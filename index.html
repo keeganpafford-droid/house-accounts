@@ -333,6 +333,87 @@
     letter-spacing:0.05em;
   }
 
+  /* Business Signals Section */
+  .business-signals-section{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:24px;
+    margin-bottom:24px;
+  }
+  .signals-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(280px,1fr));
+    gap:16px;
+  }
+  .signal-card{
+    background:#fafaf6;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:16px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .signal-card:hover{
+    border-color:var(--signal);
+    background:#fff9f6;
+  }
+  .signal-icon{
+    font-size:1.4rem;
+    margin-bottom:8px;
+    display:inline-block;
+  }
+  .signal-type{
+    font-family:var(--mono);
+    font-size:0.65rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--signal);
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .signal-title{
+    font-family:var(--display);
+    font-weight:600;
+    font-size:1rem;
+    margin-bottom:6px;
+    color:var(--ink);
+  }
+  .signal-description{
+    font-size:0.85rem;
+    line-height:1.4;
+    color:var(--muted);
+    margin-bottom:10px;
+  }
+  .signal-connection{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:8px;
+    font-size:0.8rem;
+    margin-top:10px;
+    color:var(--ink);
+  }
+  .signal-connection-label{
+    font-family:var(--mono);
+    font-size:0.6rem;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--signal);
+    font-weight:600;
+    margin-bottom:2px;
+  }
+  .signal-status{
+    font-family:var(--mono);
+    font-size:0.65rem;
+    color:var(--muted);
+    margin-top:8px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+  .status-simulated{
+    color:#e85d2a;
+  }
+
   .account-card{
     background:#fff;
     border:1px solid var(--line);
@@ -404,12 +485,6 @@
   .projects-table th{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em;}
   .contact{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:16px;}
 
-  .research-box{margin-top:22px; padding:16px; border:1px solid var(--line); background:#fff; border-radius:6px;}
-  .research-status{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:10px;}
-  .research-output{font-size:0.92rem; line-height:1.55; white-space:pre-wrap; margin-top:14px;}
-  .research-output h4{font-family:var(--display); font-size:1.1rem; margin:14px 0 6px;}
-  .research-error{margin-top:10px; padding:10px 12px; background:#fdecea; border-left:3px solid var(--signal); color:#a23b1a; font-family:var(--mono); font-size:0.8rem;}
-
   footer{
     max-width:1200px; margin:40px auto 0; padding:24px 32px 0; border-top:1px solid var(--line);
     font-family:var(--mono); font-size:0.75rem; color:var(--muted); text-align:center;
@@ -418,11 +493,11 @@
   @media (max-width:768px){
     .kpi-grid{grid-template-columns:repeat(2,1fr);}
     .opportunities-grid{grid-template-columns:1fr;}
+    .signals-grid{grid-template-columns:1fr;}
     .account-head{grid-template-columns:40px 1fr; }
     .score-bar-wrap{display:none;}
     .score-block{grid-column:2; justify-self:start; text-align:left;}
     .breakdown{grid-template-columns:repeat(2,1fr);}
-    .opp-metrics{grid-template-columns:1fr;}
   }
   @media (max-width:480px){
     main{padding:20px 16px;}
@@ -674,6 +749,146 @@ function inferIndustry(client, projects){
   if(/investment|capital|financial|bank|credit|wealth/.test(t)) return 'Financial Services';
   if(/beverage|brew|beer|restaurant|food/.test(t)) return 'Food & Beverage';
   return 'General Business';
+}
+
+function generateBusinessSignals(a, meta){
+  const signals = [];
+  const industry = a.industry;
+  const hasRecentActivity = meta.hasDates && a.daysSince !== null && a.daysSince <= 180;
+  const isHighValue = a.subscores.revenue >= 0.6;
+
+  // Hiring Activity
+  if(industry === 'Automotive / Dealership' || industry === 'Manufacturing / Industrial'){
+    const probability = Math.random();
+    if(probability > 0.4){
+      signals.push({
+        type: 'Hiring Activity',
+        icon: '👥',
+        title: `Seasonal Hiring Surge (${['Q1', 'Q2', 'Q3', 'Q4'][Math.floor(Math.random()*4)]})`,
+        description: 'Typical hiring season for this industry type. Onboarding kits and team apparel are high-priority.',
+        connection: 'Onboarding / Recruiting apparel packages & welcome kits',
+        isSimulated: true
+      });
+    }
+  } else if(industry === 'Healthcare'){
+    if(Math.random() > 0.3){
+      signals.push({
+        type: 'Hiring Activity',
+        icon: '👥',
+        title: 'Nursing & Staff Recruitment',
+        description: 'Healthcare sector shows consistent hiring. Target new hire onboarding and staff appreciation programs.',
+        connection: 'Scrubs, staff kits, and employee recognition packages',
+        isSimulated: true
+      });
+    }
+  }
+
+  // New Locations
+  if(industry === 'Automotive / Dealership'){
+    if(Math.random() > 0.5){
+      signals.push({
+        type: 'New Locations',
+        icon: '🏢',
+        title: 'Potential Dealership Expansion',
+        description: 'Dealerships often open new locations with existing brands. Opportunity for full grand-opening merch packages.',
+        connection: 'Grand opening bundles, location-branded apparel, customer giveaways',
+        isSimulated: true
+      });
+    }
+  } else if(industry === 'Food & Beverage' || industry === 'General Business'){
+    if(isHighValue && Math.random() > 0.6){
+      signals.push({
+        type: 'New Locations',
+        icon: '🏢',
+        title: 'Growth Stage: Multi-Unit Expansion',
+        description: 'High-value accounts may be expanding. New locations need branded merch for launches and staff uniforms.',
+        connection: 'Location-branded merchandise, team uniforms, launch event kits',
+        isSimulated: true
+      });
+    }
+  }
+
+  // Leadership Changes
+  if(isHighValue){
+    if(Math.random() > 0.7){
+      signals.push({
+        type: 'Leadership Changes',
+        icon: '👔',
+        title: 'New Leadership / Executive Transition',
+        description: 'Leadership changes create opportunities to pitch new partnerships and refresh brand merchandise.',
+        connection: 'Executive gift sets, company rebrand opportunities, strategic partnership programs',
+        isSimulated: true
+      });
+    }
+  }
+
+  // Product Launches
+  if(a.categoryTypes.size > 1 || a.orderCount > 3){
+    if(Math.random() > 0.4){
+      const categories = [...a.categoryTypes];
+      const category = categories.length > 0 ? categories[Math.floor(Math.random()*categories.length)] : 'new products';
+      signals.push({
+        type: 'Product Launches',
+        icon: '🚀',
+        title: `New Product Line: ${category}`,
+        description: `Based on purchase history, this account likely launches ${category.toLowerCase()} seasonally.`,
+        connection: `Launch-specific promotional bundles and event merchandise for ${category.toLowerCase()}`,
+        isSimulated: true
+      });
+    }
+  }
+
+  // Events / Conferences
+  if(industry === 'Automotive / Dealership' || industry === 'Manufacturing / Industrial'){
+    if(Math.random() > 0.35){
+      const events = industry === 'Automotive / Dealership' 
+        ? ['Auto Show', 'Dealership Convention', 'Sales Conference']
+        : ['Trade Show', 'Industry Conference', 'Safety Summit'];
+      const event = events[Math.floor(Math.random()*events.length)];
+      signals.push({
+        type: 'Events / Conferences',
+        icon: '🎪',
+        title: `Annual ${event}`,
+        description: `Typical event for this industry. High-impact opportunity for branded giveaways and booth merchandise.`,
+        connection: `Event-specific promotional products, booth giveaways, attendee gifts`,
+        isSimulated: true
+      });
+    }
+  } else if(industry === 'Financial Services' || industry === 'Healthcare'){
+    if(Math.random() > 0.45){
+      const event = industry === 'Financial Services' ? 'Client Summit' : 'Medical Conference';
+      signals.push({
+        type: 'Events / Conferences',
+        icon: '🎪',
+        title: event,
+        description: `Industry events for networking and client appreciation. Merch reinforces brand presence.`,
+        connection: `Premium event merchandise, client appreciation gifts, VIP packages`,
+        isSimulated: true
+      });
+    }
+  }
+
+  // Funding / Acquisitions
+  if(isHighValue || a.subscores.frequency >= 0.7){
+    if(Math.random() > 0.6){
+      const scenarios = [
+        {title: 'Potential Acquisition / Merger', desc: 'Company growth or consolidation opportunities create merch needs for integration.'},
+        {title: 'Series Funding or IPO Preparation', desc: 'Growth stage companies refresh branding and employee engagement programs.'},
+        {title: 'PE-Backed Growth Initiative', desc: 'Private equity typically drives aggressive expansion and brand-building campaigns.'}
+      ];
+      const scenario = scenarios[Math.floor(Math.random()*scenarios.length)];
+      signals.push({
+        type: 'Funding / Acquisitions',
+        icon: '💰',
+        title: scenario.title,
+        description: scenario.desc,
+        connection: 'Strategic rebrand, employee culture programs, investor/client gifts',
+        isSimulated: true
+      });
+    }
+  }
+
+  return signals.slice(0, 6);
 }
 
 function processData(records){
@@ -991,10 +1206,33 @@ function renderResults(accounts, meta){
     </div>
   `).join('');
 
-  // Render detailed account cards
+  // Render detailed account cards with business signals
   accounts.forEach((a, i) => {
     const card = document.createElement('div');
     card.className = 'account-card';
+
+    const businessSignals = generateBusinessSignals(a, meta);
+
+    const signalsHtml = businessSignals.length > 0 ? `
+      <div class="business-signals-section">
+        <div class="section-title">Business Signals</div>
+        <div class="signals-grid">
+          ${businessSignals.map(signal => `
+            <div class="signal-card">
+              <div class="signal-icon">${signal.icon}</div>
+              <div class="signal-type">${escapeHtml(signal.type)}</div>
+              <div class="signal-title">${escapeHtml(signal.title)}</div>
+              <div class="signal-description">${escapeHtml(signal.description)}</div>
+              <div class="signal-connection">
+                <div class="signal-connection-label">→ Opportunity Connection</div>
+                ${escapeHtml(signal.connection)}
+              </div>
+              <div class="signal-status status-simulated">📡 Simulated Signal — Live research coming soon</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
 
     const projectRows = a.orders
       .slice()
@@ -1030,6 +1268,8 @@ function renderResults(accounts, meta){
           ${meta.hasDates ? `<div class="bd-item"><div class="lbl">Recency</div><div class="val">${Math.round(a.subscores.recency*100)}</div></div>` : ''}
           ${meta.hasProjects ? `<div class="bd-item"><div class="lbl">Diversity</div><div class="val">${Math.round(a.subscores.diversity*100)}</div></div>` : ''}
         </div>
+
+        ${signalsHtml}
 
         <div class="section-title">Order History</div>
         <table class="projects-table">
