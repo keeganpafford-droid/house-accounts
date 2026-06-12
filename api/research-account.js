@@ -91,20 +91,25 @@ function extractText(data) {
 function demoResearch(account) {
   const client = account.client || 'This account';
   const projects = (account.projects || []).map(p => p.project).filter(Boolean).slice(0, 5).join(', ');
+  const categories = (account.categories || []).join(', ') || 'not enough category detail available';
+  const industry = account.industry || 'General Business';
   return `DEMO MODE - add OPENAI_API_KEY to enable live web research.
 
 ACCOUNT SNAPSHOT
 - ${client} has ${account.orderCount || 0} recorded order(s) and roughly $${Math.round(account.totalRevenue || 0).toLocaleString()} in tracked revenue.
 - Recent project themes: ${projects || 'not enough project detail available'}.
+- Detected industry: ${industry}.
+- Detected promo categories: ${categories}.
 
 CURRENT BUSINESS SIGNALS
 - Live web research is not enabled yet.
 - In production, this section will scan public news, company websites, press releases, hiring activity, and event/product launch signals.
 
 PROMO PLAYS
-- Build a timely account-specific merch play based on recent activity.
-- If this is a dealership: sales event giveaways, technician onboarding kits, service apparel refresh, vehicle launch/customer test-drive kits.
-- If this is a manufacturer: safety recognition, new hire kits, recruiting/event giveaways, department apparel.
+- Build a timely account-specific merch play based on recent activity and detected categories.
+- Automotive/dealership: sales event giveaways, technician onboarding kits, service apparel refresh, vehicle launch/customer test-drive kits, used-car department kits.
+- Manufacturing/industrial: safety recognition, new hire kits, recruiting/event giveaways, department apparel.
+- Healthcare/dental: staff appreciation, patient referral gifts, onboarding kits, milestone/anniversary recognition.
 
 ESTIMATED OPPORTUNITY
 - Initial suggested range: $5,000-$15,000 depending on account size, timing, and department scope.

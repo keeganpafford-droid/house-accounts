@@ -306,15 +306,24 @@ function parseCSV(text){
   const filtered = lines.filter(r => r.some(c => c.trim() !== ''));
   if(filtered.length < 2) throw new Error('No data rows found.');
 
-  const headerRaw = filtered[0].map(h => h.trim().toLowerCase());
+  const normalizeHeader = h => h.trim().toLowerCase().replace(/[()%]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  const headerRaw = filtered[0].map(normalizeHeader);
   const map = {
     client_name: ['client_name','client','company','account','customer','customer_name'],
-    project_name: ['project_name','project','service','product','offering','item'],
-    order_date: ['order_date','date','order date','purchase_date'],
-    revenue: ['revenue','amount','total','order_value','sales'],
-    margin: ['margin','profit','margin_pct','profit_margin'],
-    contact_name: ['contact_name','contact','contact person','primary_contact'],
-    contact_email: ['contact_email','email','contact email']
+    project_name: ['project_name','project','name','project_title','order_name','job_name','description','product','item'],
+    order_date: ['order_date','date','purchase_date','created_date'],
+    revenue: ['revenue','amount','total','subtotal','order_value','sales','project_billed_margin_subtotal','booked_margin_subtotal'],
+    margin: ['margin','margin_pct','booked_margin','booked_margin_amount','project_billed_margin','project_billed_margin_amount','profit'],
+    margin_percent: ['margin_percent','booked_margin_percent','project_billed_margin_percent','booked_margin_','project_billed_margin_'],
+    contact_name: ['contact_name','contact','contact_person','primary_contact','project_client_contact','client_contact'],
+    contact_first: ['project_client_contact_first_name','contact_first_name','first_name'],
+    contact_last: ['project_client_contact_last_name','contact_last_name','last_name'],
+    contact_email: ['contact_email','project_client_contact_email','email','contact_email_address'],
+    order_status: ['order_status','status'],
+    order_tags: ['order_tags','tags'],
+    client_tags: ['client_tags','account_tags'],
+    ship_city: ['shipto_city','ship_city','city'],
+    ship_state: ['shipto_state','ship_state','state']
   };
   const colIndex = {};
   for(const key in map){
@@ -340,19 +349,54 @@ function parseCSV(text){
     const marginRaw = get('margin').replace(/[^0-9.\-]/g,'');
     const dateStr = get('order_date');
     const d = new Date(dateStr);
+    const projectName = colIndex.project_name !== undefined ? (get('project_name') || 'Unspecified') : 'Unspecified';
+    const contactName = get('contact_name') || [get('contact_first'), get('contact_last')].filter(Boolean).join(' ');
     records.push({
       client: get('client_name') || 'Unknown',
-      project: colIndex.project_name !== undefined ? (get('project_name') || 'Unspecified') : 'Unspecified',
+      project: projectName,
+      category: inferPromoCategory(projectName + ' ' + get('order_tags') + ' ' + get('client_tags')),
       date: isNaN(d.getTime()) ? null : d,
       dateStr,
       revenue: parseFloat(revenueRaw) || 0,
       margin: marginRaw === '' ? null : parseFloat(marginRaw),
-      contactName: get('contact_name'),
-      contactEmail: get('contact_email')
+      contactName,
+      contactEmail: get('contact_email'),
+      status: get('order_status'),
+      location: [get('ship_city'), get('ship_state')].filter(Boolean).join(', ')
     });
   }
   records.missingCols = missingCols;
   return records;
+}
+
+
+function inferPromoCategory(text){
+  const t = String(text || '').toLowerCase();
+  const rules = [
+    ['Apparel', ['shirt','shirts','tee','t-shirt','polo','quarter zip','jacket','hoodie','sweatshirt','apparel','uniform','gear','vest','fleece']],
+    ['Headwear', ['hat','hats','cap','caps','beanie','headwear']],
+    ['Drinkware', ['coozie','koozie','tumbler','mug','bottle','drinkware','cup','can cooler']],
+    ['Event / Giveaway', ['event','convention','giveaway','premiums','swag','launch','show','expo','booth','sales event']],
+    ['Recognition / Awards', ['award','awards','recognition','excellence','anniversary','years','milestone','appreciation']],
+    ['Print / Stationery', ['journal','notebook','set','card','print','sign','banner','table throw']],
+    ['Onboarding / Recruiting', ['new hire','onboarding','welcome','recruiting','career','employee kit']],
+    ['Safety', ['safety','ppe','hi-vis','vest','osha']]
+  ];
+  const hits = [];
+  for(const [cat, words] of rules){
+    if(words.some(w => t.includes(w))) hits.push(cat);
+  }
+  return hits[0] || 'Uncategorized';
+}
+
+function inferIndustry(client, projects){
+  const t = (client + ' ' + projects.join(' ')).toLowerCase();
+  if(/ford|toyota|honda|chevy|chevrolet|dealer|auto|used car|bronco|vehicle/.test(t)) return 'Automotive / Dealership';
+  if(/dental|medical|health|hospital|clinic|physician|pharma/.test(t)) return 'Healthcare';
+  if(/construction|saw|supply|industrial|manufactur|seating|steel|tool/.test(t)) return 'Manufacturing / Industrial';
+  if(/investment|capital|financial|bank|credit|wealth/.test(t)) return 'Financial Services';
+  if(/beverage|brew|beer|restaurant|food/.test(t)) return 'Food & Beverage';
+  return 'General Business';
 }
 
 function processData(records){
@@ -376,7 +420,9 @@ function processData(records){
     const lastOrder = dates.length ? new Date(Math.max(...dates.map(d=>d.getTime()))) : null;
     const daysSince = lastOrder ? Math.floor((now - lastOrder) / (1000*60*60*24)) : null;
 
-    const projectTypes = new Set(orders.map(o=>o.project));
+    const projectTypes = new Set(orders.map(o=>o.project).filter(p => p && p !== 'Unspecified'));
+    const categoryTypes = new Set(orders.map(o=>o.category).filter(c => c && c !== 'Uncategorized'));
+    const industry = inferIndustry(client, orders.map(o=>o.project));
     const marginVals = orders.map(o=>o.margin).filter(m=>m!==null && !isNaN(m));
     const avgMargin = marginVals.length ? marginVals.reduce((a,b)=>a+b,0)/marginVals.length : null;
 
@@ -390,6 +436,8 @@ function processData(records){
       lastOrder,
       daysSince,
       projectTypes,
+      categoryTypes,
+      industry,
       avgMargin,
       contactName: contact.contactName || '',
       contactEmail: contact.contactEmail || ''
@@ -449,59 +497,63 @@ function generateInsights(a, meta){
   const opps = [];
   const actions = [];
   const projects = [...a.projectTypes];
+  const categories = [...a.categoryTypes];
+  const recentProject = a.orders.slice().sort((x,y)=>(y.date?.getTime()||0)-(x.date?.getTime()||0))[0]?.project || 'recent order';
 
-  // Diversity-based cross-sell
-  if(meta.hasProjects){
-    if(a.projectTypes.size <= 1){
-      opps.push(`Single-line account (${projects[0] || 'one offering'}) — strong candidate for cross-sell into adjacent services.`);
-    } else if(a.projectTypes.size >= 2 && a.score >= 60){
-      opps.push(`Engaged across ${a.projectTypes.size} project types — explore bundling into a broader retainer or framework agreement.`);
-    }
+  if(categories.length){
+    opps.push(`Detected buying categories: ${categories.join(', ')}.`);
   }
 
-  // Recency-based
+  if(a.industry === 'Automotive / Dealership'){
+    if(categories.includes('Apparel') || categories.includes('Headwear')){
+      opps.push('Dealership is already buying apparel/headwear — strong next plays are service department apparel refresh, sales event kits, technician onboarding, and customer test-drive giveaways.');
+      actions.push(`Use the recent ${recentProject} order as the bridge into an annual dealership merch calendar.`);
+    }
+    opps.push('Automotive accounts often have separate budgets across sales, service, used cars, recruiting, and customer events. Look for department-level expansion, not just reorders.');
+    actions.push('Ask who owns merch for sales events, service department, hiring/onboarding, and customer appreciation.');
+  } else if(a.industry === 'Healthcare'){
+    opps.push('Healthcare/dental signal — explore staff appreciation, patient referral gifts, onboarding kits, anniversary/milestone recognition, and scrubs/apparel refreshes.');
+    actions.push('Ask about upcoming employee appreciation, recruiting, anniversary, or patient-facing campaigns.');
+  } else if(a.industry === 'Manufacturing / Industrial'){
+    opps.push('Industrial/manufacturing signal — explore safety recognition, recruiting giveaways, department apparel, onboarding kits, and trade-show support.');
+    actions.push('Ask about safety milestones, hiring needs, plant events, and upcoming trade shows.');
+  } else if(a.industry === 'Financial Services'){
+    opps.push('Financial services signal — explore client appreciation gifts, investor meeting kits, onboarding kits, and premium event merchandise.');
+    actions.push('Ask about client events, annual meetings, referral gifts, and recruiting/onboarding.');
+  }
+
   if(meta.hasDates){
     if(a.daysSince !== null && a.daysSince > 180){
-      opps.push(`No activity in ${a.daysSince} days — re-engagement opportunity before relationship goes cold.`);
-      actions.push(`Schedule a check-in call to surface new needs${meta.hasProjects ? ` ; reference last project (${a.orders[a.orders.length-1].project})` : ''}.`);
+      opps.push(`No activity in ${a.daysSince} days — reactivation opportunity before the account goes cold.`);
+      actions.push(`Re-open with context: “last time we helped with ${recentProject}; wanted to share a timely idea.”`);
     } else if(a.daysSince !== null && a.daysSince <= 60){
-      opps.push(`Recently active (${a.daysSince} days ago) — momentum is high for a follow-on proposal.`);
-      actions.push(`Propose a follow-on scope while the most recent activity is still top of mind.`);
+      opps.push(`Recently active (${a.daysSince} days ago) — good timing for a follow-on recommendation while momentum is high.`);
+      actions.push('Reach out now with one specific next-play, not a generic “anything else coming up?” check-in.');
     }
   }
 
-  // Revenue-based
   if(a.subscores.revenue >= 0.7){
-    opps.push(`Top-tier revenue contributor — candidate for strategic account planning and executive sponsorship.`);
-    actions.push(`Set up a quarterly business review (QBR) to align on roadmap and budget cycles.`);
+    opps.push(`High-value account (${fmtCurrency(a.totalRevenue)} tracked) — worth strategic account planning, not passive order-taking.`);
+    actions.push('Propose a 15-minute merch planning call around the next 90 days.');
   } else if(a.subscores.revenue < 0.2 && a.subscores.frequency >= 0.5){
-    opps.push(`High order frequency but low revenue per order — opportunity to upsell premium tiers or larger scopes.`);
-    actions.push(`Audit current pricing/scope vs. comparable accounts and propose an upgraded package.`);
+    opps.push('Frequent but smaller orders — opportunity to bundle scattered needs into a larger quarterly program.');
   }
 
-  // Frequency-based
   if(a.orderCount === 1){
-    opps.push(`One-time buyer — opportunity to convert into a repeat or recurring relationship.`);
-    actions.push(`Send a satisfaction follow-up and introduce a recurring service option.`);
+    opps.push('One-time buyer — convert the first order into a planned follow-up campaign.');
+    actions.push('Send a satisfaction follow-up and suggest one adjacent use case based on industry.');
   } else if(a.subscores.frequency >= 0.6){
-    opps.push(`Highly repeat-frequency account — good fit for a volume-based or subscription pricing model.`);
+    opps.push('Repeat-buyer signal — good candidate for a planned merch calendar or department-by-department expansion.');
   }
 
-  // Margin
-  if(a.avgMargin !== null){
-    if(a.avgMargin < 15){
-      opps.push(`Average margin is ${a.avgMargin.toFixed(1)}% — review pricing or delivery efficiency before expanding scope.`);
-      actions.push(`Review project costing to identify margin improvement levers before next renewal.`);
-    } else if(a.avgMargin >= 30){
-      opps.push(`Strong average margin of ${a.avgMargin.toFixed(1)}% — healthy economics support investing more account time here.`);
-    }
+  if(a.avgMargin !== null && a.avgMargin >= 30){
+    opps.push(`Strong average margin of ${a.avgMargin.toFixed(1)}% — healthy economics justify proactive account time.`);
   }
 
-  // Generic fallback action
   if(actions.length === 0){
-    actions.push(`Reach out with a tailored recap of work delivered and gauge interest in next steps.`);
+    actions.push('Send a targeted note with one recommended merch play based on the most recent project.');
   }
-  actions.push(`Add account to next pipeline review with current Opportunity Score (${a.score}) as context.`);
+  actions.push(`Add to pipeline review with Opportunity Score ${a.score} and suggested play: ${opps[0] || 'account expansion'}.`);
 
   return {opps, actions};
 }
@@ -534,7 +586,7 @@ function renderResults(accounts, meta){
       .sort((x,y) => (y.date?.getTime()||0) - (x.date?.getTime()||0))
       .map(o => `
         <tr>
-          ${meta.hasProjects ? `<td>${escapeHtml(o.project)}</td>` : ''}
+          ${meta.hasProjects ? `<td>${escapeHtml(o.project)}</td><td>${escapeHtml(o.category || 'Uncategorized')}</td>` : ''}
           ${meta.hasDates ? `<td>${fmtDate(o.date)}</td>` : ''}
           <td>${fmtCurrency(o.revenue)}</td>
           <td>${o.margin !== null && !isNaN(o.margin) ? o.margin.toFixed(1)+'%' : '—'}</td>
@@ -546,7 +598,7 @@ function renderResults(accounts, meta){
         <div class="rank">#${i+1}</div>
         <div>
           <div class="acct-name">${escapeHtml(a.client)}</div>
-          <div class="acct-meta">${a.orderCount} order${a.orderCount===1?'':'s'} · ${fmtCurrency(a.totalRevenue)} total · last activity ${fmtDate(a.lastOrder)}</div>
+          <div class="acct-meta">${a.orderCount} order${a.orderCount===1?'':'s'} · ${fmtCurrency(a.totalRevenue)} total · ${escapeHtml(a.industry)} · last activity ${fmtDate(a.lastOrder)}</div>
         </div>
         <div class="score-bar-wrap">
           <div class="score-bar"><div class="score-bar-fill" style="width:${a.score}%"></div></div>
@@ -572,7 +624,7 @@ function renderResults(accounts, meta){
 
         <div class="section-title">Order History</div>
         <table class="projects-table">
-          <thead><tr>${meta.hasProjects?'<th>Project</th>':''}${meta.hasDates?'<th>Date</th>':''}<th>Revenue</th><th>Margin</th></tr></thead>
+          <thead><tr>${meta.hasProjects?'<th>Project</th><th>Category</th>':''}${meta.hasDates?'<th>Date</th>':''}<th>Revenue</th><th>Margin</th></tr></thead>
           <tbody>${projectRows}</tbody>
         </table>
 
@@ -604,7 +656,9 @@ function renderResults(accounts, meta){
           totalRevenue: a.totalRevenue,
           orderCount: a.orderCount,
           lastOrder: a.lastOrder ? a.lastOrder.toISOString() : null,
-          projects: a.orders.map(o => ({ project: o.project, date: o.dateStr, revenue: o.revenue })),
+          industry: a.industry,
+          categories: [...a.categoryTypes],
+          projects: a.orders.map(o => ({ project: o.project, category: o.category, date: o.dateStr, revenue: o.revenue })),
           contactName: a.contactName,
           contactEmail: a.contactEmail
         };
