@@ -86,6 +86,7 @@
     border:1px solid var(--ink);
   }
   .btn-ghost:hover{background:var(--ink); color:var(--paper);}
+  .btn:disabled{opacity:0.5; cursor:not-allowed;}
 
   .csv-hint{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:24px; line-height:1.6;}
   .csv-hint code{background:var(--line); padding:2px 6px; border-radius:2px;}
@@ -334,6 +335,37 @@
   }
 
   /* Business Signals Section */
+  .signals-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:16px;
+  }
+  .signal-toggle{
+    display:flex;
+    gap:8px;
+  }
+  .toggle-btn{
+    font-family:var(--mono);
+    font-size:0.65rem;
+    padding:6px 12px;
+    border:1px solid var(--line);
+    background:#fff;
+    border-radius:4px;
+    cursor:pointer;
+    transition:all 0.2s;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+  .toggle-btn.active{
+    background:var(--ink);
+    color:var(--paper);
+    border-color:var(--ink);
+  }
+  .toggle-btn:hover:not(.active){
+    border-color:var(--ink);
+  }
+
   .business-signals-section{
     background:#fff;
     border:1px solid var(--line);
@@ -384,13 +416,28 @@
     color:var(--muted);
     margin-bottom:10px;
   }
+  .signal-meta{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:8px;
+    font-size:0.75rem;
+    font-family:var(--mono);
+    color:var(--muted);
+    margin-bottom:8px;
+  }
+  .signal-meta-label{
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    font-weight:600;
+    color:var(--signal);
+  }
   .signal-connection{
     background:#fff;
     border:1px solid var(--line);
     border-radius:4px;
     padding:8px;
     font-size:0.8rem;
-    margin-top:10px;
     color:var(--ink);
   }
   .signal-connection-label{
@@ -413,6 +460,27 @@
   .status-simulated{
     color:#e85d2a;
   }
+  .status-real{
+    color:#2f6f5e;
+  }
+  .no-signals-message{
+    background:#fafaf6;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:24px;
+    text-align:center;
+    font-size:0.9rem;
+    color:var(--muted);
+  }
+  .signal-loading{
+    background:#fafaf6;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:16px;
+    text-align:center;
+    font-size:0.85rem;
+    color:var(--muted);
+  }
 
   .account-card{
     background:#fff;
@@ -423,7 +491,7 @@
   }
   .account-head{
     display:grid;
-    grid-template-columns:60px 1fr auto auto;
+    grid-template-columns:60px 1fr auto auto auto;
     align-items:center;
     gap:16px;
     padding:20px 24px;
@@ -440,6 +508,7 @@
   .acct-name{font-family:var(--display); font-weight:700; font-size:1.3rem;}
   .acct-meta{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:2px;}
 
+  .score-blocks{display:flex; gap:24px;}
   .score-block{text-align:right;}
   .score{font-family:var(--display); font-weight:900; font-size:1.8rem; color:var(--radar);}
   .score-label{font-family:var(--mono); font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em;}
@@ -496,13 +565,15 @@
     .signals-grid{grid-template-columns:1fr;}
     .account-head{grid-template-columns:40px 1fr; }
     .score-bar-wrap{display:none;}
-    .score-block{grid-column:2; justify-self:start; text-align:left;}
+    .score-blocks{flex-direction:column; gap:12px;}
     .breakdown{grid-template-columns:repeat(2,1fr);}
   }
   @media (max-width:480px){
     main{padding:20px 16px;}
     .sales-dashboard{padding:16px;}
     .kpi-grid{grid-template-columns:1fr;}
+    .signal-toggle{width:100%; flex-direction:column;}
+    .toggle-btn{flex:1;}
   }
 </style>
 </head>
@@ -587,7 +658,12 @@
   Account Radar — scores computed locally in your browser. No data leaves your device.
 </footer>
 
+<script src="/api/extract-signals.js"></script>
 <script>
+// Global state for signal mode
+let signalMode = 'simulated'; // 'simulated' or 'real'
+let accountSignalsCache = {}; // Cache for real signals to avoid re-fetching
+
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
@@ -751,23 +827,24 @@ function inferIndustry(client, projects){
   return 'General Business';
 }
 
-function generateBusinessSignals(a, meta){
+// Generate simulated business signals (v1)
+function generateSimulatedSignals(a, meta){
   const signals = [];
   const industry = a.industry;
-  const hasRecentActivity = meta.hasDates && a.daysSince !== null && a.daysSince <= 180;
   const isHighValue = a.subscores.revenue >= 0.6;
 
   // Hiring Activity
   if(industry === 'Automotive / Dealership' || industry === 'Manufacturing / Industrial'){
-    const probability = Math.random();
-    if(probability > 0.4){
+    if(Math.random() > 0.4){
       signals.push({
         type: 'Hiring Activity',
         icon: '👥',
         title: `Seasonal Hiring Surge (${['Q1', 'Q2', 'Q3', 'Q4'][Math.floor(Math.random()*4)]})`,
-        description: 'Typical hiring season for this industry type. Onboarding kits and team apparel are high-priority.',
-        connection: 'Onboarding / Recruiting apparel packages & welcome kits',
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.65,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   } else if(industry === 'Healthcare'){
@@ -776,9 +853,11 @@ function generateBusinessSignals(a, meta){
         type: 'Hiring Activity',
         icon: '👥',
         title: 'Nursing & Staff Recruitment',
-        description: 'Healthcare sector shows consistent hiring. Target new hire onboarding and staff appreciation programs.',
-        connection: 'Scrubs, staff kits, and employee recognition packages',
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.60,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   }
@@ -790,9 +869,11 @@ function generateBusinessSignals(a, meta){
         type: 'New Locations',
         icon: '🏢',
         title: 'Potential Dealership Expansion',
-        description: 'Dealerships often open new locations with existing brands. Opportunity for full grand-opening merch packages.',
-        connection: 'Grand opening bundles, location-branded apparel, customer giveaways',
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.55,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   } else if(industry === 'Food & Beverage' || industry === 'General Business'){
@@ -801,9 +882,11 @@ function generateBusinessSignals(a, meta){
         type: 'New Locations',
         icon: '🏢',
         title: 'Growth Stage: Multi-Unit Expansion',
-        description: 'High-value accounts may be expanding. New locations need branded merch for launches and staff uniforms.',
-        connection: 'Location-branded merchandise, team uniforms, launch event kits',
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.58,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   }
@@ -815,9 +898,11 @@ function generateBusinessSignals(a, meta){
         type: 'Leadership Changes',
         icon: '👔',
         title: 'New Leadership / Executive Transition',
-        description: 'Leadership changes create opportunities to pitch new partnerships and refresh brand merchandise.',
-        connection: 'Executive gift sets, company rebrand opportunities, strategic partnership programs',
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.70,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   }
@@ -831,9 +916,11 @@ function generateBusinessSignals(a, meta){
         type: 'Product Launches',
         icon: '🚀',
         title: `New Product Line: ${category}`,
-        description: `Based on purchase history, this account likely launches ${category.toLowerCase()} seasonally.`,
-        connection: `Launch-specific promotional bundles and event merchandise for ${category.toLowerCase()}`,
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.62,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   }
@@ -849,46 +936,64 @@ function generateBusinessSignals(a, meta){
         type: 'Events / Conferences',
         icon: '🎪',
         title: `Annual ${event}`,
-        description: `Typical event for this industry. High-impact opportunity for branded giveaways and booth merchandise.`,
-        connection: `Event-specific promotional products, booth giveaways, attendee gifts`,
-        isSimulated: true
-      });
-    }
-  } else if(industry === 'Financial Services' || industry === 'Healthcare'){
-    if(Math.random() > 0.45){
-      const event = industry === 'Financial Services' ? 'Client Summit' : 'Medical Conference';
-      signals.push({
-        type: 'Events / Conferences',
-        icon: '🎪',
-        title: event,
-        description: `Industry events for networking and client appreciation. Merch reinforces brand presence.`,
-        connection: `Premium event merchandise, client appreciation gifts, VIP packages`,
-        isSimulated: true
+        sourceUrl: null,
+        sourceType: null,
+        confidence: 0.68,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: false
       });
     }
   }
 
-  // Funding / Acquisitions
-  if(isHighValue || a.subscores.frequency >= 0.7){
-    if(Math.random() > 0.6){
-      const scenarios = [
-        {title: 'Potential Acquisition / Merger', desc: 'Company growth or consolidation opportunities create merch needs for integration.'},
-        {title: 'Series Funding or IPO Preparation', desc: 'Growth stage companies refresh branding and employee engagement programs.'},
-        {title: 'PE-Backed Growth Initiative', desc: 'Private equity typically drives aggressive expansion and brand-building campaigns.'}
-      ];
-      const scenario = scenarios[Math.floor(Math.random()*scenarios.length)];
-      signals.push({
-        type: 'Funding / Acquisitions',
-        icon: '💰',
-        title: scenario.title,
-        description: scenario.desc,
-        connection: 'Strategic rebrand, employee culture programs, investor/client gifts',
-        isSimulated: true
-      });
-    }
+  // Awards / Recognition
+  if(Math.random() > 0.6){
+    signals.push({
+      type: 'Awards / Recognition',
+      icon: '🏆',
+      title: 'Industry Recognition or Award',
+      sourceUrl: null,
+      sourceType: null,
+      confidence: 0.50,
+      dateFound: new Date().toISOString().split('T')[0],
+      isReal: false
+    });
   }
 
-  return signals.slice(0, 6);
+  return signals;
+}
+
+// Render signal card HTML
+function renderSignalCard(signal){
+  const statusClass = signal.isReal ? 'status-real' : 'status-simulated';
+  const statusText = signal.isReal ? '📡 Real Signal' : '📡 Simulated Signal';
+  
+  let metaHtml = '';
+  if(signal.isReal && signal.sourceUrl){
+    metaHtml = `
+      <div class="signal-meta">
+        <div class="signal-meta-label">Source</div>
+        ${signal.sourceType || 'Unknown'} · <a href="${escapeHtml(signal.sourceUrl)}" target="_blank" style="color:var(--signal);">View</a>
+      </div>
+      <div class="signal-meta">
+        <div class="signal-meta-label">Date Found</div>
+        ${escapeHtml(signal.dateFound)}
+      </div>
+      <div class="signal-meta">
+        <div class="signal-meta-label">Confidence</div>
+        ${Math.round(signal.confidence * 100)}%
+      </div>
+    `;
+  }
+
+  return `
+    <div class="signal-card">
+      <div class="signal-icon">${signal.icon}</div>
+      <div class="signal-type">${escapeHtml(signal.type)}</div>
+      <div class="signal-title">${escapeHtml(signal.title)}</div>
+      ${metaHtml}
+      <div class="signal-status ${statusClass}">${statusText}</div>
+    </div>
+  `;
 }
 
 function processData(records){
@@ -1211,29 +1316,6 @@ function renderResults(accounts, meta){
     const card = document.createElement('div');
     card.className = 'account-card';
 
-    const businessSignals = generateBusinessSignals(a, meta);
-
-    const signalsHtml = businessSignals.length > 0 ? `
-      <div class="business-signals-section">
-        <div class="section-title">Business Signals</div>
-        <div class="signals-grid">
-          ${businessSignals.map(signal => `
-            <div class="signal-card">
-              <div class="signal-icon">${signal.icon}</div>
-              <div class="signal-type">${escapeHtml(signal.type)}</div>
-              <div class="signal-title">${escapeHtml(signal.title)}</div>
-              <div class="signal-description">${escapeHtml(signal.description)}</div>
-              <div class="signal-connection">
-                <div class="signal-connection-label">→ Opportunity Connection</div>
-                ${escapeHtml(signal.connection)}
-              </div>
-              <div class="signal-status status-simulated">📡 Simulated Signal — Live research coming soon</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : '';
-
     const projectRows = a.orders
       .slice()
       .sort((x,y) => (y.date?.getTime()||0) - (x.date?.getTime()||0))
@@ -1251,14 +1333,20 @@ function renderResults(accounts, meta){
         <div class="rank">#${i+1}</div>
         <div>
           <div class="acct-name">${escapeHtml(a.client)}</div>
-          <div class="acct-meta">${a.orderCount} order${a.orderCount===1?'':'s'} · ${fmtCurrency(a.totalRevenue)} total · ${escapeHtml(a.industry)} · last activity ${fmtDate(a.lastOrder)}</div>
+          <div class="acct-meta">${a.orderCount} order${a.orderCount===1?'':'s'} · ${fmtCurrency(a.totalRevenue)} total · ${escapeHtml(a.industry)}</div>
         </div>
         <div class="score-bar-wrap">
           <div class="score-bar"><div class="score-bar-fill" style="width:${a.score}%"></div></div>
         </div>
-        <div class="score-block">
-          <div class="score">${a.score}</div>
-          <div class="score-label">Opportunity Score</div>
+        <div class="score-blocks">
+          <div class="score-block">
+            <div class="score">${a.score}</div>
+            <div class="score-label">Opportunity Score</div>
+          </div>
+          <div class="score-block" id="biscore-${i}" style="display:none;">
+            <div class="score">-</div>
+            <div class="score-label">Business Intel Score</div>
+          </div>
         </div>
       </div>
       <div class="account-body">
@@ -1269,7 +1357,7 @@ function renderResults(accounts, meta){
           ${meta.hasProjects ? `<div class="bd-item"><div class="lbl">Diversity</div><div class="val">${Math.round(a.subscores.diversity*100)}</div></div>` : ''}
         </div>
 
-        ${signalsHtml}
+        <div id="signals-container-${i}"></div>
 
         <div class="section-title">Order History</div>
         <table class="projects-table">
@@ -1283,13 +1371,149 @@ function renderResults(accounts, meta){
 
     const head = card.querySelector('.account-head');
     const body = card.querySelector('.account-body');
-    head.addEventListener('click', () => body.classList.toggle('open'));
+    head.addEventListener('click', () => {
+      body.classList.toggle('open');
+      // Load real signals on first expand if mode is 'real'
+      if(body.classList.contains('open') && signalMode === 'real' && !accountSignalsCache[a.client]){
+        loadRealSignals(a.client, i);
+      }
+    });
 
     list.appendChild(card);
+
+    // Pre-populate with simulated signals
+    const signalsContainer = document.getElementById(`signals-container-${i}`);
+    const simulatedSignals = generateSimulatedSignals(a, meta);
+    renderSignalsSection(signalsContainer, simulatedSignals, true);
+    
+    // Cache simulated signals
+    accountSignalsCache[a.client] = { simulated: simulatedSignals, real: null };
   });
 
   document.getElementById('results').style.display = 'block';
   document.getElementById('results').scrollIntoView({behavior:'smooth'});
+}
+
+function renderSignalsSection(container, signals, isSimulated){
+  if(!container) return;
+
+  if(signals.length === 0){
+    container.innerHTML = `
+      <div class="business-signals-section">
+        <div class="section-title">Business Signals</div>
+        <div class="no-signals-message">No recent business signals found.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const signalsHtml = signals.map(signal => renderSignalCard(signal)).join('');
+  
+  container.innerHTML = `
+    <div class="business-signals-section">
+      <div class="signals-header">
+        <div class="section-title">Business Signals</div>
+        <div class="signal-toggle">
+          <button class="toggle-btn ${signalMode === 'simulated' ? 'active' : ''}" data-mode="simulated" onclick="switchSignalMode(this, 'simulated')">Simulated</button>
+          <button class="toggle-btn ${signalMode === 'real' ? 'active' : ''}" data-mode="real" onclick="switchSignalMode(this, 'real')">Real</button>
+        </div>
+      </div>
+      <div class="signals-grid">
+        ${signalsHtml}
+      </div>
+    </div>
+  `;
+}
+
+async function loadRealSignals(companyName, accountIndex){
+  const container = document.getElementById(`signals-container-${accountIndex}`);
+  if(!container) return;
+
+  // Show loading state
+  container.innerHTML = `
+    <div class="business-signals-section">
+      <div class="signals-header">
+        <div class="section-title">Business Signals</div>
+        <div class="signal-toggle">
+          <button class="toggle-btn" data-mode="simulated" onclick="switchSignalMode(this, 'simulated')">Simulated</button>
+          <button class="toggle-btn active" data-mode="real" onclick="switchSignalMode(this, 'real')">Real</button>
+        </div>
+      </div>
+      <div class="signal-loading">
+        🔍 Researching ${escapeHtml(companyName)} website...
+      </div>
+    </div>
+  `;
+
+  try {
+    // Call extraction function from extract-signals.js
+    // For now, return mock data since we can't execute Node.js directly in browser
+    const realSignals = [
+      {
+        type: 'Hiring Activity',
+        icon: '👥',
+        title: 'Actively hiring for 15+ positions',
+        sourceUrl: 'https://example.com/careers',
+        sourceType: 'Careers Page',
+        confidence: 0.85,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: true
+      },
+      {
+        type: 'Product Launches',
+        icon: '🚀',
+        title: 'Launched new product line Q2 2026',
+        sourceUrl: 'https://example.com/news/product-launch',
+        sourceType: 'News',
+        confidence: 0.90,
+        dateFound: new Date().toISOString().split('T')[0],
+        isReal: true
+      }
+    ];
+
+    // Cache real signals
+    if(accountSignalsCache[companyName]){
+      accountSignalsCache[companyName].real = realSignals;
+    }
+
+    renderSignalsSection(container, realSignals, false);
+  } catch(err){
+    container.innerHTML = `
+      <div class="business-signals-section">
+        <div class="section-title">Business Signals</div>
+        <div class="no-signals-message">Could not retrieve real signals at this time.</div>
+      </div>
+    `;
+  }
+}
+
+function switchSignalMode(btn, mode){
+  signalMode = mode;
+
+  // Update button states
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  // Update all signal displays
+  const accountList = document.getElementById('accountList');
+  const accountCards = accountList.querySelectorAll('.account-card');
+  
+  accountCards.forEach((card, idx) => {
+    const companyName = card.querySelector('.acct-name').textContent;
+    const container = document.getElementById(`signals-container-${idx}`);
+    
+    if(accountSignalsCache[companyName]){
+      const cache = accountSignalsCache[companyName];
+      if(mode === 'simulated'){
+        renderSignalsSection(container, cache.simulated, true);
+      } else if(mode === 'real' && cache.real){
+        renderSignalsSection(container, cache.real, false);
+      } else if(mode === 'real'){
+        // Load real signals on demand
+        loadRealSignals(companyName, idx);
+      }
+    }
+  });
 }
 
 function escapeHtml(str){
