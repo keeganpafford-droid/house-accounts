@@ -39,8 +39,9 @@ function createSalesPlayPanel(opportunity) {
       </div>
 
       <div class="sales-play-actions">
+        <button class="btn btn-secondary" id="copy-all-btn" style="background:var(--signal);">Copy All</button>
         <button class="btn btn-secondary" id="copy-email-btn">Copy Email</button>
-        <button class="btn btn-secondary" id="copy-script-btn">Copy Call Script</button>
+        <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
         <button class="btn btn-ghost" id="close-play-btn">Close</button>
       </div>
     </div>
@@ -67,15 +68,23 @@ function createSalesPlayPanel(opportunity) {
   modal.querySelector('.sales-play-close').addEventListener('click', () => modal.remove());
   modal.querySelector('#close-play-btn').addEventListener('click', () => modal.remove());
 
-  // Copy buttons
-  modal.querySelector('#copy-email-btn').addEventListener('click', () => {
-    const emailText = modal.querySelector('.sales-play-email-body')?.innerText;
-    if (emailText) copyToClipboard(emailText);
+  // Copy All button
+  modal.querySelector('#copy-all-btn').addEventListener('click', () => {
+    const play = getCurrentPlayFromModal(modal);
+    const allText = formatAllForClipboard(play);
+    copyToClipboard(allText, 'Copy All');
   });
 
+  // Copy Email button
+  modal.querySelector('#copy-email-btn').addEventListener('click', () => {
+    const emailText = modal.querySelector('.sales-play-email-body')?.innerText;
+    if (emailText) copyToClipboard(emailText, 'Copy Email');
+  });
+
+  // Copy Script button
   modal.querySelector('#copy-script-btn').addEventListener('click', () => {
     const scriptText = modal.querySelector('.sales-play-call-script')?.innerText;
-    if (scriptText) copyToClipboard(scriptText);
+    if (scriptText) copyToClipboard(scriptText, 'Copy Script');
   });
 
   document.body.appendChild(modal);
@@ -93,19 +102,19 @@ function renderSalesPlay(play, modal) {
       <!-- Subject Line -->
       <div class="sales-play-section">
         <h3 class="section-title">📧 Subject Line</h3>
-        <div class="section-content subject-line">${escapeHtml(play.subjectLine)}</div>
+        <div class="section-content subject-line" data-play-field="subjectLine">${escapeHtml(play.subjectLine)}</div>
       </div>
 
       <!-- Outreach Email -->
       <div class="sales-play-section">
         <h3 class="section-title">📨 Outreach Email</h3>
-        <div class="section-content sales-play-email-body">${escapeHtml(play.email).replace(/\n/g, '<br>')}</div>
+        <div class="section-content sales-play-email-body" data-play-field="email">${escapeHtml(play.email).replace(/\n/g, '<br>')}</div>
       </div>
 
       <!-- Call Script -->
       <div class="sales-play-section">
         <h3 class="section-title">☎️ Call Script</h3>
-        <div class="section-content sales-play-call-script">
+        <div class="section-content sales-play-call-script" data-play-field="callScript">
           ${play.callScript.map(part => `
             <div class="script-section">
               <div class="script-label">${part.section}</div>
@@ -118,7 +127,7 @@ function renderSalesPlay(play, modal) {
       <!-- Discovery Questions -->
       <div class="sales-play-section">
         <h3 class="section-title">❓ Discovery Questions</h3>
-        <div class="section-content">
+        <div class="section-content" data-play-field="discoveryQuestions">
           <ul class="discovery-list">
             ${play.discoveryQuestions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}
           </ul>
@@ -128,7 +137,7 @@ function renderSalesPlay(play, modal) {
       <!-- Suggested Next Step -->
       <div class="sales-play-section">
         <h3 class="section-title">🎯 Suggested Next Step</h3>
-        <div class="section-content next-step">${escapeHtml(play.suggestedNextStep)}</div>
+        <div class="section-content next-step" data-play-field="nextStep">${escapeHtml(play.suggestedNextStep)}</div>
       </div>
 
       <div class="sales-play-meta">
@@ -136,9 +145,75 @@ function renderSalesPlay(play, modal) {
       </div>
     </div>
   `;
+
+  // Store play data in modal for Copy All
+  modal.dataset.currentPlay = JSON.stringify(play);
 }
 
-function copyToClipboard(text) {
+function getCurrentPlayFromModal(modal) {
+  try {
+    return JSON.parse(modal.dataset.currentPlay);
+  } catch (e) {
+    return null;
+  }
+}
+
+function formatAllForClipboard(play) {
+  if (!play) return '';
+
+  const lines = [
+    '═══════════════════════════════════════════════════════════════',
+    'SALES PLAY: ' + play.account + ' · ' + play.opportunity,
+    'STYLE: ' + SALES_STYLES[play.style].name.toUpperCase(),
+    '═══════════════════════════════════════════════════════════════',
+    '',
+    '─────────────────────────────────────────────────────────────',
+    'SUBJECT LINE',
+    '─────────────────────────────────────────────────────────────',
+    play.subjectLine,
+    '',
+    '─────────────────────────────────────────────────────────────',
+    'OUTREACH EMAIL',
+    '─────────────────────────────────────────────────────────────',
+    play.email,
+    '',
+    '─────────────────────────────────────────────────────────────',
+    'CALL SCRIPT',
+    '─────────────────────────────────────────────────────────────'
+  ];
+
+  // Add call script sections
+  play.callScript.forEach(section => {
+    lines.push('');
+    lines.push('[' + section.section + ']');
+    lines.push(section.text);
+  });
+
+  lines.push('');
+  lines.push('─────────────────────────────────────────────────────────────');
+  lines.push('DISCOVERY QUESTIONS');
+  lines.push('─────────────────────────────────────────────────────────────');
+  lines.push('');
+
+  // Add questions
+  play.discoveryQuestions.forEach((q, idx) => {
+    lines.push((idx + 1) + '. ' + q);
+  });
+
+  lines.push('');
+  lines.push('─────────────────────────────────────────────────────────────');
+  lines.push('SUGGESTED NEXT STEP');
+  lines.push('─────────────────────────────────────────────────────────────');
+  lines.push(play.suggestedNextStep);
+  lines.push('');
+  lines.push('═══════════════════════════════════════════════════════════════');
+  lines.push('Generated: ' + play.generatedAt);
+  lines.push('═══════════════════════════════════════════════════════════════');
+
+  return lines.join('\n');
+}
+
+function copyToClipboard(text, label = 'Copy') {
   navigator.clipboard.writeText(text).then(() => {
     const btn = event.target;
     const originalText = btn.textContent;
