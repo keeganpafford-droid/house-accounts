@@ -50,7 +50,7 @@
   }
   .sub{font-family:var(--mono); font-size:0.85rem; color:var(--muted); max-width:420px;}
 
-  main{max-width:1100px; margin:0 auto; padding:40px 32px;}
+  main{max-width:1200px; margin:0 auto; padding:40px 32px;}
 
   .upload-zone{
     border:2px dashed var(--line);
@@ -77,6 +77,7 @@
     padding:12px 24px;
     border-radius:2px;
     cursor:pointer;
+    transition: background 0.2s;
   }
   .btn:hover{background:var(--radar);}
   .btn-ghost{
@@ -94,8 +95,92 @@
     font-family:var(--mono); font-size:0.85rem; color:#a23b1a;
   }
 
-  /* results */
+  /* Sales Manager Dashboard */
   #results{display:none; margin-top:48px;}
+  
+  .sales-dashboard{
+    background:#fff;
+    border:2px solid var(--ink);
+    border-radius:8px;
+    padding:32px;
+    margin-bottom:32px;
+  }
+  .dashboard-header{
+    font-family:var(--display);
+    font-weight:900;
+    font-size:1.8rem;
+    margin-bottom:24px;
+    padding-bottom:16px;
+    border-bottom:2px solid var(--line);
+  }
+  
+  .kpi-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(200px,1fr));
+    gap:20px;
+    margin-bottom:32px;
+  }
+  .kpi-card{
+    background:linear-gradient(135deg, #fafaf6 0%, #f0ede6 100%);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:20px;
+    text-align:center;
+  }
+  .kpi-value{
+    font-family:var(--display);
+    font-weight:900;
+    font-size:2.4rem;
+    color:var(--radar);
+    margin-bottom:6px;
+    line-height:1;
+  }
+  .kpi-label{
+    font-family:var(--mono);
+    font-size:0.7rem;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--muted);
+  }
+
+  .top-opportunities{
+    margin-top:24px;
+  }
+  .top-opps-title{
+    font-family:var(--mono);
+    font-size:0.8rem;
+    text-transform:uppercase;
+    letter-spacing:0.12em;
+    color:var(--signal);
+    margin-bottom:12px;
+  }
+  .top-opps-list{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(180px,1fr));
+    gap:12px;
+  }
+  .top-opp-item{
+    background:#fafaf6;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:12px;
+    font-size:0.85rem;
+  }
+  .top-opp-title{
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .top-opp-meta{
+    font-family:var(--mono);
+    font-size:0.75rem;
+    color:var(--muted);
+  }
+  .top-opp-value{
+    color:var(--signal);
+    font-weight:600;
+    margin-top:4px;
+  }
+
   .results-head{display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:16px; margin-bottom:24px;}
   .results-head h2{font-family:var(--display); font-size:2rem;}
   .results-head .count{font-family:var(--mono); color:var(--muted); font-size:0.85rem;}
@@ -105,6 +190,148 @@
     display:flex; gap:24px; flex-wrap:wrap; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid var(--line);
   }
   .legend span b{color:var(--ink);}
+
+  /* Opportunity Cards Grid */
+  .opportunities-section{
+    margin-bottom:32px;
+  }
+  .section-header{
+    font-family:var(--display);
+    font-weight:700;
+    font-size:1.4rem;
+    margin-bottom:16px;
+    padding-bottom:12px;
+    border-bottom:2px solid var(--line);
+  }
+  .opportunities-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(320px,1fr));
+    gap:16px;
+    margin-bottom:24px;
+  }
+  .opportunity-card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:20px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    display:flex;
+    flex-direction:column;
+  }
+  .opportunity-card:hover{
+    border-color:var(--radar);
+    box-shadow:0 4px 12px rgba(47,111,94,0.1);
+  }
+  
+  .opp-card-header{
+    margin-bottom:12px;
+  }
+  .opp-card-title{
+    font-family:var(--display);
+    font-weight:700;
+    font-size:1.1rem;
+    margin-bottom:6px;
+    color:var(--ink);
+  }
+  .opp-card-account{
+    font-family:var(--mono);
+    font-size:0.75rem;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+
+  .opp-metrics{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+    padding:12px;
+    background:#fafaf6;
+    border-radius:6px;
+    margin-bottom:12px;
+  }
+  .metric{
+    text-align:center;
+  }
+  .metric-value{
+    font-family:var(--display);
+    font-weight:700;
+    font-size:1.4rem;
+    color:var(--radar);
+    line-height:1;
+  }
+  .metric-label{
+    font-family:var(--mono);
+    font-size:0.6rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--muted);
+    margin-top:2px;
+  }
+
+  .confidence-badge{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:0.65rem;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    padding:4px 8px;
+    border-radius:3px;
+    margin-bottom:12px;
+  }
+  .confidence-high{
+    background:#d4edda;
+    color:#155724;
+  }
+  .confidence-medium{
+    background:#fff3cd;
+    color:#856404;
+  }
+  .confidence-low{
+    background:#f8d7da;
+    color:#721c24;
+  }
+
+  .opp-section{
+    margin-bottom:12px;
+  }
+  .opp-label{
+    font-family:var(--mono);
+    font-size:0.65rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--signal);
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .opp-content{
+    font-size:0.9rem;
+    line-height:1.5;
+    color:var(--ink);
+  }
+  .opp-content.meta{
+    font-family:var(--mono);
+    font-size:0.8rem;
+    color:var(--muted);
+  }
+
+  .opp-products{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:4px;
+  }
+  .product-badge{
+    font-family:var(--mono);
+    font-size:0.7rem;
+    background:var(--radar);
+    color:#fff;
+    padding:3px 8px;
+    border-radius:3px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
 
   .account-card{
     background:#fff;
@@ -120,6 +347,11 @@
     gap:16px;
     padding:20px 24px;
     cursor:pointer;
+    background:#fafaf6;
+    border-bottom:1px solid var(--line);
+  }
+  .account-head:hover{
+    background:#f0ede6;
   }
   .rank{
     font-family:var(--mono); font-size:1.1rem; color:var(--muted);
@@ -154,8 +386,9 @@
 
   .section-title{
     font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--signal);
-    margin-bottom:8px; margin-top:20px;
+    margin-bottom:12px; margin-top:20px;
   }
+
   .opps, .actions{margin:0; padding-left:0; list-style:none;}
   .opps li, .actions li{
     padding:8px 0 8px 20px; position:relative; font-size:0.92rem; line-height:1.5; border-bottom:1px solid var(--line);
@@ -171,7 +404,6 @@
   .projects-table th{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em;}
   .contact{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:16px;}
 
-
   .research-box{margin-top:22px; padding:16px; border:1px solid var(--line); background:#fff; border-radius:6px;}
   .research-status{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:10px;}
   .research-output{font-size:0.92rem; line-height:1.55; white-space:pre-wrap; margin-top:14px;}
@@ -179,15 +411,23 @@
   .research-error{margin-top:10px; padding:10px 12px; background:#fdecea; border-left:3px solid var(--signal); color:#a23b1a; font-family:var(--mono); font-size:0.8rem;}
 
   footer{
-    max-width:1100px; margin:40px auto 0; padding:24px 32px 0; border-top:1px solid var(--line);
+    max-width:1200px; margin:40px auto 0; padding:24px 32px 0; border-top:1px solid var(--line);
     font-family:var(--mono); font-size:0.75rem; color:var(--muted); text-align:center;
   }
 
-  @media (max-width:640px){
+  @media (max-width:768px){
+    .kpi-grid{grid-template-columns:repeat(2,1fr);}
+    .opportunities-grid{grid-template-columns:1fr;}
     .account-head{grid-template-columns:40px 1fr; }
     .score-bar-wrap{display:none;}
     .score-block{grid-column:2; justify-self:start; text-align:left;}
     .breakdown{grid-template-columns:repeat(2,1fr);}
+    .opp-metrics{grid-template-columns:1fr;}
+  }
+  @media (max-width:480px){
+    main{padding:20px 16px;}
+    .sales-dashboard{padding:16px;}
+    .kpi-grid{grid-template-columns:1fr;}
   }
 </style>
 </head>
@@ -215,18 +455,56 @@
   </div>
 
   <div id="results">
-    <div class="results-head">
-      <h2>Ranked Accounts</h2>
-      <div class="count" id="resultCount"></div>
+    <!-- Sales Manager Dashboard -->
+    <div class="sales-dashboard">
+      <div class="dashboard-header">Sales Manager Dashboard</div>
+      
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-value" id="totalAccounts">0</div>
+          <div class="kpi-label">Total Accounts Analyzed</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value" id="totalOppValue">$0</div>
+          <div class="kpi-label">Total Est. Opportunity Value</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value" id="highConfidenceCount">0</div>
+          <div class="kpi-label">High Confidence Opportunities</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value" id="avgConfidence">0%</div>
+          <div class="kpi-label">Average Confidence</div>
+        </div>
+      </div>
+
+      <div class="top-opportunities">
+        <div class="top-opps-title">Top 5 Opportunities by Value</div>
+        <div class="top-opps-list" id="topOppsList"></div>
+      </div>
     </div>
-    <div class="legend">
-      <span><b>Revenue</b> — total spend, scaled vs. portfolio</span>
-      <span><b>Frequency</b> — number of distinct orders</span>
-      <span><b>Recency</b> — time since last order (sooner = higher)</span>
-      <span><b>Diversity</b> — distinct project types purchased</span>
+
+    <!-- Opportunity Cards Section -->
+    <div class="opportunities-section">
+      <div class="section-header">All Opportunities</div>
+      <div class="results-head">
+        <div class="count" id="resultCount"></div>
+      </div>
+      <div class="legend">
+        <span><b>Revenue</b> — total spend, scaled vs. portfolio</span>
+        <span><b>Frequency</b> — number of distinct orders</span>
+        <span><b>Recency</b> — time since last order (sooner = higher)</span>
+        <span><b>Diversity</b> — distinct project types purchased</span>
+      </div>
+      <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
+      <div class="opportunities-grid" id="opportunitiesGrid"></div>
     </div>
-    <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
-    <div id="accountList"></div>
+
+    <!-- Detailed Account Cards -->
+    <div class="opportunities-section">
+      <div class="section-header">Detailed Account Views</div>
+      <div id="accountList"></div>
+    </div>
   </div>
 </main>
 
@@ -369,7 +647,6 @@ function parseCSV(text){
   return records;
 }
 
-
 function inferPromoCategory(text){
   const t = String(text || '').toLowerCase();
   const rules = [
@@ -493,81 +770,136 @@ function fmtDate(d){
   return d.toLocaleDateString('en-US', {year:'numeric', month:'short', day:'numeric'});
 }
 
-function generateInsights(a, meta){
+function generateOpportunities(a, meta){
   const opps = [];
-  const actions = [];
-  const projects = [...a.projectTypes];
   const categories = [...a.categoryTypes];
-  const recentProject = a.orders.slice().sort((x,y)=>(y.date?.getTime()||0)-(x.date?.getTime()||0))[0]?.project || 'recent order';
+  const recentProject = a.orders.slice().sort((x,y)=>(y.date?.getTime()||0)-(x.date?.getTime()||0))[0];
+  const recentProjectName = recentProject?.project || 'recent order';
 
+  // Opportunity 1: Category Expansion
   if(categories.length){
-    opps.push(`Detected buying categories: ${categories.join(', ')}.`);
+    opps.push({
+      title: 'Product Line Expansion',
+      description: `Build on existing ${categories.join(', ')} purchases with adjacent categories.`,
+      estimatedValue: Math.round(a.totalRevenue * 0.15),
+      confidence: Math.min(95, 75 + categories.length * 5),
+      suggestedContact: a.contactName || 'Account Manager',
+      evidence: `${categories.length} product categories already purchased`,
+      recommendedProducts: ['Promotional Gifts', 'Branded Merchandise'],
+      nextAction: `Propose complementary product categories based on their ${categories[0]} spending.`
+    });
   }
 
-  if(a.industry === 'Automotive / Dealership'){
-    if(categories.includes('Apparel') || categories.includes('Headwear')){
-      opps.push('Dealership is already buying apparel/headwear — strong next plays are service department apparel refresh, sales event kits, technician onboarding, and customer test-drive giveaways.');
-      actions.push(`Use the recent ${recentProject} order as the bridge into an annual dealership merch calendar.`);
-    }
-    opps.push('Automotive accounts often have separate budgets across sales, service, used cars, recruiting, and customer events. Look for department-level expansion, not just reorders.');
-    actions.push('Ask who owns merch for sales events, service department, hiring/onboarding, and customer appreciation.');
-  } else if(a.industry === 'Healthcare'){
-    opps.push('Healthcare/dental signal — explore staff appreciation, patient referral gifts, onboarding kits, anniversary/milestone recognition, and scrubs/apparel refreshes.');
-    actions.push('Ask about upcoming employee appreciation, recruiting, anniversary, or patient-facing campaigns.');
-  } else if(a.industry === 'Manufacturing / Industrial'){
-    opps.push('Industrial/manufacturing signal — explore safety recognition, recruiting giveaways, department apparel, onboarding kits, and trade-show support.');
-    actions.push('Ask about safety milestones, hiring needs, plant events, and upcoming trade shows.');
-  } else if(a.industry === 'Financial Services'){
-    opps.push('Financial services signal — explore client appreciation gifts, investor meeting kits, onboarding kits, and premium event merchandise.');
-    actions.push('Ask about client events, annual meetings, referral gifts, and recruiting/onboarding.');
+  // Opportunity 2: Reactivation
+  if(meta.hasDates && a.daysSince !== null && a.daysSince > 180){
+    opps.push({
+      title: 'Account Reactivation',
+      description: `No activity in ${a.daysSince} days—timely reengagement opportunity.`,
+      estimatedValue: Math.round(a.totalRevenue * 0.20),
+      confidence: Math.max(65, Math.min(85, 100 - (a.daysSince / 2))),
+      suggestedContact: a.contactName || 'Account Manager',
+      evidence: `Last order: ${fmtDate(a.lastOrder)}, ${a.daysSince} days ago`,
+      recommendedProducts: ['Seasonal Collections', 'New Product Lines'],
+      nextAction: `Re-open with context: "last time we helped with ${recentProjectName}; wanted to share a timely idea."`
+    });
   }
 
-  if(meta.hasDates){
-    if(a.daysSince !== null && a.daysSince > 180){
-      opps.push(`No activity in ${a.daysSince} days — reactivation opportunity before the account goes cold.`);
-      actions.push(`Re-open with context: “last time we helped with ${recentProject}; wanted to share a timely idea.”`);
-    } else if(a.daysSince !== null && a.daysSince <= 60){
-      opps.push(`Recently active (${a.daysSince} days ago) — good timing for a follow-on recommendation while momentum is high.`);
-      actions.push('Reach out now with one specific next-play, not a generic “anything else coming up?” check-in.');
-    }
-  }
-
+  // Opportunity 3: Strategic Account Growth
   if(a.subscores.revenue >= 0.7){
-    opps.push(`High-value account (${fmtCurrency(a.totalRevenue)} tracked) — worth strategic account planning, not passive order-taking.`);
-    actions.push('Propose a 15-minute merch planning call around the next 90 days.');
-  } else if(a.subscores.revenue < 0.2 && a.subscores.frequency >= 0.5){
-    opps.push('Frequent but smaller orders — opportunity to bundle scattered needs into a larger quarterly program.');
+    opps.push({
+      title: 'Strategic Account Partnership',
+      description: `High-value account (${fmtCurrency(a.totalRevenue)})—opportunity for planned annual calendar.`,
+      estimatedValue: Math.round(a.totalRevenue * 0.25),
+      confidence: 90,
+      suggestedContact: a.contactName || 'Executive Sponsor',
+      evidence: `${fmtCurrency(a.totalRevenue)} total historical spend, ${a.orderCount} orders`,
+      recommendedProducts: ['Custom Annual Calendar', 'Strategic Partnership Program'],
+      nextAction: 'Propose a 15-minute merch planning call around the next 90 days.'
+    });
   }
 
-  if(a.orderCount === 1){
-    opps.push('One-time buyer — convert the first order into a planned follow-up campaign.');
-    actions.push('Send a satisfaction follow-up and suggest one adjacent use case based on industry.');
-  } else if(a.subscores.frequency >= 0.6){
-    opps.push('Repeat-buyer signal — good candidate for a planned merch calendar or department-by-department expansion.');
+  // Opportunity 4: Frequency Growth
+  if(a.orderCount > 1 && a.subscores.frequency >= 0.5){
+    opps.push({
+      title: 'Order Frequency Increase',
+      description: `${a.orderCount} previous orders suggest consolidation into quarterly programs.`,
+      estimatedValue: Math.round(a.totalRevenue * 0.18),
+      confidence: Math.min(95, 75 + (a.orderCount * 3)),
+      suggestedContact: a.contactName || 'Account Manager',
+      evidence: `${a.orderCount} orders on record, avg ${fmtCurrency(Math.round(a.totalRevenue / a.orderCount))} per order`,
+      recommendedProducts: ['Quarterly Program Bundle', 'Standing Order Program'],
+      nextAction: 'Consolidate scattered needs into a larger quarterly program to increase frequency.'
+    });
   }
 
-  if(a.avgMargin !== null && a.avgMargin >= 30){
-    opps.push(`Strong average margin of ${a.avgMargin.toFixed(1)}% — healthy economics justify proactive account time.`);
+  // Opportunity 5: Industry-Specific
+  if(a.industry === 'Automotive / Dealership'){
+    opps.push({
+      title: 'Multi-Department Expansion',
+      description: 'Dealerships have separate budgets (sales, service, used cars, recruiting). Explore department-level growth.',
+      estimatedValue: Math.round(a.totalRevenue * 0.30),
+      confidence: 80,
+      suggestedContact: a.contactName || 'Sales Manager',
+      evidence: `${a.industry} account with multi-budget opportunity`,
+      recommendedProducts: ['Service Dept. Apparel', 'Sales Event Kits', 'Technician Uniforms'],
+      nextAction: 'Ask who owns merch for sales events, service department, hiring/onboarding, and customer appreciation.'
+    });
+  } else if(a.industry === 'Healthcare'){
+    opps.push({
+      title: 'Healthcare Staff Recognition',
+      description: 'Explore staff appreciation, patient referral gifts, onboarding kits, and scrubs/apparel.',
+      estimatedValue: Math.round(a.totalRevenue * 0.20),
+      confidence: 78,
+      suggestedContact: a.contactName || 'HR Manager',
+      evidence: `${a.industry} account—natural fit for recognition programs`,
+      recommendedProducts: ['Staff Appreciation Kits', 'Patient Referral Gifts', 'Scrubs'],
+      nextAction: 'Ask about upcoming employee appreciation, recruiting, anniversary, or patient-facing campaigns.'
+    });
+  } else if(a.industry === 'Manufacturing / Industrial'){
+    opps.push({
+      title: 'Safety & Recruiting Programs',
+      description: 'Explore safety recognition, recruiting giveaways, department apparel, and trade-show support.',
+      estimatedValue: Math.round(a.totalRevenue * 0.22),
+      confidence: 82,
+      suggestedContact: a.contactName || 'Operations Manager',
+      evidence: `${a.industry} account—strong safety & hiring programs`,
+      recommendedProducts: ['Safety Program Bundle', 'Recruiting Gifts', 'Department Apparel'],
+      nextAction: 'Ask about safety milestones, hiring needs, plant events, and upcoming trade shows.'
+    });
   }
 
-  if(actions.length === 0){
-    actions.push('Send a targeted note with one recommended merch play based on the most recent project.');
+  // Opportunity 6: Recent Momentum
+  if(meta.hasDates && a.daysSince !== null && a.daysSince <= 60 && a.daysSince > 0){
+    opps.push({
+      title: 'Recent Momentum Follow-Up',
+      description: `Recently active (${a.daysSince} days ago)—ideal time for next-play recommendation while momentum is high.`,
+      estimatedValue: Math.round(a.totalRevenue * 0.12),
+      confidence: 88,
+      suggestedContact: a.contactName || 'Primary Contact',
+      evidence: `Recent activity ${fmtDate(a.lastOrder)}—strong engagement signal`,
+      recommendedProducts: ['Companion Products', 'Related Categories'],
+      nextAction: 'Reach out now with one specific next-play, not a generic "anything else coming up?" check-in.'
+    });
   }
-  actions.push(`Add to pipeline review with Opportunity Score ${a.score} and suggested play: ${opps[0] || 'account expansion'}.`);
 
-  return {opps, actions};
+  return opps.slice(0, 6).sort((x, y) => y.estimatedValue - x.estimatedValue);
+}
+
+function getConfidenceClass(confidence){
+  if(confidence >= 85) return 'confidence-high';
+  if(confidence >= 75) return 'confidence-medium';
+  return 'confidence-low';
 }
 
 function renderResults(accounts, meta){
   const list = document.getElementById('accountList');
   list.innerHTML = '';
-  document.getElementById('resultCount').textContent = `${accounts.length} account${accounts.length===1?'':'s'} analyzed`;
-
+  
   // notice about missing columns
   const notice = document.getElementById('notice');
   const noticeParts = [];
   if(meta.missingCols.length){
-    noticeParts.push(`No <code>${meta.missingCols.join('</code>, <code>')}</code> column${meta.missingCols.length>1?'s':''} found — scoring adjusted to skip ${meta.missingCols.includes('order_date') && meta.missingCols.includes('project_name') ? 'recency and diversity' : meta.missingCols.includes('order_date') ? 'recency' : meta.missingCols.includes('project_name') ? 'diversity' : 'unused factors'} where applicable.`);
+    noticeParts.push(`No <code>${meta.missingCols.join('</code>, <code>')}</code> column${meta.missingCols.length>1?'s':''} found — scoring adjusted to skip those factors.`);
   }
   if(noticeParts.length){
     notice.innerHTML = noticeParts.join(' ');
@@ -576,8 +908,91 @@ function renderResults(accounts, meta){
     notice.style.display = 'none';
   }
 
+  // Collect all opportunities
+  let allOpportunities = [];
+  let totalOppValue = 0;
+  let totalConfidence = 0;
+  let highConfidenceCount = 0;
+
   accounts.forEach((a, i) => {
-    const {opps, actions} = generateInsights(a, meta);
+    const opps = generateOpportunities(a, meta);
+    opps.forEach(opp => {
+      allOpportunities.push({...opp, accountIndex: i+1, accountName: a.client});
+      totalOppValue += opp.estimatedValue;
+      totalConfidence += opp.confidence;
+      if(opp.confidence >= 85) highConfidenceCount++;
+    });
+  });
+
+  // Update dashboard
+  document.getElementById('totalAccounts').textContent = accounts.length;
+  document.getElementById('totalOppValue').textContent = fmtCurrency(totalOppValue);
+  document.getElementById('highConfidenceCount').textContent = highConfidenceCount;
+  const avgConfidence = allOpportunities.length > 0 ? Math.round(totalConfidence / allOpportunities.length) : 0;
+  document.getElementById('avgConfidence').textContent = avgConfidence + '%';
+
+  // Top 5 opportunities
+  const topOpps = allOpportunities.slice().sort((x,y) => y.estimatedValue - x.estimatedValue).slice(0, 5);
+  const topOppsList = document.getElementById('topOppsList');
+  topOppsList.innerHTML = topOpps.map(opp => `
+    <div class="top-opp-item">
+      <div class="top-opp-title">${escapeHtml(opp.title)}</div>
+      <div class="top-opp-meta">${escapeHtml(opp.accountName)}</div>
+      <div class="top-opp-value">${fmtCurrency(opp.estimatedValue)}</div>
+    </div>
+  `).join('');
+
+  // Render opportunity cards grid
+  document.getElementById('resultCount').textContent = `${allOpportunities.length} opportunit${allOpportunities.length===1?'y':'ies'} identified`;
+  const oppGrid = document.getElementById('opportunitiesGrid');
+  oppGrid.innerHTML = allOpportunities.map(opp => `
+    <div class="opportunity-card">
+      <div class="opp-card-header">
+        <div class="opp-card-title">${escapeHtml(opp.title)}</div>
+        <div class="opp-card-account">Account #${opp.accountIndex}: ${escapeHtml(opp.accountName)}</div>
+      </div>
+
+      <div class="confidence-badge ${getConfidenceClass(opp.confidence)}">
+        ${opp.confidence}% Confidence
+      </div>
+
+      <div class="opp-metrics">
+        <div class="metric">
+          <div class="metric-value">${fmtCurrency(opp.estimatedValue)}</div>
+          <div class="metric-label">Est. Value</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${opp.confidence}%</div>
+          <div class="metric-label">Confidence</div>
+        </div>
+      </div>
+
+      <div class="opp-section">
+        <div class="opp-label">Evidence</div>
+        <div class="opp-content">${escapeHtml(opp.evidence)}</div>
+      </div>
+
+      <div class="opp-section">
+        <div class="opp-label">Suggested Contact</div>
+        <div class="opp-content meta">${escapeHtml(opp.suggestedContact)}</div>
+      </div>
+
+      <div class="opp-section">
+        <div class="opp-label">Recommended Products</div>
+        <div class="opp-products">
+          ${opp.recommendedProducts.map(p => `<span class="product-badge">${escapeHtml(p)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="opp-section">
+        <div class="opp-label">Next Action</div>
+        <div class="opp-content">${escapeHtml(opp.nextAction)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  // Render detailed account cards
+  accounts.forEach((a, i) => {
     const card = document.createElement('div');
     card.className = 'account-card';
 
@@ -616,24 +1031,11 @@ function renderResults(accounts, meta){
           ${meta.hasProjects ? `<div class="bd-item"><div class="lbl">Diversity</div><div class="val">${Math.round(a.subscores.diversity*100)}</div></div>` : ''}
         </div>
 
-        <div class="section-title">Expansion Opportunities</div>
-        <ul class="opps">${opps.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
-
-        <div class="section-title">Recommended Next Actions</div>
-        <ul class="actions">${actions.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
-
         <div class="section-title">Order History</div>
         <table class="projects-table">
           <thead><tr>${meta.hasProjects?'<th>Project</th><th>Category</th>':''}${meta.hasDates?'<th>Date</th>':''}<th>Revenue</th><th>Margin</th></tr></thead>
           <tbody>${projectRows}</tbody>
         </table>
-
-        <div class="section-title">Business Intelligence</div>
-        <div class="research-box">
-          <button class="btn research-btn" type="button">Research Account</button>
-          <div class="research-status">Scans public business signals and turns them into promo-specific plays.</div>
-          <div class="research-result"></div>
-        </div>
 
         ${(a.contactName || a.contactEmail) ? `<div class="contact">Contact: ${escapeHtml(a.contactName)} ${a.contactEmail ? '· '+escapeHtml(a.contactEmail) : ''}</div>` : ''}
       </div>
@@ -642,41 +1044,6 @@ function renderResults(accounts, meta){
     const head = card.querySelector('.account-head');
     const body = card.querySelector('.account-body');
     head.addEventListener('click', () => body.classList.toggle('open'));
-
-    const researchBtn = card.querySelector('.research-btn');
-    const researchResult = card.querySelector('.research-result');
-    researchBtn.addEventListener('click', async (ev) => {
-      ev.stopPropagation();
-      researchBtn.disabled = true;
-      researchBtn.textContent = 'Researching...';
-      researchResult.innerHTML = '<div class="research-status">Looking for business signals and building promo plays...</div>';
-      try {
-        const payload = {
-          client: a.client,
-          totalRevenue: a.totalRevenue,
-          orderCount: a.orderCount,
-          lastOrder: a.lastOrder ? a.lastOrder.toISOString() : null,
-          industry: a.industry,
-          categories: [...a.categoryTypes],
-          projects: a.orders.map(o => ({ project: o.project, category: o.category, date: o.dateStr, revenue: o.revenue })),
-          contactName: a.contactName,
-          contactEmail: a.contactEmail
-        };
-        const res = await fetch('/api/research-account', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Research failed');
-        researchResult.innerHTML = '<div class="research-output">' + escapeHtml(data.research || 'No research returned.') + '</div>';
-      } catch (err) {
-        researchResult.innerHTML = '<div class="research-error">Could not complete research: ' + escapeHtml(err.message) + '</div>';
-      } finally {
-        researchBtn.disabled = false;
-        researchBtn.textContent = 'Research Account';
-      }
-    });
 
     list.appendChild(card);
   });
