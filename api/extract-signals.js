@@ -1,11 +1,15 @@
 /**
- * Business Signals v2 - Extract real signals from company websites
+ * Business Intelligence API - Extract real signals from company websites
  * 
- * Attempts to:
- * 1. Identify company website from company name
- * 2. Scrape careers, about, news, and press pages
- * 3. Extract hiring, location, leadership, product, event, and award signals
- * 4. Calculate Business Intelligence Score
+ * Endpoint: POST /api/research-signals
+ * 
+ * Scrapes company websites to extract:
+ * - Hiring activity
+ * - New locations
+ * - Product launches
+ * - Events
+ * - Leadership changes
+ * - Awards & recognition
  */
 
 const http = require('http');
@@ -16,12 +20,11 @@ const url = require('url');
 const SIGNAL_PATTERNS = {
   hiring: {
     patterns: [
-      /(?:now\s+)?hiring|join\s+(?:our\s+)?team|career|open\s+position|employment|recruitment|we.?re\s+growing/gi,
-      /apply\s+(?:now|here)|submit\s+(?:your\s+)?resume|send\s+us\s+your|talent|internship|graduate|entry.?level/gi
+      /(?:now\s+)?hiring|join\s+(?:our\s+)?team|career|open\s+position|employment|recruitment|we.?re\s+growing|apply\s+now|submit\s+(?:your\s+)?resume/gi,
+      /talent\s+acquisition|internship|graduate\s+program|entry.?level\s+position|we.?re\s+hiring/gi
     ],
     type: 'Hiring Activity',
-    icon: '👥',
-    products: ['Onboarding Kits', 'Team Apparel', 'Welcome Packages']
+    icon: '👥'
   },
   locations: {
     patterns: [
@@ -29,142 +32,169 @@ const SIGNAL_PATTERNS = {
       /(?:now\s+serving|serving.*locations?)|additional\s+location|multiple\s+offices?|across\s+\d+\s+(?:states?|cities?|countries?)/gi
     ],
     type: 'New Locations',
-    icon: '🏢',
-    products: ['Grand Opening Kits', 'Location Apparel', 'Employee Welcome Kits']
+    icon: '🏢'
   },
   leadership: {
     patterns: [
-      /(?:announce|appoint|welcome)\s+(?:new\s+)?(?:ceo|cto|cfo|president|director|executive|founder|co-founder)/gi,
-      /(?:joins?|named|announced)\s+as\s+(?:ceo|cto|cfo|president|director|vice\s+president|chief|head\s+of)/gi,
-      /promotion|leadership\s+transition|executive\s+team\s+expanded?/gi
+      /(?:announce|appoint|welcome)\s+(?:new\s+)?(?:ceo|cto|cfo|president|director|executive|founder|co-founder)|promote[ds]?\s+(?:to\s+)?(?:ceo|cto|cfo|president|director)/gi,
+      /(?:joins?|named|appointed|announced)\s+as\s+(?:ceo|cto|cfo|president|director|vice\s+president|chief)/gi,
+      /leadership\s+(?:change|transition|update)|executive\s+team\s+(?:expanded?|announcement)/gi
     ],
     type: 'Leadership Changes',
-    icon: '👔',
-    products: ['Executive Gifts', 'Leadership Programs', 'Strategic Partnerships']
+    icon: '👔'
   },
   products: {
     patterns: [
-      /(?:announce|introduce|launch|unveil|release)\s+(?:new\s+)?(?:product|service|feature|line)/gi,
-      /new\s+(?:offering|solution|capability|version|model)/gi,
-      /available\s+now|coming\s+soon|alpha|beta|launch/gi
+      /(?:announce|introduce|launch|unveil|release|introducing)\s+(?:new\s+)?(?:product|service|feature|line)|new\s+(?:offering|solution|capability|version|model)/gi,
+      /available\s+now|coming\s+soon|launching\s+(?:today|this|in|q\d)|product\s+launch/gi
     ],
     type: 'Product Launches',
-    icon: '🚀',
-    products: ['Launch Merchandise', 'Customer Giveaways', 'Campaign Bundles']
+    icon: '🚀'
   },
   events: {
     patterns: [
-      /(?:join\s+us\s+)?(?:at|for)\s+(?:our\s+)?(?:event|conference|summit|expo|trade\s+show|seminar|webinar|workshop)/gi,
-      /(?:upcoming|annual|host(?:ing)?)\s+(?:event|conference|summit|expo|show)/gi,
-      /register\s+(?:now|here)|(?:save\s+the\s+)?date/gi
+      /(?:join\s+us\s+)?(?:at|for)\s+(?:our\s+)?(?:event|conference|summit|expo|trade\s+show|seminar|webinar|workshop)|(?:upcoming|annual|host(?:ing)?)\s+(?:event|conference|summit|expo|show)/gi,
+      /register\s+(?:now|here)|(?:save\s+the\s+)?date|join\s+us\s+at|speaking\s+at|presenting\s+at/gi
     ],
     type: 'Events / Conferences',
-    icon: '🎪',
-    products: ['Booth Giveaways', 'Attendee Kits', 'Event Signage']
+    icon: '🎪'
   },
   awards: {
     patterns: [
-      /(?:award|recognition|honored|named|selected)\s+(?:as|for)|(?:won|received|earned)\s+(?:an?|the)\s+award/gi,
-      /best\s+(?:company|employer|place\s+to\s+work)|top\s+(?:\d+)?(?:companies?|employers?)/gi,
-      /(?:industry|market)\s+leader|leading\s+provider/gi
+      /(?:award|recognition|honored|named|selected)\s+(?:as|for)|(?:won|received|earned)\s+(?:an?|the)\s+award|award\s+for/gi,
+      /best\s+(?:company|employer|place\s+to\s+work)|top\s+(?:\d+)?(?:companies?|employers?)|industry\s+leader|leading\s+provider/gi
     ],
     type: 'Awards / Recognition',
-    icon: '🏆',
-    products: ['Recognition Programs', 'Achievement Bundles', 'Employee Celebration Kits']
+    icon: '🏆'
   }
 };
 
-// Helper: Fetch page content
-async function fetchPage(urlString, timeout = 5000) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new url.URL(urlString);
-    const protocol = urlObj.protocol === 'https:' ? https : http;
+// Helper: Fetch page with timeout
+function fetchPage(urlString, timeout = 5000) {
+  return new Promise((resolve) => {
+    try {
+      const urlObj = new url.URL(urlString);
+      const protocol = urlObj.protocol === 'https:' ? https : http;
 
-    const options = {
-      hostname: urlObj.hostname,
-      port: urlObj.port,
-      path: urlObj.pathname + urlObj.search,
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout
-    };
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0'
+        },
+        timeout
+      };
 
-    const req = protocol.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, html: data }));
-    });
+      const req = protocol.request(options, (res) => {
+        let data = '';
+        const chunks = [];
+        
+        res.on('data', chunk => {
+          chunks.push(chunk);
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          // Limit to first 500KB to avoid huge pages
+          if (data.length > 500000) data = data.substring(0, 500000);
+          resolve({ status: res.statusCode, html: data });
+        });
+      });
 
-    req.on('error', () => reject(new Error('Fetch failed')));
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
+      req.on('error', () => resolve({ status: 0, html: '' }));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ status: 0, html: '' });
+      });
+      
+      req.end();
+    } catch (e) {
+      resolve({ status: 0, html: '' });
+    }
   });
 }
 
-// Helper: Extract text from HTML
+// Helper: Extract clean text from HTML
 function extractText(html) {
+  if (!html) return '';
+  
   // Remove script and style tags
-  html = html.replace(/<script[^>]*>.*?<\/script>/gi, '');
-  html = html.replace(/<style[^>]*>.*?<\/style>/gi, '');
+  html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  html = html.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+  html = html.replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, '');
+  
   // Remove HTML tags
   html = html.replace(/<[^>]+>/g, ' ');
-  // Decode entities and clean whitespace
-  html = html.replace(/&nbsp;/g, ' ').replace(/&[a-z]+;/g, ' ');
+  
+  // Decode entities
+  html = html.replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&[a-z]+;/g, ' ');
+  
+  // Clean whitespace
   html = html.replace(/\s+/g, ' ').trim();
+  
   return html;
 }
 
-// Helper: Generate likely company domain
-function guessCompanyDomain(companyName) {
+// Helper: Generate possible company domains
+function guessCompanyDomains(companyName) {
   const cleaned = companyName
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^\w\s-]/g, '')
     .trim()
-    .split(/\s+/)
+    .split(/[\s-]+/)
+    .filter(w => w.length > 0)
     .slice(0, 3)
     .join('');
   
-  const common = ['com', 'io', 'co'];
-  return common.map(ext => `https://www.${cleaned}.${ext}`);
+  if (!cleaned) return [];
+  
+  const extensions = ['com', 'io', 'co', 'net', 'org'];
+  const domains = extensions.map(ext => `https://www.${cleaned}.${ext}`);
+  
+  // Also try without www
+  domains.push(...extensions.map(ext => `https://${cleaned}.${ext}`));
+  
+  return [...new Set(domains)];
 }
 
 // Helper: Extract signals from text
-function extractSignals(text, sourceUrl, sourceType, foundDate) {
+function extractSignals(text, sourceUrl, sourceType, pageTitle) {
   const signals = [];
+  const textLower = text.substring(0, 100000); // Limit text size for processing
   
   for (const [signalKey, config] of Object.entries(SIGNAL_PATTERNS)) {
     for (const pattern of config.patterns) {
-      const matches = text.match(pattern);
-      if (matches) {
-        // Find the sentence containing the match
-        const sentenceRegex = /[^.!?]*[.!?]+/g;
-        const sentences = text.match(sentenceRegex) || [];
-        let signalTitle = '';
+      // Test if pattern matches
+      const testMatch = pattern.test(textLower);
+      pattern.lastIndex = 0; // Reset regex state
+      
+      if (testMatch) {
+        // Find snippet containing the match
+        const match = textLower.match(pattern);
+        if (!match) continue;
         
-        for (const sentence of sentences) {
-          if (pattern.test(sentence)) {
-            signalTitle = sentence.trim().substring(0, 150);
-            break;
-          }
-        }
+        // Get surrounding context (150 chars before and after)
+        const matchIndex = textLower.indexOf(match[0]);
+        const start = Math.max(0, matchIndex - 75);
+        const end = Math.min(textLower.length, matchIndex + match[0].length + 75);
+        const snippet = textLower.substring(start, end).trim();
         
-        if (signalTitle) {
+        if (snippet.length > 10) {
           signals.push({
             type: config.type,
-            title: signalTitle,
+            icon: config.icon,
+            title: snippet.length > 120 ? snippet.substring(0, 120) + '...' : snippet,
             sourceUrl,
             sourceType,
-            confidence: 0.7,
-            dateFound: foundDate,
-            icon: config.icon,
-            products: config.products
+            confidence: 0.75,
+            dateFound: new Date().toISOString().split('T')[0]
           });
-          // Only extract one signal per pattern per source
+          // Only one signal per pattern per source
           break;
         }
       }
@@ -176,56 +206,49 @@ function extractSignals(text, sourceUrl, sourceType, foundDate) {
 
 // Helper: Calculate Business Intelligence Score
 function calculateBIScore(signals) {
-  if (signals.length === 0) return 0;
+  if (!signals || signals.length === 0) return 0;
   
-  const now = new Date();
   let score = 0;
   
-  // Score based on signal count (0-30 points)
-  score += Math.min(30, signals.length * 5);
+  // Signal count (0-30 points)
+  score += Math.min(30, signals.length * 10);
   
-  // Score based on recency (0-40 points)
-  const avgAgeInDays = signals.reduce((sum, s) => {
-    const age = (now - new Date(s.dateFound)) / (1000 * 60 * 60 * 24);
-    return sum + age;
+  // Signal recency (0-40 points)
+  const now = new Date();
+  const avgAge = signals.reduce((sum, s) => {
+    const date = new Date(s.dateFound);
+    const ageMs = now - date;
+    const ageDays = ageMs / (1000 * 60 * 60 * 24);
+    return sum + ageDays;
   }, 0) / signals.length;
   
-  if (avgAgeInDays <= 7) score += 40;
-  else if (avgAgeInDays <= 30) score += 35;
-  else if (avgAgeInDays <= 90) score += 25;
-  else if (avgAgeInDays <= 180) score += 15;
+  if (avgAge <= 7) score += 40;
+  else if (avgAge <= 30) score += 32;
+  else if (avgAge <= 90) score += 24;
+  else if (avgAge <= 180) score += 12;
   else score += 5;
   
-  // Score based on signal quality/diversity (0-30 points)
+  // Signal diversity (0-30 points)
   const uniqueTypes = new Set(signals.map(s => s.type)).size;
   score += Math.min(30, uniqueTypes * 5);
   
-  // Score based on confidence scores (0 already factored)
-  const avgConfidence = signals.reduce((sum, s) => sum + (s.confidence || 0.7), 0) / signals.length;
-  score = Math.round(score * avgConfidence);
-  
-  return Math.min(100, score);
+  return Math.min(100, Math.round(score));
 }
 
-// Main: Extract signals from company
-async function extractSignalsFromCompany(companyName) {
+// Main extraction function
+async function extractRealSignals(companyName) {
   const signals = [];
   const visited = new Set();
-  const foundDate = new Date().toISOString().split('T')[0];
   
-  // Guess domain
-  const possibleDomains = guessCompanyDomain(companyName);
+  // Step 1: Identify website
+  const possibleDomains = guessCompanyDomains(companyName);
   let primaryDomain = null;
   
   for (const domain of possibleDomains) {
-    try {
-      const result = await fetchPage(domain, 3000);
-      if (result.status === 200) {
-        primaryDomain = domain;
-        break;
-      }
-    } catch (e) {
-      // Try next domain
+    const result = await fetchPage(domain, 3000);
+    if (result.status === 200) {
+      primaryDomain = domain;
+      break;
     }
   }
   
@@ -238,67 +261,64 @@ async function extractSignalsFromCompany(companyName) {
     };
   }
   
-  // Pages to scrape
-  const pagesToScrape = [
+  // Step 2: Scrape key pages
+  const pagePaths = [
     { path: '/careers', type: 'Careers' },
+    { path: '/careers/', type: 'Careers' },
     { path: '/about', type: 'About' },
-    { path: '/news', type: 'News' },
-    { path: '/press', type: 'Press' },
-    { path: '/blog', type: 'Blog' },
-    { path: '/events', type: 'Events' }
-  ];
-  
-  // Try different variations
-  const urlVariations = [
-    ...pagesToScrape,
+    { path: '/about/', type: 'About' },
     { path: '/about-us', type: 'About' },
+    { path: '/news', type: 'News' },
+    { path: '/news/', type: 'News' },
+    { path: '/press', type: 'Press' },
+    { path: '/press/', type: 'Press' },
     { path: '/press-releases', type: 'Press' },
     { path: '/newsroom', type: 'News' },
-    { path: '/careers-jobs', type: 'Careers' },
-    { path: '/join-us', type: 'Careers' }
+    { path: '/blog', type: 'Blog' },
+    { path: '/blog/', type: 'Blog' },
+    { path: '/events', type: 'Events' },
+    { path: '/events/', type: 'Events' },
+    { path: '/', type: 'Home' }
   ];
   
-  for (const page of urlVariations) {
-    const fullUrl = `${primaryDomain}${page.path}`;
+  for (const page of pagePaths) {
+    const fullUrl = primaryDomain + page.path;
     
     if (visited.has(fullUrl)) continue;
     visited.add(fullUrl);
     
-    try {
-      const result = await fetchPage(fullUrl, 4000);
-      if (result.status === 200) {
-        const text = extractText(result.html);
-        const pageSignals = extractSignals(text, fullUrl, page.type, foundDate);
-        signals.push(...pageSignals);
-      }
-    } catch (e) {
-      // Skip this page, continue to next
+    const result = await fetchPage(fullUrl, 4000);
+    if (result.status === 200) {
+      const text = extractText(result.html);
+      const pageSignals = extractSignals(text, fullUrl, page.type, companyName);
+      signals.push(...pageSignals);
     }
   }
   
-  // Deduplicate signals (same type from different sources)
-  const uniqueSignals = [];
-  const seenTypes = new Set();
-  
+  // Step 3: Deduplicate signals (keep best from each type)
+  const uniqueSignals = {};
   for (const signal of signals) {
-    if (!seenTypes.has(signal.type)) {
-      uniqueSignals.push(signal);
-      seenTypes.add(signal.type);
+    if (!uniqueSignals[signal.type]) {
+      uniqueSignals[signal.type] = signal;
+    } else if (signal.confidence > uniqueSignals[signal.type].confidence) {
+      uniqueSignals[signal.type] = signal;
     }
   }
   
-  const biScore = calculateBIScore(uniqueSignals);
+  const finalSignals = Object.values(uniqueSignals);
+  const biScore = calculateBIScore(finalSignals);
   
   return {
-    signals: uniqueSignals,
+    signals: finalSignals,
     biScore,
-    status: 'success',
+    status: finalSignals.length > 0 ? 'success' : 'no_signals',
+    message: finalSignals.length > 0 ? `Found ${finalSignals.length} signals` : 'No recent business signals found',
     website: primaryDomain,
-    sourcesChecked: visited.size
+    sourceCount: visited.size
   };
 }
 
-// Export for Node.js usage
+// Export for use
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { extractSignalsFromCompany };
+  module.exports = { extractRealSignals };
 }
