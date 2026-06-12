@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vercel dev",
-    "start": "node server.js"
+    "start": "vercel dev"
   },
   "dependencies": {
     "@vercel/node": "latest",
