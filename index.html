@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account Radar</title>
+<style>
+  :root{
+    --ink:#1a1f1c;
+    --paper:#f6f4ee;
+    --signal:#e85d2a;
+    --radar:#2f6f5e;
+    --line:#d9d4c6;
+    --muted:#787268;
+    --display: 'Fraunces', Georgia, serif;
+    --mono: 'IBM Plex Mono', monospace;
+    --body: 'Inter', system-ui, sans-serif;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..900&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:var(--body);
+    background:var(--paper);
+    color:var(--ink);
+    min-height:100vh;
+    padding:0 0 80px;
+  }
+  header{
+    padding:48px 32px 32px;
+    border-bottom:2px solid var(--ink);
+    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:24px;
+  }
+  .brand{display:flex; align-items:baseline; gap:16px;}
+  .brand h1{
+    font-family:var(--display);
+    font-weight:900;
+    font-size:clamp(2.2rem, 5vw, 3.6rem);
+    letter-spacing:-0.02em;
+  }
+  .brand .tag{
+    font-family:var(--mono);
+    font-size:0.75rem;
+    color:var(--signal);
+    text-transform:uppercase;
+    letter-spacing:0.15em;
+    border:1px solid var(--signal);
+    padding:4px 8px;
+    border-radius:2px;
+  }
+  .sub{font-family:var(--mono); font-size:0.85rem; color:var(--muted); max-width:420px;}
+
+  main{max-width:1100px; margin:0 auto; padding:40px 32px;}
+
+  .upload-zone{
+    border:2px dashed var(--line);
+    border-radius:8px;
+    padding:48px 32px;
+    text-align:center;
+    background:#fff;
+    transition:border-color .2s, background .2s;
+    cursor:pointer;
+  }
+  .upload-zone.drag{border-color:var(--signal); background:#fff8f4;}
+  .upload-zone h2{font-family:var(--display); font-size:1.6rem; margin-bottom:8px;}
+  .upload-zone p{color:var(--muted); font-size:0.9rem; margin-bottom:16px;}
+  .upload-zone input{display:none;}
+  .btn{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:0.8rem;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    background:var(--ink);
+    color:var(--paper);
+    border:none;
+    padding:12px 24px;
+    border-radius:2px;
+    cursor:pointer;
+  }
+  .btn:hover{background:var(--radar);}
+  .btn-ghost{
+    background:transparent;
+    color:var(--ink);
+    border:1px solid var(--ink);
+  }
+  .btn-ghost:hover{background:var(--ink); color:var(--paper);}
+
+  .csv-hint{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:24px; line-height:1.6;}
+  .csv-hint code{background:var(--line); padding:2px 6px; border-radius:2px;}
+
+  #error{
+    display:none; margin-top:16px; padding:12px 16px; background:#fdecea; border-left:3px solid var(--signal);
+    font-family:var(--mono); font-size:0.85rem; color:#a23b1a;
+  }
+
+  /* results */
+  #results{display:none; margin-top:48px;}
+  .results-head{display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:16px; margin-bottom:24px;}
+  .results-head h2{font-family:var(--display); font-size:2rem;}
+  .results-head .count{font-family:var(--mono); color:var(--muted); font-size:0.85rem;}
+
+  .legend{
+    font-family:var(--mono); font-size:0.75rem; color:var(--muted);
+    display:flex; gap:24px; flex-wrap:wrap; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid var(--line);
+  }
+  .legend span b{color:var(--ink);}
+
+  .account-card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:8px;
+    margin-bottom:16px;
+    overflow:hidden;
+  }
+  .account-head{
+    display:grid;
+    grid-template-columns:60px 1fr auto auto;
+    align-items:center;
+    gap:16px;
+    padding:20px 24px;
+    cursor:pointer;
+  }
+  .rank{
+    font-family:var(--mono); font-size:1.1rem; color:var(--muted);
+  }
+  .acct-name{font-family:var(--display); font-weight:700; font-size:1.3rem;}
+  .acct-meta{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:2px;}
+
+  .score-block{text-align:right;}
+  .score{font-family:var(--display); font-weight:900; font-size:1.8rem; color:var(--radar);}
+  .score-label{font-family:var(--mono); font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em;}
+
+  .score-bar-wrap{width:120px;}
+  .score-bar{height:6px; background:var(--line); border-radius:3px; overflow:hidden;}
+  .score-bar-fill{height:100%; background:var(--radar);}
+
+  .account-body{
+    display:none;
+    border-top:1px solid var(--line);
+    padding:24px;
+    background:#fafaf6;
+  }
+  .account-body.open{display:block;}
+
+  .breakdown{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(110px,1fr)); gap:12px; margin-bottom:24px;
+  }
+  .bd-item{
+    border:1px solid var(--line); border-radius:6px; padding:12px; background:#fff;
+  }
+  .bd-item .lbl{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);}
+  .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
+
+  .section-title{
+    font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--signal);
+    margin-bottom:8px; margin-top:20px;
+  }
+  .opps, .actions{margin:0; padding-left:0; list-style:none;}
+  .opps li, .actions li{
+    padding:8px 0 8px 20px; position:relative; font-size:0.92rem; line-height:1.5; border-bottom:1px solid var(--line);
+  }
+  .opps li:last-child, .actions li:last-child{border-bottom:none;}
+  .opps li:before{content:"○"; position:absolute; left:0; color:var(--radar);}
+  .actions li:before{content:"→"; position:absolute; left:0; color:var(--signal);}
+
+  .projects-table{width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:8px;}
+  .projects-table th, .projects-table td{
+    text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
+  }
+  .projects-table th{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em;}
+  .contact{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:16px;}
+
+
+  .research-box{margin-top:22px; padding:16px; border:1px solid var(--line); background:#fff; border-radius:6px;}
+  .research-status{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:10px;}
+  .research-output{font-size:0.92rem; line-height:1.55; white-space:pre-wrap; margin-top:14px;}
+  .research-output h4{font-family:var(--display); font-size:1.1rem; margin:14px 0 6px;}
+  .research-error{margin-top:10px; padding:10px 12px; background:#fdecea; border-left:3px solid var(--signal); color:#a23b1a; font-family:var(--mono); font-size:0.8rem;}
+
+  footer{
+    max-width:1100px; margin:40px auto 0; padding:24px 32px 0; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:0.75rem; color:var(--muted); text-align:center;
+  }
+
+  @media (max-width:640px){
+    .account-head{grid-template-columns:40px 1fr; }
+    .score-bar-wrap{display:none;}
+    .score-block{grid-column:2; justify-self:start; text-align:left;}
+    .breakdown{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Account Radar</h1>
+    <span class="tag">Opportunity Scan</span>
+  </div>
+  <div class="sub">Upload client activity data to surface your highest-opportunity accounts, ranked by revenue, frequency, recency, and buying diversity.</div>
+</header>
+
+<main>
+  <div class="upload-zone" id="dropzone">
+    <h2>Drop your CSV here</h2>
+    <p>or click to browse files</p>
+    <button class="btn" id="browseBtn" type="button">Choose file</button>
+    <input type="file" id="fileInput" accept=".csv">
+    <div class="csv-hint">
+      Expected columns (header names, order flexible):<br>
+      <code>client_name</code> · <code>project_name</code> · <code>order_date</code> · <code>revenue</code> · <code>margin</code> · <code>contact_name</code> · <code>contact_email</code>
+    </div>
+    <div id="error"></div>
+  </div>
+
+  <div id="results">
+    <div class="results-head">
+      <h2>Ranked Accounts</h2>
+      <div class="count" id="resultCount"></div>
+    </div>
+    <div class="legend">
+      <span><b>Revenue</b> — total spend, scaled vs. portfolio</span>
+      <span><b>Frequency</b> — number of distinct orders</span>
+      <span><b>Recency</b> — time since last order (sooner = higher)</span>
+      <span><b>Diversity</b> — distinct project types purchased</span>
+    </div>
+    <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
+    <div id="accountList"></div>
+  </div>
+</main>
+
+<footer>
+  Account Radar — scores computed locally in your browser. No data leaves your device.
+</footer>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const browseBtn = document.getElementById('browseBtn');
+const errorBox = document.getElementById('error');
+
+browseBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+dropzone.addEventListener('click', () => fileInput.click());
+
+['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+}));
+dropzone.addEventListener('drop', e => {
+  if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if(e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function showError(msg){
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+}
+function clearError(){
+  errorBox.style.display = 'none';
+}
+
+function handleFile(file){
+  clearError();
+  if(!file.name.toLowerCase().endsWith('.csv')){
+    showError('Please upload a .csv file.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const rows = parseCSV(e.target.result);
+      processData(rows);
+    }catch(err){
+      showError('Could not parse file: ' + err.message);
+    }
+  };
+  reader.onerror = () => showError('Could not read file.');
+  reader.readAsText(file);
+}
+
+// Simple CSV parser handling quoted fields
+function parseCSV(text){
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n'){ row.push(field); lines.push(row); row=[]; field=''; }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); lines.push(row); }
+  const filtered = lines.filter(r => r.some(c => c.trim() !== ''));
+  if(filtered.length < 2) throw new Error('No data rows found.');
+
+  const headerRaw = filtered[0].map(h => h.trim().toLowerCase());
+  const map = {
+    client_name: ['client_name','client','company','account','customer','customer_name'],
+    project_name: ['project_name','project','service','product','offering','item'],
+    order_date: ['order_date','date','order date','purchase_date'],
+    revenue: ['revenue','amount','total','order_value','sales'],
+    margin: ['margin','profit','margin_pct','profit_margin'],
+    contact_name: ['contact_name','contact','contact person','primary_contact'],
+    contact_email: ['contact_email','email','contact email']
+  };
+  const colIndex = {};
+  for(const key in map){
+    for(const alt of map[key]){
+      const idx = headerRaw.indexOf(alt);
+      if(idx !== -1){ colIndex[key] = idx; break; }
+    }
+  }
+  const required = ['client_name','revenue'];
+  for(const r of required){
+    if(colIndex[r] === undefined) throw new Error(`Missing required column: ${r.replace('_',' ')}`);
+  }
+  const missingCols = [];
+  ['project_name','order_date','margin','contact_name','contact_email'].forEach(k=>{
+    if(colIndex[k] === undefined) missingCols.push(k);
+  });
+
+  const records = [];
+  for(let i=1;i<filtered.length;i++){
+    const r = filtered[i];
+    const get = key => colIndex[key] !== undefined ? (r[colIndex[key]] || '').trim() : '';
+    const revenueRaw = get('revenue').replace(/[^0-9.\-]/g,'');
+    const marginRaw = get('margin').replace(/[^0-9.\-]/g,'');
+    const dateStr = get('order_date');
+    const d = new Date(dateStr);
+    records.push({
+      client: get('client_name') || 'Unknown',
+      project: colIndex.project_name !== undefined ? (get('project_name') || 'Unspecified') : 'Unspecified',
+      date: isNaN(d.getTime()) ? null : d,
+      dateStr,
+      revenue: parseFloat(revenueRaw) || 0,
+      margin: marginRaw === '' ? null : parseFloat(marginRaw),
+      contactName: get('contact_name'),
+      contactEmail: get('contact_email')
+    });
+  }
+  records.missingCols = missingCols;
+  return records;
+}
+
+function processData(records){
+  // Group by client
+  const groups = {};
+  records.forEach(r => {
+    if(!groups[r.client]) groups[r.client] = [];
+    groups[r.client].push(r);
+  });
+
+  const now = new Date();
+  const allRevenues = [];
+  const accounts = [];
+
+  Object.keys(groups).forEach(client => {
+    const orders = groups[client];
+    const totalRevenue = orders.reduce((s,o) => s+o.revenue, 0);
+    allRevenues.push(totalRevenue);
+
+    const dates = orders.map(o=>o.date).filter(d=>d!==null);
+    const lastOrder = dates.length ? new Date(Math.max(...dates.map(d=>d.getTime()))) : null;
+    const daysSince = lastOrder ? Math.floor((now - lastOrder) / (1000*60*60*24)) : null;
+
+    const projectTypes = new Set(orders.map(o=>o.project));
+    const marginVals = orders.map(o=>o.margin).filter(m=>m!==null && !isNaN(m));
+    const avgMargin = marginVals.length ? marginVals.reduce((a,b)=>a+b,0)/marginVals.length : null;
+
+    const contact = orders.find(o=>o.contactName || o.contactEmail) || {};
+
+    accounts.push({
+      client,
+      orders,
+      totalRevenue,
+      orderCount: orders.length,
+      lastOrder,
+      daysSince,
+      projectTypes,
+      avgMargin,
+      contactName: contact.contactName || '',
+      contactEmail: contact.contactEmail || ''
+    });
+  });
+
+  const maxRevenue = Math.max(...allRevenues, 1);
+  const maxOrderCount = Math.max(...accounts.map(a=>a.orderCount), 1);
+  const maxDiversity = Math.max(...accounts.map(a=>a.projectTypes.size), 1);
+  const validDays = accounts.map(a=>a.daysSince).filter(d=>d!==null);
+  const maxDays = validDays.length ? Math.max(...validDays) : 365;
+
+  const hasDates = validDays.length > 0;
+  const hasProjects = accounts.some(a => a.projectTypes.size > 1 || (a.projectTypes.size===1 && ![...a.projectTypes][0].match(/^unspecified$/i)));
+
+  // redistribute weights for missing signals
+  let wRev=0.35, wFreq=0.25, wRec=0.20, wDiv=0.20;
+  if(!hasDates && !hasProjects){ wRev=0.55; wFreq=0.45; wRec=0; wDiv=0; }
+  else if(!hasDates){ wRev=0.45; wFreq=0.30; wRec=0; wDiv=0.25; }
+  else if(!hasProjects){ wRev=0.40; wFreq=0.30; wRec=0.30; wDiv=0; }
+
+  accounts.forEach(a => {
+    const revScore = a.totalRevenue / maxRevenue;
+    const freqScore = a.orderCount / maxOrderCount;
+    const recScore = a.daysSince === null ? 0.3 : Math.max(0, 1 - (a.daysSince / Math.max(maxDays,1)));
+    const divScore = a.projectTypes.size / maxDiversity;
+
+    a.subscores = {
+      revenue: revScore,
+      frequency: freqScore,
+      recency: recScore,
+      diversity: divScore
+    };
+
+    a.score = Math.round((
+      revScore * wRev +
+      freqScore * wFreq +
+      recScore * wRec +
+      divScore * wDiv
+    ) * 100);
+  });
+
+  accounts.sort((a,b) => b.score - a.score);
+
+  renderResults(accounts, {hasDates, hasProjects, missingCols: records.missingCols || [], weights:{wRev,wFreq,wRec,wDiv}});
+}
+
+function fmtCurrency(n){
+  return '$' + n.toLocaleString('en-US', {maximumFractionDigits:0});
+}
+function fmtDate(d){
+  if(!d) return '—';
+  return d.toLocaleDateString('en-US', {year:'numeric', month:'short', day:'numeric'});
+}
+
+function generateInsights(a, meta){
+  const opps = [];
+  const actions = [];
+  const projects = [...a.projectTypes];
+
+  // Diversity-based cross-sell
+  if(meta.hasProjects){
+    if(a.projectTypes.size <= 1){
+      opps.push(`Single-line account (${projects[0] || 'one offering'}) — strong candidate for cross-sell into adjacent services.`);
+    } else if(a.projectTypes.size >= 2 && a.score >= 60){
+      opps.push(`Engaged across ${a.projectTypes.size} project types — explore bundling into a broader retainer or framework agreement.`);
+    }
+  }
+
+  // Recency-based
+  if(meta.hasDates){
+    if(a.daysSince !== null && a.daysSince > 180){
+      opps.push(`No activity in ${a.daysSince} days — re-engagement opportunity before relationship goes cold.`);
+      actions.push(`Schedule a check-in call to surface new needs${meta.hasProjects ? ` ; reference last project (${a.orders[a.orders.length-1].project})` : ''}.`);
+    } else if(a.daysSince !== null && a.daysSince <= 60){
+      opps.push(`Recently active (${a.daysSince} days ago) — momentum is high for a follow-on proposal.`);
+      actions.push(`Propose a follow-on scope while the most recent activity is still top of mind.`);
+    }
+  }
+
+  // Revenue-based
+  if(a.subscores.revenue >= 0.7){
+    opps.push(`Top-tier revenue contributor — candidate for strategic account planning and executive sponsorship.`);
+    actions.push(`Set up a quarterly business review (QBR) to align on roadmap and budget cycles.`);
+  } else if(a.subscores.revenue < 0.2 && a.subscores.frequency >= 0.5){
+    opps.push(`High order frequency but low revenue per order — opportunity to upsell premium tiers or larger scopes.`);
+    actions.push(`Audit current pricing/scope vs. comparable accounts and propose an upgraded package.`);
+  }
+
+  // Frequency-based
+  if(a.orderCount === 1){
+    opps.push(`One-time buyer — opportunity to convert into a repeat or recurring relationship.`);
+    actions.push(`Send a satisfaction follow-up and introduce a recurring service option.`);
+  } else if(a.subscores.frequency >= 0.6){
+    opps.push(`Highly repeat-frequency account — good fit for a volume-based or subscription pricing model.`);
+  }
+
+  // Margin
+  if(a.avgMargin !== null){
+    if(a.avgMargin < 15){
+      opps.push(`Average margin is ${a.avgMargin.toFixed(1)}% — review pricing or delivery efficiency before expanding scope.`);
+      actions.push(`Review project costing to identify margin improvement levers before next renewal.`);
+    } else if(a.avgMargin >= 30){
+      opps.push(`Strong average margin of ${a.avgMargin.toFixed(1)}% — healthy economics support investing more account time here.`);
+    }
+  }
+
+  // Generic fallback action
+  if(actions.length === 0){
+    actions.push(`Reach out with a tailored recap of work delivered and gauge interest in next steps.`);
+  }
+  actions.push(`Add account to next pipeline review with current Opportunity Score (${a.score}) as context.`);
+
+  return {opps, actions};
+}
+
+function renderResults(accounts, meta){
+  const list = document.getElementById('accountList');
+  list.innerHTML = '';
+  document.getElementById('resultCount').textContent = `${accounts.length} account${accounts.length===1?'':'s'} analyzed`;
+
+  // notice about missing columns
+  const notice = document.getElementById('notice');
+  const noticeParts = [];
+  if(meta.missingCols.length){
+    noticeParts.push(`No <code>${meta.missingCols.join('</code>, <code>')}</code> column${meta.missingCols.length>1?'s':''} found — scoring adjusted to skip ${meta.missingCols.includes('order_date') && meta.missingCols.includes('project_name') ? 'recency and diversity' : meta.missingCols.includes('order_date') ? 'recency' : meta.missingCols.includes('project_name') ? 'diversity' : 'unused factors'} where applicable.`);
+  }
+  if(noticeParts.length){
+    notice.innerHTML = noticeParts.join(' ');
+    notice.style.display = 'block';
+  } else {
+    notice.style.display = 'none';
+  }
+
+  accounts.forEach((a, i) => {
+    const {opps, actions} = generateInsights(a, meta);
+    const card = document.createElement('div');
+    card.className = 'account-card';
+
+    const projectRows = a.orders
+      .slice()
+      .sort((x,y) => (y.date?.getTime()||0) - (x.date?.getTime()||0))
+      .map(o => `
+        <tr>
+          ${meta.hasProjects ? `<td>${escapeHtml(o.project)}</td>` : ''}
+          ${meta.hasDates ? `<td>${fmtDate(o.date)}</td>` : ''}
+          <td>${fmtCurrency(o.revenue)}</td>
+          <td>${o.margin !== null && !isNaN(o.margin) ? o.margin.toFixed(1)+'%' : '—'}</td>
+        </tr>
+      `).join('');
+
+    card.innerHTML = `
+      <div class="account-head">
+        <div class="rank">#${i+1}</div>
+        <div>
+          <div class="acct-name">${escapeHtml(a.client)}</div>
+          <div class="acct-meta">${a.orderCount} order${a.orderCount===1?'':'s'} · ${fmtCurrency(a.totalRevenue)} total · last activity ${fmtDate(a.lastOrder)}</div>
+        </div>
+        <div class="score-bar-wrap">
+          <div class="score-bar"><div class="score-bar-fill" style="width:${a.score}%"></div></div>
+        </div>
+        <div class="score-block">
+          <div class="score">${a.score}</div>
+          <div class="score-label">Opportunity Score</div>
+        </div>
+      </div>
+      <div class="account-body">
+        <div class="breakdown">
+          <div class="bd-item"><div class="lbl">Revenue</div><div class="val">${Math.round(a.subscores.revenue*100)}</div></div>
+          <div class="bd-item"><div class="lbl">Frequency</div><div class="val">${Math.round(a.subscores.frequency*100)}</div></div>
+          ${meta.hasDates ? `<div class="bd-item"><div class="lbl">Recency</div><div class="val">${Math.round(a.subscores.recency*100)}</div></div>` : ''}
+          ${meta.hasProjects ? `<div class="bd-item"><div class="lbl">Diversity</div><div class="val">${Math.round(a.subscores.diversity*100)}</div></div>` : ''}
+        </div>
+
+        <div class="section-title">Expansion Opportunities</div>
+        <ul class="opps">${opps.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
+
+        <div class="section-title">Recommended Next Actions</div>
+        <ul class="actions">${actions.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
+
+        <div class="section-title">Order History</div>
+        <table class="projects-table">
+          <thead><tr>${meta.hasProjects?'<th>Project</th>':''}${meta.hasDates?'<th>Date</th>':''}<th>Revenue</th><th>Margin</th></tr></thead>
+          <tbody>${projectRows}</tbody>
+        </table>
+
+        <div class="section-title">Business Intelligence</div>
+        <div class="research-box">
+          <button class="btn research-btn" type="button">Research Account</button>
+          <div class="research-status">Scans public business signals and turns them into promo-specific plays.</div>
+          <div class="research-result"></div>
+        </div>
+
+        ${(a.contactName || a.contactEmail) ? `<div class="contact">Contact: ${escapeHtml(a.contactName)} ${a.contactEmail ? '· '+escapeHtml(a.contactEmail) : ''}</div>` : ''}
+      </div>
+    `;
+
+    const head = card.querySelector('.account-head');
+    const body = card.querySelector('.account-body');
+    head.addEventListener('click', () => body.classList.toggle('open'));
+
+    const researchBtn = card.querySelector('.research-btn');
+    const researchResult = card.querySelector('.research-result');
+    researchBtn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      researchBtn.disabled = true;
+      researchBtn.textContent = 'Researching...';
+      researchResult.innerHTML = '<div class="research-status">Looking for business signals and building promo plays...</div>';
+      try {
+        const payload = {
+          client: a.client,
+          totalRevenue: a.totalRevenue,
+          orderCount: a.orderCount,
+          lastOrder: a.lastOrder ? a.lastOrder.toISOString() : null,
+          projects: a.orders.map(o => ({ project: o.project, date: o.dateStr, revenue: o.revenue })),
+          contactName: a.contactName,
+          contactEmail: a.contactEmail
+        };
+        const res = await fetch('/api/research-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Research failed');
+        researchResult.innerHTML = '<div class="research-output">' + escapeHtml(data.research || 'No research returned.') + '</div>';
+      } catch (err) {
+        researchResult.innerHTML = '<div class="research-error">Could not complete research: ' + escapeHtml(err.message) + '</div>';
+      } finally {
+        researchBtn.disabled = false;
+        researchBtn.textContent = 'Research Account';
+      }
+    });
+
+    list.appendChild(card);
+  });
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({behavior:'smooth'});
+}
+
+function escapeHtml(str){
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
