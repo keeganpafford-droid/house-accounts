@@ -822,6 +822,62 @@
     padding:10px 12px;
   }
 
+
+  .research-controls{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin:16px 0 20px;
+    align-items:center;
+  }
+  .research-note{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--muted);
+    line-height:1.4;
+  }
+  .signal-research-panel{
+    margin-top:10px;
+  }
+  .verified-signal-card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-left:4px solid var(--radar);
+    border-radius:6px;
+    padding:14px;
+    margin-bottom:10px;
+  }
+  .verified-signal-title{
+    font-family:var(--display);
+    font-weight:700;
+    font-size:1.05rem;
+    margin-bottom:4px;
+  }
+  .verified-signal-meta{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--muted);
+    margin-bottom:8px;
+  }
+  .verified-signal-evidence{
+    font-size:0.88rem;
+    line-height:1.45;
+    margin-bottom:8px;
+  }
+  .verified-opportunity{
+    background:#fafaf6;
+    border:1px solid var(--line);
+    padding:10px;
+    border-radius:4px;
+    font-size:0.86rem;
+  }
+  .source-link{
+    color:var(--signal);
+    text-decoration:none;
+    font-weight:600;
+  }
+  .source-link:hover{text-decoration:underline;}
+
   @media (max-width:768px){
     .kpi-grid{grid-template-columns:repeat(2,1fr);}
     .opportunities-grid{grid-template-columns:1fr;}
@@ -873,6 +929,10 @@
     <!-- Sales Manager Dashboard -->
     <div class="sales-dashboard">
       <div class="dashboard-header">Sales Manager Dashboard</div>
+      <div class="research-controls">
+        <button class="btn btn-secondary" id="researchTopBtn" type="button" onclick="researchTopAccounts()">Research Top Accounts</button>
+        <div class="research-note">Uses free public search from the backend. No OpenAI. No paid APIs. CSV still stays in browser; only selected account names are researched.</div>
+      </div>
       
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -1136,6 +1196,140 @@ function renderSignalCard(signal){
   `;
 }
 
+
+
+function accountDomId(name){
+  return String(name || 'account').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'account';
+}
+
+function renderVerifiedSignals(signals){
+  if(!signals || !signals.length){
+    return `<div class="no-signals-message">No recent external business signals found from public sources.</div>`;
+  }
+  return signals.map(signal => `
+    <div class="verified-signal-card">
+      <div class="verified-signal-title">${escapeHtml(signal.signalType || signal.type || 'Business Signal')}: ${escapeHtml(signal.title || '')}</div>
+      <div class="verified-signal-meta">
+        ${escapeHtml(signal.dateFound || 'Checked today')} · ${Math.round((signal.confidence || 0.5)*100)}% source confidence
+        ${signal.sourceUrl ? ` · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">Source</a>` : ''}
+      </div>
+      <div class="verified-signal-evidence">${escapeHtml(signal.evidence || signal.description || '')}</div>
+      ${signal.promoOpportunity ? `<div class="verified-opportunity"><strong>Promo opportunity:</strong> ${escapeHtml(signal.promoOpportunity)}<br><strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function addSignalDerivedOpportunities(account, signals){
+  const existing = new Set((account.futureOpportunities || []).map(o => o.opportunity));
+  signals.forEach(signal => {
+    const type = signal.signalType || signal.type || '';
+    let name = signal.promoOpportunity || '';
+    let products = ['branded apparel', 'event giveaways', 'employee kits'];
+    let contactTitle = signal.suggestedContact || 'Relevant department lead';
+    let base = 72;
+
+    if(type.includes('Hiring')){
+      name = name || 'Hiring / Onboarding Merchandise Program';
+      products = ['new hire welcome kits', 'department apparel', 'recruiting giveaways'];
+      contactTitle = signal.suggestedContact || 'HR Manager / Department Manager';
+    } else if(type.includes('Event')){
+      name = name || 'Event Merchandise Program';
+      products = ['attendee gifts', 'booth giveaways', 'staff apparel', 'signage'];
+      contactTitle = signal.suggestedContact || 'Marketing Manager / Events Lead';
+    } else if(type.includes('Expansion') || type.includes('Location')){
+      name = name || 'New Location Launch Kit';
+      products = ['grand opening gifts', 'location apparel', 'employee welcome kits'];
+      contactTitle = signal.suggestedContact || 'Operations Manager / Marketing Manager';
+    } else if(type.includes('Launch') || type.includes('Product')){
+      name = name || 'Product Launch Merchandise Kit';
+      products = ['launch giveaways', 'sales team apparel', 'customer gifts'];
+      contactTitle = signal.suggestedContact || 'Marketing Manager / Sales Manager';
+    }
+
+    if(!name || existing.has(name)) return;
+    const opp = createOpportunity(account, name, contactTitle, products, [], base);
+    opp.evidence = [
+      `Verified signal: ${signal.title || type}`,
+      `Source: ${signal.sourceUrl || 'public source'}`,
+      signal.evidence || 'External business activity detected',
+      ...buildEvidence(account).slice(0,2)
+    ];
+    opp.businessSignals = [signal];
+    opp.confidence = Math.min(96, Math.max(70, Math.round((signal.confidence || 0.65)*100)));
+    account.futureOpportunities.unshift(opp);
+    existing.add(name);
+  });
+}
+
+async function researchAccountByName(accountName){
+  const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
+  if(!account) return;
+  const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
+  if(panel) panel.innerHTML = `<div class="signal-loading">Researching ${escapeHtml(account.name)} across public sources...</div>`;
+  try{
+    const res = await fetch('/api/research-account', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        accountName: account.name,
+        industry: account.industry,
+        cityState: account.purchases?.[0]?.location || '',
+        categories: [...(account.categoryTypes || [])],
+        projects: account.projects || []
+      })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Research failed');
+    account.signals = data.signals || [];
+    addSignalDerivedOpportunities(account, account.signals);
+    if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
+    refreshOpportunityViews();
+  }catch(err){
+    if(panel) panel.innerHTML = `<div class="no-signals-message">Research failed: ${escapeHtml(err.message)}. This account was not updated.</div>`;
+  }
+}
+
+async function researchTopAccounts(){
+  const btn = document.getElementById('researchTopBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Researching...'; }
+  const accounts = (window.accountRadarAccounts || []).slice(0, 10);
+  for(const account of accounts){
+    await researchAccountByName(account.name);
+  }
+  if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+}
+
+function refreshOpportunityViews(){
+  const accounts = window.accountRadarAccounts || [];
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []).sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue);
+  const displayedOpportunities = futureOpportunities.slice(0, 10);
+  const grid = document.getElementById('opportunitiesGrid');
+  const resultCount = document.getElementById('resultCount');
+  if(resultCount) resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} future opportunities from ${accounts.length} accounts</span>`;
+  if(grid){
+    grid.innerHTML = `<div class="limit-note">Showing the top 10 ranked future opportunities only. Verified external signals are prioritized when found.</div>` + displayedOpportunities.map((opp) => {
+      const tier = getPriorityTier(opp);
+      return `
+        <div class="opportunity-card">
+          <div class="opp-card-header">
+            <div class="opp-card-title">${escapeHtml(opp.opportunity)}</div>
+            <div class="opp-card-account">${escapeHtml(opp.account)}</div>
+          </div>
+          <div class="confidence-badge ${tier.cls}">${tier.label} · ${Math.round(opp.confidence)}% Opportunity Score</div>
+          <div class="opp-metrics"><div class="metric"><div class="metric-value">${fmtMoney(opp.estimatedValue)}</div><div class="metric-label">Future Opportunity</div></div><div class="metric"><div class="metric-value">${Math.round(opp.confidence)}%</div><div class="metric-label">Score</div></div></div>
+          <div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content">${renderEvidenceList(opp.evidence)}<div class="evidence-note">Every opportunity must be supported by historical order evidence and/or a verified external signal.</div></div></div>
+          <div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content meta">${escapeHtml(opp.contactTitle || opp.contact || 'Unknown')}</div></div>
+          <div class="opp-section"><div class="opp-label">Suggested Products</div><div class="opp-products">${opp.suggestedProducts.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>
+          <div class="opp-card-actions"><button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Generate Sales Play</button></div>
+        </div>`;
+    }).join('');
+  }
+  const totalFutureValue = futureOpportunities.reduce((sum, o) => sum + (o.estimatedValue || 0), 0);
+  document.getElementById('totalOppValue').textContent = fmtMoney(totalFutureValue);
+  document.getElementById('highConfidenceCount').textContent = futureOpportunities.filter(o => o.confidence >= 70).length;
+  document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
+  document.getElementById('topOppsList').innerHTML = futureOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.opportunity)}</div><div class="top-opp-meta">${escapeHtml(opp.account)} · ${escapeHtml(opp.contactTitle)}</div><div class="top-opp-value">${fmtMoney(opp.estimatedValue)}</div></div>`).join('');
+}
 
 function estimateFutureValue(account, opportunityType){
   const revenue = account.revenue || 0;
@@ -1531,6 +1725,7 @@ function processData(records){
   }
 
   accounts.sort((a, b) => b.confidence - a.confidence);
+  window.accountRadarAccounts = accounts;
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
   const futureOpportunities = accounts.flatMap(account => account.futureOpportunities).sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue);
@@ -1662,11 +1857,13 @@ function processData(records){
         </table>
 
         <div class="section-title">📡 Verified Business Signals</div>
-        ${a.signals && a.signals.length > 0 ? `
-          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;">
-            ${a.signals.map(s => renderSignalCard(s)).join('')}
-          </div>
-        ` : `<div class="no-signals-message">No verified external business signals connected yet. This version will not invent hiring, launches, expansions, or events.</div>`}
+        <div class="research-controls">
+          <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name)}')">Research Account</button>
+          <div class="research-note">Only real sources should appear here. If nothing is found, the system should say so.</div>
+        </div>
+        <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">
+          ${a.signals && a.signals.length > 0 ? renderVerifiedSignals(a.signals) : `<div class="no-signals-message">Not researched yet. Click Research Account to look for public hiring, news, events, expansion, or launch signals.</div>`}
+        </div>
         ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
       </div>
     </div>
