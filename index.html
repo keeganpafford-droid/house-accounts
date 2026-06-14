@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Account Radar</title>
+<title>Revenue Intelligence for Promotional Distributors</title>
 <style>
   :root{
     --ink:#1a1f1c;
@@ -789,6 +789,39 @@
     flex:1;
   }
 
+
+  .evidence-note{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--muted);
+    background:#fff;
+    border-left:3px solid var(--radar);
+    padding:8px 10px;
+    margin-top:8px;
+  }
+  .relationship-badge{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:0.65rem;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    padding:4px 8px;
+    border:1px solid var(--line);
+    border-radius:3px;
+    margin-left:6px;
+    color:var(--muted);
+    background:#fff;
+  }
+  .limit-note{
+    font-family:var(--mono);
+    font-size:0.78rem;
+    color:var(--muted);
+    margin-bottom:16px;
+    background:#fff8e8;
+    border-left:3px solid var(--signal);
+    padding:10px 12px;
+  }
+
   @media (max-width:768px){
     .kpi-grid{grid-template-columns:repeat(2,1fr);}
     .opportunities-grid{grid-template-columns:1fr;}
@@ -817,10 +850,10 @@
 
 <header>
   <div class="brand">
-    <h1>Account Radar</h1>
-    <span class="tag">Opportunity Scan</span>
+    <h1>Revenue Intelligence</h1>
+    <span class="tag">Promo Distributor Tool</span>
   </div>
-  <div class="sub">Upload client activity data to surface your highest-opportunity accounts, ranked by revenue, frequency, recency, and buying diversity.</div>
+  <div class="sub">Upload house-account or customer order history to surface the top future expansion opportunities, with evidence and next actions.</div>
 </header>
 
 <main>
@@ -861,14 +894,14 @@
       </div>
 
       <div class="top-opportunities">
-        <div class="top-opps-title">Top 5 Opportunities by Value</div>
+        <div class="top-opps-title">Top 10 Accounts To Call</div>
         <div class="top-opps-list" id="topOppsList"></div>
       </div>
     </div>
 
     <!-- Opportunity Cards Section -->
     <div class="opportunities-section">
-      <div class="section-header">All Opportunities</div>
+      <div class="section-header">Top Future Opportunities</div>
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
@@ -891,12 +924,9 @@
 </main>
 
 <footer>
-  Account Radar — scores computed locally in your browser. No data leaves your device.
+  Revenue Intelligence — CSV analysis runs locally in your browser. Only use verified signals when available.
 </footer>
 
-<script src="/api/extract-signals.js"></script>
-<script src="/sales-play-templates.js"></script>
-<script src="/sales-play-ui.js"></script>
 <script>
 // Global state for signal mode
 let signalMode = 'simulated'; // 'simulated' or 'real'
@@ -1067,137 +1097,9 @@ function inferIndustry(client, projects){
 
 // Generate simulated business signals (v1)
 function generateSimulatedSignals(a, meta){
-  const signals = [];
-  const industry = a.industry;
-  const isHighValue = a.subscores.revenue >= 0.6;
-
-  // Hiring Activity
-  if(industry === 'Automotive / Dealership' || industry === 'Manufacturing / Industrial'){
-    if(Math.random() > 0.4){
-      signals.push({
-        type: 'Hiring Activity',
-        icon: '👥',
-        title: `Seasonal Hiring Surge (${['Q1', 'Q2', 'Q3', 'Q4'][Math.floor(Math.random()*4)]})`,
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.65,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  } else if(industry === 'Healthcare'){
-    if(Math.random() > 0.3){
-      signals.push({
-        type: 'Hiring Activity',
-        icon: '👥',
-        title: 'Nursing & Staff Recruitment',
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.60,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  }
-
-  // New Locations
-  if(industry === 'Automotive / Dealership'){
-    if(Math.random() > 0.5){
-      signals.push({
-        type: 'New Locations',
-        icon: '🏢',
-        title: 'Potential Dealership Expansion',
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.55,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  } else if(industry === 'Food & Beverage' || industry === 'General Business'){
-    if(isHighValue && Math.random() > 0.6){
-      signals.push({
-        type: 'New Locations',
-        icon: '🏢',
-        title: 'Growth Stage: Multi-Unit Expansion',
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.58,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  }
-
-  // Leadership Changes
-  if(isHighValue){
-    if(Math.random() > 0.7){
-      signals.push({
-        type: 'Leadership Changes',
-        icon: '👔',
-        title: 'New Leadership / Executive Transition',
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.70,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  }
-
-  // Product Launches
-  if(a.categoryTypes.size > 1 || a.orderCount > 3){
-    if(Math.random() > 0.4){
-      const categories = [...a.categoryTypes];
-      const category = categories.length > 0 ? categories[Math.floor(Math.random()*categories.length)] : 'new products';
-      signals.push({
-        type: 'Product Launches',
-        icon: '🚀',
-        title: `New Product Line: ${category}`,
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.62,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  }
-
-  // Events / Conferences
-  if(industry === 'Automotive / Dealership' || industry === 'Manufacturing / Industrial'){
-    if(Math.random() > 0.35){
-      const events = industry === 'Automotive / Dealership' 
-        ? ['Auto Show', 'Dealership Convention', 'Sales Conference']
-        : ['Trade Show', 'Industry Conference', 'Safety Summit'];
-      const event = events[Math.floor(Math.random()*events.length)];
-      signals.push({
-        type: 'Events / Conferences',
-        icon: '🎪',
-        title: `Annual ${event}`,
-        sourceUrl: null,
-        sourceType: null,
-        confidence: 0.68,
-        dateFound: new Date().toISOString().split('T')[0],
-        isReal: false
-      });
-    }
-  }
-
-  // Awards / Recognition
-  if(Math.random() > 0.6){
-    signals.push({
-      type: 'Awards / Recognition',
-      icon: '🏆',
-      title: 'Industry Recognition or Award',
-      sourceUrl: null,
-      sourceType: null,
-      confidence: 0.50,
-      dateFound: new Date().toISOString().split('T')[0],
-      isReal: false
-    });
-  }
-
-  return signals;
+  // v4: no fake business events. We only show verified external signals when a real signal source exists.
+  // Historical purchase data can support expansion recommendations, but it must not invent hiring, events, launches, or expansions.
+  return [];
 }
 
 // Render signal card HTML
@@ -1243,7 +1145,7 @@ function estimateFutureValue(account, opportunityType){
   const multipliers = {
     'Technician Onboarding Kits': 0.22,
     'Service Department Apparel Program': 0.30,
-    'Sales Event / Vehicle Launch Kit': 0.28,
+    'Customer Event / Campaign Kit': 0.28,
     'Customer Appreciation Program': 0.20,
     'Safety Recognition Program': 0.25,
     'Trade Show / Event Program': 0.24,
@@ -1339,10 +1241,10 @@ function generateFutureOpportunities(account){
         62
       ));
     }
-    if(cats.has('Event / Giveaway') || cats.has('Print / Stationery') || account.orderCount >= 3){
+    if(cats.has('Event / Giveaway')){
       opps.push(createOpportunity(
         account,
-        'Sales Event / Vehicle Launch Kit',
+        'Customer Event / Campaign Kit',
         'Marketing Manager / General Manager',
         ['event giveaways', 'sales team apparel', 'customer gifts', 'signage'],
         ['Event / Giveaway','Print / Stationery','Apparel'],
@@ -1485,67 +1387,91 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
-// Fallback Sales Play Generator if external sales-play scripts are unavailable
-if(typeof window.createSalesPlayPanel !== 'function'){
-  window.createSalesPlayPanel = function(opp){
-    const account = opp.account || 'this account';
-    const contact = opp.contactName || opp.contact || opp.contactTitle || 'the right contact';
-    const opportunity = opp.opportunityName || opp.opportunity || 'Account Expansion';
-    const products = Array.isArray(opp.suggestedProducts) ? opp.suggestedProducts.join(', ') : 'relevant branded merchandise';
-    const evidence = Array.isArray(opp.evidence) ? opp.evidence.join('; ') : (opp.opportunityEvidence || 'recent account activity');
-    const subject = `Idea for ${opportunity} at ${account}`;
+// Sales Play Generator - relationship-aware and evidence-based
+window.createSalesPlayPanel = function(opp){
+  const account = opp.account || 'this account';
+  const contactName = opp.contactName || opp.contact || '';
+  const contactTitle = opp.contactTitle || 'the right contact';
+  const opportunity = opp.opportunityName || opp.opportunity || 'Account Expansion';
+  const products = Array.isArray(opp.suggestedProducts) ? opp.suggestedProducts : ['relevant branded merchandise'];
+  const evidenceArr = Array.isArray(opp.evidence) ? opp.evidence : [];
+  const history = Array.isArray(opp.historicalPurchaseData) ? opp.historicalPurchaseData : [];
+  const orderCount = history.length;
+  const historicalSpend = history.reduce((s,h)=>s + Number(h.revenue || 0), 0);
+  const relationship = orderCount >= 3 || historicalSpend >= 10000 ? 'existing' : 'developing';
+  const firstName = contactName && !contactName.includes('/') ? contactName.split(' ')[0] : 'there';
+  const productsText = products.slice(0,4).join(', ');
+  const evidenceText = evidenceArr.length ? evidenceArr.slice(0,3).join('; ') : 'your recent order history';
+  const subject = relationship === 'existing'
+    ? `Quick idea for ${account}`
+    : `Idea for ${opportunity} at ${account}`;
 
-    const email = `Hi ${contact && !contact.includes('/') ? contact : 'there'},\n\nI was looking at the work we've done with ${account} and noticed a pattern that may point to a bigger opportunity.\n\nBased on ${evidence}, I think there may be a fit for a ${opportunity.toLowerCase()}.\n\nA simple version could include ${products}.\n\nWorth a quick 15-minute conversation to see if this lines up with anything your team is planning?\n\nBest,\n`;
+  let email;
+  let callOpen;
 
-    const questions = [
-      `How are you currently handling ${opportunity.toLowerCase()}?`,
-      `Are different departments ordering branded items separately today?`,
-      `Is there a budget or event window we should be planning around?`
-    ];
+  if(relationship === 'existing'){
+    email = `Hey ${firstName},\n\nAppreciate being able to help with the branded merch work so far. I was looking at the recent order history and noticed ${evidenceText}.\n\nOne small idea: we often see ${opp.industry || 'similar organizations'} extend that same branded-program approach into ${opportunity.toLowerCase()}.\n\nNot sure if that team needs anything right now, but if helpful I can pull together a few simple options around ${productsText}.\n\nWorth a quick look?\n\nBest,`;
+    callOpen = `"Hey ${firstName}, appreciate the work we've been able to help with so far. I had one quick adjacent idea based on what you're already ordering."`;
+  } else {
+    email = `Hi ${firstName},\n\nI was reviewing the recent work with ${account} and noticed ${evidenceText}.\n\nThat made me think there may be an opportunity around ${opportunity.toLowerCase()}, especially with items like ${productsText}.\n\nWould it be worth a quick 15-minute conversation to see if this is relevant for your team?\n\nBest,`;
+    callOpen = `"Hi ${firstName}, I had a specific idea based on the recent branded merchandise activity at ${account}."`;
+  }
 
-    const html = `
-      <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
-        <div class="sales-play-modal-content">
-          <div class="sales-play-header">
-            <div>
-              <h2>Sales Play</h2>
-              <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(opportunity)}</div>
-            </div>
-            <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
+  const questions = relationship === 'existing'
+    ? [
+        `Is ${opportunity.toLowerCase()} something your team is already handling internally?`,
+        `Are different departments ordering branded items separately today?`,
+        `Who usually owns this type of need — ${contactTitle}, HR, marketing, or operations?`
+      ]
+    : [
+        `How are you currently handling ${opportunity.toLowerCase()}?`,
+        `Is there a timeline or upcoming initiative this could support?`,
+        `Who else would be involved in approving or shaping this kind of program?`
+      ];
+
+  const html = `
+    <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
+      <div class="sales-play-modal-content">
+        <div class="sales-play-header">
+          <div>
+            <h2>Sales Play</h2>
+            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(opportunity)} <span class="relationship-badge">${relationship === 'existing' ? 'Existing Customer Play' : 'Developing Relationship Play'}</span></div>
           </div>
-          <div class="sales-play-output">
-            <div class="sales-play-section">
-              <h3>Subject Line</h3>
-              <div class="section-content subject-line">${escapeHtml(subject)}</div>
+          <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
+        </div>
+        <div class="sales-play-output">
+          <div class="sales-play-section">
+            <h3>Why This Play</h3>
+            <div class="section-content">${renderEvidenceList(evidenceArr)}<div class="evidence-note">This play is based on historical order evidence only. Do not reference unverified hiring, events, launches, or expansions unless a verified signal is shown.</div></div>
+          </div>
+          <div class="sales-play-section">
+            <h3>Subject Line</h3>
+            <div class="section-content subject-line">${escapeHtml(subject)}</div>
+          </div>
+          <div class="sales-play-section">
+            <h3>Outreach Email</h3>
+            <div class="section-content sales-play-email-body">${escapeHtml(email)}</div>
+          </div>
+          <div class="sales-play-section">
+            <h3>Call Script</h3>
+            <div class="section-content">
+              <div class="script-section"><div class="script-label">Open</div><div class="script-text">${escapeHtml(callOpen)}</div></div>
+              <div class="script-section"><div class="script-label">Reason</div><div class="script-text">"Based on ${escapeHtml(evidenceText)}, ${escapeHtml(opportunity.toLowerCase())} feels like a natural adjacent conversation."</div></div>
+              <div class="script-section"><div class="script-label">Ask</div><div class="script-text">"Would it be helpful if I pulled together a couple options, or is there someone else on the team I should ask first?"</div></div>
             </div>
-            <div class="sales-play-section">
-              <h3>Outreach Email</h3>
-              <div class="section-content sales-play-email-body">${escapeHtml(email)}</div>
-            </div>
-            <div class="sales-play-section">
-              <h3>Call Script</h3>
-              <div class="section-content">
-                <strong>Open:</strong> "I noticed a pattern in the branded merchandise work we've done together and had an idea that may help your team."<br><br>
-                <strong>Reason:</strong> "${escapeHtml(opportunity)} could help connect the branded merchandise you're already buying into a more intentional program."<br><br>
-                <strong>Ask:</strong> "Would it be worth mapping out what this could look like before your next buying cycle?"
-              </div>
-            </div>
-            <div class="sales-play-section">
-              <h3>Discovery Questions</h3>
-              <div class="section-content">
-                <ul class="discovery-list">${questions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul>
-              </div>
-            </div>
-            <div class="sales-play-section">
-              <h3>Recommended Next Step</h3>
-              <div class="section-content next-step">Schedule a 15-minute planning call and bring 2-3 product concepts tied to ${escapeHtml(opportunity)}.</div>
-            </div>
+          </div>
+          <div class="sales-play-section">
+            <h3>Discovery Questions</h3>
+            <div class="section-content"><ul class="discovery-list">${questions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
+          </div>
+          <div class="sales-play-section">
+            <h3>Recommended Next Step</h3>
+            <div class="section-content next-step">Send a brief relationship-based note first. If interest exists, bring 2-3 options tied to ${escapeHtml(opportunity)} and keep the first conversation under 15 minutes.</div>
           </div>
         </div>
       </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', html);
-  }
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
 }
 
 function processData(records){
@@ -1607,14 +1533,15 @@ function processData(records){
   accounts.sort((a, b) => b.confidence - a.confidence);
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
-  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities);
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities).sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue);
+  const displayedOpportunities = futureOpportunities.slice(0, 10);
 
   // Render opportunities grid
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
-  resultCount.innerHTML = `<span>${futureOpportunities.length} future opportunities from ${accounts.length} accounts</span>`;
+  resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} future opportunities from ${accounts.length} accounts</span>`;
 
-  grid.innerHTML = futureOpportunities.map((opp, idx) => {
+  grid.innerHTML = `<div class="limit-note">Showing the top 10 ranked future opportunities only. Historical orders are evidence, not opportunities. For large uploads, shorten the CSV to a segment of accounts if you want deeper review.</div>` + displayedOpportunities.map((opp, idx) => {
     const tier = getPriorityTier(opp);
     return `
       <div class="opportunity-card">
@@ -1637,7 +1564,7 @@ function processData(records){
         </div>
         <div class="opp-section">
           <div class="opp-label">Evidence</div>
-          <div class="opp-content">${renderEvidenceList(opp.evidence)}</div>
+          <div class="opp-content">${renderEvidenceList(opp.evidence)}<div class="evidence-note">Shown because purchase history supports this adjacent opportunity. No unverified external events are used.</div></div>
         </div>
         <div class="opp-section">
           <div class="opp-label">Suggested Contact</div>
@@ -1666,7 +1593,7 @@ function processData(records){
   ) + '%';
 
   // Render top future opportunities
-  const topOpps = [...futureOpportunities].sort((a, b) => b.estimatedValue - a.estimatedValue).slice(0, 5);
+  const topOpps = [...futureOpportunities].sort((a, b) => b.confidence - a.confidence || b.estimatedValue - a.estimatedValue).slice(0, 10);
   document.getElementById('topOppsList').innerHTML = topOpps.map(opp => `
     <div class="top-opp-item">
       <div class="top-opp-title">${escapeHtml(opp.opportunity)}</div>
@@ -1734,12 +1661,12 @@ function processData(records){
           </tbody>
         </table>
 
+        <div class="section-title">📡 Verified Business Signals</div>
         ${a.signals && a.signals.length > 0 ? `
-          <div class="section-title">📡 Business Signals</div>
           <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;">
             ${a.signals.map(s => renderSignalCard(s)).join('')}
           </div>
-        ` : ''}
+        ` : `<div class="no-signals-message">No verified external business signals connected yet. This version will not invent hiring, launches, expansions, or events.</div>`}
         ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
       </div>
     </div>
