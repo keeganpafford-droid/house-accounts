@@ -1234,11 +1234,324 @@ function renderSignalCard(signal){
   `;
 }
 
+
+function estimateFutureValue(account, opportunityType){
+  const revenue = account.revenue || 0;
+  const orders = account.orderCount || 1;
+  const categoryCount = account.categoryTypes ? account.categoryTypes.size : 1;
+
+  const multipliers = {
+    'Technician Onboarding Kits': 0.22,
+    'Service Department Apparel Program': 0.30,
+    'Sales Event / Vehicle Launch Kit': 0.28,
+    'Customer Appreciation Program': 0.20,
+    'Safety Recognition Program': 0.25,
+    'Trade Show / Event Program': 0.24,
+    'New Hire Welcome Kits': 0.22,
+    'Employee Recognition Program': 0.20,
+    'Recruiting Campaign Kit': 0.18,
+    'Account Expansion Program': 0.18,
+    'Multi-Department Expansion': 0.32
+  };
+
+  const multiplier = multipliers[opportunityType] || 0.18;
+  const activityBoost = Math.min(orders * 250, 2500);
+  const diversityBoost = Math.min(categoryCount * 600, 2400);
+  const raw = (revenue * multiplier) + activityBoost + diversityBoost;
+
+  return Math.round(Math.max(1500, Math.min(raw, 50000)));
+}
+
+function buildEvidence(account, categoriesNeeded=[]){
+  const evidence = [];
+  const cats = [...account.categoryTypes];
+
+  if(account.orderCount > 1) evidence.push(`${account.orderCount} historical orders`);
+  if(account.revenue > 0) evidence.push(`${fmtMoney(account.revenue)} historical spend`);
+  if(cats.length) evidence.push(`Purchased categories: ${cats.join(', ')}`);
+  if(account.mostRecentDate && account.mostRecentDate !== 'Unknown') evidence.push(`Recent activity: ${account.mostRecentDate}`);
+  if(categoriesNeeded.length){
+    const matching = cats.filter(c => categoriesNeeded.includes(c));
+    if(matching.length) evidence.push(`Relevant purchase history: ${matching.join(', ')}`);
+  }
+  return evidence.slice(0, 5);
+}
+
+function confidenceForOpportunity(account, base=55, bonusCategories=[]){
+  let score = base;
+  score += Math.min(account.orderCount * 4, 16);
+  score += account.revenue > 10000 ? 12 : account.revenue > 3000 ? 6 : 0;
+  score += account.categoryTypes ? Math.min(account.categoryTypes.size * 4, 16) : 0;
+  bonusCategories.forEach(cat => { if(account.categoryTypes.has(cat)) score += 5; });
+  score += account.subscores.recency > 0.7 ? 8 : account.subscores.recency > 0.4 ? 4 : 0;
+  return Math.max(35, Math.min(Math.round(score), 96));
+}
+
+function fmtMoney(n){
+  return '$' + Number(n || 0).toLocaleString('en-US', {maximumFractionDigits:0});
+}
+
+function createOpportunity(account, name, contactTitle, products, evidenceCats=[], baseConfidence=55){
+  const value = estimateFutureValue(account, name);
+  return {
+    account: account.name,
+    industry: account.industry,
+    opportunity: name,
+    opportunityName: name,
+    estimatedValue: value,
+    confidence: confidenceForOpportunity(account, baseConfidence, evidenceCats),
+    contact: account.contactName || contactTitle,
+    contactTitle,
+    email: account.contactEmail,
+    evidence: buildEvidence(account, evidenceCats),
+    suggestedProducts: products,
+    historicalPurchaseData: account.purchases.map(p => ({
+      project: p.project,
+      category: p.category,
+      revenue: p.revenue,
+      date: p.dateStr
+    })),
+    businessSignals: account.signals || []
+  };
+}
+
+function generateFutureOpportunities(account){
+  const cats = account.categoryTypes || new Set();
+  const industry = account.industry;
+  const opps = [];
+
+  if(industry === 'Automotive / Dealership'){
+    if(cats.has('Apparel') || cats.has('Headwear')){
+      opps.push(createOpportunity(
+        account,
+        'Service Department Apparel Program',
+        'Service Director',
+        ['Technician shirts', 'outerwear', 'service hats', 'name-badge ready apparel'],
+        ['Apparel','Headwear'],
+        64
+      ));
+      opps.push(createOpportunity(
+        account,
+        'Technician Onboarding Kits',
+        'Service Director / HR Manager',
+        ['welcome kit', 'branded backpack', 'drinkware', 'uniform starter pack'],
+        ['Apparel','Headwear'],
+        62
+      ));
+    }
+    if(cats.has('Event / Giveaway') || cats.has('Print / Stationery') || account.orderCount >= 3){
+      opps.push(createOpportunity(
+        account,
+        'Sales Event / Vehicle Launch Kit',
+        'Marketing Manager / General Manager',
+        ['event giveaways', 'sales team apparel', 'customer gifts', 'signage'],
+        ['Event / Giveaway','Print / Stationery','Apparel'],
+        66
+      ));
+    }
+    opps.push(createOpportunity(
+      account,
+      'Customer Appreciation Program',
+      'Marketing Manager',
+      ['thank-you gifts', 'test-drive giveaways', 'service customer gifts'],
+      ['Event / Giveaway','Drinkware'],
+      56
+    ));
+  } else if(industry === 'Manufacturing / Industrial'){
+    opps.push(createOpportunity(
+      account,
+      'Safety Recognition Program',
+      'Safety Manager / HR Manager',
+      ['safety awards', 'hi-vis apparel', 'milestone gifts', 'team incentives'],
+      ['Safety','Recognition / Awards','Apparel'],
+      64
+    ));
+    opps.push(createOpportunity(
+      account,
+      'Trade Show / Event Program',
+      'Marketing Manager / Sales Manager',
+      ['booth giveaways', 'table throws', 'staff apparel', 'lead-gen gifts'],
+      ['Event / Giveaway','Print / Stationery','Apparel'],
+      58
+    ));
+    opps.push(createOpportunity(
+      account,
+      'New Hire Welcome Kits',
+      'HR Manager',
+      ['welcome box', 'branded apparel', 'drinkware', 'notebooks'],
+      ['Apparel','Onboarding / Recruiting'],
+      55
+    ));
+  } else if(industry === 'Healthcare'){
+    opps.push(createOpportunity(
+      account,
+      'Employee Recognition Program',
+      'HR Manager / Practice Manager',
+      ['staff appreciation gifts', 'apparel', 'drinkware', 'milestone awards'],
+      ['Recognition / Awards','Apparel','Drinkware'],
+      62
+    ));
+    opps.push(createOpportunity(
+      account,
+      'New Provider Onboarding Kits',
+      'Practice Manager / HR Manager',
+      ['welcome kits', 'branded apparel', 'desk items', 'drinkware'],
+      ['Onboarding / Recruiting','Apparel'],
+      56
+    ));
+  } else if(industry === 'Financial Services'){
+    opps.push(createOpportunity(
+      account,
+      'Client Appreciation Program',
+      'Marketing Director / Client Experience Lead',
+      ['premium gifts', 'event kits', 'notebooks', 'drinkware'],
+      ['Event / Giveaway','Print / Stationery'],
+      60
+    ));
+    opps.push(createOpportunity(
+      account,
+      'Investor / Alumni Event Kit',
+      'Events Manager / Marketing Director',
+      ['attendee gifts', 'premium apparel', 'event signage', 'notebooks'],
+      ['Event / Giveaway','Print / Stationery','Apparel'],
+      58
+    ));
+  } else if(industry === 'Food & Beverage'){
+    opps.push(createOpportunity(
+      account,
+      'Retail / Customer Giveaway Program',
+      'Marketing Manager',
+      ['coozies', 'drinkware', 'caps', 'event merch'],
+      ['Drinkware','Headwear','Event / Giveaway'],
+      60
+    ));
+    opps.push(createOpportunity(
+      account,
+      'Staff Apparel Refresh',
+      'Operations Manager',
+      ['staff shirts', 'hats', 'outerwear', 'aprons'],
+      ['Apparel','Headwear'],
+      56
+    ));
+  } else {
+    if(account.categoryTypes.size >= 3 || account.orderCount >= 3){
+      opps.push(createOpportunity(
+        account,
+        'Multi-Department Expansion',
+        'Marketing Manager / HR Manager',
+        ['employee apparel', 'recognition gifts', 'event kits', 'onboarding items'],
+        [...account.categoryTypes],
+        62
+      ));
+    }
+    opps.push(createOpportunity(
+      account,
+      'Employee Recognition Program',
+      'HR Manager',
+      ['appreciation gifts', 'milestone awards', 'apparel', 'drinkware'],
+      ['Recognition / Awards','Apparel','Drinkware'],
+      54
+    ));
+    opps.push(createOpportunity(
+      account,
+      'Event / Campaign Merch Program',
+      'Marketing Manager',
+      ['giveaways', 'event apparel', 'signage', 'premium gifts'],
+      ['Event / Giveaway','Print / Stationery'],
+      54
+    ));
+  }
+
+  // Remove duplicate opportunity names and keep best 4 per account
+  const unique = [];
+  const seen = new Set();
+  for(const opp of opps.sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue)){
+    if(!seen.has(opp.opportunity)){
+      seen.add(opp.opportunity);
+      unique.push(opp);
+    }
+  }
+  return unique.slice(0, 4);
+}
+
+function renderEvidenceList(evidence){
+  if(!evidence || !evidence.length) return 'Historical purchase pattern supports this recommendation.';
+  return `<ul style="padding-left:18px; margin:0;">${evidence.map(e=>`<li>${escapeHtml(e)}</li>`).join('')}</ul>`;
+}
+
+function getPriorityTier(opp){
+  if(opp.confidence >= 80 || opp.estimatedValue >= 15000) return {label:'Immediate Action', cls:'confidence-high'};
+  if(opp.confidence >= 60) return {label:'Monitor', cls:'confidence-medium'};
+  return {label:'Low Priority', cls:'confidence-low'};
+}
+
+// Fallback Sales Play Generator if external sales-play scripts are unavailable
+if(typeof window.createSalesPlayPanel !== 'function'){
+  window.createSalesPlayPanel = function(opp){
+    const account = opp.account || 'this account';
+    const contact = opp.contactName || opp.contact || opp.contactTitle || 'the right contact';
+    const opportunity = opp.opportunityName || opp.opportunity || 'Account Expansion';
+    const products = Array.isArray(opp.suggestedProducts) ? opp.suggestedProducts.join(', ') : 'relevant branded merchandise';
+    const evidence = Array.isArray(opp.evidence) ? opp.evidence.join('; ') : (opp.opportunityEvidence || 'recent account activity');
+    const subject = `Idea for ${opportunity} at ${account}`;
+
+    const email = `Hi ${contact && !contact.includes('/') ? contact : 'there'},\n\nI was looking at the work we've done with ${account} and noticed a pattern that may point to a bigger opportunity.\n\nBased on ${evidence}, I think there may be a fit for a ${opportunity.toLowerCase()}.\n\nA simple version could include ${products}.\n\nWorth a quick 15-minute conversation to see if this lines up with anything your team is planning?\n\nBest,\n`;
+
+    const questions = [
+      `How are you currently handling ${opportunity.toLowerCase()}?`,
+      `Are different departments ordering branded items separately today?`,
+      `Is there a budget or event window we should be planning around?`
+    ];
+
+    const html = `
+      <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
+        <div class="sales-play-modal-content">
+          <div class="sales-play-header">
+            <div>
+              <h2>Sales Play</h2>
+              <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(opportunity)}</div>
+            </div>
+            <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
+          </div>
+          <div class="sales-play-output">
+            <div class="sales-play-section">
+              <h3>Subject Line</h3>
+              <div class="section-content subject-line">${escapeHtml(subject)}</div>
+            </div>
+            <div class="sales-play-section">
+              <h3>Outreach Email</h3>
+              <div class="section-content sales-play-email-body">${escapeHtml(email)}</div>
+            </div>
+            <div class="sales-play-section">
+              <h3>Call Script</h3>
+              <div class="section-content">
+                <strong>Open:</strong> "I noticed a pattern in the branded merchandise work we've done together and had an idea that may help your team."<br><br>
+                <strong>Reason:</strong> "${escapeHtml(opportunity)} could help connect the branded merchandise you're already buying into a more intentional program."<br><br>
+                <strong>Ask:</strong> "Would it be worth mapping out what this could look like before your next buying cycle?"
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <h3>Discovery Questions</h3>
+              <div class="section-content">
+                <ul class="discovery-list">${questions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <h3>Recommended Next Step</h3>
+              <div class="section-content next-step">Schedule a 15-minute planning call and bring 2-3 product concepts tied to ${escapeHtml(opportunity)}.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  }
+}
+
 function processData(records){
   // Group by client
   const clients = {};
-  const recordsByOpportunity = [];
-  
+
   records.forEach(record => {
     if(!clients[record.client]) clients[record.client] = [];
     clients[record.client].push(record);
@@ -1257,16 +1570,16 @@ function processData(records){
     const orderCount = orders.length;
     const categories = new Set(orders.map(o => o.category).filter(Boolean));
     const projects = [...new Set(orders.map(o => o.project).filter(Boolean))];
-    
+
     const now = new Date();
     const mostRecentDate = orders.filter(o => o.date).sort((a, b) => b.date - a.date)[0]?.date;
     const daysSinceLast = mostRecentDate ? Math.floor((now - mostRecentDate) / (1000 * 60 * 60 * 24)) : 999;
-    
+
     const revScore = (totalRevenue - minRev) / revRange;
     const freqScore = Math.min(orderCount / 10, 1);
     const recencyScore = Math.max(1 - (daysSinceLast / 365), 0);
     const diversityScore = Math.min(categories.size / 4, 1);
-    
+
     const totalScore = (revScore * 0.4 + freqScore * 0.2 + recencyScore * 0.25 + diversityScore * 0.15);
     const confidence = Math.min(totalScore * 100, 100);
 
@@ -1287,109 +1600,78 @@ function processData(records){
     };
 
     account.signals = generateSimulatedSignals(account, {});
+    account.futureOpportunities = generateFutureOpportunities(account);
     accounts.push(account);
   }
 
   accounts.sort((a, b) => b.confidence - a.confidence);
 
-  // Create opportunity records for opportunities grid
-  accounts.forEach((account, idx) => {
-    account.purchases.forEach((purchase, pidx) => {
-      recordsByOpportunity.push({
-        rank: idx + 1,
-        account: account.name,
-        industry: account.industry,
-        opportunity: purchase.project || 'Unnamed Project',
-        category: purchase.category,
-        revenue: purchase.revenue,
-        margin: purchase.margin,
-        confidence: account.confidence,
-        order: pidx + 1,
-        contact: account.contactName,
-        email: account.contactEmail,
-        // For sales play generation
-        opportunityName: purchase.project,
-        opportunityEvidence: `Recent purchase of ${purchase.category}`,
-        suggestedProducts: [purchase.category],
-        contactName: account.contactName,
-        historicalPurchaseData: account.purchases.map(p => ({ category: p.category, revenue: p.revenue })),
-        businessSignals: account.signals
-      });
-    });
-  });
+  // Future opportunities only. Historical orders are evidence, not opportunities.
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities);
 
   // Render opportunities grid
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
-  resultCount.innerHTML = `<span>${recordsByOpportunity.length} opportunities</span>`;
+  resultCount.innerHTML = `<span>${futureOpportunities.length} future opportunities from ${accounts.length} accounts</span>`;
 
-  grid.innerHTML = recordsByOpportunity.map((opp, idx) => {
-    const confBadgeClass = opp.confidence >= 70 ? 'confidence-high' : opp.confidence >= 40 ? 'confidence-medium' : 'confidence-low';
+  grid.innerHTML = futureOpportunities.map((opp, idx) => {
+    const tier = getPriorityTier(opp);
     return `
       <div class="opportunity-card">
         <div class="opp-card-header">
           <div class="opp-card-title">${escapeHtml(opp.opportunity)}</div>
           <div class="opp-card-account">${escapeHtml(opp.account)}</div>
         </div>
-        <div class="confidence-badge ${confBadgeClass}">
-          ${Math.round(opp.confidence)}% Confidence
+        <div class="confidence-badge ${tier.cls}">
+          ${tier.label} · ${Math.round(opp.confidence)}% Confidence
         </div>
         <div class="opp-metrics">
           <div class="metric">
-            <div class="metric-value">$${opp.revenue.toLocaleString('en-US', {maximumFractionDigits:0})}</div>
-            <div class="metric-label">Revenue</div>
+            <div class="metric-value">${fmtMoney(opp.estimatedValue)}</div>
+            <div class="metric-label">Future Opportunity</div>
           </div>
           <div class="metric">
-            <div class="metric-value">${opp.margin ? Math.round(opp.margin) + '%' : '—'}</div>
-            <div class="metric-label">Margin</div>
+            <div class="metric-value">${Math.round(opp.confidence)}%</div>
+            <div class="metric-label">Confidence</div>
           </div>
         </div>
         <div class="opp-section">
-          <div class="opp-label">Category</div>
-          <div class="opp-content">${escapeHtml(opp.category)}</div>
+          <div class="opp-label">Evidence</div>
+          <div class="opp-content">${renderEvidenceList(opp.evidence)}</div>
         </div>
         <div class="opp-section">
-          <div class="opp-label">Industry</div>
-          <div class="opp-content">${escapeHtml(opp.industry)}</div>
+          <div class="opp-label">Suggested Contact</div>
+          <div class="opp-content meta">${escapeHtml(opp.contactTitle || opp.contact || 'Unknown')}</div>
         </div>
         <div class="opp-section">
-          <div class="opp-label">Contact</div>
-          <div class="opp-content meta">${escapeHtml(opp.contact) || 'Unknown'}</div>
+          <div class="opp-label">Suggested Products</div>
+          <div class="opp-products">
+            ${opp.suggestedProducts.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}
+          </div>
         </div>
         <div class="opp-card-actions">
-          <button class="btn btn-generate-play" onclick="createSalesPlayPanel({
-            account: ${JSON.stringify(opp.account)},
-            industry: ${JSON.stringify(opp.industry)},
-            opportunity: ${JSON.stringify(opp.opportunity)},
-            opportunityName: ${JSON.stringify(opp.opportunityName)},
-            opportunityEvidence: ${JSON.stringify(opp.opportunityEvidence)},
-            suggestedProducts: ${JSON.stringify(opp.suggestedProducts)},
-            contactName: ${JSON.stringify(opp.contactName)},
-            historicalPurchaseData: ${JSON.stringify(opp.historicalPurchaseData)},
-            businessSignals: ${JSON.stringify(opp.businessSignals)}
-          })">Generate Sales Play</button>
+          <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Generate Sales Play</button>
         </div>
       </div>
     `;
   }).join('');
 
   // Render KPIs
+  const totalFutureValue = futureOpportunities.reduce((sum, o) => sum + (o.estimatedValue || 0), 0);
   document.getElementById('totalAccounts').textContent = accounts.length;
-  document.getElementById('totalOppValue').textContent = '$' + Math.round(
-    recordsByOpportunity.reduce((sum, o) => sum + (o.revenue || 0), 0) / 1000
-  ) + 'k';
-  document.getElementById('highConfidenceCount').textContent = recordsByOpportunity.filter(o => o.confidence >= 70).length;
+  document.getElementById('totalOppValue').textContent = fmtMoney(totalFutureValue);
+  document.getElementById('highConfidenceCount').textContent = futureOpportunities.filter(o => o.confidence >= 70).length;
   document.getElementById('avgConfidence').textContent = Math.round(
-    recordsByOpportunity.reduce((sum, o) => sum + o.confidence, 0) / recordsByOpportunity.length
+    futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)
   ) + '%';
 
-  // Render top opportunities
-  const topOpps = [...recordsByOpportunity].sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+  // Render top future opportunities
+  const topOpps = [...futureOpportunities].sort((a, b) => b.estimatedValue - a.estimatedValue).slice(0, 5);
   document.getElementById('topOppsList').innerHTML = topOpps.map(opp => `
     <div class="top-opp-item">
       <div class="top-opp-title">${escapeHtml(opp.opportunity)}</div>
-      <div class="top-opp-meta">${escapeHtml(opp.account)}</div>
-      <div class="top-opp-value">$${opp.revenue.toLocaleString('en-US', {maximumFractionDigits:0})}</div>
+      <div class="top-opp-meta">${escapeHtml(opp.account)} · ${escapeHtml(opp.contactTitle)}</div>
+      <div class="top-opp-value">${fmtMoney(opp.estimatedValue)}</div>
     </div>
   `).join('');
 
@@ -1401,7 +1683,7 @@ function processData(records){
         <div class="rank">#${idx + 1}</div>
         <div>
           <div class="acct-name">${escapeHtml(a.name)}</div>
-          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} orders</div>
+          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} historical orders · ${a.futureOpportunities.length} future opportunities</div>
         </div>
         <div class="score-block">
           <div class="score">${Math.round(a.confidence)}</div>
@@ -1426,22 +1708,32 @@ function processData(records){
       </div>
       <div class="account-body">
         <div class="breakdown">
-          <div class="bd-item"><div class="lbl">Total Revenue</div><div class="val">$${(a.revenue/1000).toFixed(1)}k</div></div>
+          <div class="bd-item"><div class="lbl">Historical Revenue</div><div class="val">$${(a.revenue/1000).toFixed(1)}k</div></div>
           <div class="bd-item"><div class="lbl">Order Count</div><div class="val">${a.orderCount}</div></div>
-          <div class="bd-item"><div class="lbl">Categories</div><div class="val">${a.categoryTypes.size}</div></div>
+          <div class="bd-item"><div class="lbl">Categories Bought</div><div class="val">${a.categoryTypes.size}</div></div>
           <div class="bd-item"><div class="lbl">Last Order</div><div class="val">${a.mostRecentDate}</div></div>
         </div>
-        <div class="section-title">📈 Subscription Scores</div>
-        <div class="breakdown">
-          <div class="bd-item"><div class="lbl">Revenue</div><div class="val">${Math.round(a.subscores.revenue * 100)}</div></div>
-          <div class="bd-item"><div class="lbl">Frequency</div><div class="val">${Math.round(a.subscores.frequency * 100)}</div></div>
-          <div class="bd-item"><div class="lbl">Recency</div><div class="val">${Math.round(a.subscores.recency * 100)}</div></div>
-          <div class="bd-item"><div class="lbl">Diversity</div><div class="val">${Math.round(a.subscores.diversity * 100)}</div></div>
-        </div>
-        <div class="section-title">🎯 Opportunities</div>
+
+        <div class="section-title">🎯 Future Revenue Opportunities</div>
         <ul class="opps">
-          ${a.projects.slice(0, 8).map(p => `<li>${escapeHtml(p)}</li>`).join('')}
+          ${a.futureOpportunities.map(o => `<li><strong>${escapeHtml(o.opportunity)}</strong> — ${fmtMoney(o.estimatedValue)} · ${Math.round(o.confidence)}% confidence</li>`).join('')}
         </ul>
+
+        <div class="section-title">🧾 Historical Orders Used As Evidence</div>
+        <table class="projects-table">
+          <thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th></tr></thead>
+          <tbody>
+            ${a.purchases.map(p => `
+              <tr>
+                <td>${escapeHtml(p.project)}</td>
+                <td>${escapeHtml(p.category)}</td>
+                <td>${fmtMoney(p.revenue)}</td>
+                <td>${escapeHtml(p.dateStr || '')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
         ${a.signals && a.signals.length > 0 ? `
           <div class="section-title">📡 Business Signals</div>
           <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;">
