@@ -1,124 +1,167 @@
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+// Vercel Serverless Function: free public signal research, no OpenAI, no paid APIs.
+// Endpoint: POST /api/research-account
 
+const USER_AGENT = 'Mozilla/5.0 (compatible; AccountRadarBot/0.1; +https://example.com)';
+
+function clean(text = '') {
+  return String(text).replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function decodeDuckUrl(url) {
   try {
-    const account = req.body || {};
-    const apiKey = process.env.OPENAI_API_KEY;
+    if (!url) return '';
+    const u = new URL(url, 'https://duckduckgo.com');
+    const uddg = u.searchParams.get('uddg');
+    return uddg ? decodeURIComponent(uddg) : url;
+  } catch { return url || ''; }
+}
 
-    if (!apiKey) {
-      return res.status(200).json({
-        research: demoResearch(account)
-      });
-    }
-
-    const prompt = buildPrompt(account);
-
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        tools: [{ type: 'web_search_preview' }],
-        input: prompt
-      })
+async function ddgSearch(query) {
+  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+  if (!res.ok) return [];
+  const html = await res.text();
+  const results = [];
+  const regex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = regex.exec(html)) && results.length < 6) {
+    results.push({
+      url: decodeDuckUrl(m[1]),
+      title: clean(m[2]),
+      snippet: clean(m[3])
     });
+  }
+  // fallback when snippets are absent
+  if (!results.length) {
+    const simple = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    while ((m = simple.exec(html)) && results.length < 6) {
+      results.push({ url: decodeDuckUrl(m[1]), title: clean(m[2]), snippet: '' });
+    }
+  }
+  return results;
+}
 
-    const data = await response.json();
+function signalFromResult(result, accountName, industry) {
+  const text = `${result.title} ${result.snippet}`.toLowerCase();
+  const today = new Date().toISOString().slice(0, 10);
 
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: data.error?.message || 'OpenAI request failed'
-      });
+  const make = (signalType, title, promoOpportunity, suggestedContact, confidence = 0.68) => ({
+    signalType,
+    type: signalType,
+    title,
+    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 450),
+    sourceUrl: result.url,
+    sourceType: 'Public web search',
+    dateFound: today,
+    confidence,
+    isReal: true,
+    promoOpportunity,
+    suggestedContact
+  });
+
+  if (/(career|careers|hiring|jobs|join our team|open position|technician|sales consultant|recruit)/i.test(text)) {
+    const isAuto = /dealership|ford|automotive|service|technician/.test(text) || /Automotive/.test(industry || '');
+    return make(
+      'Hiring Activity',
+      `${accountName} hiring / careers activity`,
+      isAuto ? 'Technician or sales team onboarding merchandise program' : 'New hire onboarding and recruiting merchandise program',
+      isAuto ? 'Service Director / HR Manager' : 'HR Manager / Department Lead',
+      0.74
+    );
+  }
+  if (/(event|conference|expo|show|summit|festival|webinar|open house)/i.test(text)) {
+    return make(
+      'Events / Conferences',
+      `${accountName} event or conference activity`,
+      'Event merchandise, attendee gifts, booth giveaways, and staff apparel',
+      'Marketing Manager / Events Lead',
+      0.70
+    );
+  }
+  if (/(new location|expansion|expands|opening|grand opening|new facility|renovation|relocation)/i.test(text)) {
+    return make(
+      'Expansion / New Location',
+      `${accountName} expansion or location activity`,
+      'Grand opening kits, location apparel, employee welcome kits, and customer gifts',
+      'Operations Manager / Marketing Manager',
+      0.72
+    );
+  }
+  if (/(launch|new product|announces|unveils|release|model|lineup)/i.test(text)) {
+    return make(
+      'Product Launches',
+      `${accountName} launch or announcement activity`,
+      'Launch merchandise, customer giveaways, sales team apparel, and campaign kits',
+      'Marketing Manager / Sales Manager',
+      0.66
+    );
+  }
+  if (/(award|recognized|winner|honor|best of|certified|ranked)/i.test(text)) {
+    return make(
+      'Awards / Recognition',
+      `${accountName} award or recognition activity`,
+      'Employee recognition gifts, customer announcement mailers, and celebration merchandise',
+      'Marketing Manager / HR Manager',
+      0.62
+    );
+  }
+  if (/(appoints|promotes|named|ceo|president|director|manager|leadership)/i.test(text)) {
+    return make(
+      'Leadership Changes',
+      `${accountName} leadership activity`,
+      'New leader welcome package, team announcement gifts, and internal culture merchandise',
+      'Executive Assistant / HR Manager',
+      0.58
+    );
+  }
+  return null;
+}
+
+function dedupeSignals(signals) {
+  const seen = new Set();
+  return signals.filter(s => {
+    const key = `${s.signalType}|${s.sourceUrl}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 6);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  try {
+    const { accountName, industry, cityState } = req.body || {};
+    if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
+
+    const location = cityState ? ` ${cityState}` : '';
+    const queries = [
+      `"${accountName}" careers${location}`,
+      `"${accountName}" hiring jobs${location}`,
+      `"${accountName}" news press release`,
+      `"${accountName}" event conference`,
+      `"${accountName}" expansion new location`,
+      `"${accountName}" product launch announcement`
+    ];
+
+    const allResults = [];
+    for (const q of queries) {
+      const results = await ddgSearch(q);
+      allResults.push(...results);
     }
 
-    const text = extractText(data);
-    return res.status(200).json({ research: text || 'No research returned.' });
+    const signals = dedupeSignals(
+      allResults
+        .map(r => signalFromResult(r, accountName, industry))
+        .filter(Boolean)
+    );
+
+    return res.status(200).json({
+      accountName,
+      researchedAt: new Date().toISOString(),
+      signals,
+      message: signals.length ? `${signals.length} public signals found.` : 'No recent public business signals found.'
+    });
   } catch (err) {
-    return res.status(500).json({ error: err.message || 'Server error' });
+    return res.status(500).json({ error: err.message || 'Research failed' });
   }
-}
-
-function buildPrompt(account) {
-  return `You are Account Radar, a promo-industry account intelligence analyst.
-
-Analyze this existing promotional products customer and use current public web signals when available.
-
-Customer data:
-${JSON.stringify(account, null, 2)}
-
-Your job: tell a promo distributor who to contact, why now, and what to sell.
-
-Return in this exact structure:
-
-ACCOUNT SNAPSHOT
-- 2-3 bullets from internal order history.
-
-CURRENT BUSINESS SIGNALS
-- 2-4 current public signals if found. Include dates when available. Do not invent. If signals are weak, say so.
-
-PROMO PLAYS
-- 2-4 specific promotional product opportunities tied to the signals and order history.
-- Be specific: launch kits, technician onboarding, sales event giveaways, service department apparel, recruiting kits, recognition awards, etc.
-
-ESTIMATED OPPORTUNITY
-- Give a realistic budget range and why.
-
-WHO TO CONTACT
-- Suggest likely titles, not made-up names unless public sources clearly identify someone.
-
-OUTREACH ANGLE
-- Write one concise email a rep could send.
-
-Be practical, skeptical, and promo-specific.`;
-}
-
-function extractText(data) {
-  if (data.output_text) return data.output_text;
-  const parts = [];
-  for (const item of data.output || []) {
-    for (const content of item.content || []) {
-      if (content.type === 'output_text' && content.text) parts.push(content.text);
-    }
-  }
-  return parts.join('\n');
-}
-
-function demoResearch(account) {
-  const client = account.client || 'This account';
-  const projects = (account.projects || []).map(p => p.project).filter(Boolean).slice(0, 5).join(', ');
-  const categories = (account.categories || []).join(', ') || 'not enough category detail available';
-  const industry = account.industry || 'General Business';
-  return `DEMO MODE - add OPENAI_API_KEY to enable live web research.
-
-ACCOUNT SNAPSHOT
-- ${client} has ${account.orderCount || 0} recorded order(s) and roughly $${Math.round(account.totalRevenue || 0).toLocaleString()} in tracked revenue.
-- Recent project themes: ${projects || 'not enough project detail available'}.
-- Detected industry: ${industry}.
-- Detected promo categories: ${categories}.
-
-CURRENT BUSINESS SIGNALS
-- Live web research is not enabled yet.
-- In production, this section will scan public news, company websites, press releases, hiring activity, and event/product launch signals.
-
-PROMO PLAYS
-- Build a timely account-specific merch play based on recent activity and detected categories.
-- Automotive/dealership: sales event giveaways, technician onboarding kits, service apparel refresh, vehicle launch/customer test-drive kits, used-car department kits.
-- Manufacturing/industrial: safety recognition, new hire kits, recruiting/event giveaways, department apparel.
-- Healthcare/dental: staff appreciation, patient referral gifts, onboarding kits, milestone/anniversary recognition.
-
-ESTIMATED OPPORTUNITY
-- Initial suggested range: $5,000-$15,000 depending on account size, timing, and department scope.
-
-WHO TO CONTACT
-- Marketing Director, Sales Manager, HR/People Operations, General Manager, or Operations Manager depending on the play.
-
-OUTREACH ANGLE
-Subject: Quick idea for ${client}
-
-Hey — noticed a few recent branded projects around ${projects || 'your team'} and had an idea for a more intentional follow-up program. Rather than treating each order separately, we could package the next initiative around a specific business moment — sales event, hiring push, department refresh, or employee recognition. Worth a quick look?`;
 }
