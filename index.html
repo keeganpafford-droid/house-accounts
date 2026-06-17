@@ -1023,13 +1023,23 @@
         </div>
         <div class="form-field">
           <label for="leadRole">Role</label>
-          <select id="leadRole" name="role">
+<select id="leadRole" name="role" required>
             <option value="Owner / Principal">Owner / Principal</option>
             <option value="Sales Leader">Sales Leader</option>
             <option value="Sales Rep">Sales Rep</option>
             <option value="Ops / Admin">Ops / Admin</option>
             <option value="Other">Other</option>
           </select>
+          <div class="form-field">
+  <label for="houseAccounts">How many house accounts do you manage?</label>
+  <select id="houseAccounts" name="houseAccounts" required>
+    <option value="">Select one</option>
+    <option value="Under 50">Under 50</option>
+    <option value="50-250">50-250</option>
+    <option value="250-1000">250-1000</option>
+    <option value="1000+">1000+</option>
+  </select>
+</div>
         </div>
       </div>
       <button class="btn btn-secondary" type="submit">Unlock Free Account Scan</button>
