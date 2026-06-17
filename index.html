@@ -1589,60 +1589,79 @@ function accountDomId(name){
   return String(name || 'account').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'account';
 }
 
+function confidenceLabel(score){
+  const pct = Math.round((score || 0.5) * 100);
+  if(pct >= 75) return `High (${pct}%)`;
+  if(pct >= 60) return `Medium (${pct}%)`;
+  return `Low (${pct}%)`;
+}
+
 function renderVerifiedSignals(signals){
-  if(!signals || !signals.length){
-    return `<div class="no-signals-message">No recent external business signals found from public sources.</div>`;
+  const verified = (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl);
+  if(!verified.length){
+    return `<div class="no-signals-message">No verified external signals found.</div>`;
   }
-  return signals.map(signal => `
+  return verified.map(signal => `
     <div class="verified-signal-card">
-      <div class="verified-signal-title">${escapeHtml(signal.signalType || signal.type || 'Business Signal')}: ${escapeHtml(signal.title || '')}</div>
+      <div class="verified-signal-title">Verified Signal: ${escapeHtml(signal.title || signal.signalType || signal.type || 'Business Signal')}</div>
       <div class="verified-signal-meta">
-        ${escapeHtml(signal.dateFound || 'Checked today')} · ${Math.round((signal.confidence || 0.5)*100)}% source confidence
-        ${signal.sourceUrl ? ` · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">Source</a>` : ''}
+        <strong>Type:</strong> ${escapeHtml(signal.signalType || signal.type || 'Business Signal')} ·
+        <strong>Source:</strong> ${escapeHtml(signal.sourceType || 'Public source')} ·
+        <strong>Confidence:</strong> ${confidenceLabel(signal.confidence)} ·
+        <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">View source</a>
       </div>
-      <div class="verified-signal-evidence">${escapeHtml(signal.evidence || signal.description || '')}</div>
-      ${signal.promoOpportunity ? `<div class="verified-opportunity"><strong>Promo opportunity:</strong> ${escapeHtml(signal.promoOpportunity)}<br><strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>` : ''}
+      <div class="verified-signal-evidence"><strong>Evidence:</strong> ${escapeHtml(signal.evidence || signal.description || 'Source-backed business activity found.')}</div>
+      <div class="verified-opportunity">
+        <strong>Opportunity explanation:</strong> ${escapeHtml(signal.opportunityExplanation || signal.promoOpportunity || 'This signal may create a timely reason to discuss branded merchandise.')}<br>
+        <strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}
+      </div>
     </div>
   `).join('');
 }
 
 function addSignalDerivedOpportunities(account, signals){
   const existing = new Set((account.futureOpportunities || []).map(o => o.opportunity));
-  signals.forEach(signal => {
+  (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
     const type = signal.signalType || signal.type || '';
-    let name = signal.promoOpportunity || '';
+    let name = signal.promoOpportunity || signal.opportunityExplanation || '';
     let products = ['branded apparel', 'event giveaways', 'employee kits'];
     let contactTitle = signal.suggestedContact || 'Relevant department lead';
-    let base = 72;
+    let base = 74;
 
     if(type.includes('Hiring')){
       name = name || 'Hiring / Onboarding Merchandise Program';
       products = ['new hire welcome kits', 'department apparel', 'recruiting giveaways'];
       contactTitle = signal.suggestedContact || 'HR Manager / Department Manager';
+      base = 78;
     } else if(type.includes('Event')){
       name = name || 'Event Merchandise Program';
       products = ['attendee gifts', 'booth giveaways', 'staff apparel', 'signage'];
       contactTitle = signal.suggestedContact || 'Marketing Manager / Events Lead';
+      base = 76;
     } else if(type.includes('Expansion') || type.includes('Location')){
       name = name || 'New Location Launch Kit';
       products = ['grand opening gifts', 'location apparel', 'employee welcome kits'];
       contactTitle = signal.suggestedContact || 'Operations Manager / Marketing Manager';
+      base = 78;
     } else if(type.includes('Launch') || type.includes('Product')){
       name = name || 'Product Launch Merchandise Kit';
       products = ['launch giveaways', 'sales team apparel', 'customer gifts'];
       contactTitle = signal.suggestedContact || 'Marketing Manager / Sales Manager';
+      base = 74;
     }
 
     if(!name || existing.has(name)) return;
     const opp = createOpportunity(account, name, contactTitle, products, [], base);
+    opp.isVerifiedSignalOpportunity = true;
     opp.evidence = [
-      `Verified signal: ${signal.title || type}`,
-      `Source: ${signal.sourceUrl || 'public source'}`,
+      `Verified external signal: ${signal.title || type}`,
+      `Source type: ${signal.sourceType || 'Public source'}`,
+      `Source URL: ${signal.sourceUrl}`,
       signal.evidence || 'External business activity detected',
       ...buildEvidence(account).slice(0,2)
     ];
     opp.businessSignals = [signal];
-    opp.confidence = Math.min(96, Math.max(70, Math.round((signal.confidence || 0.65)*100)));
+    opp.confidence = Math.min(98, Math.max(78, Math.round((signal.confidence || 0.72)*100) + 10));
     account.futureOpportunities.unshift(opp);
     existing.add(name);
   });
@@ -1702,6 +1721,7 @@ function refreshOpportunityViews(){
             <div class="opp-card-title">${escapeHtml(opp.opportunity)}</div>
             <div class="opp-card-account">${escapeHtml(opp.account)}</div>
           </div>
+          ${opp.isVerifiedSignalOpportunity ? '<div class="confidence-badge confidence-high">Verified External Signal</div>' : ''}
           <div class="confidence-badge ${tier.cls}">${tier.label} · ${Math.round(opp.confidence)}% Opportunity Score</div>
           <div class="opp-metrics"><div class="metric"><div class="metric-value">${fmtMoney(opp.estimatedValue)}</div><div class="metric-label">Future Opportunity</div></div><div class="metric"><div class="metric-value">${Math.round(opp.confidence)}%</div><div class="metric-label">Score</div></div></div>
           <div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content">${renderEvidenceList(opp.evidence)}<div class="evidence-note">Every opportunity must be supported by historical order evidence and/or a verified external signal.</div></div></div>
@@ -2267,7 +2287,7 @@ function processData(records){
         ${renderPipelineTable(a.activePipeline)}
         <div class="section-title">📡 Verified Business Signals</div>
         <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Research Account</button>
-        <span class="research-note">Only real sources should appear here. If nothing is found, the system should say so.</span>
+        <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
         <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">${renderVerifiedSignals(a.signals)}</div>
         ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
       </div>
