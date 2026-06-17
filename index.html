@@ -2274,10 +2274,10 @@ function processData(records){
     </div>
   `).join('');
 
+  document.getElementById('results').style.display = 'block';
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
 
-  document.getElementById('results').style.display = 'block';
   const betaCta = document.getElementById('betaCta');
   if(betaCta) betaCta.style.display = 'block';
   lastAnalysisSummary = {
