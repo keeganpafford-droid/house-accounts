@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Revenue Intelligence for Promotional Distributors</title>
+<title>House Accounts | Promo Distributor Opportunity Tool</title>
 <style>
   :root{
-    --ink:#1a1f1c;
-    --paper:#f6f4ee;
-    --signal:#e85d2a;
-    --radar:#2f6f5e;
-    --line:#d9d4c6;
-    --muted:#787268;
+    --ink:#17324D;
+    --paper:#F4F6F8;
+    --signal:#F5A623;
+    --radar:#14B8A6;
+    --line:#d7dee8;
+    --muted:#6B7280;
     --display: 'Fraunces', Georgia, serif;
     --mono: 'IBM Plex Mono', monospace;
     --body: 'Inter', system-ui, sans-serif;
@@ -118,14 +118,13 @@
     max-width:820px;
     margin-bottom:20px;
   }
-.lead-form-grid{
-  display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:12px;
-  margin-bottom:16px;
-  align-items:end;
-}
-}
+  .lead-form-grid{
+    display:grid;
+    grid-template-columns:1fr 1.1fr 1fr 0.9fr 1.1fr;
+    gap:12px;
+    margin-bottom:16px;
+    align-items:end;
+    width:100%;
   }
   .form-field label{
     display:block;
@@ -1000,16 +999,16 @@
 
 <header>
   <div class="brand">
-    <h1>Revenue Intelligence</h1>
+    <h1>House Accounts</h1>
     <span class="tag">Promo Distributor Tool</span>
   </div>
-  <div class="sub">Upload house-account or customer order history to surface the top future expansion opportunities, with evidence and next actions.</div>
+  <div class="sub">Turn dormant house accounts into active opportunities. We find the signals. You close the deals.</div>
 </header>
 
 <main>
   <section class="lead-gate" id="leadGate">
-    <h2>Find hidden revenue in your house accounts.</h2>
-    <div class="promise">Upload a CSV export from your promo CRM/ERP and Revenue Radar will produce a fast opportunity report. V1 is a founding beta tool; the long-term product will monitor these accounts weekly and alert you when new revenue signals appear.</div>
+    <h2>Your next sale is probably already in your account list.</h2>
+    <div class="promise">Upload your house accounts and discover hiring activity, growth signals, leadership changes, and new revenue opportunities in minutes. V1 is a founding beta scan; the long-term product will monitor these accounts weekly and alert you when new revenue signals appear.</div>
     <form id="leadForm">
       <div class="lead-form-grid">
         <div class="form-field">
@@ -1026,26 +1025,26 @@
         </div>
         <div class="form-field">
           <label for="leadRole">Role</label>
-<select id="leadRole" name="role" required>
+          <select id="leadRole" name="role" required>
             <option value="Owner / Principal">Owner / Principal</option>
             <option value="Sales Leader">Sales Leader</option>
             <option value="Sales Rep">Sales Rep</option>
             <option value="Ops / Admin">Ops / Admin</option>
             <option value="Other">Other</option>
           </select>
-          <div class="form-field">
-  <label for="houseAccounts">How many house accounts do you manage?</label>
-  <select id="houseAccounts" name="houseAccounts" required>
-    <option value="">Select one</option>
-    <option value="Under 50">Under 50</option>
-    <option value="50-250">50-250</option>
-    <option value="250-1000">250-1000</option>
-    <option value="1000+">1000+</option>
-  </select>
-</div>
+        </div>
+        <div class="form-field">
+          <label for="houseAccounts">House Accounts</label>
+          <select id="houseAccounts" name="houseAccounts" required>
+            <option value="">Select one</option>
+            <option value="Under 50">Under 50</option>
+            <option value="50-250">50-250</option>
+            <option value="250-1000">250-1000</option>
+            <option value="1000+">1000+</option>
+          </select>
         </div>
       </div>
-      <button class="btn btn-secondary" type="submit">Unlock Free Account Scan</button>
+      <button class="btn btn-secondary" type="submit">Upload Your Accounts</button>
       <div class="lead-note">We do not store your uploaded CSV in V1. The file is analyzed locally in your browser. Your contact info is captured so we can follow up about the founding beta.</div>
     </form>
   </section>
@@ -1078,7 +1077,7 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="totalOppValue">$0</div>
-          <div class="kpi-label">Total Est. Opportunity Value</div>
+          <div class="kpi-label">Revenue Found</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="highConfidenceCount">0</div>
@@ -1149,7 +1148,7 @@
 </main>
 
 <footer>
-  Revenue Intelligence — CSV analysis runs locally in your browser. Only use verified signals when available.
+  House Accounts — CSV analysis runs locally in your browser. Only use verified signals when available.
 </footer>
 
 <script>
@@ -1161,7 +1160,7 @@ let currentLead = null;
 let lastAnalysisSummary = null;
 
 function getSavedLead(){
-  try { return JSON.parse(localStorage.getItem('revenueRadarLead') || 'null'); }
+  try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
   catch(e){ return null; }
 }
 
@@ -1193,9 +1192,9 @@ async function captureLead(stage, payload){
     console.warn('Lead capture API unavailable; saved locally only.', err);
   }
   try{
-    const all = JSON.parse(localStorage.getItem('revenueRadarLeadEvents') || '[]');
+    const all = JSON.parse(localStorage.getItem('houseAccountsLeadEvents') || '[]');
     all.push(body);
-    localStorage.setItem('revenueRadarLeadEvents', JSON.stringify(all.slice(-25)));
+    localStorage.setItem('houseAccountsLeadEvents', JSON.stringify(all.slice(-25)));
   }catch(e){}
 }
 
@@ -1210,14 +1209,15 @@ document.addEventListener('DOMContentLoaded', () => {
         name: document.getElementById('leadName').value.trim(),
         email: document.getElementById('leadEmail').value.trim(),
         company: document.getElementById('leadCompany').value.trim(),
-        role: document.getElementById('leadRole').value
+        role: document.getElementById('leadRole').value,
+        houseAccounts: document.getElementById('houseAccounts').value
       };
-      if(!lead.name || !lead.email || !lead.company){
-        showError('Please enter name, work email, and company.');
+      if(!lead.name || !lead.email || !lead.company || !lead.role || !lead.houseAccounts){
+        showError('Please complete all beta access fields.');
         return;
       }
       currentLead = lead;
-      localStorage.setItem('revenueRadarLead', JSON.stringify(lead));
+      localStorage.setItem('houseAccountsLead', JSON.stringify(lead));
       await captureLead('report_gate', {lead});
       setLeadGateState();
       clearError();
@@ -2089,7 +2089,7 @@ function processData(records){
           <div class="bd-item"><div class="lbl">Last Order</div><div class="val">${a.mostRecentDate}</div></div>
         </div>
 
-        <div class="section-title">🎯 Future Revenue Opportunities</div>
+        <div class="section-title">🎯 Estimated Opportunities</div>
         <ul class="opps">
           ${a.futureOpportunities.map(o => `<li><strong>${escapeHtml(o.opportunity)}</strong> — ${fmtMoney(o.estimatedValue)} · ${Math.round(o.confidence)}% confidence</li>`).join('')}
         </ul>

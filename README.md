@@ -1,48 +1,14 @@
-# Account Radar MVP
+# House Accounts V7
 
-A lightweight promo-industry account intelligence prototype.
+Brand update from Revenue Intelligence to House Accounts.
 
-## What it does
+Positioning:
+- Promo distributor tool
+- House account opportunity scan
+- V1 validates demand and captures beta leads
+- Long-term product monitors house accounts weekly for new revenue signals
 
-- Upload a CSV locally in the browser
-- Scores accounts by revenue, frequency, recency, and project diversity
-- Adds a **Research Account** button
-- Calls a secure backend endpoint instead of calling AI directly from the browser
-- If `OPENAI_API_KEY` is missing, returns demo-mode research so the app still works
-
-## Run locally
-
-```bash
-npm install
-npm start
-```
-
-Open:
-
-```text
-http://localhost:3000
-```
-
-## Enable live web research
-
-Create a `.env` file:
-
-```bash
-OPENAI_API_KEY=your_key_here
-```
-
-Then restart:
-
-```bash
-npm start
-```
-
-## Deploy to Vercel
-
-1. Upload this folder to Vercel
-2. Add environment variable: `OPENAI_API_KEY`
-3. Deploy
-
-## Important
-
-ChatGPT Plus does not automatically provide API access for apps. To use live AI research in this app, you need an API key with billing enabled.
+Important:
+- CSV analysis still runs locally in browser.
+- Lead capture endpoint currently logs to Vercel Function Logs.
+- Next step: connect api/lead-capture.js to Google Sheets.
