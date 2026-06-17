@@ -1,25 +1,22 @@
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Method not allowed" });
   }
 
   try {
-    const payload = req.body || {};
+    const lead = req.body;
 
-    // V1 lightweight capture: visible in Vercel Function Logs.
-    // Next step: replace this with Supabase, Airtable, HubSpot, or a Google Sheet webhook.
-    console.log('HOUSE_ACCOUNTS_LEAD_CAPTURE', JSON.stringify({
-      receivedAt: new Date().toISOString(),
-      stage: payload.stage,
-      lead: payload.lead,
-      beta: payload.beta,
-      analysisSummary: payload.analysisSummary,
-      page: payload.page
-    }));
+    await fetch("https://script.google.com/macros/s/AKfycbxXCrl1kUVFOmprMdrBenyLI2j9pWnef4UmvMvRFtH7ufov_ovHIiV2ZDHn0Iy-XCkU/exec", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(lead)
+    });
 
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Lead capture failed', error);
-    return res.status(500).json({ ok: false, error: 'Lead capture failed' });
+    console.error("Lead capture error:", error);
+    return res.status(500).json({ success: false, error: "Lead capture failed" });
   }
 }
