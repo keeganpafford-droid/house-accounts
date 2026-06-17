@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
     // V1 lightweight capture: visible in Vercel Function Logs.
     // Next step: replace this with Supabase, Airtable, HubSpot, or a Google Sheet webhook.
-    console.log('REVENUE_RADAR_LEAD_CAPTURE', JSON.stringify({
+    console.log('HOUSE_ACCOUNTS_LEAD_CAPTURE', JSON.stringify({
       receivedAt: new Date().toISOString(),
       stage: payload.stage,
       lead: payload.lead,
