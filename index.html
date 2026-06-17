@@ -96,6 +96,97 @@
   .csv-hint{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:24px; line-height:1.6;}
   .csv-hint code{background:var(--line); padding:2px 6px; border-radius:2px;}
 
+
+
+  /* Lead capture / beta gate */
+  .lead-gate{
+    background:#fff;
+    border:2px solid var(--ink);
+    border-radius:8px;
+    padding:32px;
+    margin-bottom:32px;
+  }
+  .lead-gate h2{
+    font-family:var(--display);
+    font-size:2rem;
+    margin-bottom:8px;
+  }
+  .lead-gate .promise{
+    font-size:1rem;
+    line-height:1.5;
+    color:var(--ink);
+    max-width:820px;
+    margin-bottom:20px;
+  }
+  .lead-form-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(210px,1fr));
+    gap:12px;
+    margin-bottom:16px;
+  }
+  .form-field label{
+    display:block;
+    font-family:var(--mono);
+    font-size:0.65rem;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--signal);
+    margin-bottom:6px;
+    font-weight:600;
+  }
+  .form-field input, .form-field select{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:12px;
+    font-family:var(--body);
+    font-size:0.95rem;
+    background:#fafaf6;
+    color:var(--ink);
+  }
+  .form-field input:focus, .form-field select:focus{
+    outline:none;
+    border-color:var(--radar);
+    background:#fff;
+  }
+  .lead-note{
+    font-family:var(--mono);
+    font-size:0.75rem;
+    color:var(--muted);
+    line-height:1.5;
+    margin-top:12px;
+  }
+  .upload-zone.locked{
+    display:none;
+  }
+  .beta-cta{
+    background:#fff;
+    border:2px solid var(--radar);
+    border-radius:8px;
+    padding:28px;
+    margin:32px 0;
+  }
+  .beta-cta h2{
+    font-family:var(--display);
+    font-size:1.8rem;
+    margin-bottom:8px;
+  }
+  .beta-cta p{
+    max-width:800px;
+    line-height:1.5;
+    margin-bottom:16px;
+    color:var(--ink);
+  }
+  .beta-success{
+    display:none;
+    background:#e8f4ef;
+    border-left:3px solid var(--radar);
+    padding:12px 14px;
+    font-family:var(--mono);
+    font-size:0.85rem;
+    margin-top:12px;
+  }
+
   #error{
     display:none; margin-top:16px; padding:12px 16px; background:#fdecea; border-left:3px solid var(--signal);
     font-family:var(--mono); font-size:0.85rem; color:#a23b1a;
@@ -913,7 +1004,40 @@
 </header>
 
 <main>
-  <div class="upload-zone" id="dropzone">
+  <section class="lead-gate" id="leadGate">
+    <h2>Find hidden revenue in your house accounts.</h2>
+    <div class="promise">Upload a CSV export from your promo CRM/ERP and Revenue Radar will produce a fast opportunity report. V1 is a founding beta tool; the long-term product will monitor these accounts weekly and alert you when new revenue signals appear.</div>
+    <form id="leadForm">
+      <div class="lead-form-grid">
+        <div class="form-field">
+          <label for="leadName">Name</label>
+          <input id="leadName" name="name" required placeholder="Your name">
+        </div>
+        <div class="form-field">
+          <label for="leadEmail">Work Email</label>
+          <input id="leadEmail" name="email" type="email" required placeholder="you@company.com">
+        </div>
+        <div class="form-field">
+          <label for="leadCompany">Company</label>
+          <input id="leadCompany" name="company" required placeholder="Distributor name">
+        </div>
+        <div class="form-field">
+          <label for="leadRole">Role</label>
+          <select id="leadRole" name="role">
+            <option value="Owner / Principal">Owner / Principal</option>
+            <option value="Sales Leader">Sales Leader</option>
+            <option value="Sales Rep">Sales Rep</option>
+            <option value="Ops / Admin">Ops / Admin</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-secondary" type="submit">Unlock Free Account Scan</button>
+      <div class="lead-note">We do not store your uploaded CSV in V1. The file is analyzed locally in your browser. Your contact info is captured so we can follow up about the founding beta.</div>
+    </form>
+  </section>
+
+  <div class="upload-zone locked" id="dropzone">
     <h2>Drop your CSV here</h2>
     <p>or click to browse files</p>
     <button class="btn" id="browseBtn" type="button">Choose file</button>
@@ -980,6 +1104,34 @@
       <div class="section-header">Detailed Account Views</div>
       <div id="accountList"></div>
     </div>
+
+    <section class="beta-cta" id="betaCta" style="display:none;">
+      <h2>Want us to monitor these accounts for you?</h2>
+      <p>The real product is not a one-time report. It is weekly revenue intelligence for house accounts: new hiring, events, expansions, product launches, and account changes translated into promo-specific opportunities.</p>
+      <form id="betaForm">
+        <div class="lead-form-grid">
+          <div class="form-field">
+            <label for="betaPriority">Biggest Need</label>
+            <select id="betaPriority" name="priority">
+              <option value="Weekly opportunity emails">Weekly opportunity emails</option>
+              <option value="House account reclaiming">House account reclaiming</option>
+              <option value="CRM/ERP export support">CRM/ERP export support</option>
+              <option value="Sales play generation">Sales play generation</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="betaAccounts">Approx. House Accounts</label>
+            <input id="betaAccounts" name="accounts" placeholder="e.g. 400">
+          </div>
+          <div class="form-field">
+            <label for="betaErp">CRM / ERP</label>
+            <input id="betaErp" name="erp" placeholder="commonsku, Antera, Facilis, Essent...">
+          </div>
+        </div>
+        <button class="btn btn-secondary" type="submit">Join Founding Beta</button>
+        <div class="beta-success" id="betaSuccess">Got it — beta interest captured.</div>
+      </form>
+    </section>
   </div>
 </main>
 
@@ -991,6 +1143,90 @@
 // Global state for signal mode
 let signalMode = 'simulated'; // 'simulated' or 'real'
 let accountSignalsCache = {}; // Cache for real signals to avoid re-fetching
+
+let currentLead = null;
+let lastAnalysisSummary = null;
+
+function getSavedLead(){
+  try { return JSON.parse(localStorage.getItem('revenueRadarLead') || 'null'); }
+  catch(e){ return null; }
+}
+
+function setLeadGateState(){
+  const saved = getSavedLead();
+  if(saved && saved.email){
+    currentLead = saved;
+    const gate = document.getElementById('leadGate');
+    const dz = document.getElementById('dropzone');
+    if(gate) gate.style.display = 'none';
+    if(dz) dz.classList.remove('locked');
+  }
+}
+
+async function captureLead(stage, payload){
+  const body = {
+    stage,
+    capturedAt: new Date().toISOString(),
+    page: window.location.href,
+    ...payload
+  };
+  try{
+    await fetch('/api/lead-capture', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+  }catch(err){
+    console.warn('Lead capture API unavailable; saved locally only.', err);
+  }
+  try{
+    const all = JSON.parse(localStorage.getItem('revenueRadarLeadEvents') || '[]');
+    all.push(body);
+    localStorage.setItem('revenueRadarLeadEvents', JSON.stringify(all.slice(-25)));
+  }catch(e){}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setLeadGateState();
+
+  const leadForm = document.getElementById('leadForm');
+  if(leadForm){
+    leadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const lead = {
+        name: document.getElementById('leadName').value.trim(),
+        email: document.getElementById('leadEmail').value.trim(),
+        company: document.getElementById('leadCompany').value.trim(),
+        role: document.getElementById('leadRole').value
+      };
+      if(!lead.name || !lead.email || !lead.company){
+        showError('Please enter name, work email, and company.');
+        return;
+      }
+      currentLead = lead;
+      localStorage.setItem('revenueRadarLead', JSON.stringify(lead));
+      await captureLead('report_gate', {lead});
+      setLeadGateState();
+      clearError();
+    });
+  }
+
+  const betaForm = document.getElementById('betaForm');
+  if(betaForm){
+    betaForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const beta = {
+        priority: document.getElementById('betaPriority').value,
+        approxHouseAccounts: document.getElementById('betaAccounts').value.trim(),
+        erp: document.getElementById('betaErp').value.trim(),
+        analysisSummary: lastAnalysisSummary
+      };
+      await captureLead('founding_beta', {lead: currentLead || getSavedLead(), beta});
+      const success = document.getElementById('betaSuccess');
+      if(success) success.style.display = 'block';
+    });
+  }
+});
 
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
@@ -1023,6 +1259,10 @@ function clearError(){
 
 function handleFile(file){
   clearError();
+  if(!currentLead && !getSavedLead()){
+    showError('Please enter your name, work email, and company before generating the report.');
+    return;
+  }
   if(!file.name.toLowerCase().endsWith('.csv')){
     showError('Please upload a .csv file.');
     return;
@@ -1869,7 +2109,17 @@ function processData(records){
     </div>
   `).join('');
 
+  lastAnalysisSummary = {
+    accountsAnalyzed: accounts.length,
+    opportunitiesShown: (typeof opportunities !== 'undefined' && opportunities.length) ? opportunities.length : (typeof recordsByOpportunity !== 'undefined' ? recordsByOpportunity.length : null),
+    totalRevenueUploaded: accounts.reduce((sum, a) => sum + (a.revenue || 0), 0),
+    topAccounts: accounts.slice(0,5).map(a => ({name:a.name, revenue:a.revenue, orders:a.orderCount, industry:a.industry}))
+  };
+  captureLead('report_generated', {lead: currentLead || getSavedLead(), analysisSummary: lastAnalysisSummary});
+
   document.getElementById('results').style.display = 'block';
+  const beta = document.getElementById('betaCta');
+  if(beta) beta.style.display = 'block';
 }
 
 function escapeHtml(text){

@@ -1,6 +1,6 @@
 {
-  "name": "account-radar",
-  "version": "0.1.0",
+  "name": "revenue-radar",
+  "version": "0.6.0",
   "private": true,
   "type": "module"
 }
