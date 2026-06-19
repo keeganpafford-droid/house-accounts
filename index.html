@@ -1497,8 +1497,10 @@ function parseCSV(text){
     const d = new Date(dateStr);
     const projectName = colIndex.project_name !== undefined ? (get('project_name') || 'Unspecified') : 'Unspecified';
     const contactName = get('contact_name') || [get('contact_first'), get('contact_last')].filter(Boolean).join(' ');
+    const clientName = get('client_name') || '';
+    if(isLikelyInvalidAccountName(clientName)) continue;
     records.push({
-      client: get('client_name') || 'Unknown',
+      client: clientName || 'Unknown',
       project: projectName,
       category: inferPromoCategory(projectName + ' ' + get('order_tags') + ' ' + get('client_tags')),
       date: isNaN(d.getTime()) ? null : d,
@@ -1589,6 +1591,24 @@ function renderSignalCard(signal){
 
 function accountDomId(name){
   return String(name || 'account').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'account';
+}
+
+function extractEmailDomain(email){
+  const value = String(email || '').trim().toLowerCase();
+  const match = value.match(/@([^\s>]+)$/);
+  if(!match) return '';
+  const domain = match[1].replace(/^www\./,'');
+  if(/gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(domain)) return '';
+  return domain;
+}
+
+function isLikelyInvalidAccountName(name){
+  const n = String(name || '').trim().toLowerCase();
+  if(!n) return true;
+  if(n.length < 2) return true;
+  if(/^(end result|primary result|secondary result|close \d+ deal|\$?\d+k order total|\d+ meetings?|\d+ total touchpoints|over \d+ days?)$/i.test(n)) return true;
+  if(/total touchpoints|order total|meetings$|result$/.test(n) && !/(inc|llc|corp|company|co\.|group|systems|technologies|manufacturing|medical|ford|dental|partners)/.test(n)) return true;
+  return false;
 }
 
 function confidenceLabel(score){
@@ -1682,6 +1702,7 @@ async function researchAccountByName(accountName){
         accountName: account.name,
         industry: account.industry,
         cityState: account.purchases?.[0]?.location || '',
+        emailDomain: extractEmailDomain(account.contactEmail),
         categories: [...(account.categoryTypes || [])],
         projects: account.projects || []
       })
@@ -2264,9 +2285,11 @@ function processData(records){
     notice.innerHTML = `Active pipeline detected: ${fmtMoney(activePipelineTotal)} in open estimates was excluded from historical revenue and Revenue Found.`;
   }
 
-  // Render detailed account cards
+  // Render detailed account cards. Keep the screen useful for large uploads by showing the top 10.
+  // The full account set still exists in memory for Research Top Accounts and future features.
   const accountList = document.getElementById('accountList');
-  accountList.innerHTML = accounts.map((a, idx) => `
+  const detailedAccounts = accounts.slice(0, 10);
+  accountList.innerHTML = `${accounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${accounts.length} uploaded accounts. Research Top Accounts scans the top 10 first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
     <div class="account-card">
       <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
         <div class="rank">#${idx + 1}</div>
