@@ -1,8 +1,9 @@
 // Vercel Serverless Function: verified public signal research.
-// No OpenAI, no paid APIs. Returns only source-backed signals.
+// No OpenAI by default. No paid APIs required.
+// Returns only source-backed signals.
 // Endpoint: POST /api/research-account
 
-const USER_AGENT = 'Mozilla/5.0 (compatible; HouseAccountsBot/0.2; +https://house-accounts.vercel.app)';
+const USER_AGENT = 'Mozilla/5.0 (compatible; HouseAccountsBot/0.3; +https://house-accounts.vercel.app)';
 
 function clean(text = '') {
   return String(text)
@@ -13,16 +14,17 @@ function clean(text = '') {
     .replace(/&nbsp;/g, ' ')
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function decodeDuckUrl(url) {
+function normalizeUrl(url) {
   try {
     if (!url) return '';
     const u = new URL(url, 'https://duckduckgo.com');
     const uddg = u.searchParams.get('uddg');
-    return uddg ? decodeURIComponent(uddg) : url;
+    return uddg ? decodeURIComponent(uddg) : u.href;
   } catch {
     return url || '';
   }
@@ -42,50 +44,83 @@ function classifySource(url = '', title = '') {
 function sourceConfidence(sourceType, title = '', snippet = '') {
   const text = `${title} ${snippet}`.toLowerCase();
   let score = 0.58;
-  if (/Careers|job posting/i.test(sourceType)) score = 0.74;
-  if (/News|press|Public \/ press/i.test(sourceType)) score = 0.70;
-  if (/Event/i.test(sourceType)) score = 0.68;
+  if (/Careers|job posting/i.test(sourceType)) score = 0.76;
+  if (/News|press|Public \/ press/i.test(sourceType)) score = 0.72;
+  if (/Event/i.test(sourceType)) score = 0.70;
   if (/Public social/i.test(sourceType)) score = 0.64;
   if (/LinkedIn/i.test(sourceType)) score = 0.62;
   if (/(today|yesterday|2026|2025|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(text)) score += 0.06;
-  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch)/i.test(text)) score += 0.06;
-  return Math.min(0.88, score);
+  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch|careers|jobs)/i.test(text)) score += 0.06;
+  return Math.min(0.92, score);
+}
+
+async function fetchText(url) {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8' },
+      redirect: 'follow'
+    });
+    if (!res.ok) return '';
+    const contentType = res.headers.get('content-type') || '';
+    if (!/text|html|xml|json/i.test(contentType)) return '';
+    return await res.text();
+  } catch {
+    return '';
+  }
 }
 
 async function ddgSearch(query) {
-  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-  if (!res.ok) return [];
-  const html = await res.text();
+  const urls = [
+    `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`
+  ];
+
   const results = [];
-  const regex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/div>)/g;
-  let m;
-  while ((m = regex.exec(html)) && results.length < 8) {
-    const sourceUrl = decodeDuckUrl(m[1]);
-    const title = clean(m[2]);
-    const snippet = clean(m[3] || m[4] || '');
-    if (!sourceUrl || /duckduckgo\.com/.test(sourceUrl)) continue;
-    results.push({ url: sourceUrl, title, snippet });
-  }
-  if (!results.length) {
-    const simple = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-    while ((m = simple.exec(html)) && results.length < 8) {
-      const sourceUrl = decodeDuckUrl(m[1]);
+  for (const searchUrl of urls) {
+    const html = await fetchText(searchUrl);
+    if (!html) continue;
+
+    let m;
+
+    // Standard DuckDuckGo HTML result format.
+    const rich = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/div>)/g;
+    while ((m = rich.exec(html)) && results.length < 10) {
+      const sourceUrl = normalizeUrl(m[1]);
       if (!sourceUrl || /duckduckgo\.com/.test(sourceUrl)) continue;
-      results.push({ url: sourceUrl, title: clean(m[2]), snippet: '' });
+      results.push({ url: sourceUrl, title: clean(m[2]), snippet: clean(m[3] || m[4] || '') });
     }
+
+    // Lite DuckDuckGo format often just uses result-link anchors.
+    const lite = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    while ((m = lite.exec(html)) && results.length < 10) {
+      const sourceUrl = normalizeUrl(m[1]);
+      const title = clean(m[2]);
+      if (!sourceUrl || /duckduckgo\.com|javascript:|^#/.test(sourceUrl)) continue;
+      if (!title || title.length < 4) continue;
+      results.push({ url: sourceUrl, title, snippet: '' });
+    }
+
+    if (results.length) break;
   }
-  return results;
+
+  // Dedupe URLs.
+  const seen = new Set();
+  return results.filter(r => {
+    const key = r.url.split('#')[0];
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 8);
 }
 
 function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0) {
   const sourceType = classifySource(result.url, result.title);
-  const confidence = Math.min(0.92, sourceConfidence(sourceType, result.title, result.snippet) + confidenceBoost);
+  const confidence = Math.min(0.94, sourceConfidence(sourceType, result.title, result.snippet) + confidenceBoost);
   return {
     signalType,
     type: signalType,
     title,
-    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 650),
+    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 750),
     sourceUrl: result.url,
     sourceType,
     dateFound: new Date().toISOString().slice(0, 10),
@@ -102,9 +137,9 @@ function signalFromResult(result, accountName, industry = '') {
   const text = `${result.title} ${result.snippet} ${result.url}`.toLowerCase();
   const isAuto = /dealership|ford|automotive|service|technician|vehicle|used car/.test(text) || /Automotive/.test(industry || '');
   const isHealthcare = /dental|medical|health|clinic|provider|practice/.test(text) || /Healthcare/.test(industry || '');
-  const isMfg = /manufactur|industrial|factory|plant|safety|facility/.test(text) || /Manufacturing/.test(industry || '');
+  const isMfg = /manufactur|industrial|factory|plant|safety|facility|production|assembly|engineering/.test(text) || /Manufacturing/.test(industry || '');
 
-  if (/(career|careers|hiring|jobs|join our team|open position|openings|technician|sales consultant|recruit|now hiring)/i.test(text)) {
+  if (/(career|careers|hiring|jobs|join our team|open position|openings|technician|sales consultant|recruit|now hiring|job opportunities|apply now)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -122,7 +157,7 @@ function signalFromResult(result, accountName, industry = '') {
     );
   }
 
-  if (/(event|conference|expo|show|summit|festival|webinar|open house|monthly sales event|customer event)/i.test(text)) {
+  if (/(event|conference|expo|show|summit|festival|webinar|open house|customer event|sponsorship)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -134,7 +169,7 @@ function signalFromResult(result, accountName, industry = '') {
     );
   }
 
-  if (/(new location|expansion|expands|opening|grand opening|new facility|renovation|relocation|moved to|opens)/i.test(text)) {
+  if (/(new location|expansion|expands|opening|grand opening|new facility|renovation|relocation|moved to|opens|capacity expansion)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -146,7 +181,7 @@ function signalFromResult(result, accountName, industry = '') {
     );
   }
 
-  if (/(launch|new product|announces|unveils|release|model|lineup|new service|new program)/i.test(text)) {
+  if (/(launch|new product|announces|unveils|release|model|lineup|new service|new program|introduces)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -158,7 +193,7 @@ function signalFromResult(result, accountName, industry = '') {
     );
   }
 
-  if (/(award|recognized|winner|honor|best of|certified|ranked|achievement|milestone)/i.test(text)) {
+  if (/(award|recognized|winner|honor|best of|certified|ranked|achievement|milestone|anniversary)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -170,7 +205,7 @@ function signalFromResult(result, accountName, industry = '') {
     );
   }
 
-  if (/(appoints|promotes|named|joins as|ceo|president|director|manager|leadership|new general manager)/i.test(text)) {
+  if (/(appoints|promotes|named|joins as|ceo|president|director|manager|leadership|new general manager|new vp)/i.test(text)) {
     return makeSignal(
       result,
       accountName,
@@ -199,13 +234,46 @@ function dedupeSignals(signals) {
     .slice(0, 6);
 }
 
+function domainFromEmailDomain(emailDomain = '') {
+  const d = String(emailDomain || '').trim().toLowerCase().replace(/^www\./,'');
+  if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(d)) return '';
+  return d;
+}
+
+async function domainProbeSignals(domain, accountName, industry) {
+  if (!domain) return [];
+  const paths = ['', '/', '/careers', '/career', '/jobs', '/about', '/news', '/press', '/events', '/blog'];
+  const candidates = [];
+  for (const path of paths) {
+    candidates.push(`https://${domain}${path}`);
+    if (path) candidates.push(`https://www.${domain}${path}`);
+  }
+
+  const results = [];
+  const seen = new Set();
+  for (const url of candidates) {
+    const normalized = url.replace(/\/+$/,'/');
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    const html = await fetchText(url);
+    if (!html) continue;
+    const text = clean(html).slice(0, 2000);
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = clean(titleMatch ? titleMatch[1] : `${accountName} ${url}`);
+    results.push({ url, title, snippet: text });
+    if (results.length >= 10) break;
+  }
+  return results.map(r => signalFromResult(r, accountName, industry)).filter(Boolean);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   try {
-    const { accountName, industry, cityState } = req.body || {};
+    const { accountName, industry, cityState, emailDomain } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
+    const domain = domainFromEmailDomain(emailDomain);
     const queries = [
       `"${accountName}" careers hiring jobs${location}`,
       `"${accountName}" open positions recruiting${location}`,
@@ -215,18 +283,22 @@ export default async function handler(req, res) {
       `"${accountName}" product launch new service`,
       `"${accountName}" award recognized leadership`
     ];
+    if (domain) {
+      queries.unshift(`site:${domain} careers jobs hiring`);
+      queries.unshift(`site:${domain} news press events expansion`);
+    }
 
     const allResults = [];
+    const domainSignals = await domainProbeSignals(domain, accountName, industry);
     for (const q of queries) {
       const results = await ddgSearch(q);
       allResults.push(...results);
     }
 
-    const signals = dedupeSignals(
-      allResults
-        .map(r => signalFromResult(r, accountName, industry))
-        .filter(Boolean)
-    );
+    const signals = dedupeSignals([
+      ...domainSignals,
+      ...allResults.map(r => signalFromResult(r, accountName, industry)).filter(Boolean)
+    ]);
 
     return res.status(200).json({
       accountName,
