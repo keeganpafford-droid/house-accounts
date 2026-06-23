@@ -279,7 +279,7 @@
     font-family:var(--mono); font-size:0.85rem; color:#a23b1a;
   }
 
-  /* Sales Manager Dashboard */
+  /* Accounts To Call This Week */
   #results{display:none; margin-top:48px;}
   
   .sales-dashboard{
@@ -1095,6 +1095,60 @@
     .sales-play-header{flex-direction:column;}
     .sales-play-actions{flex-direction:column;}
   }
+
+  .quickwin-breakdown{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:8px;
+    margin:10px 0 12px;
+  }
+  .quickwin-mini{
+    background:#f8fafc;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:8px;
+    text-align:center;
+  }
+  .quickwin-mini .num{
+    font-family:var(--display);
+    color:var(--primary);
+    font-size:1.1rem;
+    font-weight:800;
+    line-height:1;
+  }
+  .quickwin-mini .lbl{
+    font-family:var(--mono);
+    color:var(--slate);
+    font-size:0.56rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    margin-top:3px;
+  }
+  .opportunity-type{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:0.62rem;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:#fff;
+    background:var(--gold);
+    padding:4px 8px;
+    border-radius:999px;
+    margin-bottom:8px;
+  }
+  .relationship-badge{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:0.68rem;
+    color:var(--primary);
+    background:#e6f7f5;
+    border:1px solid var(--teal);
+    border-radius:999px;
+    padding:3px 8px;
+    margin-left:6px;
+  }
+
 </style>
 </head>
 <body>
@@ -1109,7 +1163,7 @@
 
 <main>
   <section class="lead-gate" id="leadGate">
-    <h2>Your next sale is probably already in your account list.</h2>
+    <h2>Know which house accounts to call this week.</h2>
     <div class="promise">Upload your house accounts and discover new revenue opportunities in minutes. V1 is a founding beta scan; the long-term product will monitor these accounts weekly and alert you when new revenue signals appear.</div>
     <div class="signal-checklist" aria-label="What House Accounts helps identify">
       <div class="signal-check"><span class="checkmark">✓</span> Hiring Activity</div>
@@ -1165,7 +1219,7 @@
     <button class="btn" id="browseBtn" type="button">Choose file</button>
     <input type="file" id="fileInput" accept=".csv">
     <div class="csv-hint">
-      Required company/account column:<br>
+      Required column:<br>
       <code>client_name</code> · <code>company_name</code> · <code>company</code> · <code>account_name</code> · <code>customer_name</code><br>
       Optional columns improve scoring:<br>
       <code>project_name</code> · <code>order_date</code> · <code>revenue</code> · <code>margin</code> · <code>contact_name</code> · <code>contact_email</code>
@@ -1198,12 +1252,12 @@
   </section>
 
   <div id="results">
-    <!-- Sales Manager Dashboard -->
+    <!-- Accounts To Call This Week -->
     <div class="sales-dashboard">
-      <div class="dashboard-header">Sales Manager Dashboard</div>
+      <div class="dashboard-header">Accounts To Call This Week</div>
       <div class="research-controls">
         <button class="btn btn-secondary" id="researchTopBtn" type="button" onclick="researchTopAccounts()">Research Top Accounts</button>
-        <div class="research-note">Uses free public search from the backend. No OpenAI. No paid APIs. CSV still stays in browser; only selected account names are researched.</div>
+        <div class="research-note">Research scans public sources for real business signals. Historical order data helps prioritize accounts, but verified signals create the strongest “why now.”</div>
       </div>
       
       <div class="kpi-grid">
@@ -1213,20 +1267,20 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="totalOppValue">$0</div>
-          <div class="kpi-label">Future Revenue Found</div>
+          <div class="kpi-label">Estimated Revenue Opportunity</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="highConfidenceCount">0</div>
-          <div class="kpi-label">High Confidence Opportunities</div>
+          <div class="kpi-label">High-Probability Opportunities</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="avgConfidence">0%</div>
-          <div class="kpi-label">Average Confidence</div>
+          <div class="kpi-label">Avg Quick Win Score</div>
         </div>
       </div>
 
       <div class="top-opportunities">
-        <div class="top-opps-title">Top 10 Accounts To Call</div>
+        <div class="top-opps-title">Top 10 Accounts To Review This Week</div>
         <div class="top-opps-list" id="topOppsList"></div>
       </div>
     </div>
@@ -1254,8 +1308,8 @@
     </div>
 
     <section class="beta-cta" id="betaCta" style="display:none;">
-      <h2>Want us to monitor these accounts for you?</h2>
-      <p>The real product is not a one-time report. It is weekly revenue intelligence for house accounts: new hiring, events, expansions, product launches, and account changes translated into promo-specific opportunities.</p>
+      <h2>Future Version: Weekly Opportunity Alerts</h2>
+      <p>Upload once. Get a weekly list of the best accounts to call and why.</p>
       <form id="betaForm">
         <div class="lead-form-grid">
           <div class="form-field">
@@ -1453,6 +1507,7 @@ function parseCSV(text){
   if(filtered.length < 2) throw new Error('No data rows found.');
 
   const normalizeHeader = h => h.trim().toLowerCase().replace(/[()%]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  const headerOriginal = filtered[0].map(h => String(h || '').trim());
   const headerRaw = filtered[0].map(normalizeHeader);
   const map = {
     client_name: ['client_name','company_name','company','account_name','account','customer_name','customer','client','client_company','organization','business_name','business','name'],
@@ -1478,16 +1533,14 @@ function parseCSV(text){
       const idx = headerRaw.indexOf(alt);
       if(idx !== -1){
         colIndex[key] = idx;
-        columnMappings[key] = { detected: filtered[0][idx], normalized: alt };
+        columnMappings[key] = { detected: headerOriginal[idx] || alt, normalized: alt };
         break;
       }
     }
   }
   const required = ['client_name'];
   for(const r of required){
-    if(colIndex[r] === undefined){
-      throw new Error('Could not identify a company/account column. Accepted names: client_name, company_name, company, account_name, account, customer_name, customer, client.');
-    }
+    if(colIndex[r] === undefined) throw new Error('Could not identify a company/account column. Accepted names: client_name, company_name, company, account_name, account, customer_name, customer, client.');
   }
   const missingCols = [];
   ['project_name','order_date','revenue','margin','contact_name','contact_email'].forEach(k=>{
@@ -1681,7 +1734,7 @@ function addSignalDerivedOpportunities(account, signals){
     }
 
     if(!name || existing.has(name)) return;
-    const opp = createOpportunity(account, name, contactTitle, products, [], base);
+    const opp = createOpportunity(account, name, contactTitle, products, [], base, true);
     opp.isVerifiedSignalOpportunity = true;
     opp.evidence = [
       `Verified external signal: ${signal.title || type}`,
@@ -1691,7 +1744,11 @@ function addSignalDerivedOpportunities(account, signals){
       ...buildEvidence(account).slice(0,2)
     ];
     opp.businessSignals = [signal];
-    opp.confidence = Math.min(98, Math.max(78, Math.round((signal.confidence || 0.72)*100) + 10));
+    opp.closeProbability = Math.min(95, Math.max(55, Math.round((signal.confidence || 0.72)*100) + (opp.relationshipStrength >= 40 ? 10 : 0)));
+    opp.quickWinScore = getQuickWinScore(account, base, true);
+    opp.confidence = opp.quickWinScore;
+    opp.opportunityType = 'SIGNAL-DRIVEN';
+    opp.relationshipMode = getRelationshipMode(account);
     account.futureOpportunities.unshift(opp);
     existing.add(name);
   });
@@ -1736,9 +1793,26 @@ async function researchTopAccounts(){
   if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
 }
 
+
+function getWhyNowText(opp){
+  if(!opp) return 'Review this account for a focused next step.';
+  if(opp.isVerifiedSignalOpportunity || opp.signalTitle || opp.sourceUrl){
+    const title = opp.signalTitle || 'Verified external signal';
+    return `Verified signal: ${title}`;
+  }
+  const rel = Number(opp.relationshipStrength || 0);
+  const close = Number(opp.closeProbability || 0);
+  const ev = Array.isArray(opp.evidence) ? opp.evidence.join(' ').toLowerCase() : String(opp.evidence || '').toLowerCase();
+  if(rel >= 80 && close >= 75) return 'Strong existing relationship and a clear adjacent category to ask about.';
+  if(ev.includes('recent activity') || ev.includes('last order')) return 'Recent account activity creates a natural reason to follow up now.';
+  if(ev.includes('purchased categories') || ev.includes('relevant purchase history')) return 'Past buying behavior suggests a simple expansion opportunity.';
+  if(rel >= 55) return 'Existing account history creates a warmer path than cold outreach.';
+  return 'Ranked because the account has enough evidence to warrant review this week.';
+}
+
 function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
-  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []).sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue);
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []).sort((a,b)=>(b.quickWinScore||b.confidence) - (a.quickWinScore||a.confidence) || (b.closeProbability||0) - (a.closeProbability||0) || b.estimatedValue - a.estimatedValue);
   const displayedOpportunities = futureOpportunities.slice(0, 10);
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
@@ -1753,8 +1827,9 @@ function refreshOpportunityViews(){
             <div class="opp-card-account">${escapeHtml(opp.account)}</div>
           </div>
           ${opp.isVerifiedSignalOpportunity ? '<div class="confidence-badge confidence-high">Verified External Signal</div>' : ''}
-          <div class="confidence-badge ${tier.cls}">${tier.label} · ${Math.round(opp.confidence)}% Opportunity Score</div>
+          <div class="confidence-badge ${tier.cls}">${tier.label} · ${Math.round(opp.confidence)}% Quick Win Score</div>
           <div class="opp-metrics"><div class="metric"><div class="metric-value">${fmtMoney(opp.estimatedValue)}</div><div class="metric-label">Future Opportunity</div></div><div class="metric"><div class="metric-value">${Math.round(opp.confidence)}%</div><div class="metric-label">Score</div></div></div>
+          <div class="opp-section"><div class="opp-label">Why Now</div><div class="opp-content">${escapeHtml(getWhyNowText(opp))}</div></div>
           <div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content">${renderEvidenceList(opp.evidence)}<div class="evidence-note">Every opportunity must be supported by historical order evidence and/or a verified external signal.</div></div></div>
           <div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content meta">${escapeHtml(opp.contactTitle || opp.contact || 'Unknown')}</div></div>
           <div class="opp-section"><div class="opp-label">Suggested Products</div><div class="opp-products">${opp.suggestedProducts.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>
@@ -1825,15 +1900,113 @@ function fmtMoney(n){
   return '$' + Number(n || 0).toLocaleString('en-US', {maximumFractionDigits:0});
 }
 
-function createOpportunity(account, name, contactTitle, products, evidenceCats=[], baseConfidence=55){
+
+function clampScore(n){
+  return Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+}
+
+function getRelationshipStrength(account){
+  const orderCount = Number(account.orderCount || 0);
+  const revenue = Number(account.revenue || 0);
+  const categoryCount = account.categoryTypes ? account.categoryTypes.size : 0;
+  const hasContact = !!(account.contactName || account.contactEmail);
+  const recency = Number(account.subscores?.recency || 0) * 100;
+
+  const orderScore = Math.min(orderCount / 6, 1) * 30;
+  const revenueScore = Math.min(revenue / 30000, 1) * 25;
+  const categoryScore = Math.min(categoryCount / 4, 1) * 15;
+  const contactScore = hasContact ? 15 : 0;
+  const recencyScore = Math.min(recency, 100) * 0.15;
+
+  return clampScore(orderScore + revenueScore + categoryScore + contactScore + recencyScore);
+}
+
+function getRelationshipMode(account){
+  const strength = getRelationshipStrength(account);
+  const recency = Number(account.subscores?.recency || 0) * 100;
+  if(strength >= 75 && recency >= 45) return 'Warm';
+  if(strength >= 40 || Number(account.orderCount || 0) > 0) return 'Lukewarm';
+  return 'Cold';
+}
+
+function getOpportunityType(account, signalBased=false){
+  if(signalBased) return 'SIGNAL-DRIVEN';
+  const strength = getRelationshipStrength(account);
+  const recency = Number(account.subscores?.recency || 0) * 100;
+  if(strength >= 75 && recency >= 50) return 'QUICK WIN';
+  if(Number(account.orderCount || 0) > 0 && recency < 35) return 'REACTIVATION';
+  if(Number(account.orderCount || 0) > 0) return 'EXPANSION';
+  return 'SIGNAL-DRIVEN';
+}
+
+function getCloseProbability(account, baseConfidence=55, signalBased=false){
+  const relationship = getRelationshipStrength(account);
+  const recency = Number(account.subscores?.recency || 0) * 100;
+  const hasContact = !!(account.contactName || account.contactEmail);
+  const frequency = Number(account.subscores?.frequency || 0) * 100;
+  const categoryExpansion = Number(account.subscores?.diversity || 0) * 100;
+  const signalBoost = signalBased ? 18 : 0;
+
+  // Close probability prioritizes "can this turn into a real conversation this month?"
+  // over giant theoretical account size.
+  return clampScore(
+    relationship * 0.42 +
+    recency * 0.20 +
+    frequency * 0.12 +
+    categoryExpansion * 0.10 +
+    (hasContact ? 8 : 0) +
+    signalBoost +
+    baseConfidence * 0.08
+  );
+}
+
+function getQuickWinScore(account, baseConfidence=55, signalBased=false){
+  const closeProbability = getCloseProbability(account, baseConfidence, signalBased);
+  const relationship = getRelationshipStrength(account);
+  const revenuePotential = Math.min(Number(account.revenue || 0) / 30000, 1) * 100;
+  const signal = signalBased ? 100 : 0;
+  return clampScore(
+    closeProbability * 0.45 +
+    relationship * 0.30 +
+    revenuePotential * 0.15 +
+    signal * 0.10
+  );
+}
+
+function relationshipLabelFromScore(score){
+  if(score >= 75) return 'Warm Relationship';
+  if(score >= 40) return 'Lukewarm Relationship';
+  return 'Cold / Low History';
+}
+
+function salesPlayModeFromOpp(opp){
+  if(opp.relationshipMode) return opp.relationshipMode;
+  const score = Number(opp.relationshipStrength || 0);
+  if(score >= 75) return 'Warm';
+  if(score >= 40) return 'Lukewarm';
+  return 'Cold';
+}
+
+function createOpportunity(account, name, contactTitle, products, evidenceCats=[], baseConfidence=55, signalBased=false){
   const value = estimateFutureValue(account, name);
+  const relationshipStrength = getRelationshipStrength(account);
+  const closeProbability = getCloseProbability(account, baseConfidence, signalBased);
+  const quickWinScore = getQuickWinScore(account, baseConfidence, signalBased);
+  const opportunityType = getOpportunityType(account, signalBased);
+  const relationshipMode = getRelationshipMode(account);
+
   return {
     account: account.name,
     industry: account.industry,
     opportunity: name,
     opportunityName: name,
     estimatedValue: value,
-    confidence: confidenceForOpportunity(account, baseConfidence, evidenceCats),
+    confidence: quickWinScore,
+    quickWinScore,
+    relationshipStrength,
+    closeProbability,
+    opportunityType,
+    relationshipMode,
     contact: account.contactName || contactTitle,
     contactTitle,
     email: account.contactEmail,
@@ -1999,7 +2172,7 @@ function generateFutureOpportunities(account){
   // Remove duplicate opportunity names and keep best 4 per account
   const unique = [];
   const seen = new Set();
-  for(const opp of opps.sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue)){
+  for(const opp of opps.sort((a,b)=>(b.quickWinScore||b.confidence) - (a.quickWinScore||a.confidence) || (b.closeProbability||0) - (a.closeProbability||0) || b.estimatedValue - a.estimatedValue)){
     if(!seen.has(opp.opportunity)){
       seen.add(opp.opportunity);
       unique.push(opp);
@@ -2019,7 +2192,7 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
-// Sales Play Generator - relationship-aware and evidence-based
+// Sales Play Generator - quick-win and relationship-aware
 window.createSalesPlayPanel = function(opp){
   const account = opp.account || 'this account';
   const contactName = opp.contactName || opp.contact || '';
@@ -2028,38 +2201,47 @@ window.createSalesPlayPanel = function(opp){
   const products = Array.isArray(opp.suggestedProducts) ? opp.suggestedProducts : ['relevant branded merchandise'];
   const evidenceArr = Array.isArray(opp.evidence) ? opp.evidence : [];
   const history = Array.isArray(opp.historicalPurchaseData) ? opp.historicalPurchaseData : [];
-  const orderCount = history.length;
-  const historicalSpend = history.reduce((s,h)=>s + Number(h.revenue || 0), 0);
-  const relationship = orderCount >= 3 || historicalSpend >= 10000 ? 'existing' : 'developing';
+  const mode = salesPlayModeFromOpp(opp);
+  const relationshipStrength = Math.round(opp.relationshipStrength || 0);
+  const closeProbability = Math.round(opp.closeProbability || 0);
+  const opportunityType = opp.opportunityType || 'EXPANSION';
   const firstName = contactName && !contactName.includes('/') ? contactName.split(' ')[0] : 'there';
   const productsText = products.slice(0,4).join(', ');
-  const evidenceText = evidenceArr.length ? evidenceArr.slice(0,3).join('; ') : 'your recent order history';
-  const subject = relationship === 'existing'
-    ? `Quick idea for ${account}`
-    : `Idea for ${opportunity} at ${account}`;
+  const evidenceText = evidenceArr.length ? evidenceArr.slice(0,2).join('; ') : 'your recent order history';
 
-  let email;
-  let callOpen;
+  let subject, email, callOpen, questions, nextStep;
 
-  if(relationship === 'existing'){
-    email = `Hey ${firstName},\n\nAppreciate being able to help with the branded merch work so far. I was looking at the recent order history and noticed ${evidenceText}.\n\nOne small idea: we often see ${opp.industry || 'similar organizations'} extend that same branded-program approach into ${opportunity.toLowerCase()}.\n\nNot sure if that team needs anything right now, but if helpful I can pull together a few simple options around ${productsText}.\n\nWorth a quick look?\n\nBest,`;
-    callOpen = `"Hey ${firstName}, appreciate the work we've been able to help with so far. I had one quick adjacent idea based on what you're already ordering."`;
+  if(mode === 'Warm'){
+    subject = `Quick thought for ${account}`;
+    email = `Hey ${firstName},\n\nAppreciate being able to help with the branded merch work so far.\n\nQuick question — who handles ${opportunity.toLowerCase()} these days?\n\nI ask because based on the recent work around ${evidenceText}, this feels like a natural adjacent area where we may be able to help without making it a big project.\n\nIf useful, I can pull together a few simple options around ${productsText}.\n\nWorth a quick look?`;
+    callOpen = `"Hey ${firstName}, appreciate all the work we've been able to help with. I had one quick adjacent idea based on what you're already ordering."`;
+    questions = [
+      `Who owns ${opportunity.toLowerCase()} today?`,
+      `Are departments ordering this kind of merch separately right now?`,
+      `Would it be helpful if I pulled together 2-3 simple options your team could react to?`
+    ];
+    nextStep = `Send the short relationship-based note. The goal is a quick reply or referral, not a formal pitch.`;
+  } else if(mode === 'Lukewarm'){
+    subject = `Question on ${opportunity.toLowerCase()} at ${account}`;
+    email = `Hey ${firstName},\n\nIt's been a bit, but I was looking back at the branded merch work tied to ${account} and noticed ${evidenceText}.\n\nOne idea that stood out was ${opportunity.toLowerCase()} — especially around ${productsText}.\n\nNot sure if this sits with you or someone else on the team, but is this an area worth revisiting?`;
+    callOpen = `"Hey ${firstName}, we haven't talked in a bit, but I had a specific idea based on some past order history with ${account}."`;
+    questions = [
+      `Is ${opportunity.toLowerCase()} still relevant for the team?`,
+      `Has ownership for branded merch changed internally?`,
+      `Is there a better person to ask about this?`
+    ];
+    nextStep = `Use this as a reactivation touch. Ask for direction or the right owner before proposing products.`;
   } else {
-    email = `Hi ${firstName},\n\nI was reviewing the recent work with ${account} and noticed ${evidenceText}.\n\nThat made me think there may be an opportunity around ${opportunity.toLowerCase()}, especially with items like ${productsText}.\n\nWould it be worth a quick 15-minute conversation to see if this is relevant for your team?\n\nBest,`;
-    callOpen = `"Hi ${firstName}, I had a specific idea based on the recent branded merchandise activity at ${account}."`;
+    subject = `Idea for ${account}`;
+    email = `Hi ${firstName},\n\nI had a quick idea for ${account} around ${opportunity.toLowerCase()}.\n\nBased on the available account context, this could be a fit for ${productsText}.\n\nIs there someone on your team who usually owns this type of branded merchandise program?`;
+    callOpen = `"Hi ${firstName}, I had a specific branded merchandise idea for ${account} and wanted to find the right person."`;
+    questions = [
+      `Who typically owns branded merchandise or employee/customer programs?`,
+      `Are there any upcoming hiring, event, or customer initiatives this could support?`,
+      `Would it be worth sending over a few examples?`
+    ];
+    nextStep = `Treat this as a signal/contact-finding play. Do not overpitch until ownership and timing are confirmed.`;
   }
-
-  const questions = relationship === 'existing'
-    ? [
-        `Is ${opportunity.toLowerCase()} something your team is already handling internally?`,
-        `Are different departments ordering branded items separately today?`,
-        `Who usually owns this type of need — ${contactTitle}, HR, marketing, or operations?`
-      ]
-    : [
-        `How are you currently handling ${opportunity.toLowerCase()}?`,
-        `Is there a timeline or upcoming initiative this could support?`,
-        `Who else would be involved in approving or shaping this kind of program?`
-      ];
 
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
@@ -2067,14 +2249,23 @@ window.createSalesPlayPanel = function(opp){
         <div class="sales-play-header">
           <div>
             <h2>Sales Play</h2>
-            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(opportunity)} <span class="relationship-badge">${relationship === 'existing' ? 'Existing Customer Play' : 'Developing Relationship Play'}</span></div>
+            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(opportunity)} <span class="relationship-badge">${escapeHtml(mode)} Play</span></div>
           </div>
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
         <div class="sales-play-output">
           <div class="sales-play-section">
+            <h3>Quick-Win Read</h3>
+            <div class="section-content">
+              <strong>Opportunity Type:</strong> ${escapeHtml(opportunityType)}<br>
+              <strong>Relationship Strength:</strong> ${relationshipStrength}/100<br>
+              <strong>Estimated Close Probability:</strong> ${closeProbability}%<br>
+              <strong>Why this is prioritized:</strong> Existing relationship, recent activity, known contacts, category expansion, and verified signals are weighted ahead of large speculative revenue.
+            </div>
+          </div>
+          <div class="sales-play-section">
             <h3>Why This Play</h3>
-            <div class="section-content">${renderEvidenceList(evidenceArr)}<div class="evidence-note">This play is based on historical order evidence only. Do not reference unverified hiring, events, launches, or expansions unless a verified signal is shown.</div></div>
+            <div class="section-content">${renderEvidenceList(evidenceArr)}<div class="evidence-note">Reference only evidence you can support. Do not mention unverified hiring, events, launches, expansions, or leadership changes unless a verified signal appears.</div></div>
           </div>
           <div class="sales-play-section">
             <h3>Subject Line</h3>
@@ -2088,8 +2279,8 @@ window.createSalesPlayPanel = function(opp){
             <h3>Call Script</h3>
             <div class="section-content">
               <div class="script-section"><div class="script-label">Open</div><div class="script-text">${escapeHtml(callOpen)}</div></div>
-              <div class="script-section"><div class="script-label">Reason</div><div class="script-text">"Based on ${escapeHtml(evidenceText)}, ${escapeHtml(opportunity.toLowerCase())} feels like a natural adjacent conversation."</div></div>
-              <div class="script-section"><div class="script-label">Ask</div><div class="script-text">"Would it be helpful if I pulled together a couple options, or is there someone else on the team I should ask first?"</div></div>
+              <div class="script-section"><div class="script-label">Reason</div><div class="script-text">"This looked like a high-probability expansion conversation, not a random pitch."</div></div>
+              <div class="script-section"><div class="script-label">Ask</div><div class="script-text">"Should I send a couple options, or is someone else better to include?"</div></div>
             </div>
           </div>
           <div class="sales-play-section">
@@ -2098,7 +2289,7 @@ window.createSalesPlayPanel = function(opp){
           </div>
           <div class="sales-play-section">
             <h3>Recommended Next Step</h3>
-            <div class="section-content next-step">Send a brief relationship-based note first. If interest exists, bring 2-3 options tied to ${escapeHtml(opportunity)} and keep the first conversation under 15 minutes.</div>
+            <div class="section-content next-step">${escapeHtml(nextStep)}</div>
           </div>
         </div>
       </div>
@@ -2219,6 +2410,8 @@ function processData(records){
       mostRecentDate: mostRecentDate ? mostRecentDate.toLocaleDateString() : 'Unknown'
     };
 
+    account.relationshipStrength = getRelationshipStrength(account);
+    account.relationshipMode = getRelationshipMode(account);
     account.signals = generateSimulatedSignals(account, {});
     account.futureOpportunities = orderCount > 0 ? generateFutureOpportunities(account) : [];
     accounts.push(account);
@@ -2228,7 +2421,7 @@ function processData(records){
   window.accountRadarAccounts = accounts;
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
-  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []).sort((a,b)=>b.confidence - a.confidence || b.estimatedValue - a.estimatedValue);
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []).sort((a,b)=>(b.quickWinScore||b.confidence) - (a.quickWinScore||a.confidence) || (b.closeProbability||0) - (a.closeProbability||0) || b.estimatedValue - a.estimatedValue);
   const displayedOpportunities = futureOpportunities.slice(0, 10);
 
   // Render opportunities grid
@@ -2243,11 +2436,12 @@ function processData(records){
     return `
       <div class="opportunity-card">
         <div class="opp-card-header">
+          <div class="opportunity-type">${escapeHtml(opp.opportunityType || 'EXPANSION')}</div>
           <div class="opp-card-title">${escapeHtml(opp.opportunity)}</div>
-          <div class="opp-card-account">${escapeHtml(opp.account)}</div>
+          <div class="opp-card-account">${escapeHtml(opp.account)} · ${escapeHtml(relationshipLabelFromScore(opp.relationshipStrength || 0))}</div>
         </div>
         <div class="confidence-badge ${tier.cls}">
-          ${tier.label} · ${Math.round(opp.confidence)}% Opportunity Score
+          ${tier.label} · ${Math.round(opp.confidence)}% Quick Win Score
         </div>
         <div class="opp-metrics">
           <div class="metric">
@@ -2255,9 +2449,18 @@ function processData(records){
             <div class="metric-label">Future Opportunity</div>
           </div>
           <div class="metric">
-            <div class="metric-value">${Math.round(opp.confidence)}%</div>
-            <div class="metric-label">Score</div>
+            <div class="metric-value">${Math.round(opp.closeProbability || opp.confidence)}%</div>
+            <div class="metric-label">Close Probability</div>
           </div>
+        </div>
+        <div class="quickwin-breakdown">
+          <div class="quickwin-mini"><div class="num">${Math.round(opp.relationshipStrength || 0)}</div><div class="lbl">Relationship</div></div>
+          <div class="quickwin-mini"><div class="num">${Math.round(opp.closeProbability || 0)}%</div><div class="lbl">Close Prob.</div></div>
+          <div class="quickwin-mini"><div class="num">${Math.round(opp.confidence || 0)}</div><div class="lbl">Quick Win</div></div>
+        </div>
+        <div class="opp-section">
+          <div class="opp-label">Why Now</div>
+          <div class="opp-content">${escapeHtml(getWhyNowText(opp))}</div>
         </div>
         <div class="opp-section">
           <div class="opp-label">Evidence</div>
@@ -2289,16 +2492,16 @@ function processData(records){
 
   const notice = document.getElementById('notice');
   if(notice){
-    const importMessages = [];
+    const noticeMessages = [];
     const clientMapping = records.columnMappings && records.columnMappings.client_name;
     if(clientMapping && clientMapping.normalized !== 'client_name'){
-      importMessages.push(`Detected company/account column: <strong>${escapeHtml(clientMapping.detected)}</strong> → <strong>client_name</strong>.`);
+      noticeMessages.push(`Detected company/account column: <strong>${escapeHtml(clientMapping.detected)}</strong> → <strong>client_name</strong>.`);
     }
     if(activePipelineTotal > 0){
-      importMessages.push(`Active pipeline detected: ${fmtMoney(activePipelineTotal)} in open estimates was excluded from historical revenue and Revenue Found.`);
+      noticeMessages.push(`Active pipeline detected: ${fmtMoney(activePipelineTotal)} in open estimates was excluded from historical revenue and Estimated Revenue Opportunity.`);
     }
-    notice.style.display = importMessages.length ? 'block' : 'none';
-    notice.innerHTML = importMessages.join('<br>');
+    notice.style.display = noticeMessages.length ? 'block' : 'none';
+    notice.innerHTML = noticeMessages.join('<br>');
   }
 
   // Render detailed account cards. Keep the screen useful for large uploads by showing the top 10.
@@ -2328,12 +2531,13 @@ function processData(records){
         <div class="breakdown">
           <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
           <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
+          <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
           <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
           <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate}</div></div>
         </div>
         <div class="section-title">🎯 Estimated Opportunities</div>
         <ul class="opps">
-          ${(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(o.opportunity)}</strong> — ${fmtMoney(o.estimatedValue)} · ${Math.round(o.confidence)}% opportunity score</li>`).join('') || '<li>No future opportunities generated from closed historical orders.</li>'}
+          ${(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(o.opportunity)}</strong> — ${fmtMoney(o.estimatedValue)} · ${Math.round(o.confidence)}% quick-win score</li>`).join('') || '<li>No future opportunities generated from closed historical orders.</li>'}
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
