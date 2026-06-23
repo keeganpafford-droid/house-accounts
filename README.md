@@ -1,14 +1,7 @@
-# House Accounts V7
+# House Accounts v18 - Reasons to Reach Out
 
-Brand update from Revenue Intelligence to House Accounts.
-
-Positioning:
-- Promo distributor tool
-- House account opportunity scan
-- V1 validates demand and captures beta leads
-- Long-term product monitors house accounts weekly for new revenue signals
-
-Important:
-- CSV analysis still runs locally in browser.
-- Lead capture endpoint currently logs to Vercel Function Logs.
-- Next step: connect api/lead-capture.js to Google Sheets.
+Focused update:
+- Reframes opportunity cards around reasons to reach out, not product pitches.
+- Adds conversation starters and common promo categories.
+- Improves sales play copy to sound warmer and less robotic.
+- Keeps existing lead capture, beta capture, account analysis, verified signals, and column mapping.

@@ -85,6 +85,8 @@ function buildSalesContext(opportunity) {
     opportunityName: play.opportunityName,
     simpleAsk: play.simpleAsk,
     productPhrase: play.productPhrase,
+    reasonToReachOut: play.reasonToReachOut,
+    conversationStarter: play.simpleAsk,
     suggestedProducts: play.products,
     historicalData,
     categories,
@@ -130,20 +132,20 @@ function warmEmail(ctx) {
   const signalLine = ctx.signal ? `\n\nI noticed ${signalPhrase(ctx)} and it made me think there may be a simple way to support that.` : '';
   const historyLine = ctx.relationshipSummary ? `\n\n${ctx.relationshipSummary}` : '';
 
-  return `Hey ${ctx.contactName},\n\nAppreciate being able to help with the branded merch work so far.${historyLine}${signalLine}\n\nQuick question — ${ctx.simpleAsk}\n\nIf useful, I can pull together a few simple options around ${ctx.productPhrase}.\n\nWorth a quick look?`;
+  return `Hey ${ctx.contactName},\n\nAppreciate being able to help with the branded merch work so far.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf useful, I can send a few practical ideas around ${ctx.productPhrase}.\n\nWorth a quick look?`;
 }
 
 function lukewarmEmail(ctx) {
   const signalLine = ctx.signal ? `\n\nI noticed ${signalPhrase(ctx)}, which seemed like a relevant reason to reconnect.` : '';
   const historyLine = ctx.relationshipSummary ? `\n\n${ctx.relationshipSummary}` : `\n\nI know there has been some prior activity with ${ctx.account}, so I wanted to reach out with something specific rather than a generic check-in.`;
 
-  return `Hey ${ctx.contactName},\n\nIt's been a bit since we've connected.${historyLine}${signalLine}\n\nQuick question — ${ctx.simpleAsk}\n\nIf this is already covered, no worries. If not, I can send over a few practical ideas around ${ctx.productPhrase}.\n\nWorth a quick look?`;
+  return `Hey ${ctx.contactName},\n\nIt's been a bit since we've connected.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf this is already covered, no worries. If not, I can send over a few practical ideas around ${ctx.productPhrase}.\n\nWorth a quick look?`;
 }
 
 function coldSignalEmail(ctx) {
   const signalLine = ctx.signal ? `I noticed ${signalPhrase(ctx)}.` : `I was looking at ${ctx.account} and thought there may be a timely branded merchandise opportunity.`;
 
-  return `Hi ${ctx.contactName},\n\n${signalLine}\n\nWe help promotional products teams turn moments like that into practical sales opportunities — things like ${ctx.productPhrase}.\n\nQuick question — ${ctx.simpleAsk}\n\nIf you're not the right person, who would usually handle that?`;
+  return `Hi ${ctx.contactName},\n\n${signalLine}\n\nWe help promotional products teams turn moments like that into practical sales opportunities — things like ${ctx.productPhrase}.\n\n${ctx.simpleAsk}\n\nIf you're not the right person, who would usually handle that?`;
 }
 
 function shortNote(ctx) {
@@ -173,7 +175,7 @@ function generateCallScript(ctx, mode) {
     {
       section: 'WHY NOW',
       text: ctx.signal
-        ? `The reason for reaching out: ${signalPhrase(ctx)}. That may create a timely need for ${ctx.productPhrase}.`
+        ? `The reason for reaching out: ${signalPhrase(ctx)}. That creates a practical reason to ask about ${ctx.productPhrase}.`
         : `The reason for reaching out: based on the account history, ${ctx.opportunityName.toLowerCase()} looks like a practical adjacent opportunity.`
     },
     {
@@ -211,7 +213,7 @@ function generateNextStep(ctx, mode) {
   if (mode === 'warm') return `Send 2–3 simple options tied to ${ctx.opportunityName.toLowerCase()} and ask who should weigh in.`;
   if (mode === 'lukewarm') return `Use the relationship history to reopen the conversation, then offer a small option set around ${ctx.productPhrase}.`;
   if (mode === 'short') return `Send a brief note and ask whether this is worth a quick look.`;
-  return `Lead with the verified signal, ask for the right contact, and offer 2–3 practical product ideas.`;
+  return `Lead with the verified signal, ask for the right contact, and only then offer 2–3 practical ideas.`;
 }
 
 function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProducts, signal }) {
@@ -220,7 +222,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/hiring|career|jobs|recruit|new hire|onboarding|employee/.test(text)) {
     return {
       opportunityName: 'New Hire / Employee Onboarding Program',
-      simpleAsk: 'who handles onboarding gear or apparel for new hires these days?',
+      simpleAsk: 'How are you handling onboarding gear or apparel for new hires these days?',
       productPhrase: 'welcome kits, department apparel, notebooks, drinkware, and recruiting giveaways',
       products: ['Welcome kits', 'Department apparel', 'Drinkware', 'Recruiting giveaways']
     };
@@ -229,7 +231,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/service|technician|mechanic|uniform/.test(text)) {
     return {
       opportunityName: 'Service Department Apparel Program',
-      simpleAsk: 'who handles uniforms or apparel for the service team these days?',
+      simpleAsk: 'Who handles uniforms or apparel for the service team these days?',
       productPhrase: 'service polos, outerwear, hats, name-badge-ready apparel, and technician gear',
       products: ['Service polos', 'Outerwear', 'Technician hats', 'Uniform apparel']
     };
@@ -238,7 +240,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/event|conference|trade show|expo|booth|campaign|promotion/.test(text)) {
     return {
       opportunityName: 'Event / Campaign Merchandise Program',
-      simpleAsk: 'is anyone planning branded giveaways or event merch for the next campaign?',
+      simpleAsk: 'Is anyone planning branded giveaways or event merch for the next campaign?',
       productPhrase: 'event giveaways, booth merch, signage, attendee gifts, and staff apparel',
       products: ['Event giveaways', 'Booth merch', 'Signage', 'Staff apparel']
     };
@@ -247,7 +249,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/location|facility|expansion|opened|opening|branch/.test(text)) {
     return {
       opportunityName: 'New Location Launch Kit',
-      simpleAsk: 'is there a plan for branded launch materials or team gear around the new location?',
+      simpleAsk: 'Is there a plan for branded launch materials or team gear around the new location?',
       productPhrase: 'grand-opening kits, location-branded apparel, employee welcome items, and customer giveaways',
       products: ['Grand-opening kits', 'Location apparel', 'Welcome items', 'Customer giveaways']
     };
@@ -256,7 +258,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/leadership|president|ceo|director|vp|promoted|appointed|joined/.test(text)) {
     return {
       opportunityName: 'New Leader / Team Engagement Opportunity',
-      simpleAsk: 'does the new leader have any team engagement, recognition, or internal brand initiatives coming up?',
+      simpleAsk: 'Does the new leader have any team engagement, recognition, or internal brand initiatives coming up?',
       productPhrase: 'team recognition gifts, leadership welcome kits, employee appreciation items, and internal brand merch',
       products: ['Recognition gifts', 'Welcome kits', 'Internal brand merch']
     };
@@ -265,7 +267,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/apparel|shirt|hat|headwear|gear|quarter zip|jacket/.test(text)) {
     return {
       opportunityName: 'Department Apparel Expansion',
-      simpleAsk: 'are there other departments that could use apparel or gear beyond the teams we have already helped?',
+      simpleAsk: 'Are there other departments that could use apparel or gear beyond the teams we have already helped?',
       productPhrase: 'department apparel, outerwear, hats, and employee gear programs',
       products: ['Department apparel', 'Outerwear', 'Headwear', 'Employee gear']
     };
@@ -274,7 +276,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
   if (/recognition|award|anniversary|appreciation|milestone/.test(text)) {
     return {
       opportunityName: 'Recognition / Appreciation Program',
-      simpleAsk: 'who handles employee recognition, customer appreciation, or milestone gifts?',
+      simpleAsk: 'Who handles employee recognition, customer appreciation, or milestone gifts?',
       productPhrase: 'recognition gifts, milestone awards, customer appreciation items, and premium branded kits',
       products: ['Recognition gifts', 'Milestone awards', 'Appreciation kits']
     };
@@ -282,7 +284,7 @@ function inferPromoPlay({ rawOpportunity, industry, categories, suggestedProduct
 
   return {
     opportunityName: rawOpportunity || 'Account Expansion Opportunity',
-    simpleAsk: 'is there a department, event, or upcoming initiative where branded merch could help?',
+    simpleAsk: 'Is there a department, event, or upcoming initiative where branded merch could help?',
     productPhrase: suggestedProducts.length ? suggestedProducts.join(', ') : 'apparel, giveaways, recognition items, and customer-facing merch',
     products: suggestedProducts.length ? suggestedProducts : ['Apparel', 'Giveaways', 'Recognition items']
   };
