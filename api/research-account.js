@@ -157,7 +157,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Trade Show / Event Support',
       name: 'Trade Show / Event Merchandise Program',
       products: ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'],
-      explanation: 'A public event creates a timely reason to support booth traffic, staff presentation, attendee giveaways, and customer follow-up.'
+      explanation: 'A public event creates a timely reason to ask about booth traffic, staff presentation, attendee giveaways, and customer follow-up.',
+      reasonToReachOut: 'Event activity creates a timely reason to check in',
+      conversationStarter: 'Ask whether the upcoming event or campaign needs staff apparel, attendee gifts, or customer-facing merch.'
     };
   }
   if (/new location|expansion|facility|opening|grand opening/.test(combo)) {
@@ -165,7 +167,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Facility / Location Launch',
       name: 'New Location Launch Kit',
       products: ['grand opening gifts', 'location-branded apparel', 'employee welcome kits', 'customer gifts'],
-      explanation: 'Expansion or location activity creates a timely reason for launch merchandise, employee gear, and customer-facing gifts.'
+      explanation: 'Expansion or location activity creates a timely reason to ask about launch merchandise, employee gear, and customer-facing gifts.',
+      reasonToReachOut: 'Growth activity creates a timely reason to check in',
+      conversationStarter: 'Ask whether the growth activity creates any need for launch merch, employee gear, or customer gifts.'
     };
   }
   if (/award|recognized|recognition|milestone|anniversary/.test(combo)) {
@@ -173,7 +177,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Recognition / Celebration',
       name: 'Recognition & Celebration Program',
       products: ['employee gifts', 'award apparel', 'thank-you kits', 'announcement mailers'],
-      explanation: 'Recognition creates a natural opening for employee celebration gifts, customer announcements, and internal culture merchandise.'
+      explanation: 'Recognition creates a natural opening to ask about employee celebration, customer announcements, and internal culture moments.',
+      reasonToReachOut: 'Recognition creates a timely reason to check in',
+      conversationStarter: 'Ask whether there are any employee, customer, or team appreciation moments coming up.'
     };
   }
   if (/leadership|appoint|promote|named|joins/.test(combo)) {
@@ -181,7 +187,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Leadership Transition',
       name: 'New Leader Welcome / Team Culture Kit',
       products: ['welcome gifts', 'team apparel', 'executive gifts', 'internal announcement kits'],
-      explanation: 'Leadership changes create a light-touch reason to support internal communication, team culture, and executive gifting.'
+      explanation: 'Leadership changes create a light-touch reason to ask about internal communication, team culture, or executive gifting.',
+      reasonToReachOut: 'Leadership change creates a timely reason to check in',
+      conversationStarter: 'Ask whether the leadership change connects to any team engagement, recognition, or internal brand moments.'
     };
   }
   if (/product|service launch|launch|unveil|release/.test(combo)) {
@@ -189,7 +197,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Product / Service Launch',
       name: 'Product Launch Merchandise Kit',
       products: ['launch giveaways', 'sales team apparel', 'customer gifts', 'sample kits'],
-      explanation: 'Launch activity creates a timely reason for campaign merchandise, sales enablement kits, and customer-facing giveaways.'
+      explanation: 'Launch activity creates a timely reason to ask about campaign merchandise, sales enablement, and customer-facing giveaways.',
+      reasonToReachOut: 'Launch activity creates a timely reason to check in',
+      conversationStarter: 'Ask whether the product or service launch needs any sales, customer, or campaign support.'
     };
   }
   if (/service|technician/.test(combo)) {
@@ -197,7 +207,9 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Service Team Onboarding',
       name: 'Technician / Service Team Onboarding Program',
       products: ['uniform starter kits', 'service apparel', 'name-badge ready apparel', 'welcome kits'],
-      explanation: 'Service hiring creates a practical reason to discuss uniforms, onboarding kits, and department apparel.'
+      explanation: 'Service hiring creates a practical reason to ask about uniforms, onboarding, and department apparel.',
+      reasonToReachOut: 'Service team activity creates a timely reason to check in',
+      conversationStarter: 'Ask who handles apparel or onboarding gear for the service team.'
     };
   }
   if (/production|operations|plant|safety|warehouse|manufactur/.test(combo)) {
@@ -205,14 +217,18 @@ function opportunityForSignal(signalType = '', department = '', industry = '') {
       category: 'Workforce Onboarding / Safety',
       name: 'Production Team Onboarding & Safety Program',
       products: ['safety onboarding kits', 'department apparel', 'hi-vis items', 'recruiting giveaways'],
-      explanation: 'Manufacturing or operations hiring creates a timely reason to discuss safety onboarding, apparel, and recruiting support.'
+      explanation: 'Manufacturing or operations hiring creates a timely reason to ask about safety onboarding, apparel, and recruiting support.',
+      reasonToReachOut: 'Workforce activity creates a timely reason to check in',
+      conversationStarter: 'Ask how the team is handling onboarding, safety, or recruiting support for new employees.'
     };
   }
   return {
     category: 'Employee Onboarding',
     name: 'New Hire Onboarding Program',
     products: ['new hire welcome kits', 'employee apparel', 'drinkware', 'recruiting giveaways'],
-    explanation: 'Hiring creates a timely reason to support onboarding, recruiting, and employee welcome programs.'
+    explanation: 'Hiring creates a timely reason to ask about onboarding, recruiting, and employee welcome programs.',
+    reasonToReachOut: 'Hiring creates a timely reason to check in',
+    conversationStarter: 'Ask how they are handling onboarding, apparel, or employee experience for new hires.'
   };
 }
 
@@ -228,7 +244,7 @@ function valueRangeForSignal(signalType = '', count = null, sourceType = '') {
     else if (count && count >= 5) { low = 1500; high = 7500; }
     else { low = 1000; high = 5000; }
   }
-  return { low, high, label: `$${low.toLocaleString()}–$${high.toLocaleString()}` };
+  return { low, high, label: `$${low.toLocaleString()}–$${high.toLocaleString()}`, source: count ? 'Signal volume benchmark' : 'Industry benchmark range' };
 }
 
 function buildSignalIntelligence(result, accountName, signalType, industry = '') {
@@ -238,14 +254,14 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
   const sourceType = classifySource(result.url, result.title);
   const opp = opportunityForSignal(signalType, department, industry);
   const valueRange = valueRangeForSignal(signalType, count, sourceType);
-  const detailBase = compactSentence(result.snippet || result.title || `${signalType} found for ${accountName}`, 240);
+  const detailBase = compactSentence(result.snippet || result.title || `${signalType} found for ${accountName}`, 180);
   const signalDetail = count
-    ? `${signalType}: ${count} role${count === 1 ? '' : 's'} or openings referenced. ${detailBase}`
-    : detailBase;
+    ? `${signalType}: ${count} role${count === 1 ? '' : 's'} or openings referenced.`
+    : `${signalType} found in a ${sourceType.toLowerCase()}.`;
   const freshness = /(2026|2025|today|yesterday|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(raw)
     ? 'Recent public source found'
     : 'Public source found';
-  const whyNow = `${freshness}: ${opp.category.toLowerCase()} is relevant because ${opp.explanation.charAt(0).toLowerCase()}${opp.explanation.slice(1)}`;
+  const whyNow = `${freshness}. ${opp.explanation}`;
   return {
     signalDetail,
     count,
@@ -255,6 +271,9 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
     promoOpportunity: opp.name,
     suggestedProducts: opp.products,
     opportunityExplanation: opp.explanation,
+    reasonToReachOut: opp.reasonToReachOut,
+    conversationStarter: opp.conversationStarter,
+    signalSnippet: detailBase,
     valueSource: 'Signal Only',
     estimatedValueRange: valueRange,
     whyNow,
@@ -287,6 +306,9 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
     suggestedProducts: intelligence.suggestedProducts || [],
     valueSource: intelligence.valueSource || 'Signal Only',
     estimatedValueRange: intelligence.estimatedValueRange,
+    reasonToReachOut: intelligence.reasonToReachOut,
+    conversationStarter: intelligence.conversationStarter,
+    signalSnippet: intelligence.signalSnippet,
     whyNow: intelligence.whyNow
   };
 }
