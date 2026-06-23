@@ -113,22 +113,181 @@ async function ddgSearch(query) {
   }).slice(0, 8);
 }
 
-function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0) {
+
+function compactSentence(text = '', max = 220) {
+  const cleaned = clean(text).replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  return cleaned.length > max ? cleaned.slice(0, max).replace(/\s+\S*$/, '') + '…' : cleaned;
+}
+
+function extractCounts(text = '') {
+  const t = String(text || '');
+  const matches = [...t.matchAll(/\b(\d{1,4})\s+(?:new\s+)?(?:employees|hires|openings|positions|jobs|roles|technicians|workers|associates|operators|engineers|sales consultants)\b/gi)]
+    .map(m => Number(m[1]))
+    .filter(n => Number.isFinite(n) && n > 0);
+  return matches.length ? Math.max(...matches) : null;
+}
+
+function detectDepartment(text = '', industry = '') {
+  const t = `${text} ${industry}`.toLowerCase();
+  if (/technician|service advisor|service department|mechanic|parts/.test(t)) return 'Service / Operations';
+  if (/production|manufactur|operator|machinist|cnc|warehouse|assembly|plant|facility|safety/.test(t)) return 'Operations / Production';
+  if (/sales consultant|sales rep|business development|account executive/.test(t)) return 'Sales';
+  if (/marketing|event|conference|expo|trade show|campaign/.test(t)) return 'Marketing / Events';
+  if (/hr|people|talent|recruit|hiring|careers/.test(t)) return 'HR / People';
+  if (/provider|doctor|nurse|clinical|dental|practice/.test(t)) return 'Clinical / Practice Operations';
+  return 'Relevant department';
+}
+
+function contactForSignal(signalType = '', department = '', industry = '') {
+  const combo = `${signalType} ${department} ${industry}`.toLowerCase();
+  if (/service|technician|mechanic/.test(combo)) return 'Service Director / HR Manager';
+  if (/production|operations|plant|safety|warehouse/.test(combo)) return 'Operations Manager / Safety Manager / HR Manager';
+  if (/event|trade show|marketing|conference/.test(combo)) return 'Marketing Manager / Events Lead';
+  if (/leadership|award|recognition/.test(combo)) return 'Marketing Manager / HR Manager';
+  if (/sales/.test(combo)) return 'Sales Manager / HR Manager';
+  if (/clinical|practice|provider/.test(combo)) return 'Practice Manager / HR Manager';
+  return 'HR Manager / Department Lead';
+}
+
+function opportunityForSignal(signalType = '', department = '', industry = '') {
+  const combo = `${signalType} ${department} ${industry}`.toLowerCase();
+  if (/event|trade show|conference|expo|show/.test(combo)) {
+    return {
+      category: 'Trade Show / Event Support',
+      name: 'Trade Show / Event Merchandise Program',
+      products: ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'],
+      explanation: 'A public event creates a timely reason to support booth traffic, staff presentation, attendee giveaways, and customer follow-up.'
+    };
+  }
+  if (/new location|expansion|facility|opening|grand opening/.test(combo)) {
+    return {
+      category: 'Facility / Location Launch',
+      name: 'New Location Launch Kit',
+      products: ['grand opening gifts', 'location-branded apparel', 'employee welcome kits', 'customer gifts'],
+      explanation: 'Expansion or location activity creates a timely reason for launch merchandise, employee gear, and customer-facing gifts.'
+    };
+  }
+  if (/award|recognized|recognition|milestone|anniversary/.test(combo)) {
+    return {
+      category: 'Recognition / Celebration',
+      name: 'Recognition & Celebration Program',
+      products: ['employee gifts', 'award apparel', 'thank-you kits', 'announcement mailers'],
+      explanation: 'Recognition creates a natural opening for employee celebration gifts, customer announcements, and internal culture merchandise.'
+    };
+  }
+  if (/leadership|appoint|promote|named|joins/.test(combo)) {
+    return {
+      category: 'Leadership Transition',
+      name: 'New Leader Welcome / Team Culture Kit',
+      products: ['welcome gifts', 'team apparel', 'executive gifts', 'internal announcement kits'],
+      explanation: 'Leadership changes create a light-touch reason to support internal communication, team culture, and executive gifting.'
+    };
+  }
+  if (/product|service launch|launch|unveil|release/.test(combo)) {
+    return {
+      category: 'Product / Service Launch',
+      name: 'Product Launch Merchandise Kit',
+      products: ['launch giveaways', 'sales team apparel', 'customer gifts', 'sample kits'],
+      explanation: 'Launch activity creates a timely reason for campaign merchandise, sales enablement kits, and customer-facing giveaways.'
+    };
+  }
+  if (/service|technician/.test(combo)) {
+    return {
+      category: 'Service Team Onboarding',
+      name: 'Technician / Service Team Onboarding Program',
+      products: ['uniform starter kits', 'service apparel', 'name-badge ready apparel', 'welcome kits'],
+      explanation: 'Service hiring creates a practical reason to discuss uniforms, onboarding kits, and department apparel.'
+    };
+  }
+  if (/production|operations|plant|safety|warehouse|manufactur/.test(combo)) {
+    return {
+      category: 'Workforce Onboarding / Safety',
+      name: 'Production Team Onboarding & Safety Program',
+      products: ['safety onboarding kits', 'department apparel', 'hi-vis items', 'recruiting giveaways'],
+      explanation: 'Manufacturing or operations hiring creates a timely reason to discuss safety onboarding, apparel, and recruiting support.'
+    };
+  }
+  return {
+    category: 'Employee Onboarding',
+    name: 'New Hire Onboarding Program',
+    products: ['new hire welcome kits', 'employee apparel', 'drinkware', 'recruiting giveaways'],
+    explanation: 'Hiring creates a timely reason to support onboarding, recruiting, and employee welcome programs.'
+  };
+}
+
+function valueRangeForSignal(signalType = '', count = null, sourceType = '') {
+  const t = `${signalType} ${sourceType}`.toLowerCase();
+  let low = 1000, high = 3000;
+  if (/event|trade show|conference|expo/.test(t)) { low = 2500; high = 10000; }
+  else if (/expansion|new location|facility/.test(t)) { low = 3000; high = 15000; }
+  else if (/award|recognition|leadership/.test(t)) { low = 1500; high = 6000; }
+  else if (/hiring|careers|job/.test(t)) {
+    if (count && count >= 100) { low = 10000; high = 35000; }
+    else if (count && count >= 25) { low = 4000; high = 15000; }
+    else if (count && count >= 5) { low = 1500; high = 7500; }
+    else { low = 1000; high = 5000; }
+  }
+  return { low, high, label: `$${low.toLocaleString()}–$${high.toLocaleString()}` };
+}
+
+function buildSignalIntelligence(result, accountName, signalType, industry = '') {
+  const raw = `${result.title || ''} ${result.snippet || ''}`;
+  const count = extractCounts(raw);
+  const department = detectDepartment(raw, industry);
   const sourceType = classifySource(result.url, result.title);
+  const opp = opportunityForSignal(signalType, department, industry);
+  const valueRange = valueRangeForSignal(signalType, count, sourceType);
+  const detailBase = compactSentence(result.snippet || result.title || `${signalType} found for ${accountName}`, 240);
+  const signalDetail = count
+    ? `${signalType}: ${count} role${count === 1 ? '' : 's'} or openings referenced. ${detailBase}`
+    : detailBase;
+  const freshness = /(2026|2025|today|yesterday|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(raw)
+    ? 'Recent public source found'
+    : 'Public source found';
+  const whyNow = `${freshness}: ${opp.category.toLowerCase()} is relevant because ${opp.explanation.charAt(0).toLowerCase()}${opp.explanation.slice(1)}`;
+  return {
+    signalDetail,
+    count,
+    affectedDepartment: department,
+    suggestedContact: contactForSignal(signalType, department, industry),
+    opportunityCategory: opp.category,
+    promoOpportunity: opp.name,
+    suggestedProducts: opp.products,
+    opportunityExplanation: opp.explanation,
+    valueSource: 'Signal Only',
+    estimatedValueRange: valueRange,
+    whyNow,
+    sourceAuthority: sourceType
+  };
+}
+
+function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0, industry = '') {
+  const sourceType = classifySource(result.url, result.title);
+  const intelligence = buildSignalIntelligence(result, accountName, signalType, industry);
   const confidence = Math.min(0.94, sourceConfidence(sourceType, result.title, result.snippet) + confidenceBoost);
   return {
     signalType,
     type: signalType,
-    title,
-    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 750),
+    title: intelligence.promoOpportunity || title,
+    signalDetail: intelligence.signalDetail,
+    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 900),
     sourceUrl: result.url,
     sourceType,
+    sourceAuthority: intelligence.sourceAuthority || sourceType,
     dateFound: new Date().toISOString().slice(0, 10),
     confidence,
+    confidenceLevel: confidence >= 0.75 ? 'High' : confidence >= 0.60 ? 'Medium' : 'Low',
     isReal: true,
-    opportunityExplanation,
-    promoOpportunity: opportunityExplanation,
-    suggestedContact
+    affectedDepartment: intelligence.affectedDepartment,
+    suggestedContact: intelligence.suggestedContact || suggestedContact,
+    opportunityCategory: intelligence.opportunityCategory,
+    opportunityExplanation: intelligence.opportunityExplanation || opportunityExplanation,
+    promoOpportunity: intelligence.promoOpportunity || title,
+    suggestedProducts: intelligence.suggestedProducts || [],
+    valueSource: intelligence.valueSource || 'Signal Only',
+    estimatedValueRange: intelligence.estimatedValueRange,
+    whyNow: intelligence.whyNow
   };
 }
 
@@ -153,7 +312,8 @@ function signalFromResult(result, accountName, industry = '') {
             ? 'Hiring creates a timely reason to pitch recruiting giveaways, department apparel, safety onboarding kits, and new-hire welcome gifts.'
             : 'Hiring creates a timely reason to pitch onboarding kits, recruiting giveaways, employee apparel, and welcome gifts.',
       isAuto ? 'HR Manager / Service Director / Sales Manager' : 'HR Manager / Department Lead',
-      0.04
+      0.04,
+      industry
     );
   }
 
@@ -165,7 +325,8 @@ function signalFromResult(result, accountName, industry = '') {
       `${accountName} event or campaign activity`,
       'Events create a timely reason to pitch attendee gifts, booth giveaways, staff apparel, signage, and customer-facing promotional merchandise.',
       'Marketing Manager / Events Lead / Sales Manager',
-      0.03
+      0.03,
+      industry
     );
   }
 
@@ -177,7 +338,8 @@ function signalFromResult(result, accountName, industry = '') {
       `${accountName} expansion or location activity`,
       'Expansion creates a timely reason to pitch grand opening kits, location-branded apparel, employee welcome kits, customer gifts, and local launch merchandise.',
       'Operations Manager / Marketing Manager / General Manager',
-      0.04
+      0.04,
+      industry
     );
   }
 
@@ -189,7 +351,8 @@ function signalFromResult(result, accountName, industry = '') {
       `${accountName} launch or announcement activity`,
       'Launch activity creates a timely reason to pitch campaign merchandise, customer giveaways, sales team apparel, and product-specific sales kits.',
       'Marketing Manager / Sales Manager',
-      0.02
+      0.02,
+      industry
     );
   }
 
@@ -201,7 +364,8 @@ function signalFromResult(result, accountName, industry = '') {
       `${accountName} award or recognition activity`,
       'Recognition creates a timely reason to pitch employee celebration gifts, customer announcement mailers, thank-you gifts, and internal culture merchandise.',
       'Marketing Manager / HR Manager',
-      0
+      0,
+      industry
     );
   }
 
@@ -213,7 +377,8 @@ function signalFromResult(result, accountName, industry = '') {
       `${accountName} leadership activity`,
       'Leadership changes create a reason to pitch new-leader welcome packages, internal announcement gifts, team culture merchandise, or executive client gifts.',
       'Executive Assistant / HR Manager / Marketing Manager',
-      -0.02
+      -0.02,
+      industry
     );
   }
 
