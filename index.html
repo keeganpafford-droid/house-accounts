@@ -1042,6 +1042,17 @@
     line-height:1.45;
     margin-bottom:8px;
   }
+  .verified-signal-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:10px;
+    margin:10px 0;
+    padding:10px;
+    background:#f8fafc;
+    border:1px solid var(--line);
+    border-radius:6px;
+    font-size:0.84rem;
+  }
   .verified-opportunity{
     background:#fafaf6;
     border:1px solid var(--line);
@@ -1684,60 +1695,60 @@ function renderVerifiedSignals(signals){
   if(!verified.length){
     return `<div class="no-signals-message">No verified external signals found.</div>`;
   }
-  return verified.map(signal => `
-    <div class="verified-signal-card">
-      <div class="verified-signal-title">Verified Signal: ${escapeHtml(signal.title || signal.signalType || signal.type || 'Business Signal')}</div>
-      <div class="verified-signal-meta">
-        <strong>Type:</strong> ${escapeHtml(signal.signalType || signal.type || 'Business Signal')} ·
-        <strong>Source:</strong> ${escapeHtml(signal.sourceType || 'Public source')} ·
-        <strong>Confidence:</strong> ${confidenceLabel(signal.confidence)} ·
-        <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">View source</a>
-      </div>
-      <div class="verified-signal-evidence"><strong>Evidence:</strong> ${escapeHtml(signal.evidence || signal.description || 'Source-backed business activity found.')}</div>
-      <div class="verified-opportunity">
-        <strong>Opportunity explanation:</strong> ${escapeHtml(signal.opportunityExplanation || signal.promoOpportunity || 'This signal may create a timely reason to discuss branded merchandise.')}<br>
-        <strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}
-      </div>
-    </div>
-  `).join('');
+  return verified.map(signal => {
+    const valueRange = signal.estimatedValueRange?.label || 'Estimate requires account context';
+    return `
+      <div class="verified-signal-card">
+        <div class="verified-signal-title">Verified Signal: ${escapeHtml(signal.signalDetail || signal.title || signal.signalType || signal.type || 'Business Signal')}</div>
+        <div class="verified-signal-meta">
+          <strong>Type:</strong> ${escapeHtml(signal.signalType || signal.type || 'Business Signal')} ·
+          <strong>Source:</strong> ${escapeHtml(signal.sourceType || 'Public source')} ·
+          <strong>Confidence:</strong> ${escapeHtml(signal.confidenceLevel || confidenceLabel(signal.confidence))} ·
+          <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">View source</a>
+        </div>
+        <div class="verified-signal-grid">
+          <div><strong>Department:</strong><br>${escapeHtml(signal.affectedDepartment || 'Relevant department')}</div>
+          <div><strong>Suggested contact:</strong><br>${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>
+          <div><strong>Opportunity category:</strong><br>${escapeHtml(signal.opportunityCategory || 'Promo opportunity')}</div>
+          <div><strong>Value source:</strong><br>${escapeHtml(signal.valueSource || 'Signal Only')} · ${escapeHtml(valueRange)}</div>
+        </div>
+        <div class="verified-signal-evidence"><strong>Evidence:</strong> ${escapeHtml(signal.evidence || signal.description || 'Source-backed business activity found.')}</div>
+        <div class="verified-opportunity">
+          <strong>Why now:</strong> ${escapeHtml(signal.whyNow || 'A verified public signal creates a timely reason to reach out.')}<br>
+          <strong>Opportunity explanation:</strong> ${escapeHtml(signal.opportunityExplanation || signal.promoOpportunity || 'This signal may create a timely reason to discuss branded merchandise.')}
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function addSignalDerivedOpportunities(account, signals){
   const existing = new Set((account.futureOpportunities || []).map(o => o.opportunity));
   (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
     const type = signal.signalType || signal.type || '';
-    let name = signal.promoOpportunity || signal.opportunityExplanation || '';
-    let products = ['branded apparel', 'event giveaways', 'employee kits'];
-    let contactTitle = signal.suggestedContact || 'Relevant department lead';
-    let base = 74;
-
-    if(type.includes('Hiring')){
-      name = name || 'Hiring / Onboarding Merchandise Program';
-      products = ['new hire welcome kits', 'department apparel', 'recruiting giveaways'];
-      contactTitle = signal.suggestedContact || 'HR Manager / Department Manager';
-      base = 78;
-    } else if(type.includes('Event')){
-      name = name || 'Event Merchandise Program';
-      products = ['attendee gifts', 'booth giveaways', 'staff apparel', 'signage'];
-      contactTitle = signal.suggestedContact || 'Marketing Manager / Events Lead';
-      base = 76;
-    } else if(type.includes('Expansion') || type.includes('Location')){
-      name = name || 'New Location Launch Kit';
-      products = ['grand opening gifts', 'location apparel', 'employee welcome kits'];
-      contactTitle = signal.suggestedContact || 'Operations Manager / Marketing Manager';
-      base = 78;
-    } else if(type.includes('Launch') || type.includes('Product')){
-      name = name || 'Product Launch Merchandise Kit';
-      products = ['launch giveaways', 'sales team apparel', 'customer gifts'];
-      contactTitle = signal.suggestedContact || 'Marketing Manager / Sales Manager';
-      base = 74;
-    }
+    const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
+    const products = Array.isArray(signal.suggestedProducts) && signal.suggestedProducts.length
+      ? signal.suggestedProducts
+      : ['branded apparel', 'event giveaways', 'employee kits'];
+    const contactTitle = signal.suggestedContact || 'Relevant department lead';
+    const base = type.includes('Hiring') ? 78 : type.includes('Event') ? 76 : type.includes('Expansion') ? 78 : 74;
 
     if(!name || existing.has(name)) return;
     const opp = createOpportunity(account, name, contactTitle, products, [], base, true);
+    const hasHistory = Number(account.revenue || 0) > 0 || Number(account.orderCount || 0) > 0;
     opp.isVerifiedSignalOpportunity = true;
+    opp.signalTitle = signal.signalDetail || signal.title || type;
+    opp.signalType = type;
+    opp.sourceUrl = signal.sourceUrl;
+    opp.whyNow = signal.whyNow || `Verified signal found: ${signal.signalDetail || signal.title || type}`;
+    opp.valueSource = hasHistory ? 'Historical Orders + Verified Signal' : (signal.valueSource || 'Signal Only');
+    opp.estimatedValueRange = signal.estimatedValueRange || null;
+    opp.opportunityCategory = signal.opportunityCategory || 'Signal-Driven Opportunity';
+    opp.affectedDepartment = signal.affectedDepartment || '';
     opp.evidence = [
-      `Verified external signal: ${signal.title || type}`,
+      `Signal detail: ${signal.signalDetail || signal.title || type}`,
+      `Opportunity category: ${signal.opportunityCategory || name}`,
+      `Affected department: ${signal.affectedDepartment || 'Relevant department'}`,
+      `Value source: ${opp.valueSource}${signal.estimatedValueRange?.label ? ' (' + signal.estimatedValueRange.label + ')' : ''}`,
       `Source type: ${signal.sourceType || 'Public source'}`,
       `Source URL: ${signal.sourceUrl}`,
       signal.evidence || 'External business activity detected',
@@ -1796,6 +1807,7 @@ async function researchTopAccounts(){
 
 function getWhyNowText(opp){
   if(!opp) return 'Review this account for a focused next step.';
+  if(opp.whyNow) return opp.whyNow;
   if(opp.isVerifiedSignalOpportunity || opp.signalTitle || opp.sourceUrl){
     const title = opp.signalTitle || 'Verified external signal';
     return `Verified signal: ${title}`;
@@ -1830,6 +1842,7 @@ function refreshOpportunityViews(){
           <div class="confidence-badge ${tier.cls}">${tier.label} · ${Math.round(opp.confidence)}% Quick Win Score</div>
           <div class="opp-metrics"><div class="metric"><div class="metric-value">${fmtMoney(opp.estimatedValue)}</div><div class="metric-label">Future Opportunity</div></div><div class="metric"><div class="metric-value">${Math.round(opp.confidence)}%</div><div class="metric-label">Score</div></div></div>
           <div class="opp-section"><div class="opp-label">Why Now</div><div class="opp-content">${escapeHtml(getWhyNowText(opp))}</div></div>
+          ${opp.valueSource ? `<div class="opp-section"><div class="opp-label">Value Source</div><div class="opp-content">${escapeHtml(opp.valueSource)}${opp.estimatedValueRange?.label ? ` · ${escapeHtml(opp.estimatedValueRange.label)}` : ``}</div></div>` : ``}
           <div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content">${renderEvidenceList(opp.evidence)}<div class="evidence-note">Every opportunity must be supported by historical order evidence and/or a verified external signal.</div></div></div>
           <div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content meta">${escapeHtml(opp.contactTitle || opp.contact || 'Unknown')}</div></div>
           <div class="opp-section"><div class="opp-label">Suggested Products</div><div class="opp-products">${opp.suggestedProducts.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>
