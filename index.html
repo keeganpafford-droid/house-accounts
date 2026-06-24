@@ -2102,12 +2102,30 @@ function renderResearchDiagnostics(){
   const researched = diagnostics.length;
   const signals = diagnostics.reduce((sum, d) => sum + (d.signalsFound || 0), 0);
   const results = diagnostics.reduce((sum, d) => sum + (d.searchResultsFound || 0), 0);
+  const acceptedSearch = diagnostics.reduce((sum, d) => sum + (d.acceptedSearchSignals || 0), 0);
+  const domainSignals = diagnostics.reduce((sum, d) => sum + (d.domainSignalsFound || 0), 0);
   const rejected = diagnostics.reduce((sum, d) => sum + (d.rejectedResults || 0), 0);
-  const zeroSignalAccounts = diagnostics.filter(d => !d.signalsFound).slice(0, 5).map(d => escapeHtml(d.accountName)).join(', ');
-  el.style.display = 'block';
-  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} candidate search results · ${signals} business activity signals accepted · ${rejected} rejected as generic/low-signal${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}`;
-}
+  const zeroSignalAccounts = diagnostics.filter(d => !d.signalsFound).slice(0, 8).map(d => escapeHtml(d.accountName)).join(', ');
+  const samples = diagnostics.flatMap(d => (d.candidateSamples || []).map(c => ({...c, accountName:d.accountName}))).slice(0, 12);
 
+  const sampleRows = samples.length ? `
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer;"><strong>Candidate result samples</strong> — use this to debug why Business Activity Signals are not appearing</summary>
+      <div style="display:grid; gap:6px; margin-top:8px;">
+        ${samples.map(c => `
+          <div style="background:white; border:1px solid #cfe0ef; padding:8px; border-radius:6px;">
+            <div><strong>${escapeHtml(c.accountName)}</strong> · ${escapeHtml(c.status || 'candidate')} · ${escapeHtml(c.reason || '')}</div>
+            <div>${escapeHtml(c.title || '')}</div>
+            <div style="color:var(--slate);">${escapeHtml(c.domain || '')}${c.sourceType ? ` · ${escapeHtml(c.sourceType)}` : ''}</div>
+          </div>
+        `).join('')}
+      </div>
+    </details>
+  ` : '';
+
+  el.style.display = 'block';
+  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} candidate search results · ${signals} business activity signals accepted · ${acceptedSearch} accepted from search · ${domainSignals} accepted from direct domain scans · ${rejected} rejected as generic/low-signal${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}${sampleRows}`;
+}
 async function researchAccountByName(accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
@@ -2136,9 +2154,13 @@ async function researchAccountByName(accountName){
       accountName: account.name,
       signalsFound: account.signals.length,
       searchResultsFound: diag.searchResultsFound || 0,
+      acceptedSearchSignals: diag.acceptedSearchSignals || 0,
+      domainSignalsFound: diag.domainSignalsFound || 0,
       rejectedResults: diag.rejectedResults || 0,
       queriesRun: diag.queriesRun || 0,
-      domainProbes: diag.domainProbes || 0
+      domainProbes: diag.domainProbes || 0,
+      domainUsed: diag.domainUsed || '',
+      candidateSamples: diag.candidateSamples || []
     };
     if(existingDiagIndex >= 0) window.researchDiagnostics[existingDiagIndex] = nextDiag;
     else window.researchDiagnostics.push(nextDiag);
@@ -2150,9 +2172,15 @@ async function researchAccountByName(accountName){
   }
 }
 
-async function researchTopAccounts(){
+let researchInProgress = false;
+let autoResearchStarted = false;
+
+async function researchTopAccounts(options = {}){
+  if(researchInProgress) return;
+  researchInProgress = true;
   const btn = document.getElementById('researchTopBtn');
-  if(btn){ btn.disabled = true; btn.textContent = 'Researching...'; }
+  const auto = options && options.auto;
+  if(btn){ btn.disabled = true; btn.textContent = auto ? 'Scanning Top Accounts...' : 'Researching...'; }
   window.researchDiagnostics = [];
   renderResearchDiagnostics();
   const accounts = (window.accountRadarAccounts || []).slice(0, 10);
@@ -2160,6 +2188,15 @@ async function researchTopAccounts(){
     await researchAccountByName(account.name);
   }
   if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+  researchInProgress = false;
+}
+
+function autoResearchTopAccountsOnce(){
+  if(autoResearchStarted) return;
+  const accounts = window.accountRadarAccounts || [];
+  if(!accounts.length) return;
+  autoResearchStarted = true;
+  setTimeout(() => researchTopAccounts({auto:true}), 500);
 }
 
 
@@ -3201,6 +3238,7 @@ function processData(records){
   `).join('');
 
   document.getElementById('results').style.display = 'block';
+  autoResearchTopAccountsOnce();
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
 
@@ -3211,7 +3249,7 @@ function processData(records){
     closedHistoricalRevenue,
     activePipelineTotal,
     futureOpportunityCount: futureOpportunities.length,
-    futureOpportunityValue: totalFutureValue
+    reasonsToReachOut: futureOpportunities.length
   };
 }
 
