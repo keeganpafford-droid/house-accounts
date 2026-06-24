@@ -559,6 +559,153 @@ function candidateSample(result = {}, accountName = '', signal = null) {
   };
 }
 
+
+function parseJsonLoose(text = '') {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch {}
+  const match = String(text).match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch {}
+  }
+  return null;
+}
+
+function safeCandidateForAI(result = {}, idx = 0) {
+  return {
+    id: String(idx),
+    title: compactSentence(stripBadFragments(result.title || ''), 160),
+    snippet: compactSentence(stripBadFragments(result.snippet || ''), 260),
+    url: result.url || '',
+    domain: cleanSourceName(result.url || ''),
+    sourceType: classifySource(result.url || '', result.title || '')
+  };
+}
+
+function signalTypeFromAI(type = '') {
+  const t = String(type || '').toLowerCase();
+  if (/hiring|job|career|recruit/.test(t)) return 'Hiring Activity';
+  if (/event|conference|trade|expo|show|community|sponsor|fundrais/.test(t)) return 'Events / Conferences';
+  if (/expansion|facility|location|growth|opening/.test(t)) return 'Expansion / New Location';
+  if (/leader|ceo|president|director|appoint|promot|new hire/.test(t)) return 'Leadership Changes';
+  if (/award|recognition|recognized|winner|milestone/.test(t)) return 'Awards / Recognition';
+  if (/launch|product|service|announce/.test(t)) return 'Product / Service Launch';
+  if (/acquisition|acquired|merger|funding/.test(t)) return 'Expansion / New Location';
+  return 'Business Activity';
+}
+
+function confidenceFromAI(confidence = '') {
+  const c = String(confidence || '').toLowerCase();
+  if (/high/.test(c)) return { label: 'High', score: 0.84 };
+  if (/low/.test(c)) return { label: 'Low', score: 0.50 };
+  return { label: 'Medium', score: 0.68 };
+}
+
+function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '') {
+  const signalType = signalTypeFromAI(aiSignal.signalType || aiSignal.type);
+  const confidence = confidenceFromAI(aiSignal.confidence);
+  const sourceResult = {
+    url: candidate.url || aiSignal.sourceUrl || '',
+    title: candidate.title || aiSignal.title || '',
+    snippet: candidate.snippet || aiSignal.summary || aiSignal.whyItMatters || ''
+  };
+  const base = makeSignal(
+    sourceResult,
+    accountName,
+    signalType,
+    aiSignal.signalTitle || aiSignal.signalType || `${accountName} business activity`,
+    aiSignal.whyItMatters || aiSignal.whyReachOut || 'Public business activity creates a timely reason to check in.',
+    aiSignal.suggestedContact || '',
+    0,
+    industry
+  );
+
+  const cleanSummary = compactSentence(aiSignal.shortSummary || aiSignal.summary || aiSignal.signalTitle || candidate.title || candidate.snippet || '', 150);
+  const whyReachOut = compactSentence(aiSignal.whyReachOut || aiSignal.whyItMatters || base.reasonToReachOut || 'Recent business activity creates a timely reason to check in.', 190);
+  const opener = compactSentence(aiSignal.suggestedOpener || aiSignal.conversationAngle || base.conversationStarter || 'Saw some recent activity and wanted to check in — anything coming up where support would be helpful?', 200);
+
+  return {
+    ...base,
+    signalType,
+    type: signalType,
+    title: aiSignal.signalTitle || base.title,
+    signalDetail: cleanSummary || base.signalDetail,
+    shortSummary: cleanSummary || base.shortSummary,
+    signalSnippet: cleanSummary || base.signalSnippet,
+    evidence: `${candidate.domain || cleanSourceName(candidate.url)}: ${cleanSummary || candidate.title || 'Public source'}`,
+    sourceUrl: candidate.url || base.sourceUrl,
+    sourceType: candidate.sourceType || base.sourceType,
+    sourceAuthority: candidate.sourceType || base.sourceAuthority,
+    confidence: confidence.score,
+    confidenceLevel: confidence.label,
+    reasonToReachOut: whyReachOut,
+    conversationStarter: opener,
+    whyNow: whyReachOut,
+    suggestedContact: aiSignal.suggestedContact || base.suggestedContact,
+    opportunityCategory: aiSignal.opportunityCategory || base.opportunityCategory,
+    opportunityExplanation: aiSignal.whyItMatters || base.opportunityExplanation,
+    aiQualified: true,
+    valueSource: 'AI-qualified public signal'
+  };
+}
+
+async function aiQualifyBusinessSignals(accountName, industry, candidates = []) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || !candidates.length) {
+    return { enabled: Boolean(apiKey), signals: [], rawCount: 0, error: apiKey ? '' : 'OPENAI_API_KEY not configured' };
+  }
+
+  const safeCandidates = candidates
+    .filter(c => c && c.url && !isBadSearchText(`${c.title} ${c.snippet}`))
+    .slice(0, 12)
+    .map(safeCandidateForAI);
+
+  if (!safeCandidates.length) return { enabled: true, signals: [], rawCount: 0, error: 'No usable candidates for AI qualification' };
+
+  const prompt = `You qualify public business signals for House Accounts, a tool for promotional products distributors.\n\nAccount: ${accountName}\nIndustry: ${industry || 'Unknown'}\n\nTask: Review these public search candidates. Return ONLY legitimate business activity signals that create a real reason for a promotional products salesperson to reach out.\n\nValid signals include: hiring, expansion, facility growth, leadership change, product/service launch, trade show/event participation, community initiative, award/recognition, acquisition, fundraising, major company initiative.\n\nReject generic homepage descriptions, contact pages, location pages, about-us copy, SEO text, navigation text, and anything that does not create a timely reason to contact the company.\n\nReturn strict JSON only with this shape:\n{\n  "signals": [\n    {\n      "candidateId": "0",\n      "signalType": "Hiring | Event | Expansion | Leadership Change | Award | Product Launch | Community Initiative | Acquisition | Major Initiative",\n      "signalTitle": "short human-readable signal",\n      "shortSummary": "one short sentence, no raw web scrape text",\n      "whyReachOut": "one sentence explaining why a rep should contact them",\n      "suggestedOpener": "casual opener a rep could actually send",\n      "suggestedContact": "likely role to contact",\n      "confidence": "High | Medium | Low"\n    }\n  ]\n}\n\nCandidates:\n${JSON.stringify(safeCandidates, null, 2)}`;
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You return only valid JSON. You are strict about rejecting weak, generic, or non-actionable business signals.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 1200,
+        response_format: { type: 'json_object' }
+      })
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { enabled: true, signals: [], rawCount: 0, error: `OpenAI ${resp.status}: ${errText.slice(0, 180)}` };
+    }
+
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content || '';
+    const parsed = parseJsonLoose(content) || {};
+    const rawSignals = Array.isArray(parsed.signals) ? parsed.signals : [];
+    const signals = rawSignals
+      .map(sig => {
+        const candidate = safeCandidates.find(c => String(c.id) === String(sig.candidateId)) || safeCandidates[0];
+        if (!candidate || !candidate.url) return null;
+        return makeAISignal(sig, candidate, accountName, industry);
+      })
+      .filter(Boolean)
+      .slice(0, 4);
+
+    return { enabled: true, signals, rawCount: rawSignals.length, error: '' };
+  } catch (err) {
+    return { enabled: true, signals: [], rawCount: 0, error: err.message || 'OpenAI qualification failed' };
+  }
+}
+
 function domainFromEmailDomain(emailDomain = '') {
   const d = String(emailDomain || '').trim().toLowerCase().replace(/^www\./,'');
   if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(d)) return '';
@@ -624,7 +771,12 @@ export default async function handler(req, res) {
 
     const evaluatedSearchResults = allResults.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
+
+    // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
+    // If OPENAI_API_KEY is not configured, this safely falls back to keyword-qualified signals.
+    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allResults);
     const signals = dedupeSignals([
+      ...aiQualification.signals,
       ...domainSignals,
       ...acceptedSearchSignals
     ]);
@@ -645,6 +797,10 @@ export default async function handler(req, res) {
         searchResultsFound: allResults.length,
         acceptedSearchSignals: acceptedSearchSignals.length,
         domainSignalsFound: domainSignals.length,
+        aiEnabled: aiQualification.enabled,
+        aiRawSignals: aiQualification.rawCount || 0,
+        aiAcceptedSignals: aiQualification.signals.length,
+        aiError: aiQualification.error || '',
         rejectedResults,
         signalsReturned: signals.length,
         candidateSamples
