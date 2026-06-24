@@ -41,6 +41,25 @@ function classifySource(url = '', title = '') {
   return 'Public web source';
 }
 
+function cleanSourceName(url = '') {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return host || 'public source';
+  } catch {
+    return 'public source';
+  }
+}
+
+function cleanSignalSummary(result = {}, max = 150) {
+  const rawTitle = clean(result.title || '');
+  const rawSnippet = clean(result.snippet || '');
+  const title = rawTitle.replace(/\s*[|•-]\s*.*$/, '').trim();
+  const source = cleanSourceName(result.url);
+  const preferred = title && title.length >= 6 ? title : rawSnippet;
+  const cleaned = compactSentence(preferred, max);
+  return cleaned || `Public source found on ${source}`;
+}
+
 function sourceConfidence(sourceType, title = '', snippet = '') {
   const text = `${title} ${snippet}`.toLowerCase();
   let score = 0.58;
@@ -252,17 +271,31 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
   const count = extractCounts(raw);
   const department = detectDepartment(raw, industry);
   const sourceType = classifySource(result.url, result.title);
+  const sourceName = cleanSourceName(result.url);
   const opp = opportunityForSignal(signalType, department, industry);
   const valueRange = valueRangeForSignal(signalType, count, sourceType);
-  const detailBase = compactSentence(result.snippet || result.title || `${signalType} found for ${accountName}`, 180);
-  const signalDetail = count
-    ? `${signalType}: ${count} role${count === 1 ? '' : 's'} or openings referenced.`
-    : `${signalType} found in a ${sourceType.toLowerCase()}.`;
-  const freshness = /(2026|2025|today|yesterday|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(raw)
-    ? 'Recent public source found'
-    : 'Public source found';
-  const whyNow = `${freshness}. ${opp.explanation}`;
+  const shortSummary = cleanSignalSummary(result, 150);
+
+  let signalDetail = `${signalType} found via ${sourceName}`;
+  if (/hiring/i.test(signalType)) {
+    signalDetail = count
+      ? `Hiring activity: ${count} role${count === 1 ? '' : 's'} or openings referenced`
+      : 'Hiring or careers activity found';
+  } else if (/event|conference/i.test(signalType)) {
+    signalDetail = 'Event or campaign activity found';
+  } else if (/expansion|location/i.test(signalType)) {
+    signalDetail = 'Growth, expansion, or location activity found';
+  } else if (/award|recognition/i.test(signalType)) {
+    signalDetail = 'Award, recognition, or milestone activity found';
+  } else if (/leadership/i.test(signalType)) {
+    signalDetail = 'Leadership or team change found';
+  } else if (/launch/i.test(signalType)) {
+    signalDetail = 'Product, service, or campaign launch activity found';
+  }
+
+  const whyNow = `${signalDetail}. ${opp.conversationStarter}`;
   return {
+    signalLayerType: 'Business Activity Signal',
     signalDetail,
     count,
     affectedDepartment: department,
@@ -273,7 +306,9 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
     opportunityExplanation: opp.explanation,
     reasonToReachOut: opp.reasonToReachOut,
     conversationStarter: opp.conversationStarter,
-    signalSnippet: detailBase,
+    signalSnippet: shortSummary,
+    shortSummary,
+    cleanSourceName: sourceName,
     valueSource: 'Signal Only',
     estimatedValueRange: valueRange,
     whyNow,
@@ -289,8 +324,11 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
     signalType,
     type: signalType,
     title: intelligence.promoOpportunity || title,
+    signalLayerType: intelligence.signalLayerType,
     signalDetail: intelligence.signalDetail,
-    evidence: `${result.title}${result.snippet ? ' — ' + result.snippet : ''}`.slice(0, 900),
+    shortSummary: intelligence.shortSummary,
+    cleanSourceName: intelligence.cleanSourceName,
+    evidence: `${intelligence.cleanSourceName}: ${intelligence.shortSummary}`,
     sourceUrl: result.url,
     sourceType,
     sourceAuthority: intelligence.sourceAuthority || sourceType,
