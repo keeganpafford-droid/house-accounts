@@ -1624,10 +1624,12 @@ function parseCSV(text){
     client_name: ['client_name','company_name','company','account_name','account','customer_name','customer','client','client_company','organization','business_name','business','name'],
     project_name: ['project_name','project','name','project_title','order_name','job_name','description','product','item'],
     order_date: ['order_date','date','purchase_date','created_date'],
-    revenue: ['revenue','amount','total','subtotal','order_value','sales','project_billed_margin_subtotal','booked_margin_subtotal'],
+    revenue: ['revenue','amount','total','subtotal','order_value','order_amount','sales','project_billed_margin_subtotal','booked_margin_subtotal'],
     margin: ['margin','margin_pct','booked_margin','booked_margin_amount','project_billed_margin','project_billed_margin_amount','profit'],
     margin_percent: ['margin_percent','booked_margin_percent','project_billed_margin_percent','booked_margin_','project_billed_margin_'],
     contact_name: ['contact_name','contact','contact_person','primary_contact','project_client_contact','client_contact'],
+    category: ['category','product_category','item_category','project_category','order_category','type'],
+    quantity: ['quantity','qty','units'],
     contact_first: ['project_client_contact_first_name','contact_first_name','first_name'],
     contact_last: ['project_client_contact_last_name','contact_last_name','last_name'],
     contact_email: ['contact_email','project_client_contact_email','email','contact_email_address'],
@@ -1666,14 +1668,20 @@ function parseCSV(text){
     const marginRaw = get('margin').replace(/[^0-9.\-]/g,'');
     const dateStr = get('order_date');
     const d = new Date(dateStr);
-    const projectName = colIndex.project_name !== undefined ? (get('project_name') || 'Unspecified') : 'Unspecified';
+    const explicitCategory = get('category');
+    const projectName = colIndex.project_name !== undefined
+      ? (get('project_name') || explicitCategory || 'Unspecified')
+      : (explicitCategory ? `${explicitCategory} order` : 'Unspecified');
     const contactName = get('contact_name') || [get('contact_first'), get('contact_last')].filter(Boolean).join(' ');
     const clientName = get('client_name') || '';
     if(isLikelyInvalidAccountName(clientName)) continue;
+    const categoryText = [explicitCategory, projectName, get('order_tags'), get('client_tags')].filter(Boolean).join(' ');
     records.push({
       client: clientName || 'Unknown',
       project: projectName,
-      category: inferPromoCategory(projectName + ' ' + get('order_tags') + ' ' + get('client_tags')),
+      category: explicitCategory ? inferPromoCategory(categoryText) : inferPromoCategory(categoryText),
+      rawCategory: explicitCategory,
+      quantity: parseFloat(String(get('quantity') || '').replace(/[^0-9.\-]/g,'')) || null,
       date: isNaN(d.getTime()) ? null : d,
       dateStr,
       revenue: parseFloat(revenueRaw) || 0,
@@ -1697,9 +1705,12 @@ function inferPromoCategory(text){
     ['Drinkware', ['coozie','koozie','tumbler','mug','bottle','drinkware','cup','can cooler']],
     ['Event / Giveaway', ['event','convention','giveaway','premiums','swag','launch','show','expo','booth','sales event']],
     ['Recognition / Awards', ['award','awards','recognition','excellence','anniversary','years','milestone','appreciation']],
-    ['Print / Stationery', ['journal','notebook','set','card','print','sign','banner','table throw']],
+    ['Print / Stationery', ['journal','notebook','office','stationery','set','card','print','sign','banner','table throw']],
     ['Onboarding / Recruiting', ['new hire','onboarding','welcome','recruiting','career','employee kit']],
-    ['Safety', ['safety','ppe','hi-vis','vest','osha']]
+    ['Safety', ['safety','ppe','hi-vis','vest','osha']],
+    ['Wellness / Employee Engagement', ['wellness','health fair','employee engagement','wellbeing']],
+    ['Client Gifts', ['client gifts','client gift','customer gifts','premium gifts']],
+    ['Sales Incentive', ['sales incentive','incentive','spiff']]
   ];
   const hits = [];
   for(const [cat, words] of rules){
@@ -2402,10 +2413,132 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
   };
 }
 
+
+function monthNameFromDate(d){
+  if(!d || isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', { month: 'long' });
+}
+
+function categoryProgramLabel(category){
+  const c = String(category || 'Program').replace(/\s*\/\s*/g, ' / ');
+  if(c === 'Event / Giveaway') return 'Event / Giveaway Program';
+  if(c === 'Recognition / Awards') return 'Recognition / Awards Program';
+  if(c === 'Onboarding / Recruiting') return 'Onboarding / Recruiting Program';
+  if(c === 'Print / Stationery') return 'Print / Stationery Program';
+  return `${c} Program`;
+}
+
+function averageRevenue(records){
+  const values = (records || []).map(r => Number(r.revenue || 0)).filter(v => v > 0);
+  if(!values.length) return 0;
+  return values.reduce((a,b)=>a+b,0) / values.length;
+}
+
+function findRepeatPatternGroups(account){
+  const orders = (account.purchases || []).filter(o => o && o.date && o.category && o.category !== 'Uncategorized');
+  if(orders.length < 2) return [];
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const groups = new Map();
+  orders.forEach(o => {
+    const key = o.category;
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  });
+
+  const patterns = [];
+  groups.forEach((catOrders, category) => {
+    if(catOrders.length < 2) return;
+    const years = new Set(catOrders.map(o => o.date.getFullYear()));
+    const monthCounts = new Map();
+    catOrders.forEach(o => monthCounts.set(o.date.getMonth(), (monthCounts.get(o.date.getMonth()) || 0) + 1));
+    const strongestMonth = [...monthCounts.entries()].sort((a,b)=>b[1]-a[1])[0];
+    const hasMultiYear = years.size >= 2;
+    const hasSeasonalMonth = strongestMonth && strongestMonth[1] >= 2;
+    const hasCurrentSeasonActivity = catOrders.some(o => Math.abs(o.date.getMonth() - thisMonth) <= 1 || Math.abs(o.date.getMonth() - thisMonth) >= 11);
+    const hasEnoughVolume = catOrders.length >= 3;
+
+    if(!(hasMultiYear || hasSeasonalMonth || hasEnoughVolume)) return;
+
+    const sorted = [...catOrders].sort((a,b)=>b.date-a.date);
+    const last = sorted[0];
+    const monthLabel = strongestMonth ? new Date(2026, strongestMonth[0], 1).toLocaleString('en-US', {month:'long'}) : monthNameFromDate(last.date);
+    const avg = averageRevenue(catOrders);
+    const confidence = (hasMultiYear && hasSeasonalMonth) ? 82 : hasMultiYear ? 74 : 64;
+    patterns.push({
+      category,
+      orders: catOrders,
+      orderCount: catOrders.length,
+      years: [...years].sort(),
+      monthLabel,
+      lastDate: last.date,
+      lastDateStr: last.dateStr,
+      avgRevenue: avg,
+      confidence,
+      hasCurrentSeasonActivity
+    });
+  });
+  return patterns.sort((a,b)=>b.confidence-a.confidence || b.orderCount-a.orderCount || b.avgRevenue-a.avgRevenue).slice(0, 3);
+}
+
+function createRepeatPatternOpportunities(account){
+  const patterns = findRepeatPatternGroups(account);
+  return patterns.map(pattern => {
+    const program = categoryProgramLabel(pattern.category);
+    const contactTitle = pattern.category.includes('Event') ? 'Marketing Manager / Events Lead'
+      : pattern.category.includes('Onboarding') ? 'HR Manager'
+      : pattern.category.includes('Safety') ? 'Safety Manager / HR Manager'
+      : pattern.category.includes('Client') ? 'Marketing Manager / Client Experience Lead'
+      : 'Marketing Manager / HR Manager';
+    const products = categoryToPromoSuggestions(pattern.category);
+    const opp = createOpportunity(
+      account,
+      program,
+      contactTitle,
+      products,
+      [pattern.category],
+      pattern.confidence,
+      false
+    );
+    const valueBasis = pattern.avgRevenue > 0 ? pattern.avgRevenue : Math.max(1500, (account.revenue || 0) / Math.max(account.orderCount || 1, 1));
+    opp.estimatedValue = Math.round(valueBasis * 1.15);
+    opp.signalLayerType = 'Repeat / Pattern Signal';
+    opp.opportunityType = 'REPEAT PATTERN';
+    opp.reasonToReachOut = `${program} may be coming up again`;
+    opp.whyNow = `${account.name} has ordered ${pattern.category.toLowerCase()} ${pattern.orderCount} times${pattern.years.length > 1 ? ` across ${pattern.years.length} years` : ''}${pattern.monthLabel ? `, with activity around ${pattern.monthLabel}` : ''}.`;
+    opp.conversationStarter = `Ask if the ${pattern.category.toLowerCase()} program is happening again this year.`;
+    opp.signalDate = pattern.lastDate ? pattern.lastDate.toISOString() : '';
+    opp.confidence = Math.max(opp.confidence || 0, pattern.confidence);
+    opp.quickWinScore = Math.max(opp.quickWinScore || 0, pattern.confidence);
+    opp.closeProbability = Math.max(opp.closeProbability || 0, pattern.confidence - 5);
+    opp.evidence = [
+      `${pattern.orderCount} ${pattern.category.toLowerCase()} orders found`,
+      pattern.years.length > 1 ? `Purchase history spans ${pattern.years.join(', ')}` : `Repeated purchase pattern detected`,
+      pattern.monthLabel ? `Most common timing: ${pattern.monthLabel}` : `Recent similar order: ${pattern.lastDateStr || 'recent history'}`
+    ].filter(Boolean).slice(0,3);
+    opp.commonPromoCategories = products;
+    return opp;
+  });
+}
+
+function categoryToPromoSuggestions(category){
+  const c = String(category || '').toLowerCase();
+  if(c.includes('apparel')) return ['apparel refresh', 'team shirts', 'outerwear', 'uniforms'];
+  if(c.includes('headwear')) return ['caps', 'beanies', 'seasonal headwear', 'employee hats'];
+  if(c.includes('event') || c.includes('trade')) return ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'];
+  if(c.includes('recognition') || c.includes('award')) return ['recognition gifts', 'milestone awards', 'team incentives', 'drinkware'];
+  if(c.includes('onboarding') || c.includes('recruiting')) return ['welcome kits', 'new hire apparel', 'recruiting giveaways', 'drinkware'];
+  if(c.includes('safety')) return ['hi-vis apparel', 'safety awards', 'PPE-friendly gear', 'team incentives'];
+  if(c.includes('drinkware')) return ['tumblers', 'bottles', 'mugs', 'drinkware sets'];
+  if(c.includes('client')) return ['client gifts', 'premium gifts', 'thank-you items', 'event gifts'];
+  if(c.includes('wellness')) return ['wellness kits', 'employee gifts', 'drinkware', 'challenge rewards'];
+  return ['apparel', 'giveaways', 'recognition gifts', 'event kits'];
+}
+
 function generateFutureOpportunities(account){
   const cats = account.categoryTypes || new Set();
   const industry = account.industry;
-  const opps = [];
+  const opps = createRepeatPatternOpportunities(account);
 
   if(industry === 'Automotive / Dealership'){
     if(cats.has('Apparel') || cats.has('Headwear')){
@@ -2835,8 +2968,37 @@ function limitReasonsPerAccount(opps, maxPerAccount=2){
 
 function prepareDailyReasons(opps, limit=20){
   const collapsed = collapseDuplicateFollowUps(opps || []);
-  const sorted = sortDailyReasons(collapsed);
-  return limitReasonsPerAccount(sorted, 2).slice(0, limit);
+  const sorted = limitReasonsPerAccount(sortDailyReasons(collapsed), 2);
+
+  // Keep follow-ups highest priority, but do not let them monopolize the feed.
+  // If repeat/pattern or business signals exist, reserve room so reps can scan different kinds of reasons.
+  const groups = {
+    follow: sorted.filter(o => signalLayerLabel(o) === 'Follow-Up Signal'),
+    repeat: sorted.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal'),
+    business: sorted.filter(o => signalLayerLabel(o) === 'Business Activity Signal')
+  };
+  const targets = {
+    follow: groups.repeat.length || groups.business.length ? Math.min(8, limit) : limit,
+    repeat: groups.repeat.length ? 7 : 0,
+    business: groups.business.length ? 5 : 0
+  };
+  const selected = [];
+  const used = new Set();
+  function take(arr, n){
+    for(const opp of arr){
+      if(selected.length >= limit || n <= 0) break;
+      const key = `${opp.account}|${opp.opportunity}|${opp.signalLayerType}|${opp.signalDate || ''}`;
+      if(used.has(key)) continue;
+      selected.push(opp);
+      used.add(key);
+      n--;
+    }
+  }
+  take(groups.follow, targets.follow);
+  take(groups.repeat, targets.repeat);
+  take(groups.business, targets.business);
+  take(sorted, limit - selected.length);
+  return selected.slice(0, limit);
 }
 
 function feedSummary(opps){

@@ -1,25 +1,10 @@
-# House Accounts v19 - Simple Signal Layer
+# House Accounts v23 - Repeat Pattern Signal Fix
 
-Focused update: House Accounts now centers each result around a rep-friendly reason to reach out.
+This release fixes repeat/pattern signal detection for richer order-history uploads.
 
-Signal types:
-- Simple Follow-Up Signal
-- Repeat / Pattern Signal
-- Business / Web Signal
-
-Opportunity cards now show:
-- Why reach out
-- Evidence, limited to 1-3 bullets
-- Suggested opener
-- Confidence: High / Medium / Low
-- Estimated value as secondary context
-
-Public web signals are cleaned before display; raw scrape text is not shown in opportunity cards.
-
-
-## v20 Daily Reasons Feed
-
-- Keeps v19 simple signal framework.
-- Adds Daily Reasons To Reach Out as the primary results feed.
-- Sorts by actionability, not projected revenue: Follow-Up Signals, then Repeat / Pattern Signals, then Business Activity Signals.
-- Cards stay scan-friendly: signal type, why reach out, suggested opener, confidence, and max 1-3 evidence bullets.
+Changes:
+- Adds column mapping support for Category, Order Amount, Quantity, and Primary Contact.
+- Uses explicit category columns when available instead of relying only on project names.
+- Adds repeat-pattern detection across categories, dates, and years.
+- Generates Repeat / Pattern Signals when an account has recurring seasonal or repeated category purchases.
+- Balances the Daily Reasons feed so follow-up signals remain highest priority but do not crowd out repeat/pattern signals when available.
