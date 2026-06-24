@@ -1,10 +1,22 @@
-# House Accounts v23 - Repeat Pattern Signal Fix
+# House Accounts v26 — AI Business Signal Qualification
 
-This release fixes repeat/pattern signal detection for richer order-history uploads.
+Adds an optional OpenAI-powered qualification layer to the business signal pipeline.
 
-Changes:
-- Adds column mapping support for Category, Order Amount, Quantity, and Primary Contact.
-- Uses explicit category columns when available instead of relying only on project names.
-- Adds repeat-pattern detection across categories, dates, and years.
-- Generates Repeat / Pattern Signals when an account has recurring seasonal or repeated category purchases.
-- Balances the Daily Reasons feed so follow-up signals remain highest priority but do not crowd out repeat/pattern signals when available.
+If `OPENAI_API_KEY` is configured in Vercel, the research endpoint will:
+1. Search candidate public pages/results.
+2. Ask AI whether each candidate is a legitimate promo-relevant business signal.
+3. Return only meaningful signals with signal type, why reach out, suggested opener, contact role, and confidence.
+
+If no API key is configured, the app safely falls back to the existing keyword-based signal logic.
+
+Required Vercel environment variable:
+- `OPENAI_API_KEY`
+
+Optional:
+- `OPENAI_MODEL` defaults to `gpt-4o-mini`
+
+Upload/replace:
+- `api/research-account.js`
+- `index.html`
+
+Keep other files as included if you want a full v26 replacement.
