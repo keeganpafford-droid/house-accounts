@@ -1845,13 +1845,62 @@ function formatSignalAge(opp){
   return `Detected ${d.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
 }
 
+
+function cleanBusinessText(text){
+  let t = String(text || '').replace(/\s+/g,' ').trim();
+  t = t.replace(/[-–—>\s]*You have JavaScript disabled or are viewing the site on a device that does not support[^.]*\.?/ig, ' ');
+  t = t.replace(/[-–—>\s]*Press\s*-\s*/ig, ' ');
+  t = t.replace(/\bContact Saved Saved\b/ig, ' ');
+  t = t.replace(/\bMap Contact Saved\b/ig, ' ');
+  t = t.replace(/\s+/g,' ').trim();
+  if(/javascript disabled|unsupported browser|does not support|saved saved|captcha|access denied/i.test(t)) return '';
+  return t;
+}
+
+function businessSignalKind(opp){
+  const raw = `${opp.signalType || ''} ${opp.opportunityCategory || ''} ${opp.opportunity || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''}`.toLowerCase();
+  if(/hiring|career|job|recruit|new hire|technician|production|operator/.test(raw)) return 'hiring';
+  if(/event|conference|expo|trade show|open house|campaign|sponsorship/.test(raw)) return 'event';
+  if(/expansion|new location|facility|opening|grand opening|growth/.test(raw)) return 'expansion';
+  if(/award|recognition|milestone|anniversary|honor|winner/.test(raw)) return 'recognition';
+  if(/leadership|appoint|promote|named|joins/.test(raw)) return 'leadership';
+  if(/launch|new product|new service/.test(raw)) return 'launch';
+  return 'business';
+}
+
+function businessSignalPlainSummary(opp){
+  const account = opp.account || 'this account';
+  const detail = cleanBusinessText(opp.signalDetail || opp.signalTitle || opp.signalSummary || opp.shortSummary || '');
+  const kind = businessSignalKind(opp);
+  if(detail && detail.length > 12 && !/^Ford Dealer|^Dentist Exeter|^Careers with/i.test(detail)) return shortText(detail, 150);
+  if(kind === 'hiring') return `${account} has public hiring or careers activity worth checking on.`;
+  if(kind === 'event') return `${account} has public event, campaign, or community activity worth checking on.`;
+  if(kind === 'expansion') return `${account} has public growth or expansion activity worth checking on.`;
+  if(kind === 'recognition') return `${account} has public recognition or milestone activity worth checking on.`;
+  if(kind === 'leadership') return `${account} has public leadership or team-change activity worth checking on.`;
+  if(kind === 'launch') return `${account} has public product, service, or campaign activity worth checking on.`;
+  return `Recent public activity gives a timely reason to reconnect with ${account}.`;
+}
+
+function businessSuggestedOpener(opp){
+  const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
+  const kind = businessSignalKind(opp);
+  if(kind === 'hiring') return `Hey ${contact} — noticed some hiring activity on your end. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
+  if(kind === 'event') return `Hey ${contact} — noticed some event or community activity on your end. Is there anything coming up where it would help to think through merch, attendee gifts, or staff gear?`;
+  if(kind === 'expansion') return `Hey ${contact} — saw some growth activity on your end. Is that creating any internal or customer-facing needs we should be thinking about?`;
+  if(kind === 'recognition') return `Hey ${contact} — saw some recognition activity around the team. Anything coming up where employee or customer appreciation would be useful?`;
+  if(kind === 'leadership') return `Hey ${contact} — noticed some team or leadership activity. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
+  if(kind === 'launch') return `Hey ${contact} — noticed some launch activity on your end. Is there anything customer-facing or sales-team related that would be worth planning around?`;
+  return `Hey ${contact} — saw some recent activity on your end and thought it was worth checking in. Anything coming up that we should be thinking about?`;
+}
+
 function getRepFriendlyWhy(opp){
   const layer = signalLayerLabel(opp);
   const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
   if(layer === 'Follow-Up Signal'){
     if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
-      return 'A recent apparel-related project is fresh enough to check how it was received and whether anything else is coming up.';
+      return 'A recent apparel project is fresh enough for a simple check-in on fit, feedback, and any follow-up needs.';
     }
     if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
       return 'A recent event or giveaway project gives the rep a natural reason to ask how it performed.';
@@ -1870,8 +1919,7 @@ function getRepFriendlyWhy(opp){
     }
     return 'Historical buying behavior suggests a possible repeat need worth asking about now.';
   }
-  const summary = opp.signalSummary || opp.shortSummary || opp.signalTitle || getWhyNowText(opp);
-  return shortText(summary, 160) || 'Recent public business activity creates a timely reason to reconnect.';
+  return businessSignalPlainSummary(opp);
 }
 
 function getRepEvidenceBullets(opp){
@@ -1879,7 +1927,8 @@ function getRepEvidenceBullets(opp){
   const out = [];
   if(layer === 'Business Activity Signal'){
     if(opp.sourceUrl) out.push(`Source: ${sourceDomain(opp.sourceUrl) || 'public web source'}`);
-    if(opp.signalSummary || opp.signalTitle) out.push(shortText(opp.signalSummary || opp.signalTitle, 130));
+    const cleanSummary = businessSignalPlainSummary(opp);
+    if(cleanSummary) out.push(shortText(cleanSummary, 130));
     if(opp.affectedDepartment) out.push(`Likely team: ${opp.affectedDepartment}`);
   } else {
     const ev = Array.isArray(opp.evidence) ? opp.evidence : [];
@@ -1920,8 +1969,7 @@ function getSuggestedOpener(opp){
     }
     return `Hey ${contact} — looks like we helped with something similar around this time before. Is that coming up again?`;
   }
-  const topic = shortText(opp.signalSummary || opp.signalTitle || 'something timely on your end', 90);
-  return `Hey ${contact} — noticed ${topic}. Is that creating anything worth planning around?`;
+  return businessSuggestedOpener(opp);
 }
 
 function mailtoHref(email){
@@ -2004,8 +2052,8 @@ function addSignalDerivedOpportunities(account, signals){
     opp.isVerifiedSignalOpportunity = true;
     opp.signalLayerType = signal.signalLayerType || 'Business Activity Signal';
     opp.signalTitle = signal.signalDetail || signal.title || type;
-    opp.signalSummary = signal.shortSummary || signal.signalSnippet || signal.evidence || signal.title || '';
-    opp.shortSummary = signal.shortSummary || signal.signalSnippet || '';
+    opp.signalSummary = cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet || signal.evidence || signal.title || '');
+    opp.shortSummary = cleanBusinessText(signal.shortSummary || signal.signalSnippet || '');
     opp.cleanSourceName = signal.cleanSourceName || '';
     opp.signalType = type;
     opp.signalDate = signal.signalDate || signal.dateFound || signal.publishedDate || signal.detectedAt || new Date().toISOString();
@@ -2020,7 +2068,7 @@ function addSignalDerivedOpportunities(account, signals){
     opp.affectedDepartment = signal.affectedDepartment || '';
     opp.evidence = [
       `Source: ${signal.cleanSourceName || sourceDomain(signal.sourceUrl) || 'public source'}`,
-      signal.shortSummary || signal.signalSnippet || signal.signalDetail || 'External business activity detected',
+      cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet) || 'External business activity detected',
       `Suggested contact: ${signal.suggestedContact || 'Relevant department lead'}`
     ];
     opp.businessSignals = [signal];
