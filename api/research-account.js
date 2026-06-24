@@ -604,15 +604,28 @@ export default async function handler(req, res) {
       allResults.push(...results);
     }
 
+    const searchSignals = allResults.map(r => signalFromResult(r, accountName, industry));
+    const acceptedSearchSignals = searchSignals.filter(Boolean);
     const signals = dedupeSignals([
       ...domainSignals,
-      ...allResults.map(r => signalFromResult(r, accountName, industry)).filter(Boolean)
+      ...acceptedSearchSignals
     ]);
 
+    const rejectedResults = Math.max(0, allResults.length - acceptedSearchSignals.length);
     return res.status(200).json({
       accountName,
       researchedAt: new Date().toISOString(),
       signals,
+      diagnostics: {
+        queriesRun: queries.length,
+        domainUsed: domain || '',
+        domainProbes: domain ? 20 : 0,
+        searchResultsFound: allResults.length,
+        acceptedSearchSignals: acceptedSearchSignals.length,
+        domainSignalsFound: domainSignals.length,
+        rejectedResults,
+        signalsReturned: signals.length
+      },
       message: signals.length ? `${signals.length} verified public signal(s) found.` : 'No verified external signals found.'
     });
   } catch (err) {
