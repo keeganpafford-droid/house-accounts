@@ -51,26 +51,27 @@ function cleanSourceName(url = '') {
 }
 
 function cleanSignalSummary(result = {}, max = 150) {
-  const rawTitle = clean(result.title || '');
-  const rawSnippet = clean(result.snippet || '');
+  const rawTitle = stripBadFragments(result.title || '');
+  const rawSnippet = stripBadFragments(result.snippet || '');
+  if (isBadSearchText(`${rawTitle} ${rawSnippet}`)) return '';
   const title = rawTitle.replace(/\s*[|•-]\s*.*$/, '').trim();
-  const source = cleanSourceName(result.url);
-  const preferred = title && title.length >= 6 ? title : rawSnippet;
+  const preferred = title && title.length >= 8 ? title : rawSnippet;
   const cleaned = compactSentence(preferred, max);
-  return cleaned || `Public source found on ${source}`;
+  return cleaned || '';
 }
 
 function sourceConfidence(sourceType, title = '', snippet = '') {
   const text = `${title} ${snippet}`.toLowerCase();
   let score = 0.58;
-  if (/Careers|job posting/i.test(sourceType)) score = 0.76;
+  if (/Careers|job posting/i.test(sourceType)) score = 0.72;
   if (/News|press|Public \/ press/i.test(sourceType)) score = 0.72;
   if (/Event/i.test(sourceType)) score = 0.70;
-  if (/Public social/i.test(sourceType)) score = 0.64;
-  if (/LinkedIn/i.test(sourceType)) score = 0.62;
-  if (/(today|yesterday|2026|2025|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(text)) score += 0.06;
-  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch|careers|jobs)/i.test(text)) score += 0.06;
-  return Math.min(0.92, score);
+  if (/Public social/i.test(sourceType)) score = 0.62;
+  if (/LinkedIn/i.test(sourceType)) score = 0.60;
+  if (/(today|yesterday|2026|2025|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(text)) score += 0.04;
+  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch|careers|jobs|award|recognized|expansion)/i.test(text)) score += 0.06;
+  if (isBadSearchText(text)) score -= 0.20;
+  return Math.min(0.90, Math.max(0.35, score));
 }
 
 async function fetchText(url) {
@@ -137,6 +138,99 @@ function compactSentence(text = '', max = 220) {
   const cleaned = clean(text).replace(/\s+/g, ' ').trim();
   if (!cleaned) return '';
   return cleaned.length > max ? cleaned.slice(0, max).replace(/\s+\S*$/, '') + '…' : cleaned;
+}
+
+function isBadSearchText(text = '') {
+  const t = clean(text).toLowerCase();
+  if (!t) return true;
+  return /javascript disabled|enable javascript|unsupported browser|does not support|map contact saved|saved saved|access denied|captcha|cookies disabled|privacy preferences|robot check|are you a robot/.test(t);
+}
+
+function stripBadFragments(text = '') {
+  let t = clean(text);
+  t = t.replace(/[-–—>\s]*You have JavaScript disabled or are viewing the site on a device that does not support[^.]*\.?/ig, ' ');
+  t = t.replace(/[-–—>\s]*Press\s*-\s*/ig, ' ');
+  t = t.replace(/\bContact Saved Saved\b/ig, ' ');
+  t = t.replace(/\bMap Contact Saved\b/ig, ' ');
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
+}
+
+function hostPath(url = '') {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./,'')}${u.pathname || ''}`.toLowerCase();
+  } catch { return ''; }
+}
+
+function looksLikeGenericHomepage(result = {}, accountName = '') {
+  const path = hostPath(result.url || '');
+  const title = clean(result.title || '').toLowerCase();
+  const snippet = clean(result.snippet || '').toLowerCase();
+  const acct = clean(accountName).toLowerCase();
+  const shallowPath = /\.(com|net|org|io|co|biz)\/?$/.test(path) || /\/(about|contact|locations?)\/?$/.test(path);
+  const genericTitle = acct && title && title.includes(acct) && !/(career|job|hiring|news|press|event|conference|expo|award|recognized|expansion|opening|launch|announces|leadership)/.test(title);
+  const genericSnippet = /(home|contact us|hours|directions|map|phone|sales|service|parts)/.test(snippet) && !/(career|job|hiring|open position|news|press|event|conference|expo|award|recognized|expansion|opening|launch|announces|appoints|promotes)/.test(snippet);
+  return shallowPath && (genericTitle || genericSnippet);
+}
+
+function hasStrongSignalContext(text = '', url = '') {
+  const t = `${text} ${url}`.toLowerCase();
+  return /(career|careers|hiring|jobs|join our team|open position|openings|recruit|now hiring|apply now|event|conference|expo|trade show|summit|open house|sponsorship|new location|expansion|grand opening|new facility|renovation|relocation|award|recognized|winner|honor|best of|milestone|anniversary|appoints|promotes|named|joins as|new ceo|new president|new director|launch|new product|new service|announces|unveils)/.test(t);
+}
+
+function extractHiringRole(text = '', industry = '') {
+  const t = `${text} ${industry}`.toLowerCase();
+  if (/technician|mechanic|service advisor|service department/.test(t)) return 'technicians or service roles';
+  if (/sales consultant|sales rep|business development|account executive/.test(t)) return 'sales roles';
+  if (/production|operator|machinist|cnc|assembly|warehouse|plant|manufacturing/.test(t)) return 'production or operations roles';
+  if (/engineer|engineering/.test(t)) return 'engineering roles';
+  if (/nurse|provider|clinical|dental assistant|hygienist/.test(t)) return 'clinical or practice roles';
+  return '';
+}
+
+function signalConfidenceLabel(signalType = '', result = {}, count = null) {
+  const raw = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`;
+  const sourceType = classifySource(result.url, result.title);
+  let level = 'Medium';
+  if (count || /press release|businesswire|prnewswire|event|conference|expo|open positions|job posting|careers|new facility|grand opening|award|winner|appointed/i.test(raw)) level = 'High';
+  if (/Public web source/i.test(sourceType) && !count) level = 'Medium';
+  if (isBadSearchText(raw) || looksLikeGenericHomepage(result)) level = 'Low';
+  return level;
+}
+
+function confidenceNumberFromLabel(label = 'Medium') {
+  if (/high/i.test(label)) return 0.82;
+  if (/low/i.test(label)) return 0.48;
+  return 0.66;
+}
+
+function cleanSignalDetailFromResult(result = {}, accountName = '', signalType = '', industry = '') {
+  const rawTitle = stripBadFragments(result.title || '');
+  const rawSnippet = stripBadFragments(result.snippet || '');
+  const raw = `${rawTitle} ${rawSnippet}`;
+  const count = extractCounts(raw);
+  const role = extractHiringRole(raw, industry);
+  const source = cleanSourceName(result.url);
+  const acct = clean(accountName);
+
+  if (/hiring/i.test(signalType)) {
+    if (count && role) return `${acct} appears to be hiring ${count} ${role}.`;
+    if (count) return `${acct} appears to be hiring or listing ${count} roles.`;
+    if (role) return `${acct} has hiring activity tied to ${role}.`;
+    return `${acct} has public careers or recruiting activity.`;
+  }
+  if (/event|conference/i.test(signalType)) {
+    const title = compactSentence(rawTitle.replace(new RegExp(acct, 'ig'), '').trim(), 80);
+    return title ? `${acct} has event or campaign activity: ${title}.` : `${acct} has public event or campaign activity.`;
+  }
+  if (/expansion|location/i.test(signalType)) return `${acct} has public growth, expansion, or location activity.`;
+  if (/award|recognition/i.test(signalType)) return `${acct} has public recognition, award, or milestone activity.`;
+  if (/leadership/i.test(signalType)) return `${acct} has public leadership or team-change activity.`;
+  if (/launch/i.test(signalType)) return `${acct} has public product, service, or campaign-launch activity.`;
+
+  const fallback = compactSentence(rawTitle || rawSnippet, 90);
+  return fallback ? `${acct}: ${fallback}.` : `Public business activity found on ${source}.`;
 }
 
 function extractCounts(text = '') {
@@ -276,24 +370,8 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
   const valueRange = valueRangeForSignal(signalType, count, sourceType);
   const shortSummary = cleanSignalSummary(result, 150);
 
-  let signalDetail = `${signalType} found via ${sourceName}`;
-  if (/hiring/i.test(signalType)) {
-    signalDetail = count
-      ? `Hiring activity: ${count} role${count === 1 ? '' : 's'} or openings referenced`
-      : 'Hiring or careers activity found';
-  } else if (/event|conference/i.test(signalType)) {
-    signalDetail = 'Event or campaign activity found';
-  } else if (/expansion|location/i.test(signalType)) {
-    signalDetail = 'Growth, expansion, or location activity found';
-  } else if (/award|recognition/i.test(signalType)) {
-    signalDetail = 'Award, recognition, or milestone activity found';
-  } else if (/leadership/i.test(signalType)) {
-    signalDetail = 'Leadership or team change found';
-  } else if (/launch/i.test(signalType)) {
-    signalDetail = 'Product, service, or campaign launch activity found';
-  }
-
-  const whyNow = `${signalDetail}. ${opp.conversationStarter}`;
+  const signalDetail = cleanSignalDetailFromResult(result, accountName, signalType, industry);
+  const whyNow = `${signalDetail} ${opp.conversationStarter}`.trim();
   return {
     signalLayerType: 'Business Activity Signal',
     signalDetail,
@@ -319,7 +397,8 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
 function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0, industry = '') {
   const sourceType = classifySource(result.url, result.title);
   const intelligence = buildSignalIntelligence(result, accountName, signalType, industry);
-  const confidence = Math.min(0.94, sourceConfidence(sourceType, result.title, result.snippet) + confidenceBoost);
+  const label = signalConfidenceLabel(signalType, result, intelligence.count);
+  const confidence = Math.min(0.90, Math.max(0.35, confidenceNumberFromLabel(label) + confidenceBoost));
   return {
     signalType,
     type: signalType,
@@ -334,7 +413,7 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
     sourceAuthority: intelligence.sourceAuthority || sourceType,
     dateFound: new Date().toISOString().slice(0, 10),
     confidence,
-    confidenceLevel: confidence >= 0.75 ? 'High' : confidence >= 0.60 ? 'Medium' : 'Low',
+    confidenceLevel: label,
     isReal: true,
     affectedDepartment: intelligence.affectedDepartment,
     suggestedContact: intelligence.suggestedContact || suggestedContact,
@@ -353,7 +432,10 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
 
 function signalFromResult(result, accountName, industry = '') {
   if (!result || !result.url) return null;
-  const text = `${result.title} ${result.snippet} ${result.url}`.toLowerCase();
+  const rawText = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`;
+  const text = rawText.toLowerCase();
+  if (isBadSearchText(rawText)) return null;
+  if (looksLikeGenericHomepage(result, accountName) && !hasStrongSignalContext(rawText, result.url)) return null;
   const isAuto = /dealership|ford|automotive|service|technician|vehicle|used car/.test(text) || /Automotive/.test(industry || '');
   const isHealthcare = /dental|medical|health|clinic|provider|practice/.test(text) || /Healthcare/.test(industry || '');
   const isMfg = /manufactur|industrial|factory|plant|safety|facility|production|assembly|engineering/.test(text) || /Manufacturing/.test(industry || '');
@@ -467,7 +549,7 @@ function domainFromEmailDomain(emailDomain = '') {
 
 async function domainProbeSignals(domain, accountName, industry) {
   if (!domain) return [];
-  const paths = ['', '/', '/careers', '/career', '/jobs', '/about', '/news', '/press', '/events', '/blog'];
+  const paths = ['/careers', '/career', '/jobs', '/join-our-team', '/news', '/press', '/press-releases', '/events', '/blog', '/community'];
   const candidates = [];
   for (const path of paths) {
     candidates.push(`https://${domain}${path}`);
@@ -482,7 +564,9 @@ async function domainProbeSignals(domain, accountName, industry) {
     seen.add(normalized);
     const html = await fetchText(url);
     if (!html) continue;
-    const text = clean(html).slice(0, 2000);
+    const text = clean(html).slice(0, 2500);
+    if (isBadSearchText(text)) continue;
+    if (!hasStrongSignalContext(text, url)) continue;
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const title = clean(titleMatch ? titleMatch[1] : `${accountName} ${url}`);
     results.push({ url, title, snippet: text });
