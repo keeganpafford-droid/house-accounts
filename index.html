@@ -977,6 +977,56 @@
     padding:8px 10px;
     margin-top:8px;
   }
+
+  .signal-badge{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-family:var(--mono);
+    font-size:0.62rem;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    border-radius:999px;
+    padding:5px 9px;
+    margin-bottom:8px;
+    border:1px solid transparent;
+  }
+  .signal-badge.follow-up{background:#e6f7f5; color:#0f766e; border-color:#99f6e4;}
+  .signal-badge.repeat-pattern{background:#fff8e8; color:#92400e; border-color:#fde68a;}
+  .signal-badge.business-activity{background:#eef6ff; color:#1d4ed8; border-color:#bfdbfe;}
+  .signal-age{
+    font-family:var(--mono);
+    font-size:0.68rem;
+    color:var(--muted);
+    margin:-2px 0 8px;
+  }
+  .email-contact-link{
+    display:inline-block;
+    width:100%;
+    text-align:center;
+    text-decoration:none;
+    background:var(--primary);
+    color:#fff;
+    border-radius:3px;
+    padding:10px 12px;
+    font-family:var(--mono);
+    font-size:0.72rem;
+    font-weight:700;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+  .email-contact-link:hover{filter:brightness(1.08);}
+  .email-contact-missing{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--muted);
+    text-align:center;
+    padding:10px 12px;
+    border:1px dashed var(--line);
+    border-radius:3px;
+  }
+
   .relationship-badge{
     display:inline-block;
     font-family:var(--mono);
@@ -1148,6 +1198,56 @@
     border-radius:999px;
     margin-bottom:8px;
   }
+
+  .signal-badge{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-family:var(--mono);
+    font-size:0.62rem;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    border-radius:999px;
+    padding:5px 9px;
+    margin-bottom:8px;
+    border:1px solid transparent;
+  }
+  .signal-badge.follow-up{background:#e6f7f5; color:#0f766e; border-color:#99f6e4;}
+  .signal-badge.repeat-pattern{background:#fff8e8; color:#92400e; border-color:#fde68a;}
+  .signal-badge.business-activity{background:#eef6ff; color:#1d4ed8; border-color:#bfdbfe;}
+  .signal-age{
+    font-family:var(--mono);
+    font-size:0.68rem;
+    color:var(--muted);
+    margin:-2px 0 8px;
+  }
+  .email-contact-link{
+    display:inline-block;
+    width:100%;
+    text-align:center;
+    text-decoration:none;
+    background:var(--primary);
+    color:#fff;
+    border-radius:3px;
+    padding:10px 12px;
+    font-family:var(--mono);
+    font-size:0.72rem;
+    font-weight:700;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+  .email-contact-link:hover{filter:brightness(1.08);}
+  .email-contact-missing{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--muted);
+    text-align:center;
+    padding:10px 12px;
+    border:1px dashed var(--line);
+    border-radius:3px;
+  }
+
   .relationship-badge{
     display:inline-block;
     font-family:var(--mono);
@@ -1291,14 +1391,14 @@
       </div>
 
       <div class="top-opportunities">
-        <div class="top-opps-title">Daily Reasons To Reach Out</div>
+        <div class="top-opps-title">Today's Best Reasons To Reach Out</div>
         <div class="top-opps-list" id="topOppsList"></div>
       </div>
     </div>
 
     <!-- Opportunity Cards Section -->
     <div class="opportunities-section">
-      <div class="section-header">Daily Reasons To Reach Out</div>
+      <div class="section-header">Today's Best Reasons To Reach Out</div>
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
@@ -1691,7 +1791,7 @@ function confidenceLabel(score){
 }
 
 function signalLayerLabel(opp){
-  if(opp.signalLayerType) return opp.signalLayerType;
+  if(opp.signalLayerType) return normalizeSignalLayerType(opp.signalLayerType);
   if(opp.isVerifiedSignalOpportunity || opp.sourceUrl) return 'Business Activity Signal';
   if(isRecentAccountActivity(opp)) return 'Follow-Up Signal';
   return 'Repeat / Pattern Signal';
@@ -1699,7 +1799,7 @@ function signalLayerLabel(opp){
 
 function isRecentAccountActivity(opp){
   const ev = Array.isArray(opp.evidence) ? opp.evidence.join(' ').toLowerCase() : String(opp.evidence || '').toLowerCase();
-  return /recent activity|last closed order|recent order|last order/.test(ev) || Number(opp.closeProbability || 0) >= 65;
+  return /recent activity|last closed order|recent order|last order|delivered|completed/.test(ev) || Number(opp.closeProbability || 0) >= 65;
 }
 
 function confidenceWord(opp){
@@ -1719,17 +1819,59 @@ function shortText(text, max=145){
   return cleaned.length > max ? cleaned.slice(0,max).replace(/\s+\S*$/,'') + '…' : cleaned;
 }
 
+function signalBadgeMeta(opp){
+  const layer = signalLayerLabel(opp);
+  if(layer === 'Follow-Up Signal') return { cls:'follow-up', label:'Follow-Up Signal', icon:'●' };
+  if(layer === 'Repeat / Pattern Signal') return { cls:'repeat-pattern', label:'Repeat Pattern', icon:'●' };
+  return { cls:'business-activity', label:'Business Activity', icon:'●' };
+}
+
+function parseMaybeDate(value){
+  if(!value) return null;
+  if(value instanceof Date && !isNaN(value)) return value;
+  const d = new Date(value);
+  return isNaN(d) ? null : d;
+}
+
+function formatSignalAge(opp){
+  const raw = opp.signalDate || opp.detectedAt || opp.dateFound || opp.lastActivityDate || opp.orderDate || '';
+  const d = parseMaybeDate(raw);
+  if(!d) return '';
+  const now = new Date();
+  const days = Math.max(0, Math.floor((now - d) / (1000*60*60*24)));
+  if(days === 0) return 'Detected today';
+  if(days === 1) return 'Detected 1 day ago';
+  if(days <= 30) return `Detected ${days} days ago`;
+  return `Detected ${d.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
+}
+
 function getRepFriendlyWhy(opp){
   const layer = signalLayerLabel(opp);
+  const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
+  const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
   if(layer === 'Follow-Up Signal'){
-    return `Recent activity creates an easy reason to check in and ask how the order was received.`;
+    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
+      return 'A recent apparel-related project is fresh enough to check how it was received and whether anything else is coming up.';
+    }
+    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+      return 'A recent event or giveaway project gives the rep a natural reason to ask how it performed.';
+    }
+    if(oppName.includes('welcome') || oppName.includes('onboarding') || categories.some(c=>/welcome|onboarding|employee/.test(c))){
+      return 'A recent employee-facing order creates an easy check-in around how the team received it.';
+    }
+    return 'Recent project activity creates a simple reason to check in while the order is still fresh.';
   }
   if(layer === 'Repeat / Pattern Signal'){
-    const cats = (opp.commonPromoCategories || opp.suggestedProducts || []).slice(0,2).join(' / ') || 'similar merch';
-    return `Past buying pattern suggests it is worth asking whether ${cats.toLowerCase()} is needed again.`;
+    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
+      return 'Past apparel buying suggests it is worth asking whether another run or refresh is coming up.';
+    }
+    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+      return 'A previous event or campaign pattern suggests there may be another program worth checking on.';
+    }
+    return 'Historical buying behavior suggests a possible repeat need worth asking about now.';
   }
   const summary = opp.signalSummary || opp.shortSummary || opp.signalTitle || getWhyNowText(opp);
-  return shortText(summary, 160) || 'A public business signal creates a timely reason to reach out.';
+  return shortText(summary, 160) || 'Recent public business activity creates a timely reason to reconnect.';
 }
 
 function getRepEvidenceBullets(opp){
@@ -1755,25 +1897,50 @@ function getRepEvidenceBullets(opp){
 function getSuggestedOpener(opp){
   const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
   const layer = signalLayerLabel(opp);
+  const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
+  const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
   if(layer === 'Follow-Up Signal'){
-    const category = ((opp.commonPromoCategories || opp.suggestedProducts || [])[0] || 'recent order').toLowerCase();
-    return `Hey ${contact} — quick check-in on the recent ${category} work. How was everything received?`;
+    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
+      return `Hey ${contact} — quick check-in on the recent apparel project. How did everything turn out?`;
+    }
+    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+      return `Hey ${contact} — wanted to check in on the recent event/giveaway project. How did it go?`;
+    }
+    if(oppName.includes('welcome') || oppName.includes('onboarding') || categories.some(c=>/welcome|onboarding|employee/.test(c))){
+      return `Hey ${contact} — quick check-in on the recent employee-facing order. How was it received?`;
+    }
+    return `Hey ${contact} — quick check-in on the recent project. How was everything received?`;
   }
   if(layer === 'Repeat / Pattern Signal'){
-    return `Hey ${contact} — looks like we helped with something similar around this time before. Are you planning another run this year?`;
+    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
+      return `Hey ${contact} — looks like we helped with apparel around this time before. Are you planning another run this year?`;
+    }
+    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+      return `Hey ${contact} — are you planning that event or campaign again this year? Happy to help if useful.`;
+    }
+    return `Hey ${contact} — looks like we helped with something similar around this time before. Is that coming up again?`;
   }
   const topic = shortText(opp.signalSummary || opp.signalTitle || 'something timely on your end', 90);
-  return `Hey ${contact} — noticed ${topic}. Is that creating any merch, apparel, event, or employee support needs?`;
+  return `Hey ${contact} — noticed ${topic}. Is that creating anything worth planning around?`;
+}
+
+function mailtoHref(email){
+  const e = String(email || '').trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return '';
+  return `mailto:${e.replace(/"/g,'')}`;
 }
 
 function renderRepOpportunityCard(opp){
-  const layer = normalizeSignalLayerType(opp.signalLayerType);
+  const badge = signalBadgeMeta(opp);
   const bullets = getRepEvidenceBullets(opp).slice(0,3);
   const tier = getPriorityTier(opp);
+  const age = formatSignalAge(opp);
+  const emailLink = mailtoHref(opp.email || opp.contactEmail);
   return `
     <div class="opportunity-card daily-reason-card">
       <div class="opp-card-header">
-        <div class="opportunity-type">${escapeHtml(layer)}</div>
+        <div class="signal-badge ${badge.cls}"><span>${badge.icon}</span>${escapeHtml(badge.label)}</div>
+        ${age ? `<div class="signal-age">${escapeHtml(age)}</div>` : ''}
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
         <div class="opp-card-account">${escapeHtml(opp.contactTitle || opp.contact || 'Suggested contact TBD')}</div>
       </div>
@@ -1782,7 +1949,10 @@ function renderRepOpportunityCard(opp){
       <div class="opp-section"><div class="opp-label">Suggested opener</div><div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
       ${bullets.length ? `<div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content"><ul style="padding-left:18px; margin:0;">${bullets.map(b=>`<li>${escapeHtml(b)}</li>`).join('')}</ul></div></div>` : ''}
       ${(opp.commonPromoCategories || opp.suggestedProducts || []).length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${(opp.commonPromoCategories || opp.suggestedProducts || []).slice(0,4).map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
-      <div class="opp-card-actions"><button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Generate Sales Play</button></div>
+      <div class="opp-card-actions">
+        ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
+        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Generate Sales Play</button>
+      </div>
     </div>`;
 }
 
@@ -1838,6 +2008,7 @@ function addSignalDerivedOpportunities(account, signals){
     opp.shortSummary = signal.shortSummary || signal.signalSnippet || '';
     opp.cleanSourceName = signal.cleanSourceName || '';
     opp.signalType = type;
+    opp.signalDate = signal.signalDate || signal.dateFound || signal.publishedDate || signal.detectedAt || new Date().toISOString();
     opp.sourceUrl = signal.sourceUrl;
     opp.whyNow = signal.whyNow || `Verified signal found: ${signal.signalDetail || signal.title || type}`;
     opp.valueSource = hasHistory ? 'Historical Orders + Verified Signal' : (signal.valueSource || 'Signal Only');
@@ -1978,18 +2149,18 @@ function getValueLabel(opp){
 function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
   const futureOpportunities = sortDailyReasons(accounts.flatMap(account => account.futureOpportunities || []));
-  const displayedOpportunities = futureOpportunities.slice(0, 20);
+  const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
-  if(resultCount) resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} daily reasons to reach out from ${accounts.length} accounts</span>`;
+  if(resultCount) resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} reasons to reach out from ${accounts.length} accounts · ${feedSummary(displayedOpportunities)}</span>`;
   if(grid){
-    grid.innerHTML = `<div class="limit-note">Daily Reasons To Reach Out ranks signals by actionability, not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+    grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence — not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
   const totalFutureValue = futureOpportunities.reduce((sum, o) => sum + (o.estimatedValue || 0), 0);
   document.getElementById('totalOppValue').textContent = fmtMoney(totalFutureValue);
   document.getElementById('highConfidenceCount').textContent = futureOpportunities.filter(o => o.confidence >= 70).length;
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
-  document.getElementById('topOppsList').innerHTML = futureOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(normalizeSignalLayerType(opp.signalLayerType))} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
+  document.getElementById('topOppsList').innerHTML = displayedOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(signalBadgeMeta(opp).label)} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
 }
 
 function estimateFutureValue(account, opportunityType){
@@ -2164,6 +2335,7 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
     closeProbability,
     opportunityType,
     signalLayerType,
+    signalDate: account.mostRecentDate !== 'Unknown' ? account.mostRecentDate : '',
     reasonToReachOut,
     conversationStarter,
     relationshipMode,
@@ -2562,6 +2734,71 @@ function dailyReasonSummary(opp){
   return 'Verified public business activity creates a timely reason to reach out.';
 }
 
+
+function followUpCollapseKey(opp){
+  const account = String(opp.account || '').toLowerCase().trim();
+  const layer = signalLayerLabel(opp);
+  if(layer !== 'Follow-Up Signal') return `${account}|${layer}|${String(opp.opportunity || opp.opportunityName || '').toLowerCase()}`;
+  return `${account}|Follow-Up Signal`;
+}
+
+function collapseDuplicateFollowUps(opps){
+  const map = new Map();
+  const passthrough = [];
+  (opps || []).forEach(opp => {
+    if(signalLayerLabel(opp) !== 'Follow-Up Signal'){
+      passthrough.push(opp);
+      return;
+    }
+    const key = followUpCollapseKey(opp);
+    const existing = map.get(key);
+    if(!existing || getDailyReasonScore(opp) > getDailyReasonScore(existing)){
+      const merged = {...opp};
+      const related = (opps || []).filter(o => followUpCollapseKey(o) === key);
+      if(related.length > 1){
+        merged.opportunity = 'Recent Project Follow-Up';
+        merged.opportunityName = 'Recent Project Follow-Up';
+        merged.reasonToReachOut = 'Multiple recent projects completed';
+        merged.conversationStarter = 'Check in on how the recent projects were received.';
+        merged.evidence = [
+          `Multiple recent projects found (${related.length})`,
+          ...(Array.isArray(opp.evidence) ? opp.evidence : [])
+        ].slice(0,4);
+      }
+      map.set(key, merged);
+    }
+  });
+  return [...map.values(), ...passthrough];
+}
+
+function limitReasonsPerAccount(opps, maxPerAccount=2){
+  const counts = new Map();
+  const selected = [];
+  (opps || []).forEach(opp => {
+    const key = String(opp.account || '').toLowerCase().trim();
+    const count = counts.get(key) || 0;
+    if(count < maxPerAccount){
+      selected.push(opp);
+      counts.set(key, count + 1);
+    }
+  });
+  return selected;
+}
+
+function prepareDailyReasons(opps, limit=20){
+  const collapsed = collapseDuplicateFollowUps(opps || []);
+  const sorted = sortDailyReasons(collapsed);
+  return limitReasonsPerAccount(sorted, 2).slice(0, limit);
+}
+
+function feedSummary(opps){
+  const items = opps || [];
+  const follow = items.filter(o => signalLayerLabel(o) === 'Follow-Up Signal').length;
+  const repeat = items.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal').length;
+  const business = items.filter(o => signalLayerLabel(o) === 'Business Activity Signal').length;
+  return `${follow} follow-up · ${repeat} repeat/pattern · ${business} business activity`;
+}
+
 function processData(records){
   // Group by client
   const clients = {};
@@ -2641,16 +2878,16 @@ function processData(records){
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
   const futureOpportunities = sortDailyReasons(accounts.flatMap(account => account.futureOpportunities || []));
-  const displayedOpportunities = futureOpportunities.slice(0, 20);
+  const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
 
   // Render opportunities grid
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
   const accountListOnlyCount = accounts.filter(a => a.orderCount === 0 && a.activePipelineCount === 0).length;
-  resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} daily reasons to reach out from ${accounts.length} accounts${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
+  resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} reasons to reach out from ${accounts.length} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
 
   const noOpportunitiesMessage = displayedOpportunities.length === 0 ? `<div class="no-signals-message">No order-history-based reasons to reach out found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>` : '';
-  grid.innerHTML = `<div class="limit-note">Daily Reasons To Reach Out ranks signals by actionability: follow-ups first, repeat patterns second, and verified business activity third. Keep it fast: scan the list and contact the best-fit accounts today.</div>` + noOpportunitiesMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+  grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability: follow-ups first, repeat patterns second, and verified business activity third. Maximum 2 reasons per account so the feed stays scannable.</div>` + noOpportunitiesMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
@@ -2662,7 +2899,7 @@ function processData(records){
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
 
   // Render top opportunities
-  document.getElementById('topOppsList').innerHTML = futureOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(normalizeSignalLayerType(opp.signalLayerType))} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
+  document.getElementById('topOppsList').innerHTML = displayedOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(signalBadgeMeta(opp).label)} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
 
   const notice = document.getElementById('notice');
   if(notice){
