@@ -132,20 +132,20 @@ function warmEmail(ctx) {
   const signalLine = ctx.signal ? `\n\nI noticed ${signalPhrase(ctx)} and it made me think there may be a simple way to support that.` : '';
   const historyLine = ctx.relationshipSummary ? `\n\n${ctx.relationshipSummary}` : '';
 
-  return `Hey ${ctx.contactName},\n\nAppreciate being able to help with the branded merch work so far.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf useful, I can send a few practical ideas around ${ctx.productPhrase}.\n\nWorth a quick look?`;
+  return `Hey ${ctx.contactName},\n\nAppreciate being able to help with the branded merch work so far.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf helpful, I can send a couple simple options or point you toward the right category.\n\nWorth a quick look?`;
 }
 
 function lukewarmEmail(ctx) {
   const signalLine = ctx.signal ? `\n\nI noticed ${signalPhrase(ctx)}, which seemed like a relevant reason to reconnect.` : '';
   const historyLine = ctx.relationshipSummary ? `\n\n${ctx.relationshipSummary}` : `\n\nI know there has been some prior activity with ${ctx.account}, so I wanted to reach out with something specific rather than a generic check-in.`;
 
-  return `Hey ${ctx.contactName},\n\nIt's been a bit since we've connected.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf this is already covered, no worries. If not, I can send over a few practical ideas around ${ctx.productPhrase}.\n\nWorth a quick look?`;
+  return `Hey ${ctx.contactName},\n\nIt's been a bit since we've connected.${historyLine}${signalLine}\n\n${ctx.simpleAsk}\n\nIf this is already covered, no worries. If not, I can send a couple simple ideas or help identify the right person.\n\nWorth a quick look?`;
 }
 
 function coldSignalEmail(ctx) {
   const signalLine = ctx.signal ? `I noticed ${signalPhrase(ctx)}.` : `I was looking at ${ctx.account} and thought there may be a timely branded merchandise opportunity.`;
 
-  return `Hi ${ctx.contactName},\n\n${signalLine}\n\nWe help promotional products teams turn moments like that into practical sales opportunities — things like ${ctx.productPhrase}.\n\n${ctx.simpleAsk}\n\nIf you're not the right person, who would usually handle that?`;
+  return `Hi ${ctx.contactName},\n\n${signalLine}\n\nWe help promotional products teams turn moments like that into practical sales opportunities — simple merch, apparel, event, or employee support ideas.\n\n${ctx.simpleAsk}\n\nIf you're not the right person, who would usually handle that?`;
 }
 
 function shortNote(ctx) {
