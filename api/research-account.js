@@ -541,6 +541,24 @@ function dedupeSignals(signals) {
     .slice(0, 6);
 }
 
+function rejectionReason(result = {}, accountName = '') {
+  const rawText = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`;
+  if (isBadSearchText(rawText)) return 'Rejected: bad/generic browser or blocked-page text';
+  if (looksLikeGenericHomepage(result, accountName) && !hasStrongSignalContext(rawText, result.url)) return 'Rejected: generic homepage/about/contact result';
+  if (!hasStrongSignalContext(rawText, result.url)) return 'Rejected: no hiring/event/award/expansion/leadership/launch language';
+  return 'Rejected: did not map cleanly to an accepted signal type';
+}
+
+function candidateSample(result = {}, accountName = '', signal = null) {
+  return {
+    title: compactSentence(result.title || result.snippet || 'Untitled result', 120),
+    domain: cleanSourceName(result.url),
+    sourceType: classifySource(result.url, result.title),
+    status: signal ? `Accepted: ${signal.signalType || 'Business Activity Signal'}` : 'Rejected',
+    reason: signal ? 'Accepted as business activity signal' : rejectionReason(result, accountName)
+  };
+}
+
 function domainFromEmailDomain(emailDomain = '') {
   const d = String(emailDomain || '').trim().toLowerCase().replace(/^www\./,'');
   if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(d)) return '';
@@ -604,14 +622,18 @@ export default async function handler(req, res) {
       allResults.push(...results);
     }
 
-    const searchSignals = allResults.map(r => signalFromResult(r, accountName, industry));
-    const acceptedSearchSignals = searchSignals.filter(Boolean);
+    const evaluatedSearchResults = allResults.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
+    const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
     const signals = dedupeSignals([
       ...domainSignals,
       ...acceptedSearchSignals
     ]);
 
     const rejectedResults = Math.max(0, allResults.length - acceptedSearchSignals.length);
+    const candidateSamples = evaluatedSearchResults
+      .map(x => candidateSample(x.result, accountName, x.signal))
+      .slice(0, 5);
+
     return res.status(200).json({
       accountName,
       researchedAt: new Date().toISOString(),
@@ -624,7 +646,8 @@ export default async function handler(req, res) {
         acceptedSearchSignals: acceptedSearchSignals.length,
         domainSignalsFound: domainSignals.length,
         rejectedResults,
-        signalsReturned: signals.length
+        signalsReturned: signals.length,
+        candidateSamples
       },
       message: signals.length ? `${signals.length} verified public signal(s) found.` : 'No verified external signals found.'
     });
