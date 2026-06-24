@@ -1365,7 +1365,7 @@
   <div id="results">
     <!-- Accounts To Call This Week -->
     <div class="sales-dashboard">
-      <div class="dashboard-header">Accounts To Call This Week</div>
+      <div class="dashboard-header">House Accounts Snapshot</div>
       <div class="research-controls">
         <button class="btn btn-secondary" id="researchTopBtn" type="button" onclick="researchTopAccounts()">Research Top Accounts</button>
         <div class="research-note">Research scans public sources for real business signals. Historical order data helps prioritize accounts, but verified signals create the strongest “why now.”</div>
@@ -1377,12 +1377,12 @@
           <div class="kpi-label">Total Accounts Analyzed</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value" id="totalOppValue">$0</div>
-          <div class="kpi-label">Estimated Value</div>
+          <div class="kpi-value" id="totalOppValue">0</div>
+          <div class="kpi-label">Reasons To Reach Out</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="highConfidenceCount">0</div>
-          <div class="kpi-label">High-Probability Opportunities</div>
+          <div class="kpi-label">High-Confidence Accounts</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="avgConfidence">0%</div>
@@ -1390,10 +1390,6 @@
         </div>
       </div>
 
-      <div class="top-opportunities">
-        <div class="top-opps-title">Today's Best Reasons To Reach Out</div>
-        <div class="top-opps-list" id="topOppsList"></div>
-      </div>
     </div>
 
     <!-- Opportunity Cards Section -->
@@ -1409,6 +1405,7 @@
         <span><b>Business Activity Signals</b> — verified public signals from web research</span>
       </div>
       <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
+      <div id="researchDiagnostics" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#eef8ff; border-left:3px solid var(--teal); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
       <div class="opportunities-grid" id="opportunitiesGrid"></div>
     </div>
 
@@ -2093,6 +2090,24 @@ function addSignalDerivedOpportunities(account, signals){
   });
 }
 
+function renderResearchDiagnostics(){
+  const el = document.getElementById('researchDiagnostics');
+  if(!el) return;
+  const diagnostics = window.researchDiagnostics || [];
+  if(!diagnostics.length){
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const researched = diagnostics.length;
+  const signals = diagnostics.reduce((sum, d) => sum + (d.signalsFound || 0), 0);
+  const results = diagnostics.reduce((sum, d) => sum + (d.searchResultsFound || 0), 0);
+  const rejected = diagnostics.reduce((sum, d) => sum + (d.rejectedResults || 0), 0);
+  const zeroSignalAccounts = diagnostics.filter(d => !d.signalsFound).slice(0, 5).map(d => escapeHtml(d.accountName)).join(', ');
+  el.style.display = 'block';
+  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} candidate search results · ${signals} business activity signals accepted · ${rejected} rejected as generic/low-signal${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}`;
+}
+
 async function researchAccountByName(accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
@@ -2114,6 +2129,19 @@ async function researchAccountByName(accountName){
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Research failed');
     account.signals = data.signals || [];
+    window.researchDiagnostics = window.researchDiagnostics || [];
+    const diag = data.diagnostics || {};
+    const existingDiagIndex = window.researchDiagnostics.findIndex(d => d.accountName === account.name);
+    const nextDiag = {
+      accountName: account.name,
+      signalsFound: account.signals.length,
+      searchResultsFound: diag.searchResultsFound || 0,
+      rejectedResults: diag.rejectedResults || 0,
+      queriesRun: diag.queriesRun || 0,
+      domainProbes: diag.domainProbes || 0
+    };
+    if(existingDiagIndex >= 0) window.researchDiagnostics[existingDiagIndex] = nextDiag;
+    else window.researchDiagnostics.push(nextDiag);
     addSignalDerivedOpportunities(account, account.signals);
     if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
     refreshOpportunityViews();
@@ -2125,6 +2153,8 @@ async function researchAccountByName(accountName){
 async function researchTopAccounts(){
   const btn = document.getElementById('researchTopBtn');
   if(btn){ btn.disabled = true; btn.textContent = 'Researching...'; }
+  window.researchDiagnostics = [];
+  renderResearchDiagnostics();
   const accounts = (window.accountRadarAccounts || []).slice(0, 10);
   for(const account of accounts){
     await researchAccountByName(account.name);
@@ -2215,11 +2245,11 @@ function refreshOpportunityViews(){
   if(grid){
     grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence — not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
-  const totalFutureValue = futureOpportunities.reduce((sum, o) => sum + (o.estimatedValue || 0), 0);
-  document.getElementById('totalOppValue').textContent = fmtMoney(totalFutureValue);
-  document.getElementById('highConfidenceCount').textContent = futureOpportunities.filter(o => o.confidence >= 70).length;
+  const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
+  document.getElementById('totalOppValue').textContent = futureOpportunities.length;
+  document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
-  document.getElementById('topOppsList').innerHTML = displayedOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(signalBadgeMeta(opp).label)} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
+  renderResearchDiagnostics();
 }
 
 function estimateFutureValue(account, opportunityType){
@@ -3101,15 +3131,13 @@ function processData(records){
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
-  const totalFutureValue = futureOpportunities.reduce((sum, o) => sum + (o.estimatedValue || 0), 0);
+  const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
 
   document.getElementById('totalAccounts').textContent = accounts.length;
-  document.getElementById('totalOppValue').textContent = fmtMoney(totalFutureValue);
-  document.getElementById('highConfidenceCount').textContent = futureOpportunities.filter(o => o.confidence >= 70).length;
+  document.getElementById('totalOppValue').textContent = futureOpportunities.length;
+  document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
-
-  // Render top opportunities
-  document.getElementById('topOppsList').innerHTML = displayedOpportunities.slice(0,10).map(opp => `<div class="top-opp-item"><div class="top-opp-title">${escapeHtml(opp.account)}</div><div class="top-opp-meta">${escapeHtml(signalBadgeMeta(opp).label)} · ${escapeHtml(confidenceWord(opp))} confidence</div><div class="top-opp-value">${escapeHtml(getSuggestedOpener(opp))}</div></div>`).join('');
+  renderResearchDiagnostics();
 
   const notice = document.getElementById('notice');
   if(notice){
@@ -3119,7 +3147,7 @@ function processData(records){
       noticeMessages.push(`Detected company/account column: <strong>${escapeHtml(clientMapping.detected)}</strong> → <strong>client_name</strong>.`);
     }
     if(activePipelineTotal > 0){
-      noticeMessages.push(`Active pipeline detected: ${fmtMoney(activePipelineTotal)} in open estimates was excluded from historical revenue and Estimated Value.`);
+      noticeMessages.push(`Active pipeline detected: ${fmtMoney(activePipelineTotal)} in open estimates was excluded from historical revenue and reasons-to-reach-out scoring.`);
     }
     notice.style.display = noticeMessages.length ? 'block' : 'none';
     notice.innerHTML = noticeMessages.join('<br>');
