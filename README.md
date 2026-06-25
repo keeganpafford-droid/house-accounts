@@ -1,16 +1,25 @@
-# House Accounts v31 – Signal Search Reliability
+# House Accounts v36 – Targeted Business Signal Pipeline
 
-Purpose: improve business-signal discovery for company lists without order history.
+This release changes the business signal engine to mirror the Google-AI style workflow:
 
-Changes:
-- Added optional Brave Search and Tavily search provider support.
-- Keeps DuckDuckGo as fallback.
-- Passes uploaded City/State, Industry, Notes, and Employees into research context.
-- Broadened business-signal search queries with company context.
-- Keeps AI qualification layer from v29/v30.
+1. Entity / signal search using targeted search operators.
+2. Candidate snippet ranking.
+3. LLM synthesis into promo-relevant business signals.
 
-Optional Vercel env vars:
-- BRAVE_SEARCH_API_KEY
-- TAVILY_API_KEY
+## Upload / Replace
+- `index.html`
+- `api/research-batch.js`
+- `api/research-account.js`
 
-At least one real search API is strongly recommended for reliable business signals.
+## Strongly Recommended Environment Variable
+Add at least one search provider key in Vercel for best results:
+
+- `SERPER_API_KEY` (recommended)
+- `TAVILY_API_KEY`
+- `BRAVE_SEARCH_API_KEY`
+
+Keep:
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL=gpt-4o-mini`
+
+If no search provider is configured, the app falls back to OpenAI web search, but dedicated search APIs usually return cleaner candidate snippets for the LLM.
