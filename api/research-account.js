@@ -189,6 +189,71 @@ async function ddgSearch(query) {
 }
 
 
+async function braveSearch(query) {
+  const apiKey = process.env.BRAVE_SEARCH_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8&freshness=py`;
+    const res = await fetch(url, {
+      headers: {
+        'X-Subscription-Token': apiKey,
+        'Accept': 'application/json'
+      }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data?.web?.results || [];
+    return items.map(item => ({
+      url: item.url,
+      title: clean(item.title || ''),
+      snippet: clean(item.description || item.extra_snippets?.join(' ') || ''),
+      provider: 'brave'
+    })).filter(r => r.url && r.title).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+async function tavilySearch(query) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: 'basic',
+        max_results: 8,
+        include_answer: false,
+        include_raw_content: false
+      })
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data?.results || [];
+    return items.map(item => ({
+      url: item.url,
+      title: clean(item.title || ''),
+      snippet: clean(item.content || ''),
+      provider: 'tavily'
+    })).filter(r => r.url && (r.title || r.snippet)).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+async function webSearch(query) {
+  // Paid search APIs are optional but far more reliable than scraping search-result pages.
+  // Priority: Brave/Tavily if configured, then DuckDuckGo fallback.
+  const [brave, tavily] = await Promise.all([braveSearch(query), tavilySearch(query)]);
+  const paid = dedupeCandidates([...brave, ...tavily]);
+  if (paid.length) return paid;
+  return ddgSearch(query);
+}
+
+
 function compactSentence(text = '', max = 220) {
   const cleaned = clean(text).replace(/\s+/g, ' ').trim();
   if (!cleaned) return '';
@@ -950,22 +1015,23 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
   try {
-    const { accountName, industry, cityState, emailDomain } = req.body || {};
+    const { accountName, industry, cityState, emailDomain, notes, employees } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
+    const context = [industry, cityState, notes, employees ? `${employees} employees` : ''].filter(Boolean).join(' ');
     const domain = domainFromEmailDomain(emailDomain);
 
     const sourceQueries = [
-      { bucket: 'careers', q: `"${accountName}" hiring jobs careers open positions${location}` },
-      { bucket: 'news/press', q: `"${accountName}" news press release announcement 2026` },
-      { bucket: 'expansion', q: `"${accountName}" expansion new facility new location grand opening` },
-      { bucket: 'events', q: `"${accountName}" event conference expo trade show open house` },
-      { bucket: 'awards', q: `"${accountName}" award recognized milestone anniversary` },
-      { bucket: 'community/csr', q: `"${accountName}" community charity sponsorship fundraiser sustainability` },
-      { bucket: 'leadership', q: `"${accountName}" leadership appoints names promotes new director` },
-      { bucket: 'launch/partnership', q: `"${accountName}" product launch new service partnership acquisition` },
-      { bucket: 'safety/employee', q: `"${accountName}" safety sustainability employee initiative` }
+      { bucket: 'careers', q: `"${accountName}" ${location} hiring jobs careers open positions ${context}` },
+      { bucket: 'news/press', q: `"${accountName}" ${location} news press release announcement 2026 ${context}` },
+      { bucket: 'expansion', q: `"${accountName}" ${location} expansion new facility new location grand opening ${context}` },
+      { bucket: 'events', q: `"${accountName}" ${location} event conference expo trade show open house ${context}` },
+      { bucket: 'awards', q: `"${accountName}" ${location} award recognized milestone anniversary ${context}` },
+      { bucket: 'community/csr', q: `"${accountName}" ${location} community charity sponsorship fundraiser sustainability ${context}` },
+      { bucket: 'leadership', q: `"${accountName}" ${location} leadership appoints names promotes new director ${context}` },
+      { bucket: 'launch/partnership', q: `"${accountName}" ${location} product launch new service partnership acquisition ${context}` },
+      { bucket: 'safety/employee', q: `"${accountName}" ${location} safety sustainability employee initiative ${context}` }
     ];
     if (domain) {
       sourceQueries.unshift({ bucket: 'domain-news', q: `site:${domain} news press release announcement expansion events awards community leadership` });
@@ -976,7 +1042,7 @@ export default async function handler(req, res) {
     const [domainCandidates, searchBatches] = await Promise.all([
       domainProbeCandidates(domain, accountName, industry),
       Promise.allSettled(sourceQueries.map(async item => {
-        const results = await ddgSearch(item.q);
+        const results = await webSearch(item.q);
         return results.map(r => ({ ...r, discoverySource: item.bucket, query: item.q }));
       }))
     ]);
@@ -1025,6 +1091,7 @@ export default async function handler(req, res) {
       diagnostics: {
         elapsedMs: Date.now() - startedAt,
         queriesRun: sourceQueries.length,
+        searchProviders: [process.env.BRAVE_SEARCH_API_KEY ? 'brave' : '', process.env.TAVILY_API_KEY ? 'tavily' : '', 'duckduckgo-fallback'].filter(Boolean),
         domainUsed: domain || '',
         domainProbes: domain ? 52 : 0,
         searchResultsFound: allCandidates.length,
