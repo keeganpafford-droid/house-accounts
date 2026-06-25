@@ -36,6 +36,52 @@ function sourceDomain(url = '') {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
+async function firecrawlScrape(url) {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey || !url) return '';
+  try {
+    const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, timeout: 12000 })
+    });
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    const text = data?.data?.markdown || data?.markdown || data?.data?.text || data?.text || '';
+    return compact(text, 1800);
+  } catch { return ''; }
+}
+
+async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 4, totalLimit = 80) {
+  if (!process.env.FIRECRAWL_API_KEY) return { candidates, scrapedCount: 0 };
+  const byAccount = new Map();
+  const selectedKeys = new Set();
+  const selected = [];
+  for (const c of candidates) {
+    const acct = c.accountName || 'unknown';
+    const count = byAccount.get(acct) || 0;
+    if (count >= perAccountLimit || selected.length >= totalLimit) continue;
+    if (!c.url || /linkedin\.com|facebook\.com|instagram\.com|x\.com|twitter\.com|pdf/i.test(c.url)) continue;
+    const key = c.url.split('#')[0].toLowerCase();
+    if (selectedKeys.has(key)) continue;
+    selectedKeys.add(key);
+    byAccount.set(acct, count + 1);
+    selected.push(c);
+  }
+  const scraped = await mapLimit(selected, 8, async c => ({ key: c.url.split('#')[0].toLowerCase(), content: await firecrawlScrape(c.url) }));
+  const contentMap = new Map((scraped || []).filter(x => x && x.content).map(x => [x.key, x.content]));
+  let scrapedCount = 0;
+  const enriched = candidates.map(c => {
+    const content = contentMap.get((c.url || '').split('#')[0].toLowerCase());
+    if (!content) return c;
+    scrapedCount++;
+    return { ...c, pageContent: content, snippet: compact(`${c.snippet || ''}
+
+Page content: ${content}`, 2200), provider: `${c.provider || 'search'}+firecrawl` };
+  });
+  return { candidates: enriched, scrapedCount };
+}
+
 function safeArray(value, max = 6) {
   if (Array.isArray(value)) return value.map(clean).filter(Boolean).slice(0, max);
   return String(value || '').split(/[;|\n,]/).map(clean).filter(Boolean).slice(0, max);
@@ -445,6 +491,9 @@ export default async function handler(req, res) {
       candidates = discovered.candidates;
       sourceCoverage = discovered.sourceCoverage;
       candidateSamples = discovered.samples.slice(0, 16);
+      const enriched = await enrichCandidatesWithFirecrawl(candidates);
+      candidates = enriched.candidates;
+      if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
     }
 
     let parsed = null;
@@ -467,7 +516,7 @@ Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets:
-${JSON.stringify(candidates.slice(0, 140).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score})), null, 2)}
+${JSON.stringify(candidates.slice(0, 140).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score})), null, 2)}
 
 Each signal must include: accountName, signalType, signalTitle, whatChanged, whyItMattersForPromo, likelyBuyers, likelyProducts, likelyConversations, suggestedOpener, sourceName, sourceUrl, sources, publicationDate, confidence.`;
       rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });

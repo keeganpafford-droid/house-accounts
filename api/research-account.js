@@ -129,6 +129,49 @@ async function fetchText(url, timeoutMs = 6500) {
   }
 }
 
+
+async function firecrawlScrape(url) {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey || !url) return '';
+  try {
+    const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, timeout: 12000 })
+    });
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    const text = data?.data?.markdown || data?.markdown || data?.data?.text || data?.text || '';
+    return compactSentence(text, 1800);
+  } catch { return ''; }
+}
+
+async function enrichCandidatesWithFirecrawl(candidates = [], limit = 8) {
+  if (!process.env.FIRECRAWL_API_KEY) return { candidates, scrapedCount: 0 };
+  const selected = [];
+  const seen = new Set();
+  for (const c of candidates) {
+    if (selected.length >= limit) break;
+    if (!c.url || /linkedin\.com|facebook\.com|instagram\.com|x\.com|twitter\.com|pdf/i.test(c.url)) continue;
+    const key = c.url.split('#')[0].toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(c);
+  }
+  const scraped = await mapLimit(selected, 5, async c => ({ key: c.url.split('#')[0].toLowerCase(), content: await firecrawlScrape(c.url) }));
+  const contentMap = new Map((scraped || []).filter(x => x && x.content).map(x => [x.key, x.content]));
+  let scrapedCount = 0;
+  const enriched = candidates.map(c => {
+    const content = contentMap.get((c.url || '').split('#')[0].toLowerCase());
+    if (!content) return c;
+    scrapedCount++;
+    return { ...c, pageContent: content, snippet: compactSentence(`${c.snippet || ''}
+
+Page content: ${content}`, 2200), provider: `${c.provider || c.discoverySource || 'search'}+firecrawl` };
+  });
+  return { candidates: enriched, scrapedCount };
+}
+
 async function mapLimit(items, limit, mapper) {
   const results = new Array(items.length);
   let idx = 0;
@@ -189,6 +232,27 @@ async function ddgSearch(query) {
 }
 
 
+
+async function serperSearch(query) {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const res = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num: 8 })
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return [...(data.organic || []), ...(data.news || [])].map(item => ({
+      url: item.link || item.url || '',
+      title: clean(item.title || ''),
+      snippet: clean(item.snippet || item.description || ''),
+      provider: 'serper'
+    })).filter(r => r.url && (r.title || r.snippet)).slice(0, 8);
+  } catch { return []; }
+}
+
 async function braveSearch(query) {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!apiKey) return [];
@@ -247,8 +311,8 @@ async function tavilySearch(query) {
 async function webSearch(query) {
   // Paid search APIs are optional but far more reliable than scraping search-result pages.
   // Priority: Brave/Tavily if configured, then DuckDuckGo fallback.
-  const [brave, tavily] = await Promise.all([braveSearch(query), tavilySearch(query)]);
-  const paid = dedupeCandidates([...brave, ...tavily]);
+  const [serper, brave, tavily] = await Promise.all([serperSearch(query), braveSearch(query), tavilySearch(query)]);
+  const paid = dedupeCandidates([...serper, ...brave, ...tavily]);
   if (paid.length) return paid;
   return ddgSearch(query);
 }
@@ -703,17 +767,19 @@ function parseJsonLoose(text = '') {
 
 function safeCandidateForAI(result = {}, idx = 0) {
   const title = compactSentence(stripBadFragments(result.title || ''), 180);
-  const snippet = compactSentence(stripBadFragments(result.snippet || ''), 420);
+  const snippet = compactSentence(stripBadFragments(result.snippet || ''), 1200);
+  const pageContent = compactSentence(stripBadFragments(result.pageContent || ''), 1800);
   const url = result.url || '';
   const sourceType = classifySource(url, title);
   return {
     id: String(idx),
     title,
     snippet,
+    pageContent,
     url,
     domain: cleanSourceName(url),
     sourceType,
-    publicationDate: extractPublicationDate(`${title} ${snippet}`)
+    publicationDate: extractPublicationDate(`${title} ${snippet} ${pageContent}`)
   };
 }
 
@@ -1046,10 +1112,13 @@ export default async function handler(req, res) {
       .filter(x => x.status === 'fulfilled')
       .flatMap(x => x.value || []);
 
-    const allCandidates = dedupeCandidates([...domainCandidates, ...allSearchResults])
+    let allCandidates = dedupeCandidates([...domainCandidates, ...allSearchResults])
       .map(r => ({ ...r, candidateRank: rankCandidateForAI(r, accountName) }))
       .sort((a, b) => b.candidateRank - a.candidateRank)
       .slice(0, 24);
+
+    const firecrawlEnrichment = await enrichCandidatesWithFirecrawl(allCandidates);
+    allCandidates = firecrawlEnrichment.candidates;
 
     const evaluatedSearchResults = allCandidates.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
@@ -1086,12 +1155,13 @@ export default async function handler(req, res) {
       diagnostics: {
         elapsedMs: Date.now() - startedAt,
         queriesRun: sourceQueries.length,
-        searchProviders: [process.env.BRAVE_SEARCH_API_KEY ? 'brave' : '', process.env.TAVILY_API_KEY ? 'tavily' : '', 'duckduckgo-fallback'].filter(Boolean),
+        searchProviders: [process.env.SERPER_API_KEY ? 'serper' : '', process.env.BRAVE_SEARCH_API_KEY ? 'brave' : '', process.env.TAVILY_API_KEY ? 'tavily' : '', process.env.FIRECRAWL_API_KEY ? 'firecrawl' : '', 'duckduckgo-fallback'].filter(Boolean),
         domainUsed: domain || '',
         domainProbes: domain ? 52 : 0,
         searchResultsFound: allCandidates.length,
         rawSearchResultsFound: allSearchResults.length,
         directDomainCandidates: domainCandidates.length,
+        firecrawlPagesScraped: firecrawlEnrichment.scrapedCount || 0,
         acceptedSearchSignals: acceptedSearchSignals.length,
         domainSignalsFound: acceptedSearchSignals.filter(s => s && /direct-domain/.test(s.discoverySource || '')).length,
         aiEnabled: aiQualification.enabled,
