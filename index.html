@@ -186,13 +186,18 @@
     box-shadow:0 8px 24px rgba(23,50,77,0.06);
   }
   .example-opportunity-title{
-    font-family:var(--mono);
-    font-size:0.75rem;
-    text-transform:uppercase;
-    letter-spacing:0.12em;
-    color:var(--signal);
-    margin-bottom:14px;
-    font-weight:700;
+    font-family:var(--display);
+    font-size:1.6rem;
+    line-height:1.1;
+    color:var(--ink);
+    margin-bottom:8px;
+    font-weight:800;
+  }
+  .example-opportunity-subtitle{
+    font-size:0.95rem;
+    color:var(--slate);
+    margin-bottom:16px;
+    max-width:780px;
   }
   .example-card{
     border:1px solid var(--line);
@@ -1275,7 +1280,7 @@
 <main>
   <section class="lead-gate" id="leadGate">
     <h2>Know which house accounts to call this week.</h2>
-    <div class="promise">Upload your house accounts. House Accounts ranks the best reasons to reach out, shows why they matter, and helps your team decide who to contact today.</div>
+    <div class="promise">Enter your information and upload your account list. House Accounts automatically analyzes your customers and shows your team the best reasons to reach out.</div>
     <div class="signal-checklist" aria-label="What House Accounts helps identify">
       <div class="signal-check"><span class="checkmark">✓</span> Hiring Activity</div>
       <div class="signal-check"><span class="checkmark">✓</span> Leadership Changes</div>
@@ -1334,7 +1339,7 @@
         </div>
       </div>
       <button class="btn btn-secondary" type="submit">Continue</button>
-      <div class="lead-note">We do not store your uploaded CSV. The file is analyzed locally in your browser. Your contact info helps us understand who is testing House Accounts.</div>
+      <div class="lead-note">Your account data is analyzed securely. We don’t permanently store your uploaded CSV. Your contact info helps us understand who is testing House Accounts.</div>
     </form>
   </section>
 
@@ -1352,26 +1357,27 @@
     <div id="error"></div>
   </div>
 
-  <section class="example-opportunity" id="exampleOpportunity" aria-label="Example opportunity found">
-    <div class="example-opportunity-title">Example Opportunity Found</div>
+  <section class="example-opportunity" id="exampleOpportunity" aria-label="Example results preview">
+    <div class="example-opportunity-title">What You’ll Receive</div>
+    <div class="example-opportunity-subtitle">Every upload produces prioritized reasons to reach out using order history, repeat buying patterns, and verified business activity.</div>
     <div class="example-card">
       <div class="example-account">Acme Manufacturing</div>
       <div class="example-grid">
         <div>
-          <div class="example-label">Signal</div>
+          <div class="example-label">Verified Business Signal</div>
           <div class="example-value">Hiring 23 new employees</div>
         </div>
         <div>
-          <div class="example-label">Opportunity</div>
-          <div class="example-value">New Hire Onboarding Program</div>
+          <div class="example-label">Reason to Reach Out</div>
+          <div class="example-value">New hire onboarding may create a natural conversation.</div>
         </div>
         <div>
-          <div class="example-label">Estimated Revenue</div>
-          <div class="example-revenue">$7,500–$15,000</div>
+          <div class="example-label">Suggested Conversation</div>
+          <div class="example-value">Ask how they are welcoming and outfitting new employees.</div>
         </div>
       </div>
       <div class="example-play">
-        <strong>Recommended Sales Play:</strong> Introduce a branded onboarding kit program for new hires.
+        <strong>Common promo categories:</strong> Welcome kits, employee apparel, onboarding items, and recognition gifts.
       </div>
     </div>
   </section>
