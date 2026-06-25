@@ -820,48 +820,42 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = []) 
 
   if (!safeCandidates.length) return { enabled: true, signals: [], rawCount: 0, error: 'No usable candidates for AI qualification' };
 
-  const prompt = `You are an expert promotional products sales strategist for House Accounts.
+  const prompt = `You are the Opportunity Discovery Engine for House Accounts, a tool built for promotional products distributors.
 
 Account: ${accountName}
 Industry: ${industry || 'Unknown'}
 
 Your job is NOT to summarize the company.
-Your job is to identify legitimate business activity that would give a promotional products salesperson a natural reason to contact this account in the next 90 days.
+Your job is to think like an elite promotional-products sales rep and answer one question:
 
-Valid signals include:
-- Hiring activity
-- Facility expansion, new office, new location, or manufacturing growth
-- Product or service launches
-- Trade show, conference, expo, open house, or customer event participation
-- Sponsorships, community involvement, charity events, or fundraising
-- Awards, recognition, anniversaries, or major milestones
-- Acquisitions, mergers, funding, or major partnerships
-- Leadership changes or major team changes
-- Employee, safety, sustainability, or culture initiatives
+"If I sold promotional products, branded apparel, uniforms, awards, print, onboarding kits, trade-show materials, safety incentives, recognition programs, customer gifts, or corporate merchandise, is there anything happening at this company that creates a legitimate reason to start a conversation in the next 90 days?"
 
-Reject:
-- Generic About pages
-- Contact pages
-- SEO snippets
-- Homepage descriptions
-- Navigation text
-- Location/map pages
-- Anything that does not create a real reason to reach out
+Use the candidate public sources below. First identify what changed. Then translate only the strongest developments into promo-relevant sales conversations.
 
-Only return signals a rep could plausibly use to start a conversation. If nothing meaningful exists, return {"signals":[]}.
+Consider signals such as hiring, expansion, new facilities, trade shows, conferences, awards, product launches, partnerships, acquisitions, funding, leadership changes, community initiatives, safety initiatives, sustainability, employee engagement, rebrands, major customer wins, and government contracts.
 
-For each accepted signal, return strict JSON only with this shape:
+Reject generic About pages, Contact pages, homepages, SEO snippets, navigation text, stale news, and anything that does not create a natural reason to reach out.
+
+Important rules:
+- Return at most 2 opportunities.
+- Only return opportunities with confidence >= 80.
+- If there is no strong opportunity, return {"signals":[]}.
+- Do not invent facts.
+- Do not stop at "they are hiring". Translate why it matters to promo.
+
+Return strict JSON only with this shape:
 {
   "signals": [
     {
       "candidateId": "0",
-      "signalType": "Hiring | Event | Expansion | Leadership Change | Award | Product Launch | Community Initiative | Acquisition | Major Initiative",
-      "signalTitle": "short human-readable signal",
-      "shortSummary": "one short sentence, no raw web scrape text",
-      "whyReachOut": "one clear sentence explaining why a rep should contact them",
-      "likelyConversation": "the natural business conversation to start, not a product pitch",
-      "likelyConversations": ["optional short conversation themes"],
-      "suggestedOpener": "casual sentence a rep could actually send",
+      "signalType": "Hiring | Expansion | New Facility | Trade Show | Conference | Award | Leadership Change | Product Launch | Partnership | Acquisition | Community Initiative | Government Contract | Funding | Rebrand | Major Initiative",
+      "signalTitle": "short human-readable headline",
+      "whatChanged": "one specific sentence about the public business development",
+      "whyItMattersForPromo": "one clear sentence explaining why this creates a reason for a promo rep to reach out",
+      "likelyBuyers": ["likely buyer roles"],
+      "likelyProducts": ["uniforms", "welcome kits", "trade show giveaways"],
+      "likelyConversations": ["short conversation themes"],
+      "suggestedOpener": "one natural sentence a rep could say or email",
       "suggestedContact": "likely role to contact",
       "likelyDepartment": "likely department/team involved",
       "publicationDate": "date if visible, otherwise empty string",
@@ -908,7 +902,8 @@ ${JSON.stringify(safeCandidates, null, 2)}`;
         return makeAISignal(sig, candidate, accountName, industry, rawSignals.length > 1);
       })
       .filter(Boolean)
-      .slice(0, 4);
+      .filter(signal => Number(signal.confidence || 0) >= 0.80)
+      .slice(0, 2);
 
     return { enabled: true, signals, rawCount: rawSignals.length, error: '' };
   } catch (err) {
