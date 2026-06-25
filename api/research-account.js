@@ -109,11 +109,14 @@ function sourceConfidence(sourceType, title = '', snippet = '', url = '') {
   return Math.min(0.90, Math.max(0.35, score));
 }
 
-async function fetchText(url) {
+async function fetchText(url, timeoutMs = 6500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8' },
-      redirect: 'follow'
+      redirect: 'follow',
+      signal: controller.signal
     });
     if (!res.ok) return '';
     const contentType = res.headers.get('content-type') || '';
@@ -121,8 +124,25 @@ async function fetchText(url) {
     return await res.text();
   } catch {
     return '';
+  } finally {
+    clearTimeout(timer);
   }
 }
+
+async function mapLimit(items, limit, mapper) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const current = idx++;
+      try { results[current] = await mapper(items[current], current); }
+      catch { results[current] = null; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 
 async function ddgSearch(query) {
   const urls = [
@@ -567,14 +587,25 @@ function dedupeSignals(signals) {
   return signals
     .filter(s => s && s.isReal && s.sourceUrl)
     .filter(s => {
-      const key = `${s.signalType}|${s.sourceUrl}`;
-      if (seen.has(key)) return false;
+      const urlKey = canonicalUrlKey(s.sourceUrl || '');
+      const summary = clean(`${s.signalType || ''} ${s.signalDetail || ''} ${s.shortSummary || ''} ${s.title || ''}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(' ')
+        .filter(w => w.length > 3)
+        .slice(0, 10)
+        .join(' ');
+      const key = `${s.signalType || s.type || 'signal'}|${urlKey}|${summary}`;
+      const looseKey = `${s.signalType || s.type || 'signal'}|${urlKey}`;
+      if (seen.has(key) || seen.has(looseKey)) return false;
       seen.add(key);
+      seen.add(looseKey);
       return true;
     })
     .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
     .slice(0, 6);
 }
+
 
 function rejectionReason(result = {}, accountName = '') {
   const rawText = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`;
@@ -826,99 +857,189 @@ function domainFromEmailDomain(emailDomain = '') {
   return d;
 }
 
-async function domainProbeSignals(domain, accountName, industry) {
+async function domainProbeCandidates(domain, accountName, industry) {
   if (!domain) return [];
-  const paths = ['/careers', '/career', '/jobs', '/join-our-team', '/news', '/press', '/press-releases', '/media', '/events', '/event', '/trade-shows', '/blog', '/community', '/community-involvement', '/csr', '/awards', '/about/leadership', '/leadership', '/investors', '/sustainability'];
-  const candidates = [];
+  const paths = [
+    '/careers', '/career', '/jobs', '/join-our-team', '/employment',
+    '/news', '/press', '/press-releases', '/media', '/announcements',
+    '/events', '/event', '/trade-shows', '/conferences', '/open-house',
+    '/blog', '/community', '/community-involvement', '/csr', '/sustainability',
+    '/awards', '/recognition', '/about/leadership', '/leadership', '/team',
+    '/investors', '/investor-relations'
+  ];
+  const urls = [];
   for (const path of paths) {
-    candidates.push(`https://${domain}${path}`);
-    if (path) candidates.push(`https://www.${domain}${path}`);
+    urls.push(`https://${domain}${path}`);
+    urls.push(`https://www.${domain}${path}`);
   }
-
-  const results = [];
   const seen = new Set();
-  for (const url of candidates) {
-    const normalized = url.replace(/\/+$/,'/');
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    const html = await fetchText(url);
-    if (!html) continue;
-    const text = clean(html).slice(0, 2500);
-    if (isBadSearchText(text)) continue;
-    if (!hasStrongSignalContext(text, url)) continue;
+  const uniqueUrls = urls.filter(url => {
+    const key = url.replace(/\/+$|^https:\/\/www\./g, '').toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const pages = await mapLimit(uniqueUrls, 8, async (url) => {
+    const html = await fetchText(url, 5200);
+    if (!html) return null;
+    const text = clean(html).slice(0, 3000);
+    if (isBadSearchText(text)) return null;
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const title = clean(titleMatch ? titleMatch[1] : `${accountName} ${url}`);
-    results.push({ url, title, snippet: text });
-    if (results.length >= 10) break;
-  }
-  return results.map(r => signalFromResult(r, accountName, industry)).filter(Boolean);
+    return { url, title, snippet: text, discoverySource: 'direct-domain' };
+  });
+
+  return pages
+    .filter(Boolean)
+    .filter(r => hasStrongSignalContext(`${r.title} ${r.snippet}`, r.url))
+    .slice(0, 16);
 }
+
+function canonicalUrlKey(url = '') {
+  try {
+    const u = new URL(url);
+    let host = u.hostname.replace(/^www\./, '').toLowerCase();
+    let path = u.pathname.replace(/\/$/, '').toLowerCase();
+    return `${host}${path}`;
+  } catch { return String(url || '').toLowerCase().replace(/\/$/, ''); }
+}
+
+function dedupeCandidates(results = []) {
+  const seen = new Set();
+  return results.filter(r => {
+    if (!r || !r.url) return false;
+    if (isBadSearchText(`${r.title} ${r.snippet}`)) return false;
+    const key = canonicalUrlKey(r.url);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function rankCandidateForAI(r = {}, accountName = '') {
+  const text = `${r.title || ''} ${r.snippet || ''} ${r.url || ''}`.toLowerCase();
+  let score = 0;
+  if (/career|careers|hiring|jobs|open position|apply now|join our team/.test(text)) score += 35;
+  if (/news|press|release|announcement|announces|unveils|launch/.test(text)) score += 34;
+  if (/event|conference|expo|trade show|summit|open house|webinar/.test(text)) score += 32;
+  if (/award|recognized|winner|milestone|anniversary|best/.test(text)) score += 30;
+  if (/community|charity|sponsor|fundrais|csr|sustainability/.test(text)) score += 28;
+  if (/expansion|new facility|new location|opening|grand opening|capacity/.test(text)) score += 36;
+  if (/leadership|appoints|promotes|named|joins as|new ceo|president|director/.test(text)) score += 26;
+  if (/2026|today|yesterday|this week|upcoming|recently|now/.test(text)) score += 12;
+  if (looksLikeGenericHomepage(r, accountName)) score -= 25;
+  if (!hasStrongSignalContext(`${r.title} ${r.snippet}`, r.url)) score -= 20;
+  return score;
+}
+
+function sourceBucket(result = {}) {
+  const t = `${result.url || ''} ${result.title || ''}`.toLowerCase();
+  if (/career|jobs|employment|join-our-team/.test(t)) return 'careers';
+  if (/news|press|release|announcement|media/.test(t)) return 'news/press';
+  if (/event|conference|expo|trade-show|open-house/.test(t)) return 'events';
+  if (/award|recognition|milestone/.test(t)) return 'awards';
+  if (/community|charity|sponsor|csr|sustainability/.test(t)) return 'community/csr';
+  if (/leadership|team|about/.test(t)) return 'leadership';
+  if (/investor|acquisition|funding|partnership/.test(t)) return 'investor/partnership';
+  return 'general';
+}
+
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  const startedAt = Date.now();
   try {
     const { accountName, industry, cityState, emailDomain } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
     const domain = domainFromEmailDomain(emailDomain);
-    const queries = [
-      `"${accountName}" hiring jobs careers open positions${location}`,
-      `"${accountName}" news press release announcement 2026`,
-      `"${accountName}" expansion new facility new location grand opening`,
-      `"${accountName}" event conference expo trade show open house`,
-      `"${accountName}" award recognized milestone anniversary`,
-      `"${accountName}" community charity sponsorship fundraiser`,
-      `"${accountName}" leadership appoints names promotes new director`,
-      `"${accountName}" product launch new service partnership acquisition`,
-      `"${accountName}" safety sustainability employee initiative`
+
+    const sourceQueries = [
+      { bucket: 'careers', q: `"${accountName}" hiring jobs careers open positions${location}` },
+      { bucket: 'news/press', q: `"${accountName}" news press release announcement 2026` },
+      { bucket: 'expansion', q: `"${accountName}" expansion new facility new location grand opening` },
+      { bucket: 'events', q: `"${accountName}" event conference expo trade show open house` },
+      { bucket: 'awards', q: `"${accountName}" award recognized milestone anniversary` },
+      { bucket: 'community/csr', q: `"${accountName}" community charity sponsorship fundraiser sustainability` },
+      { bucket: 'leadership', q: `"${accountName}" leadership appoints names promotes new director` },
+      { bucket: 'launch/partnership', q: `"${accountName}" product launch new service partnership acquisition` },
+      { bucket: 'safety/employee', q: `"${accountName}" safety sustainability employee initiative` }
     ];
     if (domain) {
-      queries.unshift(`site:${domain} careers jobs hiring open positions`);
-      queries.unshift(`site:${domain} news press release announcement expansion events awards community leadership`);
+      sourceQueries.unshift({ bucket: 'domain-news', q: `site:${domain} news press release announcement expansion events awards community leadership` });
+      sourceQueries.unshift({ bucket: 'domain-careers', q: `site:${domain} careers jobs hiring open positions` });
     }
 
-    const allResults = [];
-    const domainSignals = await domainProbeSignals(domain, accountName, industry);
-    for (const q of queries) {
-      const results = await ddgSearch(q);
-      allResults.push(...results);
-    }
+    // Run search coverage in parallel. Ranking decides which accounts to research; research should be broad but fast.
+    const [domainCandidates, searchBatches] = await Promise.all([
+      domainProbeCandidates(domain, accountName, industry),
+      Promise.allSettled(sourceQueries.map(async item => {
+        const results = await ddgSearch(item.q);
+        return results.map(r => ({ ...r, discoverySource: item.bucket, query: item.q }));
+      }))
+    ]);
 
-    const evaluatedSearchResults = allResults.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
+    const allSearchResults = searchBatches
+      .filter(x => x.status === 'fulfilled')
+      .flatMap(x => x.value || []);
+
+    const allCandidates = dedupeCandidates([...domainCandidates, ...allSearchResults])
+      .map(r => ({ ...r, candidateRank: rankCandidateForAI(r, accountName) }))
+      .sort((a, b) => b.candidateRank - a.candidateRank)
+      .slice(0, 24);
+
+    const evaluatedSearchResults = allCandidates.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
 
     // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
-    // If OPENAI_API_KEY is not configured, this safely falls back to keyword-qualified signals.
-    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allResults);
+    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates);
+
     const signals = dedupeSignals([
       ...aiQualification.signals,
-      ...domainSignals,
       ...acceptedSearchSignals
     ]);
 
-    const rejectedResults = Math.max(0, allResults.length - acceptedSearchSignals.length);
+    const rejectedResults = Math.max(0, allCandidates.length - acceptedSearchSignals.length);
     const candidateSamples = evaluatedSearchResults
       .map(x => candidateSample(x.result, accountName, x.signal))
-      .slice(0, 5);
+      .slice(0, 10);
+
+    const sourceCoverage = allCandidates.reduce((acc, r) => {
+      const bucket = r.discoverySource || sourceBucket(r);
+      acc[bucket] = (acc[bucket] || 0) + 1;
+      return acc;
+    }, {});
+
+    const acceptedByBucket = signals.reduce((acc, s) => {
+      const bucket = sourceBucket({ url: s.sourceUrl, title: s.sourceType || s.title });
+      acc[bucket] = (acc[bucket] || 0) + 1;
+      return acc;
+    }, {});
 
     return res.status(200).json({
       accountName,
       researchedAt: new Date().toISOString(),
       signals,
       diagnostics: {
-        queriesRun: queries.length,
+        elapsedMs: Date.now() - startedAt,
+        queriesRun: sourceQueries.length,
         domainUsed: domain || '',
-        domainProbes: domain ? 20 : 0,
-        searchResultsFound: allResults.length,
+        domainProbes: domain ? 52 : 0,
+        searchResultsFound: allCandidates.length,
+        rawSearchResultsFound: allSearchResults.length,
+        directDomainCandidates: domainCandidates.length,
         acceptedSearchSignals: acceptedSearchSignals.length,
-        domainSignalsFound: domainSignals.length,
+        domainSignalsFound: acceptedSearchSignals.filter(s => s && /direct-domain/.test(s.discoverySource || '')).length,
         aiEnabled: aiQualification.enabled,
         aiRawSignals: aiQualification.rawCount || 0,
         aiAcceptedSignals: aiQualification.signals.length,
         aiError: aiQualification.error || '',
         rejectedResults,
         signalsReturned: signals.length,
+        sourceCoverage,
+        acceptedByBucket,
         candidateSamples
       },
       message: signals.length ? `${signals.length} verified public signal(s) found.` : 'No verified external signals found.'
