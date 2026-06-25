@@ -2040,11 +2040,13 @@ function renderVerifiedSignals(signals){
         <div class="verified-signal-meta">
           ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
         </div>
-        <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || 'This creates a timely reason to reach out.')}</div>
+        <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
+        <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
+        <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
         <div class="verified-signal-row"><strong>Likely conversations:</strong>
           <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
         </div>
-        <div class="verified-signal-row"><strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>
+        ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -2054,9 +2056,11 @@ function addSignalDerivedOpportunities(account, signals){
   (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
-    const products = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
-      ? signal.likelyConversations
-      : (Array.isArray(signal.suggestedProducts) && signal.suggestedProducts.length ? signal.suggestedProducts : ['employee onboarding', 'uniforms', 'recognition', 'event support']);
+    const products = Array.isArray(signal.likelyProducts) && signal.likelyProducts.length
+      ? signal.likelyProducts
+      : (Array.isArray(signal.commonPromoCategories) && signal.commonPromoCategories.length
+        ? signal.commonPromoCategories
+        : (Array.isArray(signal.suggestedProducts) && signal.suggestedProducts.length ? signal.suggestedProducts : ['employee onboarding', 'uniforms', 'recognition', 'event support']));
     const contactTitle = signal.suggestedContact || 'Relevant department lead';
     const businessSignalCount = (signals || []).filter(s => s && s.isReal && s.sourceUrl).length;
     const multiSignalBonus = businessSignalCount > 2 ? 10 : businessSignalCount > 1 ? 6 : 0;
@@ -2081,8 +2085,10 @@ function addSignalDerivedOpportunities(account, signals){
     opp.reasonToReachOut = signal.reasonToReachOut || signal.whyNow || getReasonToReachOutTitle(opp);
     opp.conversationStarter = signal.conversationStarter || signal.suggestedOpener || getConversationStarterText(opp);
     opp.commonPromoCategories = products;
-    opp.likelyConversations = signal.likelyConversations || products;
-    opp.affectedDepartment = signal.affectedDepartment || '';
+    opp.likelyProducts = products;
+    opp.likelyConversations = signal.likelyConversations || signal.conversationThemes || products;
+    opp.likelyBuyers = signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead'];
+    opp.affectedDepartment = signal.affectedDepartment || (opp.likelyBuyers[0] || '');
     opp.evidence = [
       `Source: ${signal.cleanSourceName || sourceDomain(signal.sourceUrl) || 'public source'}`,
       cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet) || 'External business activity detected',
@@ -2221,16 +2227,40 @@ function getAccountsForResearch(options = {}){
 }
 
 function batchPayloadForAccounts(accounts){
-  return accounts.map(account => ({
-    name: account.name,
-    industry: account.industry || '',
-    cityState: account.purchases?.[0]?.location || account.location || '',
-    notes: account.notes || '',
-    website: account.website || '',
-    orderCount: account.orderCount || 0,
-    revenue: account.revenue || 0,
-    categories: [...(account.categoryTypes || [])].slice(0, 10)
-  }));
+  return accounts.map(account => {
+    const contacts = Array.from(new Set((account.purchases || [])
+      .flatMap(p => [p.contactName, p.contact, p.contactEmail].filter(Boolean))
+      .map(v => String(v).trim())
+      .filter(Boolean))).slice(0, 6);
+    const recentOrderDates = (account.purchases || [])
+      .map(p => p.orderDate || p.date || p.order_date)
+      .filter(Boolean)
+      .slice(0, 6);
+    const existingSignals = (account.futureOpportunities || [])
+      .filter(o => o.signalLayerType && o.signalLayerType !== 'Business Activity Signal')
+      .slice(0, 5)
+      .map(o => ({type:o.signalLayerType, why:o.reasonToReachOut || o.whyNow || o.opportunity || ''}));
+    const repeatPatterns = (account.futureOpportunities || [])
+      .filter(o => o.signalLayerType === 'Repeat / Pattern Signal')
+      .slice(0, 5)
+      .map(o => ({category:o.opportunityCategory || o.opportunity || '', why:o.reasonToReachOut || ''}));
+    return {
+      name: account.name,
+      industry: account.industry || '',
+      cityState: account.purchases?.[0]?.location || account.location || '',
+      notes: account.notes || '',
+      website: account.website || '',
+      orderCount: account.orderCount || 0,
+      revenue: account.revenue || 0,
+      relationshipStrength: account.relationshipStrength || account.relationshipScore || '',
+      quickWinScore: account.quickWinScore || '',
+      categories: [...(account.categoryTypes || [])].slice(0, 10),
+      contacts,
+      recentOrderDates,
+      existingSignals,
+      repeatPatterns
+    };
+  });
 }
 
 async function researchAccountsBatch(accounts, options = {}){
@@ -2256,22 +2286,23 @@ async function researchAccountsBatch(accounts, options = {}){
     window.researchDiagnostics.push({
       accountName: 'Batch AI Web Research',
       signalsFound: Number(diag.signalsReturned || (data.signals || []).length || 0),
-      searchResultsFound: Number(diag.rawSignals || 0),
-      rawSearchResultsFound: Number(diag.rawSignals || 0),
+      searchResultsFound: Number(diag.signalsDiscovered || diag.rawSignals || 0),
+      rawSearchResultsFound: Number(diag.signalsDiscovered || diag.rawSignals || 0),
       acceptedSearchSignals: 0,
       domainSignalsFound: 0,
-      rejectedResults: Math.max(0, Number(diag.rawSignals || 0) - Number(diag.signalsReturned || 0)),
+      rejectedResults: Number(diag.signalsRejected || Math.max(0, Number(diag.rawSignals || 0) - Number(diag.signalsReturned || 0))),
       queriesRun: accounts.length,
       domainProbes: 0,
       domainUsed: 'OpenAI web_search',
       directDomainCandidates: 0,
-      sourceCoverage: {'ai-web-search': Number(diag.accountsResearched || accounts.length)},
+      sourceCoverage: {'ai-opportunity-discovery': Number(diag.accountsResearched || accounts.length)},
       acceptedByBucket: {'business-activity': Number(diag.signalsReturned || 0)},
       elapsedMs: diag.elapsedMs || 0,
       candidateSamples: [],
       aiEnabled: true,
-      aiRawSignals: Number(diag.rawSignals || 0),
-      aiAcceptedSignals: Number(diag.signalsReturned || 0),
+      aiRawSignals: Number(diag.signalsDiscovered || diag.rawSignals || 0),
+      aiAcceptedSignals: Number(diag.highConfidenceOpportunities || diag.signalsReturned || 0),
+      avgConfidence: diag.avgConfidence || 0,
       aiError: ''
     });
 
