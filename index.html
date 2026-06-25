@@ -98,7 +98,7 @@
 
 
 
-  /* Lead capture / beta gate */
+  /* Lead capture gate */
   .lead-gate{
     background:#fff;
     border:2px solid var(--ink);
@@ -120,7 +120,7 @@
   }
   .lead-form-grid{
     display:grid;
-    grid-template-columns:1fr 1.1fr 1fr 0.9fr 1.1fr;
+    grid-template-columns:repeat(6, minmax(150px, 1fr));
     gap:12px;
     margin-bottom:16px;
     align-items:end;
@@ -1275,14 +1275,14 @@
 <main>
   <section class="lead-gate" id="leadGate">
     <h2>Know which house accounts to call this week.</h2>
-    <div class="promise">Upload your house accounts and discover new revenue opportunities in minutes. V1 is a founding beta scan; the long-term product will monitor these accounts weekly and alert you when new revenue signals appear.</div>
+    <div class="promise">Upload your house accounts. House Accounts ranks the best reasons to reach out, shows why they matter, and helps your team decide who to contact today.</div>
     <div class="signal-checklist" aria-label="What House Accounts helps identify">
       <div class="signal-check"><span class="checkmark">✓</span> Hiring Activity</div>
       <div class="signal-check"><span class="checkmark">✓</span> Leadership Changes</div>
       <div class="signal-check"><span class="checkmark">✓</span> Company Growth Signals</div>
       <div class="signal-check"><span class="checkmark">✓</span> Expansion Opportunities</div>
-      <div class="signal-check"><span class="checkmark">✓</span> Recommended Sales Plays</div>
-      <div class="signal-check"><span class="checkmark">✓</span> Estimated Revenue Opportunities</div>
+      <div class="signal-check"><span class="checkmark">✓</span> Repeat Buying Patterns</div>
+      <div class="signal-check"><span class="checkmark">✓</span> Suggested Conversation Starters</div>
     </div>
     <form id="leadForm">
       <div class="lead-form-grid">
@@ -1318,16 +1318,30 @@
             <option value="1000+">1000+</option>
           </select>
         </div>
+        <div class="form-field">
+          <label for="leadCrmErp">CRM / ERP</label>
+          <select id="leadCrmErp" name="crmErp" required>
+            <option value="">Select one</option>
+            <option value="commonsku">commonsku</option>
+            <option value="Facilis">Facilis</option>
+            <option value="Antera">Antera</option>
+            <option value="Essent">Essent</option>
+            <option value="Salesforce">Salesforce</option>
+            <option value="HubSpot">HubSpot</option>
+            <option value="Pipedrive">Pipedrive</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
       </div>
-      <button class="btn btn-secondary" type="submit">Upload Your Accounts</button>
-      <div class="lead-note">We do not store your uploaded CSV in V1. The file is analyzed locally in your browser. Your contact info is captured so we can follow up about the founding beta.</div>
+      <button class="btn btn-secondary" type="submit">Continue</button>
+      <div class="lead-note">We do not store your uploaded CSV. The file is analyzed locally in your browser. Your contact info helps us understand who is testing House Accounts.</div>
     </form>
   </section>
 
   <div class="upload-zone locked" id="dropzone">
-    <h2>Drop your CSV here</h2>
-    <p>or click to browse files</p>
-    <button class="btn" id="browseBtn" type="button">Choose file</button>
+    <h2>Analyze Your Accounts</h2>
+    <p>Upload your account list and discover who your team should contact today — and why.</p>
+    <button class="btn" id="browseBtn" type="button">Upload Account List</button>
     <input type="file" id="fileInput" accept=".csv">
     <div class="csv-hint">
       Required column:<br>
@@ -1415,33 +1429,6 @@
       <div id="accountList"></div>
     </div>
 
-    <section class="beta-cta" id="betaCta" style="display:none;">
-      <h2>Future Version: Weekly Opportunity Alerts</h2>
-      <p>Upload once. Get a weekly list of the best accounts to call and why.</p>
-      <form id="betaForm">
-        <div class="lead-form-grid">
-          <div class="form-field">
-            <label for="betaPriority">Biggest Need</label>
-            <select id="betaPriority" name="priority">
-              <option value="Weekly opportunity emails">Weekly opportunity emails</option>
-              <option value="House account reclaiming">House account reclaiming</option>
-              <option value="CRM/ERP export support">CRM/ERP export support</option>
-              <option value="Sales play generation">Sales play generation</option>
-            </select>
-          </div>
-          <div class="form-field">
-            <label for="betaAccounts">Approx. House Accounts</label>
-            <input id="betaAccounts" name="accounts" placeholder="e.g. 400">
-          </div>
-          <div class="form-field">
-            <label for="betaErp">CRM / ERP</label>
-            <input id="betaErp" name="erp" placeholder="commonsku, Antera, Facilis, Essent...">
-          </div>
-        </div>
-        <button class="btn btn-secondary" type="submit">Join Founding Beta</button>
-        <div class="beta-success" id="betaSuccess">Got it — beta interest captured.</div>
-      </form>
-    </section>
   </div>
 </main>
 
@@ -1508,10 +1495,11 @@ document.addEventListener('DOMContentLoaded', () => {
         email: document.getElementById('leadEmail').value.trim(),
         company: document.getElementById('leadCompany').value.trim(),
         role: document.getElementById('leadRole').value,
-        houseAccounts: document.getElementById('houseAccounts').value
+        houseAccounts: document.getElementById('houseAccounts').value,
+        crmErp: document.getElementById('leadCrmErp').value
       };
-      if(!lead.name || !lead.email || !lead.company || !lead.role || !lead.houseAccounts){
-        showError('Please complete all beta access fields.');
+      if(!lead.name || !lead.email || !lead.company || !lead.role || !lead.houseAccounts || !lead.crmErp){
+        showError('Please complete all access fields.');
         return;
       }
       currentLead = lead;
@@ -1519,22 +1507,6 @@ document.addEventListener('DOMContentLoaded', () => {
       await captureLead('report_gate', {lead});
       setLeadGateState();
       clearError();
-    });
-  }
-
-  const betaForm = document.getElementById('betaForm');
-  if(betaForm){
-    betaForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const beta = {
-        priority: document.getElementById('betaPriority').value,
-        approxHouseAccounts: document.getElementById('betaAccounts').value.trim(),
-        erp: document.getElementById('betaErp').value.trim(),
-        analysisSummary: lastAnalysisSummary
-      };
-      await captureLead('founding_beta', {lead: currentLead || getSavedLead(), beta});
-      const success = document.getElementById('betaSuccess');
-      if(success) success.style.display = 'block';
     });
   }
 });
@@ -3242,8 +3214,6 @@ function processData(records){
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
 
-  const betaCta = document.getElementById('betaCta');
-  if(betaCta) betaCta.style.display = 'block';
   lastAnalysisSummary = {
     accountCount: accounts.length,
     closedHistoricalRevenue,
