@@ -1092,6 +1092,32 @@
     color:var(--muted);
     margin-bottom:8px;
   }
+
+  .verified-signal-simple{
+    border:1px solid var(--line);
+    border-left:4px solid var(--signal);
+    border-radius:10px;
+    padding:14px;
+    margin:10px 0;
+    background:#fff;
+  }
+  .verified-signal-simple-title{
+    font-weight:800;
+    color:var(--navy);
+    margin-bottom:6px;
+  }
+  .verified-signal-row{
+    margin-top:8px;
+    line-height:1.45;
+  }
+  .verified-signal-row strong{
+    color:var(--navy);
+  }
+  .likely-conversation-list{
+    margin:6px 0 0 18px;
+    padding:0;
+  }
+
   .verified-signal-evidence{
     font-size:0.88rem;
     line-height:1.45;
@@ -1339,7 +1365,7 @@
         </div>
       </div>
       <button class="btn btn-secondary" type="submit">Continue</button>
-      <div class="lead-note">Your data is used only to analyze your accounts and is never sold or shared with third parties.</div>
+      <div class="lead-note">Your account data is used to analyze your accounts and generate House Accounts insights. We never sell or share your information.</div>
     </form>
   </section>
 
@@ -1913,6 +1939,7 @@ function getRepEvidenceBullets(opp){
   const out = [];
   if(layer === 'Business Activity Signal'){
     if(opp.sourceUrl) out.push(`Source: ${sourceDomain(opp.sourceUrl) || 'public web source'}`);
+    if(opp.signalDate && !String(opp.signalDate).includes('T')) out.push(`Published: ${opp.signalDate}`);
     const cleanSummary = businessSignalPlainSummary(opp);
     if(cleanSummary) out.push(shortText(cleanSummary, 130));
     if(opp.affectedDepartment) out.push(`Likely team: ${opp.affectedDepartment}`);
@@ -1996,27 +2023,22 @@ function renderVerifiedSignals(signals){
     return `<div class="no-signals-message">No verified external signals found.</div>`;
   }
   return verified.map(signal => {
-    const valueRange = signal.estimatedValueRange?.label || 'Estimate requires account context';
+    const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
+    const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
+    const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
+      ? signal.likelyConversations
+      : [signal.opportunityCategory || signal.conversationStarter || signal.whyNow || 'Relevant account conversation'];
     return `
-      <div class="verified-signal-card">
-        <div class="verified-signal-title">Verified Signal: ${escapeHtml(signal.signalDetail || signal.title || signal.signalType || signal.type || 'Business Signal')}</div>
+      <div class="verified-signal-simple">
+        <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
         <div class="verified-signal-meta">
-          <strong>Type:</strong> ${escapeHtml(signal.signalType || signal.type || 'Business Signal')} ·
-          <strong>Source:</strong> ${escapeHtml(signal.sourceType || 'Public source')} ·
-          <strong>Confidence:</strong> ${escapeHtml(signal.confidenceLevel || confidenceLabel(signal.confidence))} ·
-          <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">View source</a>
+          ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
         </div>
-        <div class="verified-signal-grid">
-          <div><strong>Department:</strong><br>${escapeHtml(signal.affectedDepartment || 'Relevant department')}</div>
-          <div><strong>Suggested contact:</strong><br>${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>
-          <div><strong>Opportunity category:</strong><br>${escapeHtml(signal.opportunityCategory || 'Promo opportunity')}</div>
-          <div><strong>Value source:</strong><br>${escapeHtml(signal.valueSource || 'Signal Only')} · ${escapeHtml(valueRange)}</div>
+        <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || 'This creates a timely reason to reach out.')}</div>
+        <div class="verified-signal-row"><strong>Likely conversations:</strong>
+          <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
         </div>
-        <div class="verified-signal-evidence"><strong>Evidence:</strong> ${escapeHtml(signal.evidence || signal.description || 'Source-backed business activity found.')}</div>
-        <div class="verified-opportunity">
-          <strong>Why now:</strong> ${escapeHtml(signal.whyNow || 'A verified public signal creates a timely reason to reach out.')}<br>
-          <strong>Opportunity explanation:</strong> ${escapeHtml(signal.opportunityExplanation || signal.promoOpportunity || 'This signal may create a timely reason to discuss branded merchandise.')}
-        </div>
+        <div class="verified-signal-row"><strong>Suggested contact:</strong> ${escapeHtml(signal.suggestedContact || 'Relevant department lead')}</div>
       </div>`;
   }).join('');
 }
@@ -2026,11 +2048,13 @@ function addSignalDerivedOpportunities(account, signals){
   (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
-    const products = Array.isArray(signal.suggestedProducts) && signal.suggestedProducts.length
-      ? signal.suggestedProducts
-      : ['branded apparel', 'event giveaways', 'employee kits'];
+    const products = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
+      ? signal.likelyConversations
+      : (Array.isArray(signal.suggestedProducts) && signal.suggestedProducts.length ? signal.suggestedProducts : ['employee onboarding', 'uniforms', 'recognition', 'event support']);
     const contactTitle = signal.suggestedContact || 'Relevant department lead';
-    const base = type.includes('Hiring') ? 78 : type.includes('Event') ? 76 : type.includes('Expansion') ? 78 : 74;
+    const businessSignalCount = (signals || []).filter(s => s && s.isReal && s.sourceUrl).length;
+    const multiSignalBonus = businessSignalCount > 2 ? 10 : businessSignalCount > 1 ? 6 : 0;
+    const base = (type.includes('Hiring') ? 82 : type.includes('Event') ? 80 : type.includes('Expansion') ? 83 : type.includes('Award') ? 78 : 76) + multiSignalBonus;
 
     if(!name || existing.has(name)) return;
     const opp = createOpportunity(account, name, contactTitle, products, [], base, true);
@@ -2042,24 +2066,25 @@ function addSignalDerivedOpportunities(account, signals){
     opp.shortSummary = cleanBusinessText(signal.shortSummary || signal.signalSnippet || '');
     opp.cleanSourceName = signal.cleanSourceName || '';
     opp.signalType = type;
-    opp.signalDate = signal.signalDate || signal.dateFound || signal.publishedDate || signal.detectedAt || new Date().toISOString();
+    opp.signalDate = signal.publishedDate || signal.signalDate || signal.dateFound || signal.detectedAt || new Date().toISOString();
     opp.sourceUrl = signal.sourceUrl;
     opp.whyNow = signal.whyNow || `Verified signal found: ${signal.signalDetail || signal.title || type}`;
     opp.valueSource = hasHistory ? 'Historical Orders + Verified Signal' : (signal.valueSource || 'Signal Only');
     opp.estimatedValueRange = signal.estimatedValueRange || null;
-    opp.opportunityCategory = signal.opportunityCategory || 'Signal-Driven Opportunity';
-    opp.reasonToReachOut = signal.reasonToReachOut || getReasonToReachOutTitle(opp);
-    opp.conversationStarter = signal.conversationStarter || getConversationStarterText(opp);
+    opp.opportunityCategory = signal.opportunityCategory || (Array.isArray(signal.likelyConversations) ? signal.likelyConversations[0] : '') || 'Signal-Driven Conversation';
+    opp.reasonToReachOut = signal.reasonToReachOut || signal.whyNow || getReasonToReachOutTitle(opp);
+    opp.conversationStarter = signal.conversationStarter || signal.suggestedOpener || getConversationStarterText(opp);
     opp.commonPromoCategories = products;
+    opp.likelyConversations = signal.likelyConversations || products;
     opp.affectedDepartment = signal.affectedDepartment || '';
     opp.evidence = [
       `Source: ${signal.cleanSourceName || sourceDomain(signal.sourceUrl) || 'public source'}`,
       cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet) || 'External business activity detected',
-      `Suggested contact: ${signal.suggestedContact || 'Relevant department lead'}`
+      signal.publishedDate ? `Published: ${signal.publishedDate}` : `Suggested contact: ${signal.suggestedContact || 'Relevant department lead'}`
     ];
     opp.businessSignals = [signal];
-    opp.closeProbability = Math.min(95, Math.max(55, Math.round((signal.confidence || 0.72)*100) + (opp.relationshipStrength >= 40 ? 10 : 0)));
-    opp.quickWinScore = getQuickWinScore(account, base, true);
+    opp.closeProbability = Math.min(96, Math.max(55, Math.round((signal.confidence || 0.72)*100) + (opp.relationshipStrength >= 40 ? 8 : 0) + multiSignalBonus));
+    opp.quickWinScore = Math.min(98, getQuickWinScore(account, base, true) + multiSignalBonus);
     opp.confidence = opp.quickWinScore;
     opp.opportunityType = 'SIGNAL-DRIVEN';
     opp.relationshipMode = getRelationshipMode(account);
@@ -2080,15 +2105,24 @@ function renderResearchDiagnostics(){
   const researched = diagnostics.length;
   const signals = diagnostics.reduce((sum, d) => sum + (d.signalsFound || 0), 0);
   const results = diagnostics.reduce((sum, d) => sum + (d.searchResultsFound || 0), 0);
+  const rawResults = diagnostics.reduce((sum, d) => sum + (d.rawSearchResultsFound || 0), 0);
   const acceptedSearch = diagnostics.reduce((sum, d) => sum + (d.acceptedSearchSignals || 0), 0);
-  const domainSignals = diagnostics.reduce((sum, d) => sum + (d.domainSignalsFound || 0), 0);
+  const aiAccepted = diagnostics.reduce((sum, d) => sum + (d.aiAcceptedSignals || 0), 0);
   const rejected = diagnostics.reduce((sum, d) => sum + (d.rejectedResults || 0), 0);
+  const elapsed = diagnostics.reduce((sum, d) => sum + (d.elapsedMs || 0), 0);
   const zeroSignalAccounts = diagnostics.filter(d => !d.signalsFound).slice(0, 8).map(d => escapeHtml(d.accountName)).join(', ');
   const samples = diagnostics.flatMap(d => (d.candidateSamples || []).map(c => ({...c, accountName:d.accountName}))).slice(0, 12);
+  const coverage = diagnostics.reduce((acc, d) => {
+    Object.entries(d.sourceCoverage || {}).forEach(([k,v]) => acc[k] = (acc[k] || 0) + Number(v || 0));
+    return acc;
+  }, {});
+  const coverageText = Object.entries(coverage).length
+    ? Object.entries(coverage).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `${escapeHtml(k)}: ${v}`).join(' · ')
+    : '';
 
   const sampleRows = samples.length ? `
     <details style="margin-top:8px;">
-      <summary style="cursor:pointer;"><strong>Candidate result samples</strong> — use this to debug why Business Activity Signals are not appearing</summary>
+      <summary style="cursor:pointer;"><strong>Candidate result samples</strong> — shows what research found and why it was accepted/rejected</summary>
       <div style="display:grid; gap:6px; margin-top:8px;">
         ${samples.map(c => `
           <div style="background:white; border:1px solid #cfe0ef; padding:8px; border-radius:6px;">
@@ -2102,8 +2136,9 @@ function renderResearchDiagnostics(){
   ` : '';
 
   el.style.display = 'block';
-  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} candidate search results · ${signals} business activity signals accepted · ${acceptedSearch} accepted from search · ${domainSignals} accepted from direct domain scans · ${rejected} rejected as generic/low-signal${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}${sampleRows}`;
+  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} ranked candidates${rawResults ? ` from ${rawResults} raw search results` : ''} · ${signals} business activity signals accepted · ${aiAccepted} AI-qualified · ${acceptedSearch} keyword-qualified · ${rejected} rejected${elapsed ? ` · ${Math.round(elapsed/1000)}s total research time` : ''}${coverageText ? `<br><strong>Source coverage:</strong> ${coverageText}` : ''}${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}${sampleRows}`;
 }
+
 async function researchAccountByName(accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
@@ -2132,13 +2167,22 @@ async function researchAccountByName(accountName){
       accountName: account.name,
       signalsFound: account.signals.length,
       searchResultsFound: diag.searchResultsFound || 0,
+      rawSearchResultsFound: diag.rawSearchResultsFound || 0,
       acceptedSearchSignals: diag.acceptedSearchSignals || 0,
       domainSignalsFound: diag.domainSignalsFound || 0,
       rejectedResults: diag.rejectedResults || 0,
       queriesRun: diag.queriesRun || 0,
       domainProbes: diag.domainProbes || 0,
       domainUsed: diag.domainUsed || '',
-      candidateSamples: diag.candidateSamples || []
+      directDomainCandidates: diag.directDomainCandidates || 0,
+      sourceCoverage: diag.sourceCoverage || {},
+      acceptedByBucket: diag.acceptedByBucket || {},
+      elapsedMs: diag.elapsedMs || 0,
+      candidateSamples: diag.candidateSamples || [],
+      aiEnabled: diag.aiEnabled,
+      aiRawSignals: diag.aiRawSignals || 0,
+      aiAcceptedSignals: diag.aiAcceptedSignals || 0,
+      aiError: diag.aiError || ''
     };
     if(existingDiagIndex >= 0) window.researchDiagnostics[existingDiagIndex] = nextDiag;
     else window.researchDiagnostics.push(nextDiag);
@@ -2162,9 +2206,16 @@ async function researchTopAccounts(options = {}){
   window.researchDiagnostics = [];
   renderResearchDiagnostics();
   const accounts = (window.accountRadarAccounts || []).slice(0, 10);
-  for(const account of accounts){
-    await researchAccountByName(account.name);
+  const concurrency = 3;
+  let index = 0;
+  async function worker(){
+    while(index < accounts.length){
+      const account = accounts[index++];
+      if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
+      await researchAccountByName(account.name);
+    }
   }
+  await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
   if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
   researchInProgress = false;
 }
@@ -2562,6 +2613,7 @@ function createRepeatPatternOpportunities(account){
       pattern.monthLabel ? `Most common timing: ${pattern.monthLabel}` : `Recent similar order: ${pattern.lastDateStr || 'recent history'}`
     ].filter(Boolean).slice(0,3);
     opp.commonPromoCategories = products;
+    opp.likelyConversations = signal.likelyConversations || products;
     return opp;
   });
 }
