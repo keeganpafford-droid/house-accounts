@@ -2205,25 +2205,154 @@ async function researchAccountByName(accountName){
 let researchInProgress = false;
 let autoResearchStarted = false;
 
+function getAccountsForResearch(options = {}){
+  const accounts = window.accountRadarAccounts || [];
+  const total = accounts.length;
+  const hasOrderHistory = accounts.some(a => Number(a.orderCount || 0) > 0 || Number(a.revenue || 0) > 0);
+  const isLeadGenList = !hasOrderHistory;
+
+  // For small pure company lists, research every account. For larger lists, cap intelligently.
+  let limit = 25;
+  if(total <= 25) limit = total;
+  else if(isLeadGenList) limit = Math.min(total, 50);
+  else limit = Math.min(total, 25);
+
+  return accounts.slice(0, limit);
+}
+
+function batchPayloadForAccounts(accounts){
+  return accounts.map(account => ({
+    name: account.name,
+    industry: account.industry || '',
+    cityState: account.purchases?.[0]?.location || account.location || '',
+    notes: account.notes || '',
+    website: account.website || '',
+    orderCount: account.orderCount || 0,
+    revenue: account.revenue || 0,
+    categories: [...(account.categoryTypes || [])].slice(0, 10)
+  }));
+}
+
+async function researchAccountsBatch(accounts, options = {}){
+  if(!accounts.length) return false;
+  const btn = document.getElementById('researchTopBtn');
+  const auto = options && options.auto;
+  if(btn){ btn.textContent = auto ? `Scanning ${accounts.length} accounts with AI...` : `Researching ${accounts.length} accounts with AI...`; }
+  try{
+    const res = await fetch('/api/research-batch', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        mode: Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked',
+        accounts: batchPayloadForAccounts(accounts)
+      })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Batch research failed');
+
+    const byAccount = data.byAccount || {};
+    const diag = data.diagnostics || {};
+    window.researchDiagnostics = window.researchDiagnostics || [];
+    window.researchDiagnostics.push({
+      accountName: 'Batch AI Web Research',
+      signalsFound: Number(diag.signalsReturned || (data.signals || []).length || 0),
+      searchResultsFound: Number(diag.rawSignals || 0),
+      rawSearchResultsFound: Number(diag.rawSignals || 0),
+      acceptedSearchSignals: 0,
+      domainSignalsFound: 0,
+      rejectedResults: Math.max(0, Number(diag.rawSignals || 0) - Number(diag.signalsReturned || 0)),
+      queriesRun: accounts.length,
+      domainProbes: 0,
+      domainUsed: 'OpenAI web_search',
+      directDomainCandidates: 0,
+      sourceCoverage: {'ai-web-search': Number(diag.accountsResearched || accounts.length)},
+      acceptedByBucket: {'business-activity': Number(diag.signalsReturned || 0)},
+      elapsedMs: diag.elapsedMs || 0,
+      candidateSamples: [],
+      aiEnabled: true,
+      aiRawSignals: Number(diag.rawSignals || 0),
+      aiAcceptedSignals: Number(diag.signalsReturned || 0),
+      aiError: ''
+    });
+
+    accounts.forEach(account => {
+      const signals = byAccount[account.name] || [];
+      if(signals.length){
+        account.signals = dedupeSignalsClient([...(account.signals || []), ...signals]);
+        addSignalDerivedOpportunities(account, account.signals);
+        const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
+        if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
+      }
+    });
+    refreshOpportunityViews();
+    return true;
+  }catch(err){
+    console.warn('Batch AI research failed; falling back to per-account research.', err);
+    window.researchDiagnostics = window.researchDiagnostics || [];
+    window.researchDiagnostics.push({
+      accountName: 'Batch AI Web Research',
+      signalsFound: 0,
+      searchResultsFound: 0,
+      rawSearchResultsFound: 0,
+      acceptedSearchSignals: 0,
+      domainSignalsFound: 0,
+      rejectedResults: 0,
+      queriesRun: accounts.length,
+      domainProbes: 0,
+      domainUsed: 'OpenAI web_search',
+      directDomainCandidates: 0,
+      sourceCoverage: {},
+      acceptedByBucket: {},
+      elapsedMs: 0,
+      candidateSamples: [],
+      aiEnabled: true,
+      aiRawSignals: 0,
+      aiAcceptedSignals: 0,
+      aiError: err.message || 'Batch research failed'
+    });
+    renderResearchDiagnostics();
+    return false;
+  }
+}
+
+function dedupeSignalsClient(signals){
+  const seen = new Set();
+  return (signals || []).filter(sig => {
+    const key = `${sig.signalType || sig.type || ''}|${sig.sourceUrl || ''}|${String(sig.signalDetail || sig.title || '').toLowerCase().slice(0,80)}`;
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function researchTopAccounts(options = {}){
   if(researchInProgress) return;
   researchInProgress = true;
   const btn = document.getElementById('researchTopBtn');
   const auto = options && options.auto;
-  if(btn){ btn.disabled = true; btn.textContent = auto ? 'Scanning Top Accounts...' : 'Researching...'; }
+  if(btn){ btn.disabled = true; btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
   window.researchDiagnostics = [];
   renderResearchDiagnostics();
-  const accounts = (window.accountRadarAccounts || []).slice(0, 10);
-  const concurrency = 3;
-  let index = 0;
-  async function worker(){
-    while(index < accounts.length){
-      const account = accounts[index++];
-      if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
-      await researchAccountByName(account.name);
+  const accounts = getAccountsForResearch(options);
+
+  // First try the batch AI web-search path. This mirrors the Google-AI-style research flow.
+  const batchWorked = await researchAccountsBatch(accounts, options);
+
+  // Fallback: only use slower per-account pipeline if the batch endpoint fails or returns no signals.
+  const batchSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
+  if(!batchWorked || batchSignals === 0){
+    const concurrency = 4;
+    let index = 0;
+    async function worker(){
+      while(index < accounts.length){
+        const account = accounts[index++];
+        if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
+        await researchAccountByName(account.name);
+      }
     }
+    await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
   }
-  await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
+
   if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
   researchInProgress = false;
 }

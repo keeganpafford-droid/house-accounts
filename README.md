@@ -1,22 +1,16 @@
-# House Accounts v26 — AI Business Signal Qualification
+# House Accounts v31 – Signal Search Reliability
 
-Adds an optional OpenAI-powered qualification layer to the business signal pipeline.
+Purpose: improve business-signal discovery for company lists without order history.
 
-If `OPENAI_API_KEY` is configured in Vercel, the research endpoint will:
-1. Search candidate public pages/results.
-2. Ask AI whether each candidate is a legitimate promo-relevant business signal.
-3. Return only meaningful signals with signal type, why reach out, suggested opener, contact role, and confidence.
+Changes:
+- Added optional Brave Search and Tavily search provider support.
+- Keeps DuckDuckGo as fallback.
+- Passes uploaded City/State, Industry, Notes, and Employees into research context.
+- Broadened business-signal search queries with company context.
+- Keeps AI qualification layer from v29/v30.
 
-If no API key is configured, the app safely falls back to the existing keyword-based signal logic.
+Optional Vercel env vars:
+- BRAVE_SEARCH_API_KEY
+- TAVILY_API_KEY
 
-Required Vercel environment variable:
-- `OPENAI_API_KEY`
-
-Optional:
-- `OPENAI_MODEL` defaults to `gpt-4o-mini`
-
-Upload/replace:
-- `api/research-account.js`
-- `index.html`
-
-Keep other files as included if you want a full v26 replacement.
+At least one real search API is strongly recommended for reliable business signals.
