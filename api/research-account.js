@@ -1,5 +1,5 @@
 // Vercel Serverless Function: verified public signal research.
-// No OpenAI by default. No paid APIs required.
+// Uses public search plus optional OpenAI qualification when OPENAI_API_KEY is configured.
 // Returns only source-backed signals.
 // Endpoint: POST /api/research-account
 
@@ -60,16 +60,51 @@ function cleanSignalSummary(result = {}, max = 150) {
   return cleaned || '';
 }
 
-function sourceConfidence(sourceType, title = '', snippet = '') {
-  const text = `${title} ${snippet}`.toLowerCase();
-  let score = 0.58;
-  if (/Careers|job posting/i.test(sourceType)) score = 0.72;
-  if (/News|press|Public \/ press/i.test(sourceType)) score = 0.72;
-  if (/Event/i.test(sourceType)) score = 0.70;
-  if (/Public social/i.test(sourceType)) score = 0.62;
-  if (/LinkedIn/i.test(sourceType)) score = 0.60;
-  if (/(today|yesterday|2026|2025|june|july|august|september|october|november|december|spring|summer|fall|winter)/i.test(text)) score += 0.04;
-  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch|careers|jobs|award|recognized|expansion)/i.test(text)) score += 0.06;
+function extractPublicationDate(text = '') {
+  const raw = clean(text);
+  const iso = raw.match(/\b20\d{2}-\d{2}-\d{2}\b/);
+  if (iso) return iso[0];
+  const month = raw.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\s+\d{1,2},?\s+20\d{2}\b/i);
+  if (month) return month[0].replace(/\s+/g, ' ');
+  const year = raw.match(/\b(20\d{2})\b/);
+  return year ? year[1] : '';
+}
+
+function sourceQualityScore(sourceType = '', url = '') {
+  const t = `${sourceType} ${url}`.toLowerCase();
+  if (/businesswire|prnewswire|press release|news|press/.test(t)) return 0.90;
+  if (/careers|job posting|jobs|career/.test(t)) return 0.82;
+  if (/event|conference|expo|show|summit/.test(t)) return 0.80;
+  if (/linkedin/.test(t)) return 0.70;
+  if (/community|csr|award|blog/.test(t)) return 0.72;
+  return 0.58;
+}
+
+function recencyScoreFromText(text = '') {
+  const t = String(text || '').toLowerCase();
+  if (/today|yesterday|this week|newly|recently|now hiring|current|upcoming/.test(t)) return 0.90;
+  if (/2026|january|february|march|april|may|june|july|august|september|october|november|december/.test(t)) return 0.78;
+  if (/2025/.test(t)) return 0.55;
+  return 0.45;
+}
+
+function combinedConfidenceScore({ sourceType = '', url = '', text = '', aiScore = 0.68, multiSource = false } = {}) {
+  const source = sourceQualityScore(sourceType, url);
+  const recency = recencyScoreFromText(text);
+  const multi = multiSource ? 0.85 : 0.45;
+  return Math.min(0.94, Math.max(0.35, (source * 0.35) + (recency * 0.30) + (aiScore * 0.20) + (multi * 0.15)));
+}
+
+function confidenceLabelFromScore(score = 0.66) {
+  if (score >= 0.78) return 'High';
+  if (score >= 0.58) return 'Medium';
+  return 'Low';
+}
+
+function sourceConfidence(sourceType, title = '', snippet = '', url = '') {
+  const text = `${title} ${snippet} ${url}`.toLowerCase();
+  let score = combinedConfidenceScore({ sourceType, url, text, aiScore: 0.66, multiSource: false });
+  if (/(hiring|open positions|new facility|grand opening|announced|event|conference|launch|careers|jobs|award|recognized|expansion)/i.test(text)) score += 0.04;
   if (isBadSearchText(text)) score -= 0.20;
   return Math.min(0.90, Math.max(0.35, score));
 }
@@ -571,13 +606,18 @@ function parseJsonLoose(text = '') {
 }
 
 function safeCandidateForAI(result = {}, idx = 0) {
+  const title = compactSentence(stripBadFragments(result.title || ''), 180);
+  const snippet = compactSentence(stripBadFragments(result.snippet || ''), 420);
+  const url = result.url || '';
+  const sourceType = classifySource(url, title);
   return {
     id: String(idx),
-    title: compactSentence(stripBadFragments(result.title || ''), 160),
-    snippet: compactSentence(stripBadFragments(result.snippet || ''), 260),
-    url: result.url || '',
-    domain: cleanSourceName(result.url || ''),
-    sourceType: classifySource(result.url || '', result.title || '')
+    title,
+    snippet,
+    url,
+    domain: cleanSourceName(url),
+    sourceType,
+    publicationDate: extractPublicationDate(`${title} ${snippet}`)
   };
 }
 
@@ -594,15 +634,24 @@ function signalTypeFromAI(type = '') {
 }
 
 function confidenceFromAI(confidence = '') {
+  if (typeof confidence === 'number') {
+    const score = Math.max(0, Math.min(1, confidence > 1 ? confidence / 100 : confidence));
+    return { label: confidenceLabelFromScore(score), score };
+  }
   const c = String(confidence || '').toLowerCase();
+  const n = c.match(/\d{1,3}/);
+  if (n) {
+    const score = Math.max(0, Math.min(1, Number(n[0]) / 100));
+    return { label: confidenceLabelFromScore(score), score };
+  }
   if (/high/.test(c)) return { label: 'High', score: 0.84 };
   if (/low/.test(c)) return { label: 'Low', score: 0.50 };
   return { label: 'Medium', score: 0.68 };
 }
 
-function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '') {
+function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '', multiSource = false) {
   const signalType = signalTypeFromAI(aiSignal.signalType || aiSignal.type);
-  const confidence = confidenceFromAI(aiSignal.confidence);
+  const aiConfidence = confidenceFromAI(aiSignal.confidence);
   const sourceResult = {
     url: candidate.url || aiSignal.sourceUrl || '',
     title: candidate.title || aiSignal.title || '',
@@ -612,22 +661,33 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
     sourceResult,
     accountName,
     signalType,
-    aiSignal.signalTitle || aiSignal.signalType || `${accountName} business activity`,
+    aiSignal.signalTitle || aiSignal.headline || aiSignal.signalType || `${accountName} business activity`,
     aiSignal.whyItMatters || aiSignal.whyReachOut || 'Public business activity creates a timely reason to check in.',
     aiSignal.suggestedContact || '',
     0,
     industry
   );
 
-  const cleanSummary = compactSentence(aiSignal.shortSummary || aiSignal.summary || aiSignal.signalTitle || candidate.title || candidate.snippet || '', 150);
+  const cleanSummary = compactSentence(aiSignal.shortSummary || aiSignal.summary || aiSignal.headline || aiSignal.signalTitle || candidate.title || candidate.snippet || '', 170);
   const whyReachOut = compactSentence(aiSignal.whyReachOut || aiSignal.whyItMatters || base.reasonToReachOut || 'Recent business activity creates a timely reason to check in.', 190);
-  const opener = compactSentence(aiSignal.suggestedOpener || aiSignal.conversationAngle || base.conversationStarter || 'Saw some recent activity and wanted to check in — anything coming up where support would be helpful?', 200);
+  const opener = compactSentence(aiSignal.suggestedOpener || aiSignal.likelyConversation || aiSignal.conversationAngle || base.conversationStarter || 'Saw some recent activity and wanted to check in — anything coming up where support would be helpful?', 200);
+  const sourceText = `${candidate.title || ''} ${candidate.snippet || ''} ${aiSignal.publicationDate || ''}`;
+  const confidenceScore = combinedConfidenceScore({
+    sourceType: candidate.sourceType || base.sourceType,
+    url: candidate.url || base.sourceUrl,
+    text: sourceText,
+    aiScore: aiConfidence.score,
+    multiSource
+  });
+  const conversations = Array.isArray(aiSignal.likelyConversations)
+    ? aiSignal.likelyConversations.filter(Boolean).slice(0, 5)
+    : String(aiSignal.likelyConversation || aiSignal.conversationAngle || '').split(/[;|]/).map(x => x.trim()).filter(Boolean).slice(0, 5);
 
   return {
     ...base,
     signalType,
     type: signalType,
-    title: aiSignal.signalTitle || base.title,
+    title: aiSignal.signalTitle || aiSignal.headline || base.title,
     signalDetail: cleanSummary || base.signalDetail,
     shortSummary: cleanSummary || base.shortSummary,
     signalSnippet: cleanSummary || base.signalSnippet,
@@ -635,13 +695,16 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
     sourceUrl: candidate.url || base.sourceUrl,
     sourceType: candidate.sourceType || base.sourceType,
     sourceAuthority: candidate.sourceType || base.sourceAuthority,
-    confidence: confidence.score,
-    confidenceLevel: confidence.label,
+    publishedDate: aiSignal.publicationDate || candidate.publicationDate || extractPublicationDate(sourceText),
+    confidence: confidenceScore,
+    confidenceLevel: confidenceLabelFromScore(confidenceScore),
     reasonToReachOut: whyReachOut,
     conversationStarter: opener,
     whyNow: whyReachOut,
     suggestedContact: aiSignal.suggestedContact || base.suggestedContact,
-    opportunityCategory: aiSignal.opportunityCategory || base.opportunityCategory,
+    affectedDepartment: aiSignal.likelyDepartment || aiSignal.affectedDepartment || base.affectedDepartment,
+    likelyConversations: conversations,
+    opportunityCategory: aiSignal.opportunityCategory || (conversations[0] || base.opportunityCategory),
     opportunityExplanation: aiSignal.whyItMatters || base.opportunityExplanation,
     aiQualified: true,
     valueSource: 'AI-qualified public signal'
@@ -661,7 +724,58 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = []) 
 
   if (!safeCandidates.length) return { enabled: true, signals: [], rawCount: 0, error: 'No usable candidates for AI qualification' };
 
-  const prompt = `You qualify public business signals for House Accounts, a tool for promotional products distributors.\n\nAccount: ${accountName}\nIndustry: ${industry || 'Unknown'}\n\nTask: Review these public search candidates. Return ONLY legitimate business activity signals that create a real reason for a promotional products salesperson to reach out.\n\nValid signals include: hiring, expansion, facility growth, leadership change, product/service launch, trade show/event participation, community initiative, award/recognition, acquisition, fundraising, major company initiative.\n\nReject generic homepage descriptions, contact pages, location pages, about-us copy, SEO text, navigation text, and anything that does not create a timely reason to contact the company.\n\nReturn strict JSON only with this shape:\n{\n  "signals": [\n    {\n      "candidateId": "0",\n      "signalType": "Hiring | Event | Expansion | Leadership Change | Award | Product Launch | Community Initiative | Acquisition | Major Initiative",\n      "signalTitle": "short human-readable signal",\n      "shortSummary": "one short sentence, no raw web scrape text",\n      "whyReachOut": "one sentence explaining why a rep should contact them",\n      "suggestedOpener": "casual opener a rep could actually send",\n      "suggestedContact": "likely role to contact",\n      "confidence": "High | Medium | Low"\n    }\n  ]\n}\n\nCandidates:\n${JSON.stringify(safeCandidates, null, 2)}`;
+  const prompt = `You are an expert promotional products sales strategist for House Accounts.
+
+Account: ${accountName}
+Industry: ${industry || 'Unknown'}
+
+Your job is NOT to summarize the company.
+Your job is to identify legitimate business activity that would give a promotional products salesperson a natural reason to contact this account in the next 90 days.
+
+Valid signals include:
+- Hiring activity
+- Facility expansion, new office, new location, or manufacturing growth
+- Product or service launches
+- Trade show, conference, expo, open house, or customer event participation
+- Sponsorships, community involvement, charity events, or fundraising
+- Awards, recognition, anniversaries, or major milestones
+- Acquisitions, mergers, funding, or major partnerships
+- Leadership changes or major team changes
+- Employee, safety, sustainability, or culture initiatives
+
+Reject:
+- Generic About pages
+- Contact pages
+- SEO snippets
+- Homepage descriptions
+- Navigation text
+- Location/map pages
+- Anything that does not create a real reason to reach out
+
+Only return signals a rep could plausibly use to start a conversation. If nothing meaningful exists, return {"signals":[]}.
+
+For each accepted signal, return strict JSON only with this shape:
+{
+  "signals": [
+    {
+      "candidateId": "0",
+      "signalType": "Hiring | Event | Expansion | Leadership Change | Award | Product Launch | Community Initiative | Acquisition | Major Initiative",
+      "signalTitle": "short human-readable signal",
+      "shortSummary": "one short sentence, no raw web scrape text",
+      "whyReachOut": "one clear sentence explaining why a rep should contact them",
+      "likelyConversation": "the natural business conversation to start, not a product pitch",
+      "likelyConversations": ["optional short conversation themes"],
+      "suggestedOpener": "casual sentence a rep could actually send",
+      "suggestedContact": "likely role to contact",
+      "likelyDepartment": "likely department/team involved",
+      "publicationDate": "date if visible, otherwise empty string",
+      "confidence": 0-100
+    }
+  ]
+}
+
+Candidates:
+${JSON.stringify(safeCandidates, null, 2)}`;
 
   try {
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -673,11 +787,11 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = []) 
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'You return only valid JSON. You are strict about rejecting weak, generic, or non-actionable business signals.' },
+          { role: 'system', content: 'Return only valid JSON. Be strict: reject weak generic company descriptions. Think like a promotional-products rep looking for a real reason to contact the account.' },
           { role: 'user', content: prompt }
         ],
         temperature: 0.1,
-        max_tokens: 1200,
+        max_tokens: 1600,
         response_format: { type: 'json_object' }
       })
     });
@@ -695,7 +809,7 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = []) 
       .map(sig => {
         const candidate = safeCandidates.find(c => String(c.id) === String(sig.candidateId)) || safeCandidates[0];
         if (!candidate || !candidate.url) return null;
-        return makeAISignal(sig, candidate, accountName, industry);
+        return makeAISignal(sig, candidate, accountName, industry, rawSignals.length > 1);
       })
       .filter(Boolean)
       .slice(0, 4);
@@ -714,7 +828,7 @@ function domainFromEmailDomain(emailDomain = '') {
 
 async function domainProbeSignals(domain, accountName, industry) {
   if (!domain) return [];
-  const paths = ['/careers', '/career', '/jobs', '/join-our-team', '/news', '/press', '/press-releases', '/events', '/blog', '/community'];
+  const paths = ['/careers', '/career', '/jobs', '/join-our-team', '/news', '/press', '/press-releases', '/media', '/events', '/event', '/trade-shows', '/blog', '/community', '/community-involvement', '/csr', '/awards', '/about/leadership', '/leadership', '/investors', '/sustainability'];
   const candidates = [];
   for (const path of paths) {
     candidates.push(`https://${domain}${path}`);
@@ -749,17 +863,19 @@ export default async function handler(req, res) {
     const location = cityState ? ` ${cityState}` : '';
     const domain = domainFromEmailDomain(emailDomain);
     const queries = [
-      `"${accountName}" careers hiring jobs${location}`,
-      `"${accountName}" open positions recruiting${location}`,
-      `"${accountName}" news press release announcement`,
-      `"${accountName}" event conference open house`,
-      `"${accountName}" expansion new location grand opening`,
-      `"${accountName}" product launch new service`,
-      `"${accountName}" award recognized leadership`
+      `"${accountName}" hiring jobs careers open positions${location}`,
+      `"${accountName}" news press release announcement 2026`,
+      `"${accountName}" expansion new facility new location grand opening`,
+      `"${accountName}" event conference expo trade show open house`,
+      `"${accountName}" award recognized milestone anniversary`,
+      `"${accountName}" community charity sponsorship fundraiser`,
+      `"${accountName}" leadership appoints names promotes new director`,
+      `"${accountName}" product launch new service partnership acquisition`,
+      `"${accountName}" safety sustainability employee initiative`
     ];
     if (domain) {
-      queries.unshift(`site:${domain} careers jobs hiring`);
-      queries.unshift(`site:${domain} news press events expansion`);
+      queries.unshift(`site:${domain} careers jobs hiring open positions`);
+      queries.unshift(`site:${domain} news press release announcement expansion events awards community leadership`);
     }
 
     const allResults = [];
