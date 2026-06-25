@@ -1638,7 +1638,10 @@ function parseCSV(text){
     order_tags: ['order_tags','tags'],
     client_tags: ['client_tags','account_tags'],
     ship_city: ['shipto_city','ship_city','city'],
-    ship_state: ['shipto_state','ship_state','state']
+    ship_state: ['shipto_state','ship_state','state'],
+    industry: ['industry','vertical','market','sector'],
+    notes: ['notes','note','description','company_notes','account_notes'],
+    employees: ['employees','employee_count','staff','headcount','number_of_employees']
   };
   const colIndex = {};
   const columnMappings = {};
@@ -1690,7 +1693,10 @@ function parseCSV(text){
       contactName,
       contactEmail: get('contact_email'),
       status: get('order_status'),
-      location: [get('ship_city'), get('ship_state')].filter(Boolean).join(', ')
+      location: [get('ship_city'), get('ship_state')].filter(Boolean).join(', '),
+      uploadedIndustry: get('industry'),
+      notes: get('notes'),
+      employees: get('employees')
     });
   }
   records.missingCols = missingCols;
@@ -2153,6 +2159,8 @@ async function researchAccountByName(accountName){
         industry: account.industry,
         cityState: account.purchases?.[0]?.location || '',
         emailDomain: extractEmailDomain(account.contactEmail),
+        notes: account.notes || '',
+        employees: account.employees || '',
         categories: [...(account.categoryTypes || [])],
         projects: account.projects || []
       })
@@ -3151,7 +3159,8 @@ function processData(records){
     const totalScore = orderCount > 0 ? (revScore * 0.4 + freqScore * 0.2 + recencyScore * 0.25 + diversityScore * 0.15) : 0;
     const confidence = Math.min(totalScore * 100, 100);
 
-    const industry = inferIndustry(clientName, allProjects);
+    const uploadedIndustry = allOrders.find(o => o.uploadedIndustry)?.uploadedIndustry || '';
+    const industry = uploadedIndustry || inferIndustry(clientName, allProjects);
     const firstRecord = scoringOrders[0] || allOrders[0] || {};
     const account = {
       name: clientName,
@@ -3167,6 +3176,8 @@ function processData(records){
       allProjects,
       contactName: firstRecord.contactName || '',
       contactEmail: firstRecord.contactEmail || '',
+      notes: allOrders.find(o => o.notes)?.notes || '',
+      employees: allOrders.find(o => o.employees)?.employees || '',
       purchases: scoringOrders,
       activePipeline,
       allRecords: allOrders,
