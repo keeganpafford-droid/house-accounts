@@ -1,4 +1,4 @@
-// Vercel Serverless Function: v36 targeted-search Opportunity Discovery Engine.
+// Vercel Serverless Function: v38 Unified Signal Intelligence Engine.
 // Endpoint: POST /api/research-batch
 // Purpose: Google-AI-style business signal discovery for House Accounts.
 // Pipeline: targeted search operators -> candidate snippets -> LLM synthesis -> high-value promo reasons to reach out.
@@ -138,17 +138,64 @@ function classifySource(url = '', title = '') {
 
 function queryTemplates(company, context = {}) {
   const loc = context.location ? ` ${context.location}` : '';
+  const industry = context.industry ? ` ${context.industry}` : '';
   const quoted = `"${company}"`;
+  // Targeted searches modeled after the Google-AI workflow: first disambiguate, then search for recent buying triggers.
   return [
-    `${quoted}${loc} (acquired OR acquisition OR merger OR merged OR funding OR investment OR partnership OR "customer win")`,
-    `${quoted}${loc} (hiring OR jobs OR careers OR "now hiring" OR recruiting OR "open positions")`,
-    `${quoted}${loc} (summit OR conference OR expo OR exhibitor OR booth OR webinar OR event OR sponsor)`,
-    `${quoted}${loc} (award OR "Inc. 5000" OR "fastest growing" OR "best places to work" OR recognition OR milestone)`,
-    `${quoted}${loc} (launch OR unveiled OR rollout OR "new product" OR "new division" OR rebrand)`,
-    `${quoted}${loc} (expansion OR "new office" OR "new location" OR facility OR headquarters OR warehouse OR manufacturing)`,
-    `${quoted}${loc} (community OR charity OR fundraiser OR sponsorship OR sustainability OR volunteer OR donation)`,
-    `${quoted}${loc} (CEO OR president OR "vice president" OR appointed OR named OR leadership)`
-  ];
+    `${quoted}${loc}${industry}`,
+    `${quoted}${loc} (acquired OR acquisition OR merger OR merged OR funding OR investment OR "private equity" OR partnership OR "customer win" OR contract)`,
+    `${quoted}${loc} (hiring OR jobs OR careers OR "now hiring" OR recruiting OR "open positions" OR "join our team")`,
+    `${quoted}${loc} (summit OR conference OR expo OR exhibitor OR booth OR webinar OR event OR sponsor OR sponsorship)`,
+    `${quoted}${loc} (award OR "Inc. 5000" OR "fastest growing" OR "best places to work" OR recognition OR milestone OR anniversary)`,
+    `${quoted}${loc} (launch OR unveiled OR rollout OR "new product" OR "new division" OR rebrand OR "new service")`,
+    `${quoted}${loc} (expansion OR "new office" OR "new location" OR facility OR headquarters OR warehouse OR manufacturing OR "new building")`,
+    `${quoted}${loc} (community OR charity OR fundraiser OR sponsorship OR sustainability OR volunteer OR donation OR nonprofit)`,
+    `${quoted}${loc} (CEO OR president OR "vice president" OR appointed OR named OR promoted OR leadership OR joins)`,
+    `site:${String(context.website || '').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0] || ''} (${quoted} OR news OR press OR careers OR events OR awards OR community OR leadership)`,
+    `${quoted}${loc} ("trade show" OR "annual meeting" OR "open house" OR "customer event" OR "sales kickoff")`,
+    `${quoted}${loc} ("safety" OR "employee engagement" OR "recognition program" OR "recruiting campaign")`
+  ].filter(q => !q.startsWith('site: '));
+}
+
+function parseSignalDate(dateText = '') {
+  const t = String(dateText || '').trim();
+  if (!t) return null;
+  const d = new Date(t);
+  if (!isNaN(d.getTime())) return d;
+  const y = t.match(/\b(20\d{2})\b/);
+  if (y) return new Date(`${y[1]}-06-15T00:00:00Z`);
+  return null;
+}
+
+function freshnessScore(dateText = '') {
+  const t = String(dateText || '').toLowerCase();
+  if (/today|yesterday|this week|recently|now|upcoming|current/.test(t)) return 100;
+  const d = parseSignalDate(dateText);
+  if (!d) return 55;
+  const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+  if (days <= 30) return 100;
+  if (days <= 90) return 88;
+  if (days <= 180) return 74;
+  if (days <= 365) return 58;
+  if (days <= 730) return 28;
+  return 5;
+}
+
+function sourceQualityScore(url = '', sourceType = '') {
+  const t = `${url} ${sourceType}`.toLowerCase();
+  if (/company|careers|job posting|news\/press|businesswire|prnewswire|globenewswire|press release/.test(t)) return 95;
+  if (/mainebiz|inc\.com|forbes|industry|association|mereda|chamber|conference|expo/.test(t)) return 82;
+  if (/linkedin/.test(t)) return 72;
+  if (/facebook|instagram|x\.com|twitter/.test(t)) return 50;
+  return 64;
+}
+
+function adjustedConfidence(raw = {}, sourceUrl = '', sourceType = '') {
+  const ai = confidenceNumber(raw.confidence || raw.opportunityScore || raw.score || 70);
+  const fresh = freshnessScore(raw.publicationDate || raw.publishedDate || raw.date || '');
+  const source = sourceQualityScore(sourceUrl || raw.sourceUrl || '', sourceType || raw.sourceType || raw.sourceName || '');
+  const multi = Array.isArray(raw.sources) && raw.sources.length > 1 ? 100 : 55;
+  return Math.round(Math.max(0, Math.min(100, (source * 0.35) + (fresh * 0.30) + (ai * 0.25) + (multi * 0.10))));
 }
 
 async function serperSearch(query) {
@@ -295,7 +342,7 @@ async function discoverCandidatesForAccounts(accounts = []) {
   const allCandidates = [];
   const samples = [];
   const perAccount = await mapLimit(accounts, 5, async account => {
-    const queries = queryTemplates(account.name, account).slice(0, 8);
+    const queries = queryTemplates(account.name, account).slice(0, 12);
     const resultSets = await Promise.all(queries.map(runSearch));
     const raw = resultSets.flat();
     const ranked = dedupeCandidates(raw.map(r => ({
@@ -352,11 +399,13 @@ async function callOpenAIJson({ apiKey, model, prompt }) {
 }
 
 async function callOpenAIWebSearch({ apiKey, model, accounts }) {
-  const prompt = `Research the following companies for business signals related to buying promotional products: ${accounts.map(a => a.name).join(', ')}.
+  const prompt = `Research these companies for public business signals that create legitimate reasons for a promotional-products salesperson to start a conversation: ${accounts.map(a => a.name).join(', ')}.
 
-For each company, look for recent public developments: acquisitions, hiring, events, summits, conferences, awards, Inc. 5000 or fastest-growing lists, product launches, partnerships, expansion, new offices, funding, community initiatives, customer wins, or leadership changes.
+For each company, find recent public developments from the last 18 months when possible. Look broadly: hiring, awards, trade shows, conferences, summits, product launches, partnerships, customer wins, expansion, acquisition/funding, leadership changes, community events, sustainability, safety, recruiting, employee engagement.
 
-Then identify whether each development creates a legitimate reason for a promotional products salesperson to start a conversation. Return JSON only with this shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Return no signal for generic company descriptions.`;
+Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation.
+
+For each accepted signal, explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing for weak or unverifiable signals.`;
   const body = {
     model,
     input: prompt,
@@ -376,9 +425,9 @@ Then identify whether each development creates a legitimate reason for a promoti
 function makeSignal(raw = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
   if (!accountName) return null;
-  const confidencePct = confidenceNumber(raw.confidence || raw.opportunityScore || raw.score);
-  if (confidencePct < 72) return null; // Still gated, but lets medium-confidence evidence appear for testing.
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
+  const confidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
+  if (confidencePct < 72) return null; // gate weak/filler signals while still allowing useful medium evidence during beta.
   const type = normalizeSignalType(raw.signalType || raw.opportunityType || raw.type);
   const title = compact(raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 140);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 220);
@@ -432,18 +481,35 @@ function makeSignal(raw = {}) {
   };
 }
 
+function signalKeywordKey(text = '') {
+  return clean(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length > 3 && !['company','business','activity','public','signal','recent','creates','reason','promo'].includes(w)).slice(0, 8).join(' ');
+}
+
 function dedupeSignals(signals = []) {
-  const seen = new Set();
-  const out = [];
+  const map = new Map();
   for (const sig of signals) {
     if (!sig || !sig.accountName) continue;
-    const key = `${sig.accountName}|${sig.signalType}|${sourceDomain(sig.sourceUrl || '')}|${clean(sig.signalDetail || sig.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').slice(0, 90)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(sig);
+    const domain = sourceDomain(sig.sourceUrl || '');
+    const topic = signalKeywordKey(`${sig.signalType || ''} ${sig.signalDetail || sig.title || ''}`);
+    const key = `${sig.accountName.toLowerCase()}|${sig.signalType}|${topic || domain}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, sig);
+      continue;
+    }
+    const mergedSources = [...(existing.sources || []), ...(sig.sources || [])];
+    if (sig.sourceUrl && !mergedSources.some(s => s.url === sig.sourceUrl)) mergedSources.push({ name: sig.cleanSourceName || sourceDomain(sig.sourceUrl), url: sig.sourceUrl });
+    const better = Number(sig.confidenceScore || 0) > Number(existing.confidenceScore || 0) ? sig : existing;
+    map.set(key, {
+      ...better,
+      sources: mergedSources.slice(0, 5),
+      confidenceScore: Math.min(100, Math.max(Number(existing.confidenceScore || 0), Number(sig.confidenceScore || 0)) + (mergedSources.length > 1 ? 4 : 0)),
+      confidenceLevel: confidenceLabel(Math.min(100, Math.max(Number(existing.confidenceScore || 0), Number(sig.confidenceScore || 0)) + (mergedSources.length > 1 ? 4 : 0)))
+    });
   }
-  return out;
+  return [...map.values()].sort((a,b) => Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0));
 }
+
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -498,27 +564,54 @@ export default async function handler(req, res) {
 
     let parsed = null;
     if (candidates.length) {
-      const synthesisPrompt = `You are the Opportunity Discovery Engine for House Accounts, a tool for promotional products distributors.
+      const synthesisPrompt = `You are House Accounts' Unified Signal Intelligence Engine.
 
-You are given account context plus targeted public web search snippets. Your job is to identify only legitimate business signals that create a reason for a promo salesperson to contact the account in the next 90 days.
+Act like a senior promotional products account executive doing account research for a sales rep. Your job is NOT to summarize companies. Your job is to answer:
 
-Think like a senior promotional products account executive. Do not summarize companies. Do not invent facts. Use the provided snippets and URLs.
+"If I sold promotional products, branded apparel, onboarding kits, uniforms, recognition programs, safety incentives, event merchandise, print, awards, or corporate gifts, is there anything happening at this company that gives me a legitimate reason to start a conversation?"
 
-Return only strong opportunities. Good triggers include: event marketing, trade shows, summits, conferences, awards, fastest-growing lists, hiring/recruiting, product launches, rebrands, expansion, new locations, partnerships, customer wins, funding, acquisitions, community initiatives, safety initiatives, employee engagement, and leadership changes.
+You are given account context and targeted public web search snippets/page content. Use ONLY the supplied evidence and URLs. Do not invent.
 
-Also apply this red-flag filter: if the company was acquired by a large parent and buying power likely moved to corporate, downgrade or disqualify unless there is still a local promo reason.
+Return only the strongest 0, 1, or 2 business signals per account. It is better to return nothing than weak filler.
 
-For each opportunity, translate the business signal into promo sales language: likely buyers, likely products/categories, and a natural conversation starter.
+High-value triggers:
+- hiring/recruiting spikes
+- facility expansion/new office/new location
+- acquisitions/mergers/funding/investment
+- product/service launches or rebrands
+- trade shows, conferences, summits, open houses, booths, sponsorships
+- awards, fastest-growing lists, best places to work, milestones, anniversaries
+- leadership changes
+- major customer wins/contracts/partnerships
+- community/charity/fundraising/sustainability initiatives
+- safety, employee engagement, recognition, recruiting, or employer-branding initiatives
 
-Return strict JSON only with shape {"signals":[...]}.
+Reject:
+- generic company descriptions
+- old/irrelevant news unless still useful
+- contact/about/privacy/nav text
+- social posts with no clear business relevance
+- generic careers page existence with no specific hiring/recruiting reason
+
+For each accepted signal, translate it into promo sales language. Do not just say "they are hiring." Explain why it creates a legitimate conversation and who should care.
+
+Internally score every candidate on:
+- promo relevance
+- freshness
+- source quality
+- confidence that the event is real
+- urgency/actionability for a sales rep
+
+Only return signals with confidence >= 80 unless the source is extremely strong and the reason to reach out is obvious.
+
+Return strict JSON only with shape:
+{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
 
 Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
-Candidate snippets:
-${JSON.stringify(candidates.slice(0, 140).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score})), null, 2)}
-
-Each signal must include: accountName, signalType, signalTitle, whatChanged, whyItMattersForPromo, likelyBuyers, likelyProducts, likelyConversations, suggestedOpener, sourceName, sourceUrl, sources, publicationDate, confidence.`;
+Candidate snippets and clean page content:
+${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score})), null, 2)}`;
       rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
       parsed = parseJsonLoose(rawText);
     } else {
@@ -545,8 +638,9 @@ Each signal must include: accountName, signalType, signalTitle, whatChanged, why
     const byAccount = {};
     for (const sig of signals) {
       if (!byAccount[sig.accountName]) byAccount[sig.accountName] = [];
-      if (byAccount[sig.accountName].length < 2) byAccount[sig.accountName].push(sig);
+      if (byAccount[sig.accountName].length < 4) byAccount[sig.accountName].push(sig);
     }
+    Object.keys(byAccount).forEach(name => { byAccount[name] = byAccount[name].sort((a,b)=>Number(b.confidenceScore||0)-Number(a.confidenceScore||0)).slice(0,2); });
     const finalSignals = Object.values(byAccount).flat();
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
@@ -564,7 +658,7 @@ Each signal must include: accountName, signalType, signalTitle, whatChanged, why
         signalsDiscovered: rawSignals.length,
         signalsRejected: Math.max(0, rawSignals.length - finalSignals.length),
         signalsReturned: finalSignals.length,
-        highConfidenceOpportunities: finalSignals.length,
+        highConfidenceOpportunities: finalSignals.filter(s => Number(s.confidenceScore || 0) >= 80).length,
         avgConfidence,
         webSearchEnabled: !hasSearchProvider,
         targetedSearchEnabled: hasSearchProvider,
