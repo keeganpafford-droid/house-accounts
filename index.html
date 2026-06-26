@@ -2052,7 +2052,7 @@ function renderVerifiedSignals(signals){
 }
 
 function addSignalDerivedOpportunities(account, signals){
-  const existing = new Set((account.futureOpportunities || []).map(o => o.opportunity));
+  const existing = new Set((account.futureOpportunities || []).map(o => `${o.signalLayerType || ''}|${o.signalType || ''}|${String(o.signalTitle || o.opportunity || '').toLowerCase().slice(0,80)}`));
   (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
@@ -2066,7 +2066,9 @@ function addSignalDerivedOpportunities(account, signals){
     const multiSignalBonus = businessSignalCount > 2 ? 10 : businessSignalCount > 1 ? 6 : 0;
     const base = (type.includes('Hiring') ? 82 : type.includes('Event') ? 80 : type.includes('Expansion') ? 83 : type.includes('Award') ? 78 : 76) + multiSignalBonus;
 
-    if(!name || existing.has(name)) return;
+    const sigKey = `${signal.signalLayerType || 'Business Activity Signal'}|${signal.signalType || type}|${String(signal.signalDetail || signal.title || name).toLowerCase().slice(0,80)}`;
+    if(!name || existing.has(sigKey)) return;
+    existing.add(sigKey);
     const opp = createOpportunity(account, name, contactTitle, products, [], base, true);
     const hasHistory = Number(account.revenue || 0) > 0 || Number(account.orderCount || 0) > 0;
     opp.isVerifiedSignalOpportunity = true;
@@ -2263,6 +2265,17 @@ function batchPayloadForAccounts(accounts){
   });
 }
 
+
+function applyBusinessSignalAccountBoost(account){
+  const signals = (account.signals || []).filter(s => s && s.isReal && s.sourceUrl);
+  if(!signals.length) return;
+  const maxSignal = Math.max(...signals.map(s => Number(s.confidenceScore || (Number(s.confidence || 0) * 100) || 70)));
+  const bonus = Math.min(35, Math.round(maxSignal * 0.25) + Math.min(10, signals.length * 3));
+  account.businessSignalScore = Math.max(account.businessSignalScore || 0, maxSignal);
+  account.confidence = Math.max(Number(account.confidence || 0), Math.min(100, bonus));
+  account.relationshipStrength = Math.max(Number(account.relationshipStrength || 0), Math.min(100, bonus));
+}
+
 async function researchAccountsBatch(accounts, options = {}){
   if(!accounts.length) return false;
   const btn = document.getElementById('researchTopBtn');
@@ -2311,6 +2324,7 @@ async function researchAccountsBatch(accounts, options = {}){
       if(signals.length){
         account.signals = dedupeSignalsClient([...(account.signals || []), ...signals]);
         addSignalDerivedOpportunities(account, account.signals);
+        applyBusinessSignalAccountBoost(account);
         const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
         if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
       }
@@ -2346,14 +2360,29 @@ async function researchAccountsBatch(accounts, options = {}){
   }
 }
 
+function signalTopicKeyClient(sig){
+  return String(`${sig.signalType || sig.type || ''} ${sig.signalDetail || sig.title || sig.whatChanged || ''}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(w => w.length > 3 && !['public','business','activity','signal','company','recent','reason','promo'].includes(w))
+    .slice(0,8)
+    .join(' ');
+}
+
 function dedupeSignalsClient(signals){
-  const seen = new Set();
-  return (signals || []).filter(sig => {
-    const key = `${sig.signalType || sig.type || ''}|${sig.sourceUrl || ''}|${String(sig.signalDetail || sig.title || '').toLowerCase().slice(0,80)}`;
-    if(seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const map = new Map();
+  (signals || []).forEach(sig => {
+    if(!sig) return;
+    const key = `${sig.signalType || sig.type || ''}|${signalTopicKeyClient(sig) || sig.sourceUrl || ''}`;
+    const existing = map.get(key);
+    if(!existing){ map.set(key, sig); return; }
+    const better = Number(sig.confidenceScore || sig.confidence || 0) > Number(existing.confidenceScore || existing.confidence || 0) ? sig : existing;
+    const sources = [...(existing.sources || []), ...(sig.sources || [])];
+    if(sig.sourceUrl && !sources.some(s => s.url === sig.sourceUrl)) sources.push({name: sig.cleanSourceName || sourceDomain(sig.sourceUrl), url: sig.sourceUrl});
+    map.set(key, {...better, sources: sources.slice(0,5)});
   });
+  return [...map.values()];
 }
 
 async function researchTopAccounts(options = {}){
@@ -2480,6 +2509,8 @@ function refreshOpportunityViews(){
     grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence — not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
+  accounts.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
+  renderDetailedAccountViews(accounts);
   document.getElementById('totalOppValue').textContent = futureOpportunities.length;
   document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
@@ -3147,8 +3178,10 @@ function normalizeSignalLayerType(type){
 
 function signalTypePriority(type){
   const normalized = normalizeSignalLayerType(type);
+  // Follow-ups remain very actionable, but high-confidence business activity can now surface quiet accounts.
   if(normalized === 'Follow-Up Signal') return 300;
-  if(normalized === 'Repeat / Pattern Signal') return 200;
+  if(normalized === 'Business Activity Signal') return 292;
+  if(normalized === 'Repeat / Pattern Signal') return 285;
   return 100;
 }
 
@@ -3159,10 +3192,22 @@ function confidenceRankFromWord(word){
   return 10;
 }
 
+function freshnessRank(opp){
+  const d = new Date(opp.signalDate || opp.publishedDate || opp.detectedAt || '');
+  if(isNaN(d.getTime())) return 0;
+  const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+  if(days <= 14) return 22;
+  if(days <= 60) return 16;
+  if(days <= 180) return 8;
+  return -12;
+}
+
 function getDailyReasonScore(opp){
+  const confidenceScore = Number(opp.confidenceScore || opp.quickWinScore || opp.closeProbability || opp.confidence || 0);
   return signalTypePriority(opp.signalLayerType) +
     confidenceRankFromWord(confidenceWord(opp)) +
-    Math.min(20, Math.round(Number(opp.closeProbability || opp.quickWinScore || opp.confidence || 0) / 10));
+    Math.min(28, Math.round(confidenceScore / 4)) +
+    freshnessRank(opp);
 }
 
 function sortDailyReasons(opps){
@@ -3274,6 +3319,54 @@ function feedSummary(opps){
   return `${follow} follow-up · ${repeat} repeat/pattern · ${business} business activity`;
 }
 
+function renderDetailedAccountViews(accounts){
+  const accountList = document.getElementById('accountList');
+  if(!accountList) return;
+  const detailedAccounts = (accounts || []).slice(0, 10);
+  accountList.innerHTML = `${accounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${accounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
+    <div class="account-card">
+      <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
+        <div class="rank">#${idx + 1}</div>
+        <div>
+          <div class="acct-name">${escapeHtml(a.name)}</div>
+          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} historical orders · ${(a.futureOpportunities || []).length} reasons to reach out${a.signals && a.signals.length ? ` · ${a.signals.length} verified business signal(s)` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} active estimate(s)` : ''}</div>
+        </div>
+        <div class="score-block">
+          <div class="score">${Math.round(a.confidence)}</div>
+          <div class="score-label">Overall</div>
+        </div>
+        <div class="score-block">
+          <div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${(a.subscores?.revenue || 0) * 100}%"></div></div></div><div class="score-label">Revenue</div>
+        </div>
+        <div class="score-block">
+          <div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${(a.subscores?.recency || 0) * 100}%"></div></div></div><div class="score-label">Recency</div>
+        </div>
+      </div>
+      <div class="account-body">
+        <div class="breakdown">
+          <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
+          <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
+          <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
+          <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
+          <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate}</div></div>
+        </div>
+        <div class="section-title">🎯 Reasons To Reach Out</div>
+        <ul class="opps">
+          ${(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(getReasonToReachOutTitle(o))}</strong> — ${escapeHtml(o.opportunity)} · ${getValueDisplay(o)} · ${Math.round(o.confidence)}% quick-win score</li>`).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
+        </ul>
+        <div class="section-title">📄 Historical Orders Used As Evidence</div>
+        ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
+        ${renderPipelineTable(a.activePipeline)}
+        <div class="section-title">📡 Verified Business Signals</div>
+        <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\'")}')">Research Account</button>
+        <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
+        <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">${renderVerifiedSignals(a.signals)}</div>
+        ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
 function processData(records){
   // Group by client
   const clients = {};
@@ -3365,7 +3458,7 @@ function processData(records){
   resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} reasons to reach out from ${accounts.length} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
 
   const noOpportunitiesMessage = displayedOpportunities.length === 0 ? `<div class="no-signals-message">No order-history-based reasons to reach out found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>` : '';
-  grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability: follow-ups first, repeat patterns second, and verified business activity third. Maximum 2 reasons per account so the feed stays scannable.</div>` + noOpportunitiesMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+  grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence. Strong business signals can move quiet accounts into the feed.</div>` + noOpportunitiesMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
@@ -3391,52 +3484,7 @@ function processData(records){
     notice.innerHTML = noticeMessages.join('<br>');
   }
 
-  // Render detailed account cards. Keep the screen useful for large uploads by showing the top 10.
-  // The full account set still exists in memory for Research Top Accounts and future features.
-  const accountList = document.getElementById('accountList');
-  const detailedAccounts = accounts.slice(0, 10);
-  accountList.innerHTML = `${accounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${accounts.length} uploaded accounts. Research Top Accounts scans the top 10 first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
-    <div class="account-card">
-      <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
-        <div class="rank">#${idx + 1}</div>
-        <div>
-          <div class="acct-name">${escapeHtml(a.name)}</div>
-          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} historical orders · ${a.futureOpportunities.length} reasons to reach out${a.activePipelineCount ? ` · ${a.activePipelineCount} active estimate(s)` : ''}</div>
-        </div>
-        <div class="score-block">
-          <div class="score">${Math.round(a.confidence)}</div>
-          <div class="score-label">Overall</div>
-        </div>
-        <div class="score-block">
-          <div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${a.subscores.revenue * 100}%"></div></div></div><div class="score-label">Revenue</div>
-        </div>
-        <div class="score-block">
-          <div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${a.subscores.recency * 100}%"></div></div></div><div class="score-label">Recency</div>
-        </div>
-      </div>
-      <div class="account-body">
-        <div class="breakdown">
-          <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
-          <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
-          <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
-          <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
-          <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate}</div></div>
-        </div>
-        <div class="section-title">🎯 Reasons To Reach Out</div>
-        <ul class="opps">
-          ${(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(getReasonToReachOutTitle(o))}</strong> — ${escapeHtml(o.opportunity)} · ${getValueDisplay(o)} · ${Math.round(o.confidence)}% quick-win score</li>`).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
-        </ul>
-        <div class="section-title">📄 Historical Orders Used As Evidence</div>
-        ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
-        ${renderPipelineTable(a.activePipeline)}
-        <div class="section-title">📡 Verified Business Signals</div>
-        <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Research Account</button>
-        <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
-        <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">${renderVerifiedSignals(a.signals)}</div>
-        ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
-      </div>
-    </div>
-  `).join('');
+  renderDetailedAccountViews(accounts);
 
   document.getElementById('results').style.display = 'block';
   autoResearchTopAccountsOnce();

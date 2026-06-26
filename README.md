@@ -1,25 +1,21 @@
-# House Accounts v36 – Targeted Business Signal Pipeline
+# House Accounts v38 — Unified Signal Sprint
 
-This release changes the business signal engine to mirror the Google-AI style workflow:
+Upload/replace:
+- index.html
+- api/research-account.js
+- api/research-batch.js
 
-1. Entity / signal search using targeted search operators.
-2. Candidate snippet ranking.
-3. LLM synthesis into promo-relevant business signals.
+Requires environment variables:
+- OPENAI_API_KEY
+- OPENAI_MODEL (recommended: gpt-4o-mini)
+- SERPER_API_KEY
+- FIRECRAWL_API_KEY
 
-## Upload / Replace
-- `index.html`
-- `api/research-batch.js`
-- `api/research-account.js`
-
-## Strongly Recommended Environment Variable
-Add at least one search provider key in Vercel for best results:
-
-- `SERPER_API_KEY` (recommended)
-- `TAVILY_API_KEY`
-- `BRAVE_SEARCH_API_KEY`
-
-Keep:
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL=gpt-4o-mini`
-
-If no search provider is configured, the app falls back to OpenAI web search, but dedicated search APIs usually return cleaner candidate snippets for the LLM.
+What changed:
+- Unified business signals so feed, detailed views, and sales plays use the same signal objects.
+- Stronger targeted search query set per company.
+- Improved AI prompt: senior promo salesperson, top 1–2 legitimate reasons only.
+- Dedupes similar signals and merges multiple evidence sources.
+- Adds freshness/source quality into confidence scoring.
+- Lets strong business signals surface quiet accounts in Today’s Best Reasons.
+- Re-renders detailed account views after research so account rankings and signal counts stay in sync.
