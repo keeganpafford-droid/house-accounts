@@ -1475,6 +1475,9 @@ let accountSignalsCache = {}; // Cache for real signals to avoid re-fetching
 
 let currentLead = null;
 let lastAnalysisSummary = null;
+let currentUploadId = null;
+let currentUploadName = '';
+let saveInProgress = false;
 
 function getSavedLead(){
   try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
@@ -1574,6 +1577,8 @@ function clearError(){
 
 function handleFile(file){
   clearError();
+  currentUploadName = file && file.name ? file.name : 'Uploaded account list';
+  currentUploadId = null;
   if(!currentLead && !getSavedLead()){
     showError('Please enter your name, work email, and company before generating the report.');
     return;
@@ -2515,6 +2520,7 @@ function refreshOpportunityViews(){
   document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
   document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
   renderResearchDiagnostics();
+  if(currentUploadId) saveCurrentUpload('research_updated');
 }
 
 function estimateFutureValue(account, opportunityType){
@@ -3367,6 +3373,88 @@ function renderDetailedAccountViews(accounts){
   `).join('');
 }
 
+
+function serializeAccountForStorage(account){
+  const signals = Array.isArray(account.signals) ? account.signals.filter(s => s && s.isReal !== false) : [];
+  const opportunities = Array.isArray(account.futureOpportunities) ? account.futureOpportunities.slice(0, 12) : [];
+  return {
+    name: account.name,
+    industry: account.industry || '',
+    contactName: account.contactName || '',
+    contactEmail: account.contactEmail || '',
+    metrics: {
+      revenue: account.revenue || 0,
+      activePipelineValue: account.activePipelineValue || 0,
+      orderCount: account.orderCount || 0,
+      activePipelineCount: account.activePipelineCount || 0,
+      relationshipStrength: account.relationshipStrength || 0,
+      confidence: account.confidence || 0,
+      mostRecentDate: account.mostRecentDate || 'Unknown'
+    },
+    rawData: {
+      notes: account.notes || '',
+      employees: account.employees || '',
+      historicalCategories: [...(account.categoryTypes || [])],
+      historicalProjects: account.projects || [],
+      allProjects: account.allProjects || [],
+      recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date).filter(Boolean).slice(0, 12),
+      repeatPatterns: opportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').slice(0, 8),
+      existingSignals: opportunities.slice(0, 12),
+      records: (account.allRecords || []).slice(0, 100)
+    },
+    signals
+  };
+}
+
+async function saveCurrentUpload(stage = 'uploaded'){
+  const lead = currentLead || getSavedLead();
+  const accounts = window.accountRadarAccounts || [];
+  if(!lead || !lead.email || !accounts.length) return;
+  const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []);
+  const summary = {
+    accountCount: accounts.length,
+    reasonsToReachOut: futureOpportunities.length,
+    highConfidenceAccounts: new Set(futureOpportunities.filter(o => Number(o.confidence || 0) >= 70).map(o => o.account)).size,
+    businessSignals: futureOpportunities.filter(o => o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity).length,
+    followUpSignals: futureOpportunities.filter(o => o.signalLayerType === 'Follow-Up Signal').length,
+    repeatPatternSignals: futureOpportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').length,
+    savedAt: new Date().toISOString()
+  };
+  try{
+    saveInProgress = true;
+    const res = await fetch('/api/save-upload', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        lead,
+        uploadId: currentUploadId,
+        uploadName: currentUploadName || 'Uploaded account list',
+        stage,
+        page: window.location.href,
+        summary,
+        accounts: accounts.map(serializeAccountForStorage)
+      })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Save failed');
+    currentUploadId = data.uploadId || currentUploadId;
+    const notice = document.getElementById('notice');
+    if(notice && stage === 'uploaded'){
+      notice.style.display = 'block';
+      notice.innerHTML = (notice.innerHTML ? notice.innerHTML + '<br>' : '') + `Saved account list for weekly monitoring.`;
+    }
+  }catch(err){
+    console.warn('Supabase save failed:', err);
+    const diag = document.getElementById('researchDiagnostics');
+    if(diag){
+      diag.style.display = 'block';
+      diag.innerHTML = `<strong>Storage note:</strong> Upload analyzed locally, but Supabase save failed: ${escapeHtml(err.message)}. Confirm v39 schema and env vars.`;
+    }
+  }finally{
+    saveInProgress = false;
+  }
+}
+
 function processData(records){
   // Group by client
   const clients = {};
@@ -3498,6 +3586,7 @@ function processData(records){
     futureOpportunityCount: futureOpportunities.length,
     reasonsToReachOut: futureOpportunities.length
   };
+  saveCurrentUpload('uploaded');
 }
 
 function escapeHtml(text){

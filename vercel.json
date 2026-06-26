@@ -1,3 +1,9 @@
 {
-  "cleanUrls": true
+  "cleanUrls": true,
+  "crons": [
+    {
+      "path": "/api/weekly-scan",
+      "schedule": "0 12 * * 1"
+    }
+  ]
 }
