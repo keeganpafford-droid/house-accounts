@@ -13,10 +13,18 @@ function signalHash(userId, uploadId, accountName, signal){
   return hashString([userId, uploadId, accountName, signal.signalType || signal.type || '', signal.signalTitle || signal.title || signal.whatChanged || '', signal.sourceUrl || signal.source || ''].join('|').toLowerCase());
 }
 function env(){
-  const url = process.env.SUPABASE_URL;
+  const rawUrl = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if(!url || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  return {url: url.replace(/\/$/, ''), key};
+  if(!rawUrl || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+
+  // SUPABASE_URL should be the project URL only, e.g. https://xxxx.supabase.co.
+  // If someone accidentally pasted the REST endpoint, normalize it so we do not call /rest/v1/rest/v1.
+  const url = String(rawUrl)
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/rest\/v1$/i, '');
+
+  return {url, key};
 }
 async function supabase(path, options={}){
   const {url, key} = env();
