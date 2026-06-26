@@ -86,9 +86,10 @@ async function sendEmail({to, subject, html}){
   if(!resp.ok) throw new Error(`Resend ${resp.status}: ${data.message || JSON.stringify(data)}`);
   return data;
 }
-function reportHtml(user, upload, newSignals){
+function reportHtml(user, upload, newSignals, baseUrl){
   const rows = newSignals.slice(0,10).map(s => `<tr><td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong>${s.account_name}</strong><br><span style="color:#6b7280;">${s.signal_type}</span></td><td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong>${s.title}</strong><br>${s.why_reach_out || ''}</td></tr>`).join('');
-  return `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#0b2d4d;"><h1>House Accounts: New reasons to reach out</h1><p>${newSignals.length} new business signal${newSignals.length===1?'':'s'} found for ${upload.upload_name || 'your account list'}.</p><table style="border-collapse:collapse;width:100%;">${rows}</table><p style="margin-top:24px;color:#6b7280;font-size:13px;">House Accounts scans public business activity and your uploaded account data to identify who to contact and why.</p></div>`;
+  const dashboardUrl = `${String(baseUrl || '').replace(/\/$/,'')}?dashboardEmail=${encodeURIComponent(user.email || '')}`;
+  return `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#0b2d4d;"><h1>House Accounts: New reasons to reach out</h1><p>${newSignals.length} new business signal${newSignals.length===1?'':'s'} found for ${upload.upload_name || 'your account list'}.</p><table style="border-collapse:collapse;width:100%;">${rows}</table><p style="margin-top:24px;"><a href="${dashboardUrl}" style="background:#12b9a6;color:white;padding:12px 18px;text-decoration:none;border-radius:4px;font-weight:bold;">View Dashboard</a></p><p style="margin-top:24px;color:#6b7280;font-size:13px;">House Accounts scans public business activity and your uploaded account data to identify who to contact and why.</p></div>`;
 }
 
 export default async function handler(req, res){
@@ -148,7 +149,7 @@ export default async function handler(req, res){
         if(newSignalRows.length){
           await supabase('ha_signals', {method:'POST', prefer:'return=minimal', body: JSON.stringify(newSignalRows)});
           if(!dryRun){
-            await sendEmail({to:user.email, subject:`${newSignalRows.length} new House Accounts reason${newSignalRows.length===1?'':'s'} to reach out`, html:reportHtml(user, upload, newSignalRows)});
+            await sendEmail({to:user.email, subject:`${newSignalRows.length} new House Accounts reason${newSignalRows.length===1?'':'s'} to reach out`, html:reportHtml(user, upload, newSignalRows, baseUrl)});
           }
         }
         await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run?.id)}`, {method:'PATCH', body: JSON.stringify({status:'complete', finished_at:new Date().toISOString(), summary:{accounts:accountPayloads.length, newSignals:newSignalRows.length, diagnostics:research.diagnostics || {}}})});
