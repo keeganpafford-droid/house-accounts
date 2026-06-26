@@ -158,6 +158,48 @@
     line-height:1.5;
     margin-top:12px;
   }
+  .returning-user-box{
+    margin-top:24px;
+    padding-top:20px;
+    border-top:1px solid var(--line);
+    display:flex;
+    flex-wrap:wrap;
+    align-items:end;
+    gap:12px;
+  }
+  .returning-user-box .returning-copy{
+    flex:1 1 260px;
+    font-family:var(--mono);
+    font-size:0.78rem;
+    color:var(--muted);
+    line-height:1.5;
+  }
+  .returning-user-box .returning-form{
+    display:flex;
+    gap:10px;
+    flex:1 1 360px;
+  }
+  .returning-user-box input{
+    flex:1;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:12px;
+    font-family:var(--body);
+    font-size:0.95rem;
+    background:#fafaf6;
+    color:var(--ink);
+  }
+  .saved-dashboard-banner{
+    background:#fff8e8;
+    border-left:4px solid var(--signal);
+    padding:14px 16px;
+    margin:0 0 24px;
+    font-family:var(--mono);
+    font-size:0.85rem;
+    color:var(--ink);
+    display:none;
+  }
+
 
   .signal-checklist{
     display:grid;
@@ -1366,6 +1408,13 @@
       </div>
       <button class="btn btn-secondary" type="submit">Continue</button>
       <div class="lead-note">Your account data is used to analyze your accounts and generate House Accounts insights. We never sell or share your information.</div>
+      <div class="returning-user-box">
+        <div class="returning-copy"><strong>Returning user?</strong><br>Enter your email to view your saved House Accounts dashboard. No password needed for the beta.</div>
+        <form class="returning-form" id="dashboardLookupForm">
+          <input id="dashboardEmail" type="email" placeholder="you@company.com" required>
+          <button class="btn btn-secondary" type="submit">View Dashboard</button>
+        </form>
+      </div>
     </form>
   </section>
 
@@ -1407,6 +1456,8 @@
       </div>
     </div>
   </section>
+
+  <div class="saved-dashboard-banner" id="savedDashboardBanner"></div>
 
   <div id="results">
     <!-- Accounts To Call This Week -->
@@ -1518,6 +1569,65 @@ async function captureLead(stage, payload){
   }catch(e){}
 }
 
+
+function normalizeSavedAccount(account){
+  const a = account || {};
+  a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : []);
+  a.futureOpportunities = Array.isArray(a.futureOpportunities) ? a.futureOpportunities : [];
+  a.signals = Array.isArray(a.signals) ? a.signals : [];
+  a.futureOpportunities.forEach(opp => {
+    opp.account = opp.account || a.name || a.accountName || 'Saved account';
+    opp.email = opp.email || a.contactEmail || '';
+    opp.contactEmail = opp.contactEmail || a.contactEmail || '';
+    opp.contactTitle = opp.contactTitle || opp.contact || a.contactName || 'Relevant contact';
+    opp.confidence = Number(opp.confidence || opp.quickWinScore || opp.confidenceScore || 0) || 0;
+    opp.quickWinScore = Number(opp.quickWinScore || opp.confidence || 0) || 0;
+  });
+  return a;
+}
+
+async function loadSavedDashboard(email){
+  const e = String(email || '').trim().toLowerCase();
+  if(!e){ showError('Enter the email used for your House Accounts upload.'); return; }
+  clearError();
+  const banner = document.getElementById('savedDashboardBanner');
+  if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
+  try{
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}`);
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
+    const accounts = (data.accounts || []).map(normalizeSavedAccount);
+    window.accountRadarAccounts = accounts;
+    currentUploadId = data.upload?.id || currentUploadId;
+    currentUploadName = data.upload?.upload_name || 'Saved account list';
+    currentLead = {
+      email: data.user?.email || e,
+      name: data.user?.name || '',
+      company: data.user?.company || '',
+      role: data.user?.role || '',
+      houseAccounts: data.user?.house_accounts || '',
+      crmErp: data.user?.crm_erp || ''
+    };
+    localStorage.setItem('houseAccountsLead', JSON.stringify(currentLead));
+    const gate = document.getElementById('leadGate');
+    const dz = document.getElementById('dropzone');
+    const example = document.getElementById('exampleOpportunity');
+    const results = document.getElementById('results');
+    if(gate) gate.style.display = 'none';
+    if(dz) dz.style.display = 'none';
+    if(example) example.style.display = 'none';
+    if(results) results.style.display = 'block';
+    if(banner){
+      const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
+      banner.innerHTML = `<strong>Saved dashboard loaded.</strong> ${escapeHtml(accounts.length)} accounts · ${escapeHtml((data.signals || []).length)} saved signal${(data.signals || []).length===1?'':'s'} · ${escapeHtml(newCount)} new this week.`;
+    }
+    refreshOpportunityViews();
+    window.scrollTo({top:0, behavior:'smooth'});
+  }catch(err){
+    if(banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
 
@@ -1543,6 +1653,22 @@ document.addEventListener('DOMContentLoaded', () => {
       setLeadGateState();
       clearError();
     });
+  }
+
+  const dashboardLookupForm = document.getElementById('dashboardLookupForm');
+  if(dashboardLookupForm){
+    dashboardLookupForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await loadSavedDashboard(document.getElementById('dashboardEmail').value);
+    });
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const dashboardEmail = params.get('dashboardEmail') || params.get('email');
+  if(dashboardEmail){
+    const input = document.getElementById('dashboardEmail');
+    if(input) input.value = dashboardEmail;
+    loadSavedDashboard(dashboardEmail);
   }
 });
 

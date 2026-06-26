@@ -1,38 +1,35 @@
-# House Accounts v39 — Supabase Storage + Weekly Email Pipeline
+# House Accounts v40 — Returning Dashboard + Weekly Email Links
 
-## Upload / Replace
+Upload/replace:
 - `index.html`
-- `api/save-upload.js`
+- `api/get-dashboard.js`
 - `api/weekly-scan.js`
+
+Keep from v39:
+- `api/save-upload.js`
 - `api/research-account.js`
 - `api/research-batch.js`
 - `vercel.json`
-- `supabase-schema.sql` is for Supabase SQL Editor only.
+- `supabase-schema.sql` already run
 
-## Required Vercel Environment Variables
+What changed:
+- Adds returning-user email lookup on the homepage.
+- Adds `/api/get-dashboard?email=` to load saved account lists and signals from Supabase.
+- Weekly emails now include a dashboard link back to the saved account view.
+- New users still see signup + upload.
+- Returning users can view their saved dashboard without passwords during beta.
+
+Required Vercel env vars:
 - `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
-- Existing: `OPENAI_API_KEY`, `OPENAI_MODEL`, `SERPER_API_KEY`, `FIRECRAWL_API_KEY`
+- `ALERTS_FROM_EMAIL`
+- `APP_BASE_URL`
+- `CRON_SECRET`
 
-## Recommended Vercel Environment Variables
-- `ALERTS_FROM_EMAIL=House Accounts <alerts@yourdomain.com>`
-- `APP_BASE_URL=https://yourdomain.com`
-- `CRON_SECRET=<random-long-secret>`
-
-## Supabase Setup
-Run `supabase-schema.sql` once in Supabase SQL Editor before testing saves.
-
-## What v39 Adds
-- Saves lead + uploaded account list to Supabase.
-- Saves analyzed account records and verified business signals.
-- Adds `/api/weekly-scan` for Monday cron monitoring.
-- Weekly scan researches stored uploads, compares new signals against existing signal hashes, stores only new signals, and emails users through Resend.
-
-## Manual Test
-After deploy and schema setup:
-1. Upload a CSV.
-2. Confirm rows appear in Supabase: `ha_users`, `ha_uploads`, `ha_accounts`.
-3. Run: `/api/weekly-scan?dryRun=true`
-4. If you set `CRON_SECRET`, run: `/api/weekly-scan?dryRun=true&secret=YOUR_SECRET`
+Test flow:
+1. Upload a CSV and confirm Supabase rows save.
+2. Refresh the site.
+3. Use “Returning user? View dashboard” with the same email.
+4. Confirm saved accounts/signals load.
+5. Test weekly scan manually with `/api/weekly-scan?secret=YOUR_CRON_SECRET&dryRun=true`.
