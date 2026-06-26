@@ -2812,7 +2812,7 @@ function createRepeatPatternOpportunities(account){
       pattern.monthLabel ? `Most common timing: ${pattern.monthLabel}` : `Recent similar order: ${pattern.lastDateStr || 'recent history'}`
     ].filter(Boolean).slice(0,3);
     opp.commonPromoCategories = products;
-    opp.likelyConversations = signal.likelyConversations || products;
+    opp.likelyConversations = products;
     return opp;
   });
 }
