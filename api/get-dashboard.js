@@ -124,6 +124,7 @@ export default async function handler(req, res){
 
     const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=account_name.asc&limit=2500`);
     const signals = await supabase(`ha_signals?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=first_seen_at.desc&limit=500`);
+    const weeklyRuns = await supabase(`ha_weekly_runs?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=started_at.desc&limit=8`);
     const byAccount = new Map();
     for(const a of accounts || []){
       byAccount.set(a.account_name, {
@@ -169,6 +170,7 @@ export default async function handler(req, res){
       summary: upload.summary || {},
       accounts: accountList,
       signals: (signals || []).map(rowToSignal),
+      weeklyRuns: weeklyRuns || [],
       newThisWeek
     });
   }catch(err){
