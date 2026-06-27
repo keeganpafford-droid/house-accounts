@@ -1357,7 +1357,7 @@
       <div class="signal-check"><span class="checkmark">✓</span> Repeat Buying Patterns</div>
       <div class="signal-check"><span class="checkmark">✓</span> Suggested Conversation Starters</div>
     </div>
-    <h2>First time here?</h2><p>Enter your information and upload your accounts. House Accounts will analyze your customer list and begin monitoring it for new reasons to reach out.</p><form id="leadForm">
+    <form id="leadForm">
       <div class="lead-form-grid">
         <div class="form-field">
           <label for="leadName">Name</label>
@@ -1571,6 +1571,22 @@ async function captureLead(stage, payload){
 
 function normalizeSavedAccount(account){
   const a = account || {};
+  a.name = a.name || a.accountName || a.account_name || 'Saved account';
+  a.industry = a.industry || 'Saved Account';
+  a.contactName = a.contactName || a.contact_name || '';
+  a.contactEmail = a.contactEmail || a.contact_email || '';
+  a.revenue = Number(a.revenue || 0) || 0;
+  a.orderCount = Number(a.orderCount || 0) || 0;
+  a.confidence = Number(a.confidence || a.quickWinScore || 0) || 0;
+  a.relationshipStrength = Number(a.relationshipStrength || 0) || 0;
+  a.mostRecentDate = a.mostRecentDate || 'Unknown';
+  a.activePipelineValue = Number(a.activePipelineValue || 0) || 0;
+  a.activePipelineCount = Number(a.activePipelineCount || 0) || 0;
+  a.subscores = a.subscores || {revenue:0, frequency:0, recency:0, diversity:0};
+  a.purchases = Array.isArray(a.purchases) ? a.purchases : [];
+  a.projects = Array.isArray(a.projects) ? a.projects : [];
+  a.allProjects = Array.isArray(a.allProjects) ? a.allProjects : [];
+  a.activePipeline = Array.isArray(a.activePipeline) ? a.activePipeline : [];
   a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : []);
   a.futureOpportunities = Array.isArray(a.futureOpportunities) ? a.futureOpportunities : [];
   a.signals = Array.isArray(a.signals) ? a.signals : [];
@@ -1581,6 +1597,7 @@ function normalizeSavedAccount(account){
     opp.contactTitle = opp.contactTitle || opp.contact || a.contactName || 'Relevant contact';
     opp.confidence = Number(opp.confidence || opp.quickWinScore || opp.confidenceScore || 0) || 0;
     opp.quickWinScore = Number(opp.quickWinScore || opp.confidence || 0) || 0;
+    opp.estimatedValue = Number(opp.estimatedValue || 0) || 0;
   });
   return a;
 }
@@ -2641,9 +2658,14 @@ function refreshOpportunityViews(){
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
   renderDetailedAccountViews(accounts);
-  document.getElementById('totalOppValue').textContent = futureOpportunities.length;
-  document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
-  document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
+  const totalAccountsEl = document.getElementById('totalAccounts');
+  const totalOppEl = document.getElementById('totalOppValue');
+  const highConfEl = document.getElementById('highConfidenceCount');
+  const avgConfEl = document.getElementById('avgConfidence');
+  if(totalAccountsEl) totalAccountsEl.textContent = accounts.length;
+  if(totalOppEl) totalOppEl.textContent = futureOpportunities.length;
+  if(highConfEl) highConfEl.textContent = highConfidenceAccounts.size;
+  if(avgConfEl) avgConfEl.textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + Number(o.confidence || 0), 0) / Math.max(futureOpportunities.length, 1)) + '%';
   renderResearchDiagnostics();
   if(currentUploadId) saveCurrentUpload('research_updated');
 }
@@ -3453,8 +3475,9 @@ function feedSummary(opps){
 function renderDetailedAccountViews(accounts){
   const accountList = document.getElementById('accountList');
   if(!accountList) return;
-  const detailedAccounts = (accounts || []).slice(0, 10);
-  accountList.innerHTML = `${accounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${accounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
+  const safeAccounts = (accounts || []).map(normalizeSavedAccount);
+  const detailedAccounts = safeAccounts.slice(0, 10);
+  accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
     <div class="account-card">
       <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
         <div class="rank">#${idx + 1}</div>
@@ -3487,7 +3510,7 @@ function renderDetailedAccountViews(accounts){
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
-        ${renderPipelineTable(a.activePipeline)}
+        ${renderPipelineTable(a.activePipeline || [])}
         <div class="section-title">📡 Verified Business Signals</div>
         <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\'")}')">Research Account</button>
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
