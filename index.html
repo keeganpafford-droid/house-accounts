@@ -1457,6 +1457,7 @@
     margin-left:6px;
   }
 
+.low-confidence-signals{margin-top:12px;border:1px dashed var(--line);border-radius:10px;padding:10px 12px;background:#fffdf8}.low-confidence-signals summary{cursor:pointer;font-family:var(--mono);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -1607,7 +1608,7 @@
 
     <!-- Accounts To Call This Week -->
     <div class="sales-dashboard">
-      <div class="dashboard-header">House Accounts Snapshot</div>
+      <div class="dashboard-header">Revenue Context</div>
       <div class="research-controls">
         <button class="btn btn-secondary" id="researchTopBtn" type="button" onclick="researchTopAccounts()">Research Top Accounts</button>
         <div class="research-note">Research scans public sources for real business signals. Historical order data helps prioritize accounts, but verified signals create the strongest “why now.”</div>
@@ -1616,19 +1617,19 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-value" id="totalAccounts">0</div>
-          <div class="kpi-label">Total Accounts Analyzed</div>
+          <div class="kpi-label">Historical Revenue Represented</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="totalOppValue">0</div>
-          <div class="kpi-label">Reasons To Reach Out</div>
+          <div class="kpi-label">Historical Opportunities</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="highConfidenceCount">0</div>
-          <div class="kpi-label">High-Confidence Accounts</div>
+          <div class="kpi-label">New Business Opportunities</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-value" id="avgConfidence">0%</div>
-          <div class="kpi-label">Avg Quick Win Score</div>
+          <div class="kpi-label">Total Reasons To Reach Out</div>
         </div>
       </div>
 
@@ -1735,8 +1736,8 @@ function normalizeSavedAccount(account){
   a.allProjects = Array.isArray(a.allProjects) ? a.allProjects : [];
   a.activePipeline = Array.isArray(a.activePipeline) ? a.activePipeline : [];
   a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : []);
-  a.futureOpportunities = Array.isArray(a.futureOpportunities) ? a.futureOpportunities : [];
-  a.signals = Array.isArray(a.signals) ? a.signals : [];
+  a.futureOpportunities = dedupeOpportunities(Array.isArray(a.futureOpportunities) ? a.futureOpportunities : []);
+  a.signals = dedupeVerifiedSignals(Array.isArray(a.signals) ? a.signals : []);
   a.futureOpportunities.forEach(opp => {
     opp.account = opp.account || a.name || a.accountName || 'Saved account';
     opp.email = opp.email || a.contactEmail || '';
@@ -1772,12 +1773,76 @@ function uniqueDashboardOpportunities(items){
   return out;
 }
 
+
+function opportunityDedupeKey(opp){
+  const account = String(opp?.account || opp?.accountName || '').toLowerCase().trim();
+  const layer = signalLayerLabel(opp || {});
+  const type = String(opp?.signalType || opp?.opportunityCategory || opp?.opportunity || '').toLowerCase().trim();
+  const title = String(opp?.signalTitle || opp?.signalSummary || opp?.reasonToReachOut || opp?.whyNow || opp?.opportunity || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,90);
+  const source = sourceDomain(opp?.sourceUrl || '') || String(opp?.cleanSourceName || '').toLowerCase().trim();
+  return `${account}|${layer}|${type}|${title}|${source}`;
+}
+
+function dedupeOpportunities(items){
+  const map = new Map();
+  for(const item of (items || [])){
+    if(!item) continue;
+    const key = opportunityDedupeKey(item);
+    const existing = map.get(key);
+    if(!existing || getDailyReasonScore(item) > getDailyReasonScore(existing)){
+      map.set(key, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function verifiedSignalDedupeKey(signal){
+  const type = String(signal?.signalType || signal?.type || '').toLowerCase().trim();
+  const title = String(signal?.signalDetail || signal?.title || signal?.signalTitle || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,100);
+  const source = sourceDomain(signal?.sourceUrl || '') || String(signal?.cleanSourceName || '').toLowerCase().trim();
+  return `${type}|${title}|${source}`;
+}
+
+function dedupeVerifiedSignals(signals){
+  const map = new Map();
+  for(const signal of (signals || [])){
+    if(!signal || signal.isReal === false) continue;
+    const key = verifiedSignalDedupeKey(signal);
+    if(!key.trim()) continue;
+    const existing = map.get(key);
+    const score = Number(signal.confidenceScore || signal.confidence || 0);
+    const existingScore = Number(existing?.confidenceScore || existing?.confidence || 0);
+    if(!existing || score > existingScore) map.set(key, signal);
+  }
+  return Array.from(map.values());
+}
+
+function isBusinessOpportunity(opp){
+  return signalLayerLabel(opp || {}) === 'Business Activity Signal' || Boolean(opp?.isVerifiedSignalOpportunity);
+}
+
+function reasonListMeta(opp){
+  if(isBusinessOpportunity(opp)) return 'Signal-only opportunity';
+  return `${getValueDisplay(opp)} · ${Math.round(opp.confidence || 0)}% quick-win score`;
+}
+
+function calculateRevenueContext(accounts, opportunities){
+  const opps = dedupeOpportunities(opportunities || []);
+  const historicalOpps = opps.filter(o => !isBusinessOpportunity(o));
+  const newBusinessOpps = opps.filter(isBusinessOpportunity);
+  const accountByName = new Map((accounts || []).map(a => [String(a.name || '').toLowerCase().trim(), a]));
+  const representedAccounts = new Set(historicalOpps.map(o => String(o.account || '').toLowerCase().trim()).filter(Boolean));
+  let historicalRevenue = 0;
+  representedAccounts.forEach(name => { historicalRevenue += Number(accountByName.get(name)?.revenue || 0); });
+  return {historicalRevenue, historicalOpps: historicalOpps.length, newBusinessOpps: newBusinessOpps.length, totalReasons: opps.length};
+}
+
 function renderCustomerDashboard(data){
   const panel = document.getElementById('customerDashboard');
   if(!panel) return;
   const accounts = data?.accounts || [];
   const signals = data?.signals || [];
-  const newThisWeek = uniqueDashboardOpportunities(data?.newThisWeek || []);
+  const newThisWeek = uniqueDashboardOpportunities(dedupeOpportunities(data?.newThisWeek || []));
   const weeklyRuns = data?.weeklyRuns || [];
   const latestRun = weeklyRuns[0] || null;
   panel.style.display = 'block';
@@ -2395,32 +2460,42 @@ function renderRepOpportunityCard(opp){
     </div>`;
 }
 
+function renderSingleVerifiedSignal(signal){
+  const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
+  const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
+  const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
+    ? signal.likelyConversations
+    : [signal.opportunityCategory || signal.conversationStarter || signal.whyNow || 'Relevant account conversation'];
+  return `
+    <div class="verified-signal-simple">
+      <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
+      <div class="verified-signal-meta">
+        ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
+      </div>
+      <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
+      <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
+      <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
+      <div class="verified-signal-row"><strong>Likely conversations:</strong>
+        <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
+      </div>
+      ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
+    </div>`;
+}
+
 function renderVerifiedSignals(signals){
-  const verified = (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl);
+  const verified = dedupeVerifiedSignals((signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl));
   if(!verified.length){
     return `<div class="no-signals-message">No verified external signals found.</div>`;
   }
-  return verified.map(signal => {
-    const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
-    const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
-    const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
-      ? signal.likelyConversations
-      : [signal.opportunityCategory || signal.conversationStarter || signal.whyNow || 'Relevant account conversation'];
-    return `
-      <div class="verified-signal-simple">
-        <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
-        <div class="verified-signal-meta">
-          ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
-        </div>
-        <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
-        <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
-        <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
-        <div class="verified-signal-row"><strong>Likely conversations:</strong>
-          <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
-        </div>
-        ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
-      </div>`;
-  }).join('');
+  const primary = verified.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) >= 55);
+  const lower = verified.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) < 55);
+  const primaryHtml = primary.map(renderSingleVerifiedSignal).join('');
+  const lowerHtml = lower.length ? `
+    <details class="low-confidence-signals">
+      <summary>Show ${lower.length} lower-confidence signal${lower.length === 1 ? '' : 's'}</summary>
+      ${lower.map(renderSingleVerifiedSignal).join('')}
+    </details>` : '';
+  return primaryHtml + lowerHtml;
 }
 
 function addSignalDerivedOpportunities(account, signals){
@@ -2857,6 +2932,7 @@ function getConversationStarterText(opp){
 }
 
 function getValueDisplay(opp){
+  if(isBusinessOpportunity(opp)) return 'Signal-only opportunity';
   if(opp.estimatedValueRange && opp.estimatedValueRange.label){
     return escapeHtml(opp.estimatedValueRange.label);
   }
@@ -2872,7 +2948,7 @@ function getValueLabel(opp){
 
 function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
-  const futureOpportunities = sortDailyReasons(accounts.flatMap(account => account.futureOpportunities || []));
+  const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
   const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
@@ -2880,6 +2956,7 @@ function refreshOpportunityViews(){
   if(grid){
     grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence — not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
+  const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
   renderDetailedAccountViews(accounts);
@@ -2887,10 +2964,10 @@ function refreshOpportunityViews(){
   const totalOppEl = document.getElementById('totalOppValue');
   const highConfEl = document.getElementById('highConfidenceCount');
   const avgConfEl = document.getElementById('avgConfidence');
-  if(totalAccountsEl) totalAccountsEl.textContent = accounts.length;
-  if(totalOppEl) totalOppEl.textContent = futureOpportunities.length;
-  if(highConfEl) highConfEl.textContent = highConfidenceAccounts.size;
-  if(avgConfEl) avgConfEl.textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + Number(o.confidence || 0), 0) / Math.max(futureOpportunities.length, 1)) + '%';
+  if(totalAccountsEl) totalAccountsEl.textContent = fmtMoney(revenueContext.historicalRevenue);
+  if(totalOppEl) totalOppEl.textContent = revenueContext.historicalOpps;
+  if(highConfEl) highConfEl.textContent = revenueContext.newBusinessOpps;
+  if(avgConfEl) avgConfEl.textContent = revenueContext.totalReasons;
   renderResearchDiagnostics();
   if(currentUploadId) saveCurrentUpload('research_updated');
 }
@@ -3708,7 +3785,7 @@ function renderDetailedAccountViews(accounts){
         <div class="rank">#${idx + 1}</div>
         <div>
           <div class="acct-name">${escapeHtml(a.name)}</div>
-          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} historical orders · ${(a.futureOpportunities || []).length} reasons to reach out${a.signals && a.signals.length ? ` · ${a.signals.length} verified business signal(s)` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} active estimate(s)` : ''}</div>
+          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Opportunities${a.signals && a.signals.length ? ` · ${dedupeVerifiedSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
         </div>
         <div class="score-block">
           <div class="score">${Math.round(a.confidence)}</div>
@@ -3731,7 +3808,7 @@ function renderDetailedAccountViews(accounts){
         </div>
         <div class="section-title">🎯 Reasons To Reach Out</div>
         <ul class="opps">
-          ${(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(getReasonToReachOutTitle(o))}</strong> — ${escapeHtml(o.opportunity)} · ${getValueDisplay(o)} · ${Math.round(o.confidence)}% quick-win score</li>`).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
+          ${dedupeOpportunities(a.futureOpportunities || []).map(o => `<li><strong>${escapeHtml(getReasonToReachOutTitle(o))}</strong> — ${escapeHtml(o.opportunity)} · ${reasonListMeta(o)}</li>`).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
@@ -3909,7 +3986,7 @@ function processData(records){
   window.accountRadarAccounts = accounts;
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
-  const futureOpportunities = sortDailyReasons(accounts.flatMap(account => account.futureOpportunities || []));
+  const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
   const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
 
   // Render opportunities grid
@@ -3923,6 +4000,7 @@ function processData(records){
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
+  const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
 
   document.getElementById('totalAccounts').textContent = accounts.length;
