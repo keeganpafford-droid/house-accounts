@@ -65,6 +65,26 @@ function rowToSignal(row){
     lastSeenAt: row.last_seen_at
   };
 }
+
+function uniqueSignalRows(rows){
+  const map = new Map();
+  for(const row of rows || []){
+    const payload = row.payload || {};
+    const source = sourceDomain(row.source_url || payload.sourceUrl || '');
+    const key = String(`${row.account_name || ''}|${row.signal_type || payload.signalType || ''}|${row.title || payload.title || payload.signalTitle || ''}|${source}`)
+      .toLowerCase()
+      .replace(/[^a-z0-9|]+/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+    if(!key) continue;
+    const existing = map.get(key);
+    const score = Number(row.confidence || payload.confidenceScore || payload.confidence || 0) || 0;
+    const existingScore = Number(existing?.confidence || existing?.payload?.confidenceScore || existing?.payload?.confidence || 0) || 0;
+    if(!existing || score > existingScore) map.set(key, row);
+  }
+  return Array.from(map.values());
+}
+
 function signalToOpportunity(row){
   const s = rowToSignal(row);
   const products = Array.isArray(s.likelyProducts) && s.likelyProducts.length ? s.likelyProducts
@@ -125,6 +145,7 @@ export default async function handler(req, res){
     const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=account_name.asc&limit=2500`);
     const signals = await supabase(`ha_signals?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=first_seen_at.desc&limit=500`);
     const weeklyRuns = await supabase(`ha_weekly_runs?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=started_at.desc&limit=8`);
+    const uniqueSignals = uniqueSignalRows(signals || []);
     const byAccount = new Map();
     for(const a of accounts || []){
       byAccount.set(a.account_name, {
@@ -142,7 +163,7 @@ export default async function handler(req, res){
         futureOpportunities: []
       });
     }
-    for(const row of signals || []){
+    for(const row of uniqueSignals || []){
       if(!byAccount.has(row.account_name)){
         byAccount.set(row.account_name, {name: row.account_name, industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
       }
@@ -158,7 +179,7 @@ export default async function handler(req, res){
     });
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
-    const newThisWeek = (signals || []).filter(s => {
+    const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
       return Number.isFinite(t) && t >= sevenDaysAgo;
     }).map(signalToOpportunity);
@@ -169,7 +190,7 @@ export default async function handler(req, res){
       upload,
       summary: upload.summary || {},
       accounts: accountList,
-      signals: (signals || []).map(rowToSignal),
+      signals: (uniqueSignals || []).map(rowToSignal),
       weeklyRuns: weeklyRuns || [],
       newThisWeek
     });
