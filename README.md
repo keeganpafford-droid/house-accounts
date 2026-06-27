@@ -33,3 +33,16 @@ Test flow:
 3. Use “Returning user? View dashboard” with the same email.
 4. Confirm saved accounts/signals load.
 5. Test weekly scan manually with `/api/weekly-scan?secret=YOUR_CRON_SECRET&dryRun=true`.
+
+
+## V42 Marketing Site
+
+Added public pages:
+- `/pricing.html`
+- `/security.html`
+- `/privacy.html`
+- `/terms.html`
+- `/contact.html`
+- `/favicon.svg`
+
+Updated homepage header/footer navigation. Stripe not connected yet.
