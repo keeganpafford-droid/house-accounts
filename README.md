@@ -46,3 +46,7 @@ Added public pages:
 - `/favicon.svg`
 
 Updated homepage header/footer navigation. Stripe not connected yet.
+
+
+## V42.5 Marketing Site Polish
+Added FAQ, Success Stories, Hall of Accounts, updated navigation/footer links, homepage trust line, and plain-English data security language.
