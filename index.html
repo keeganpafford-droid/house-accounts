@@ -189,6 +189,130 @@
     background:#fafaf6;
     color:var(--ink);
   }
+
+  .customer-dashboard-panel{
+    background:#ffffff;
+    border:2px solid var(--ink);
+    border-radius:8px;
+    padding:26px 28px;
+    margin:0 0 28px;
+    box-shadow:0 10px 24px rgba(11,45,77,0.05);
+  }
+  .customer-dashboard-eyebrow{
+    font-family:var(--mono);
+    text-transform:uppercase;
+    letter-spacing:0.16em;
+    color:var(--signal);
+    font-size:0.72rem;
+    font-weight:800;
+    margin-bottom:8px;
+  }
+  .customer-dashboard-top{
+    display:flex;
+    justify-content:space-between;
+    gap:24px;
+    align-items:flex-start;
+    border-bottom:1px solid var(--line);
+    padding-bottom:18px;
+    margin-bottom:20px;
+  }
+  .customer-dashboard-title{
+    font-family:var(--display);
+    font-size:2rem;
+    line-height:1.05;
+    color:var(--ink);
+    margin:0 0 8px;
+  }
+  .customer-dashboard-subtitle{
+    max-width:720px;
+    color:var(--slate);
+    font-size:0.95rem;
+    line-height:1.45;
+  }
+  .customer-dashboard-actions{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    justify-content:flex-end;
+  }
+  .dashboard-mini-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:14px;
+    margin-bottom:22px;
+  }
+  .dashboard-mini-card{
+    background:#fbfaf6;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:16px;
+  }
+  .dashboard-mini-value{
+    font-family:var(--display);
+    color:var(--teal);
+    font-size:2rem;
+    line-height:1;
+    font-weight:800;
+  }
+  .dashboard-mini-label{
+    font-family:var(--mono);
+    text-transform:uppercase;
+    letter-spacing:0.12em;
+    color:var(--slate);
+    font-size:0.68rem;
+    margin-top:8px;
+  }
+  .new-this-week-list{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:14px;
+  }
+  .new-this-week-card{
+    border:1px solid var(--line);
+    border-left:4px solid var(--teal);
+    border-radius:6px;
+    padding:16px;
+    background:#fff;
+  }
+  .new-this-week-account{
+    font-family:var(--display);
+    font-size:1.2rem;
+    color:var(--ink);
+    line-height:1.1;
+    margin-bottom:4px;
+  }
+  .new-this-week-type{
+    font-family:var(--mono);
+    text-transform:uppercase;
+    letter-spacing:0.12em;
+    color:var(--signal);
+    font-size:0.68rem;
+    font-weight:800;
+    margin-bottom:8px;
+  }
+  .new-this-week-reason{
+    color:var(--ink);
+    font-size:0.92rem;
+    line-height:1.45;
+  }
+  .new-this-week-source{
+    margin-top:10px;
+    font-family:var(--mono);
+    color:var(--slate);
+    font-size:0.74rem;
+  }
+  .dashboard-empty-state{
+    background:#fff8e8;
+    border-left:4px solid var(--signal);
+    padding:16px;
+    color:var(--ink);
+    font-size:0.92rem;
+  }
+  @media(max-width:760px){
+    .customer-dashboard-top{display:block;}
+    .customer-dashboard-actions{justify-content:flex-start;margin-top:16px;}
+  }
+
   .saved-dashboard-banner{
     background:#fff8e8;
     border-left:4px solid var(--signal);
@@ -1459,6 +1583,28 @@
   <div class="saved-dashboard-banner" id="savedDashboardBanner"></div>
 
   <div id="results">
+
+    <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
+      <div class="customer-dashboard-top">
+        <div>
+          <div class="customer-dashboard-eyebrow">Customer Dashboard</div>
+          <h2 class="customer-dashboard-title">What’s New This Week</h2>
+          <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your saved account list is being monitored for new reasons to reach out.</div>
+        </div>
+        <div class="customer-dashboard-actions">
+          <button class="btn btn-secondary" type="button" onclick="scrollToUploadForNewList()">Upload New Account List</button>
+          <button class="btn" type="button" onclick="manualDashboardRefresh()">Refresh Dashboard</button>
+        </div>
+      </div>
+      <div class="dashboard-mini-grid">
+        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashNewThisWeek">0</div><div class="dashboard-mini-label">New This Week</div></div>
+        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashSavedAccounts">0</div><div class="dashboard-mini-label">Saved Accounts</div></div>
+        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashSavedSignals">0</div><div class="dashboard-mini-label">Saved Signals</div></div>
+        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashLastScan">—</div><div class="dashboard-mini-label">Last Weekly Scan</div></div>
+      </div>
+      <div id="newThisWeekList" class="new-this-week-list"></div>
+    </section>
+
     <!-- Accounts To Call This Week -->
     <div class="sales-dashboard">
       <div class="dashboard-header">House Accounts Snapshot</div>
@@ -1507,7 +1653,7 @@
 
     <!-- Detailed Account Cards -->
     <div class="opportunities-section">
-      <div class="section-header">Detailed Account Views</div>
+      <div class="section-header">Account Intelligence</div>
       <div id="accountList"></div>
     </div>
 
@@ -1528,6 +1674,7 @@ let lastAnalysisSummary = null;
 let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
+let currentDashboardData = null;
 
 function getSavedLead(){
   try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
@@ -1602,6 +1749,82 @@ function normalizeSavedAccount(account){
   return a;
 }
 
+
+function formatDashboardScanDate(value){
+  if(!value) return '—';
+  const d = new Date(value);
+  if(isNaN(d)) return '—';
+  return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+}
+
+function uniqueDashboardOpportunities(items){
+  const seen = new Set();
+  const out = [];
+  for(const item of (items || [])){
+    const key = String(`${item.account || item.accountName || ''}|${item.signalType || item.opportunity || ''}|${item.signalTitle || item.signalSummary || item.reasonToReachOut || item.whyNow || ''}|${item.sourceUrl || ''}`)
+      .toLowerCase()
+      .replace(/\s+/g,' ')
+      .trim();
+    if(!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function renderCustomerDashboard(data){
+  const panel = document.getElementById('customerDashboard');
+  if(!panel) return;
+  const accounts = data?.accounts || [];
+  const signals = data?.signals || [];
+  const newThisWeek = uniqueDashboardOpportunities(data?.newThisWeek || []);
+  const weeklyRuns = data?.weeklyRuns || [];
+  const latestRun = weeklyRuns[0] || null;
+  panel.style.display = 'block';
+  const subtitle = document.getElementById('customerDashboardSubtitle');
+  if(subtitle){
+    const uploadName = data?.upload?.upload_name || 'your saved account list';
+    subtitle.textContent = `${uploadName} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
+  }
+  const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
+  set('dashNewThisWeek', newThisWeek.length);
+  set('dashSavedAccounts', accounts.length);
+  set('dashSavedSignals', signals.length);
+  set('dashLastScan', formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at));
+  const list = document.getElementById('newThisWeekList');
+  if(list){
+    if(!newThisWeek.length){
+      list.innerHTML = `<div class="dashboard-empty-state"><strong>No brand-new signals this week.</strong><br>Your saved accounts are still available below, and the weekly scan will email you when new reasons to reach out appear.</div>`;
+    } else {
+      list.innerHTML = newThisWeek.slice(0,6).map(opp => {
+        const acct = opp.account || opp.accountName || 'Saved account';
+        const type = opp.signalType || opp.opportunityCategory || opp.opportunity || 'Business Signal';
+        const reason = opp.whyNow || opp.reasonToReachOut || opp.signalSummary || opp.signalTitle || 'New business activity creates a reason to check in.';
+        const src = opp.cleanSourceName || sourceDomain(opp.sourceUrl || '') || '';
+        return `<div class="new-this-week-card">
+          <div class="new-this-week-type">${escapeHtml(type)}</div>
+          <div class="new-this-week-account">${escapeHtml(acct)}</div>
+          <div class="new-this-week-reason">${escapeHtml(shortText(reason, 180))}</div>
+          ${src ? `<div class="new-this-week-source">Source: ${escapeHtml(src)}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+  }
+}
+
+function scrollToUploadForNewList(){
+  const gate = document.getElementById('leadGate');
+  const dz = document.getElementById('dropzone');
+  if(gate) gate.style.display = 'block';
+  if(dz){ dz.style.display = 'block'; dz.classList.remove('locked'); }
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+async function manualDashboardRefresh(){
+  const email = currentDashboardData?.user?.email || currentLead?.email || document.getElementById('dashboardEmail')?.value || '';
+  if(email) await loadSavedDashboard(email);
+}
+
 async function loadSavedDashboard(email){
   const e = String(email || '').trim().toLowerCase();
   if(!e){ showError('Enter the email used for your House Accounts upload.'); return; }
@@ -1612,6 +1835,7 @@ async function loadSavedDashboard(email){
     const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}`);
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
+    currentDashboardData = data;
     const accounts = (data.accounts || []).map(normalizeSavedAccount);
     window.accountRadarAccounts = accounts;
     currentUploadId = data.upload?.id || currentUploadId;
@@ -1637,6 +1861,7 @@ async function loadSavedDashboard(email){
       const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
       banner.innerHTML = `<strong>Saved dashboard loaded.</strong> ${escapeHtml(accounts.length)} accounts · ${escapeHtml((data.signals || []).length)} saved signal${(data.signals || []).length===1?'':'s'} · ${escapeHtml(newCount)} new this week.`;
     }
+    renderCustomerDashboard(data);
     refreshOpportunityViews();
     window.scrollTo({top:0, behavior:'smooth'});
   }catch(err){
