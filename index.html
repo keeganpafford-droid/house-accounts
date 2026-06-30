@@ -35,7 +35,7 @@
     align-items:center;
     gap:24px;
   }
-  .brand{display:flex; align-items:center; gap:16px;}
+  .brand{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
   .brand h1{
     font-family:var(--display);
     font-weight:900;
@@ -44,20 +44,23 @@
   }
   .brand .tag{
     font-family:var(--mono);
-    font-size:0.75rem;
+    font-size:0.68rem;
     color:var(--signal);
     text-transform:uppercase;
-    letter-spacing:0.15em;
+    letter-spacing:0.14em;
     border:1px solid var(--signal);
     padding:4px 8px;
     border-radius:2px;
+    white-space:nowrap;
   }
   .sub{font-family:var(--mono); font-size:0.85rem; color:var(--muted); max-width:420px;}
-  .site-nav{display:flex; justify-content:center; gap:22px; align-items:center; flex-wrap:wrap; font-family:var(--mono); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.08em;}
+  .site-nav{display:flex; justify-content:center; gap:20px; align-items:center; flex-wrap:wrap; font-family:var(--body); font-size:0.92rem; font-weight:600; letter-spacing:0.01em;}
   .site-nav a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent;}
   .site-nav a:hover{color:var(--radar); border-bottom-color:var(--radar);}
-  .header-spacer{min-height:1px;}
-  @media(max-width:760px){header{display:block}.site-nav{justify-content:flex-start;margin-top:18px;gap:12px;font-size:0.72rem}}
+  .header-copy{justify-self:end; max-width:340px; text-align:right; font-family:var(--mono); font-size:0.78rem; line-height:1.45; color:var(--muted);}
+  .header-copy strong{display:block; color:var(--ink); font-family:var(--body); font-size:0.92rem; font-weight:700;}
+  .header-copy span{display:block;}
+  @media(max-width:900px){header{display:block}.site-nav{justify-content:flex-start;margin-top:18px;gap:14px;font-size:0.86rem}.header-copy{text-align:left;justify-self:start;margin-top:14px;max-width:none}.brand h1{font-size:2rem}}
 
   main{max-width:1200px; margin:0 auto; padding:40px 32px;}
 
@@ -1477,10 +1480,11 @@
 
 <header>
   <div class="brand">
-    <h1><a href="/" style="color:inherit;text-decoration:none;">House Accounts</a></h1>
+    <h1><a href="/">House Accounts</a></h1>
+    <span class="tag">Promo Distributor Tool</span>
   </div>
-  <nav class="site-nav" aria-label="Main navigation"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></nav>
-  <div class="header-spacer"></div>
+  <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></nav>
+  <div class="header-copy"><strong>Turn dormant house accounts into active revenue.</strong><span>We find the signals. You close the deals.</span></div>
 </header>
 
 <main>
