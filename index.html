@@ -42,6 +42,16 @@
     font-size:clamp(2.2rem, 5vw, 3.6rem);
     letter-spacing:-0.02em;
   }
+  .brand-link{display:inline-block;text-decoration:none;}
+
+  .brand h1 a,
+  .brand h1 a:visited,
+  .brand h1 a:hover,
+  .brand h1 a:active{
+    color:var(--ink);
+    text-decoration:none;
+  }
+
   .brand .tag{
     font-family:var(--mono);
     font-size:0.68rem;
@@ -1480,7 +1490,7 @@
 
 <header>
   <div class="brand">
-    <h1><a href="/">House Accounts</a></h1>
+    <a href="/" class="brand-link"><h1>House Accounts</h1></a>
     <span class="tag">Promo Distributor Tool</span>
   </div>
   <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></nav>
