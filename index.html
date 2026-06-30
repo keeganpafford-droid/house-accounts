@@ -42,15 +42,19 @@
     font-size:clamp(2.2rem, 5vw, 3.6rem);
     letter-spacing:-0.02em;
   }
-  .brand-link{display:inline-block;text-decoration:none;}
-
-  .brand h1 a,
-  .brand h1 a:visited,
-  .brand h1 a:hover,
-  .brand h1 a:active{
-    color:var(--ink);
-    text-decoration:none;
+  .brand-link,
+  .brand-link:visited,
+  .brand-link:hover,
+  .brand-link:active{
+    display:inline-block;
+    color:var(--ink) !important;
+    text-decoration:none !important;
   }
+  .brand-link h1{
+    color:var(--ink) !important;
+    text-decoration:none !important;
+  }
+
 
   .brand .tag{
     font-family:var(--mono);
