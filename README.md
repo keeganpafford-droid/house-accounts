@@ -60,3 +60,16 @@ This release turns the main feed from a broad list of reasons into a focused wee
 - Limits repeated accounts in the priority feed so one account does not dominate.
 - Adds **View All Opportunities** for users who want to review the full dataset.
 - Replaces “today” language with “this week” to match the weekly monitoring product promise.
+
+## V43.3 — Signal Type Badges
+
+This release makes every recommendation easier to understand at a glance.
+
+### Added
+- Recommendation badges: Reorder Due, Annual Buying Pattern, Business Trigger, Category Expansion, Dormant High-Value, Recent Project Follow-Up.
+- Clear “Why this account” language on each priority card.
+- Why Now score displayed inside the confidence line.
+- Account Intelligence reasons now lead with the recommendation type instead of generic labels.
+
+### Goal
+A rep should immediately know why an account appears in the weekly feed before reading the evidence.
