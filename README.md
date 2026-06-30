@@ -46,3 +46,7 @@ Added public pages:
 - `/favicon.svg`
 
 Updated homepage header/footer navigation. Stripe not connected yet.
+
+## V43.1 — Opportunity Score Engine
+
+This release adds an internal Opportunity Score / Why Now Score used to rank recommendations. It combines historical revenue, timing, repeat patterns, business-signal freshness, confidence, actionability, category expansion, and dormancy. No major UI redesign was added in this release; the score is used behind the scenes to make the feed more opinionated and prioritize the strongest reasons to reach out.

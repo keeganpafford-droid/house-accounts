@@ -1775,6 +1775,7 @@ function normalizeSavedAccount(account){
     opp.confidence = Number(opp.confidence || opp.quickWinScore || opp.confidenceScore || 0) || 0;
     opp.quickWinScore = Number(opp.quickWinScore || opp.confidence || 0) || 0;
     opp.estimatedValue = Number(opp.estimatedValue || 0) || 0;
+    assignOpportunityScore(opp, a);
   });
   return a;
 }
@@ -1818,7 +1819,7 @@ function dedupeOpportunities(items){
     if(!item) continue;
     const key = opportunityDedupeKey(item);
     const existing = map.get(key);
-    if(!existing || getDailyReasonScore(item) > getDailyReasonScore(existing)){
+    if(!existing || getOpportunityScore(item) > getOpportunityScore(existing)){
       map.set(key, item);
     }
   }
@@ -2578,6 +2579,7 @@ function addSignalDerivedOpportunities(account, signals){
     opp.confidence = opp.quickWinScore;
     opp.opportunityType = 'SIGNAL-DRIVEN';
     opp.relationshipMode = getRelationshipMode(account);
+    assignOpportunityScore(opp, account);
     account.futureOpportunities.unshift(opp);
     existing.add(name);
   });
@@ -2987,7 +2989,8 @@ function refreshOpportunityViews(){
   }
   const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
-  accounts.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
+  accounts.forEach(a => (a.futureOpportunities || []).forEach(o => assignOpportunityScore(o, a)));
+  accounts.sort((a, b) => Math.max(0, ...(b.futureOpportunities || []).map(getOpportunityScore)) - Math.max(0, ...(a.futureOpportunities || []).map(getOpportunityScore)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
   renderDetailedAccountViews(accounts);
   const totalAccountsEl = document.getElementById('totalAccounts');
   const totalOppEl = document.getElementById('totalOppValue');
@@ -3161,7 +3164,7 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
     ? 'Check in and ask how the recent order was received.'
     : 'Ask whether a similar program, order, or event is happening again.';
 
-  return {
+  const opp = {
     account: account.name,
     industry: account.industry,
     opportunity: name,
@@ -3190,6 +3193,7 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
     })),
     businessSignals: account.signals || []
   };
+  return assignOpportunityScore(opp, account);
 }
 
 
@@ -3297,6 +3301,7 @@ function createRepeatPatternOpportunities(account){
     ].filter(Boolean).slice(0,3);
     opp.commonPromoCategories = products;
     opp.likelyConversations = products;
+    assignOpportunityScore(opp, account);
     return opp;
   });
 }
@@ -3669,6 +3674,122 @@ function signalTypePriority(type){
   return 100;
 }
 
+
+function daysSinceDate(value){
+  const d = new Date(value || '');
+  if(isNaN(d.getTime())) return null;
+  return Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+}
+
+function scoreFromFreshness(value){
+  const days = daysSinceDate(value);
+  if(days === null) return 0;
+  if(days <= 14) return 22;
+  if(days <= 45) return 18;
+  if(days <= 90) return 12;
+  if(days <= 180) return 6;
+  return 0;
+}
+
+function normalizedConfidenceValue(opp){
+  const raw = Number(opp?.confidenceScore || opp?.opportunityScore || opp?.quickWinScore || opp?.closeProbability || opp?.confidence || 0);
+  if(!raw) return 0;
+  return raw <= 1 ? raw * 100 : raw;
+}
+
+function evidenceCount(opp){
+  if(Array.isArray(opp?.evidence)) return opp.evidence.filter(Boolean).length;
+  if(opp?.evidence) return 1;
+  return 0;
+}
+
+function getRecommendationType(opp){
+  const layer = signalLayerLabel(opp || {});
+  const text = `${opp?.opportunity || ''} ${opp?.opportunityName || ''} ${opp?.opportunityType || ''} ${opp?.reasonToReachOut || ''} ${opp?.whyNow || ''} ${Array.isArray(opp?.evidence) ? opp.evidence.join(' ') : opp?.evidence || ''}`.toLowerCase();
+  const revenue = Number(opp?.accountRevenue || opp?.historicalRevenue || 0);
+  const orders = Number(opp?.accountOrderCount || 0);
+  const recent = Number(opp?.accountRecencyScore || 0);
+  if(layer === 'Business Activity Signal') return 'Business Trigger';
+  if(/category expansion|wallet|adjacent|never purchased|expansion opportunity|account expansion|multi-department/.test(text)) return 'Category Expansion';
+  if(/annual|seasonal|same time|repeat|coming up again|ordered .* times|purchase history spans/.test(text)) return 'Annual Buying Pattern';
+  if(/recent order|recent project|delivered|completed|check in/.test(text) || layer === 'Follow-Up Signal') return 'Recent Project Follow-Up';
+  if(revenue >= 10000 && orders > 0 && recent < 35) return 'Dormant High-Value Account';
+  return layer === 'Repeat / Pattern Signal' ? 'Reorder Due' : 'Reason To Reach Out';
+}
+
+function calculateOpportunityScore(opp){
+  if(!opp) return 0;
+  const layer = signalLayerLabel(opp);
+  const recommendationType = getRecommendationType(opp);
+  const revenue = Number(opp.accountRevenue || opp.historicalRevenue || 0);
+  const accountOrders = Number(opp.accountOrderCount || 0);
+  const recencyScore = Number(opp.accountRecencyScore || 0) * 100;
+  const frequencyScore = Number(opp.accountFrequencyScore || 0) * 100;
+  const diversityScore = Number(opp.accountDiversityScore || 0) * 100;
+  const confidence = normalizedConfidenceValue(opp);
+  const freshness = scoreFromFreshness(opp.signalDate || opp.publishedDate || opp.detectedAt || opp.lastOrderDate || opp.mostRecentDate);
+
+  let score = 0;
+
+  // Historical revenue matters most when the opportunity is backed by order history.
+  if(layer !== 'Business Activity Signal'){
+    score += Math.min(24, Math.log10(Math.max(revenue, 1)) * 5.5);
+  } else if(revenue > 0){
+    score += Math.min(10, Math.log10(Math.max(revenue, 1)) * 2.2);
+  }
+
+  // Why now: recent activity, reorder timing, or fresh public business activity.
+  if(layer === 'Follow-Up Signal') score += Math.min(24, recencyScore * 0.24 + freshness * 0.55);
+  else if(layer === 'Repeat / Pattern Signal') score += Math.min(24, frequencyScore * 0.16 + recencyScore * 0.08 + 8);
+  else score += Math.min(24, freshness + confidence * 0.06);
+
+  // Buying pattern strength.
+  if(layer === 'Repeat / Pattern Signal') score += Math.min(18, frequencyScore * 0.14 + Math.min(accountOrders, 6));
+  else if(accountOrders > 1) score += Math.min(10, accountOrders * 1.5);
+
+  // Signal confidence and actionability.
+  score += Math.min(18, confidence * 0.18);
+  const actionability = [opp.reasonToReachOut || opp.whyNow, opp.conversationStarter || opp.suggestedOpener, evidenceCount(opp) > 0, (opp.commonPromoCategories || opp.suggestedProducts || opp.likelyProducts || []).length > 0]
+    .filter(Boolean).length;
+  score += actionability * 4;
+
+  // Category expansion deserves a boost when there is enough account context to make it credible.
+  if(recommendationType === 'Category Expansion') score += Math.min(12, 5 + diversityScore * 0.08);
+  if(recommendationType === 'Dormant High-Value Account') score += 10;
+  if(recommendationType === 'Business Trigger' && confidence >= 70) score += 6;
+
+  // Penalize vague, low-evidence items so the default feed becomes more opinionated.
+  if(evidenceCount(opp) === 0 && !opp.sourceUrl) score -= 12;
+  if(confidence && confidence < 45) score -= 8;
+  if(!opp.reasonToReachOut && !opp.whyNow) score -= 10;
+
+  return clampScore(score);
+}
+
+function assignOpportunityScore(opp, account){
+  if(!opp) return opp;
+  if(account){
+    opp.accountRevenue = Number(account.revenue || opp.accountRevenue || 0) || 0;
+    opp.accountOrderCount = Number(account.orderCount || opp.accountOrderCount || 0) || 0;
+    opp.accountRecencyScore = Number(account.subscores?.recency ?? opp.accountRecencyScore ?? 0) || 0;
+    opp.accountFrequencyScore = Number(account.subscores?.frequency ?? opp.accountFrequencyScore ?? 0) || 0;
+    opp.accountDiversityScore = Number(account.subscores?.diversity ?? opp.accountDiversityScore ?? 0) || 0;
+    opp.accountRelationshipStrength = Number(account.relationshipStrength || opp.relationshipStrength || 0) || 0;
+    opp.mostRecentDate = opp.mostRecentDate || account.mostRecentDate || '';
+  }
+  opp.recommendationType = opp.recommendationType || getRecommendationType(opp);
+  opp.whyNowScore = calculateOpportunityScore(opp);
+  opp.opportunityScore = opp.whyNowScore;
+  return opp;
+}
+
+function getOpportunityScore(opp){
+  if(!opp) return 0;
+  const existing = Number(opp.opportunityScore || opp.whyNowScore || 0);
+  if(existing) return clampScore(existing);
+  return calculateOpportunityScore(opp);
+}
+
 function confidenceRankFromWord(word){
   const w = String(word || '').toLowerCase();
   if(w.includes('high')) return 30;
@@ -3687,16 +3808,12 @@ function freshnessRank(opp){
 }
 
 function getDailyReasonScore(opp){
-  const confidenceScore = Number(opp.confidenceScore || opp.quickWinScore || opp.closeProbability || opp.confidence || 0);
-  return signalTypePriority(opp.signalLayerType) +
-    confidenceRankFromWord(confidenceWord(opp)) +
-    Math.min(28, Math.round(confidenceScore / 4)) +
-    freshnessRank(opp);
+  return getOpportunityScore(opp);
 }
 
 function sortDailyReasons(opps){
-  return [...(opps || [])].sort((a,b)=>
-    getDailyReasonScore(b) - getDailyReasonScore(a) ||
+  return [...(opps || [])].map(opp => assignOpportunityScore(opp)).sort((a,b)=>
+    getOpportunityScore(b) - getOpportunityScore(a) ||
     Number(b.closeProbability || 0) - Number(a.closeProbability || 0) ||
     Number(b.quickWinScore || b.confidence || 0) - Number(a.quickWinScore || a.confidence || 0)
   );
@@ -3806,7 +3923,10 @@ function feedSummary(opps){
 function renderDetailedAccountViews(accounts){
   const accountList = document.getElementById('accountList');
   if(!accountList) return;
-  const safeAccounts = (accounts || []).map(normalizeSavedAccount);
+  const safeAccounts = (accounts || []).map(normalizeSavedAccount).map(a => {
+    a.futureOpportunities = sortDailyReasons((a.futureOpportunities || []).map(o => assignOpportunityScore(o, a)));
+    return a;
+  });
   const detailedAccounts = safeAccounts.slice(0, 10);
   accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
     <div class="account-card">
