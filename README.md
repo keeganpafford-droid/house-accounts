@@ -28,7 +28,7 @@ Required Vercel env vars:
 - `CRON_SECRET`
 
 Test flow:
-1. Upload a CSV and confirm Supabase rows save.
+1. Upload a customer list and confirm Supabase rows save.
 2. Refresh the site.
 3. Use “Returning user? View dashboard” with the same email.
 4. Confirm saved accounts/signals load.
@@ -46,7 +46,3 @@ Added public pages:
 - `/favicon.svg`
 
 Updated homepage header/footer navigation. Stripe not connected yet.
-
-
-## V42.5 Marketing Site Polish
-Added FAQ, Success Stories, Hall of Accounts, updated navigation/footer links, homepage trust line, and plain-English data security language.

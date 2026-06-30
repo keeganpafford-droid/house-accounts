@@ -28,11 +28,14 @@
     padding:0 0 80px;
   }
   header{
-    padding:48px 32px 32px;
+    padding:28px 32px;
     border-bottom:2px solid var(--ink);
-    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:24px;
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    align-items:center;
+    gap:24px;
   }
-  .brand{display:flex; align-items:baseline; gap:16px;}
+  .brand{display:flex; align-items:center; gap:16px;}
   .brand h1{
     font-family:var(--display);
     font-weight:900;
@@ -50,11 +53,11 @@
     border-radius:2px;
   }
   .sub{font-family:var(--mono); font-size:0.85rem; color:var(--muted); max-width:420px;}
-  .site-nav{display:flex; gap:18px; align-items:center; flex-wrap:wrap; font-family:var(--mono); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.08em;}
+  .site-nav{display:flex; justify-content:center; gap:22px; align-items:center; flex-wrap:wrap; font-family:var(--mono); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.08em;}
   .site-nav a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent;}
   .site-nav a:hover{color:var(--radar); border-bottom-color:var(--radar);}
-  .header-right{display:flex; flex-direction:column; gap:14px; align-items:flex-end;}
-  @media(max-width:760px){.header-right{align-items:flex-start}.site-nav{gap:12px;font-size:0.72rem}}
+  .header-spacer{min-height:1px;}
+  @media(max-width:760px){header{display:block}.site-nav{justify-content:flex-start;margin-top:18px;gap:12px;font-size:0.72rem}}
 
   main{max-width:1200px; margin:0 auto; padding:40px 32px;}
 
@@ -1475,26 +1478,15 @@
 <header>
   <div class="brand">
     <h1><a href="/" style="color:inherit;text-decoration:none;">House Accounts</a></h1>
-    <span class="tag">Promo Distributor Tool</span>
   </div>
-  <div class="header-right">
-    <nav class="site-nav" aria-label="Main navigation">
-      <a href="/">Product Overview</a>
-      <a href="/pricing.html">Pricing</a>
-      <a href="/faq.html">FAQ</a>
-      <a href="/success-stories.html">Success Stories</a>
-      <a href="/hall-of-accounts.html">Hall of Accounts</a>
-      <a href="/security.html">Security</a>
-      <a href="/contact.html">Contact</a>
-    </nav>
-    <div class="sub">Turn dormant house accounts into active opportunities. We find the signals. You close the deals.</div>
-  </div>
+  <nav class="site-nav" aria-label="Main navigation"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></nav>
+  <div class="header-spacer"></div>
 </header>
 
 <main>
   <section class="lead-gate" id="leadGate">
     <h2>Know which house accounts to call this week.</h2>
-    <div class="promise">Enter your information and upload your account list. House Accounts automatically analyzes your customers and shows your team the best reasons to reach out.</div>
+    <div class="promise">Enter your information and upload your customer list. House Accounts automatically analyzes your accounts and shows your team the best reasons to reach out.</div>
     <div class="signal-checklist" aria-label="What House Accounts helps identify">
       <div class="signal-check"><span class="checkmark">✓</span> Hiring Activity</div>
       <div class="signal-check"><span class="checkmark">✓</span> Leadership Changes</div>
@@ -1503,7 +1495,6 @@
       <div class="signal-check"><span class="checkmark">✓</span> Repeat Buying Patterns</div>
       <div class="signal-check"><span class="checkmark">✓</span> Suggested Conversation Starters</div>
     </div>
-    <p class="trust-line">Trusted by promotional products distributors who want to stop guessing who to call next.</p>
     <form id="leadForm">
       <div class="lead-form-grid">
         <div class="form-field">
@@ -1566,21 +1557,21 @@
 
   <div class="upload-zone locked" id="dropzone">
     <h2>Analyze Your Accounts</h2>
-    <p>Upload your account list and discover who your team should contact today — and why.</p>
-    <button class="btn" id="browseBtn" type="button">Upload Account List</button>
+    <p>Choose your customer list and discover who your team should contact today — and why.</p>
+    <button class="btn" id="browseBtn" type="button">Choose Customer List</button>
     <input type="file" id="fileInput" accept=".csv">
     <div class="csv-hint">
-      Required column:<br>
-      <code>client_name</code> · <code>company_name</code> · <code>company</code> · <code>account_name</code> · <code>customer_name</code><br>
-      Optional columns improve scoring:<br>
-      <code>project_name</code> · <code>order_date</code> · <code>revenue</code> · <code>margin</code> · <code>contact_name</code> · <code>contact_email</code>
+      Works best when your customer list includes:<br>
+      <code>Customer or company name</code> · <code>Project or order name</code> · <code>Order date</code> · <code>Revenue</code><br>
+      Helpful if available:<br>
+      <code>Contact name</code> · <code>Contact email</code> · <code>Margin</code>
     </div>
     <div id="error"></div>
   </div>
 
   <section class="example-opportunity" id="exampleOpportunity" aria-label="Example results preview">
-    <div class="example-opportunity-title">What You’ll Receive</div>
-    <div class="example-opportunity-subtitle">Every upload produces prioritized reasons to reach out using order history, repeat buying patterns, and verified business activity.</div>
+    <div class="example-opportunity-title">Sample Analysis</div>
+    <div class="example-opportunity-subtitle">Here’s an example of the kind of opportunity House Accounts can surface from past orders and public business activity.</div>
     <div class="example-card">
       <div class="example-account">Acme Manufacturing</div>
       <div class="example-grid">
@@ -1683,17 +1674,7 @@
   </div>
 </main>
 
-<footer>
-  <div>House Accounts — know which house accounts deserve a call this week, and why.</div>
-  <div class="footer-links"><a href="/pricing.html">Pricing</a>
-    <a href="/faq.html">FAQ</a>
-    <a href="/success-stories.html">Success Stories</a>
-    <a href="/hall-of-accounts.html">Hall of Accounts</a>
-    <a href="/security.html">Data Security</a>
-    <a href="/privacy.html">Privacy Policy</a>
-    <a href="/terms.html">Terms</a>
-    <a href="/contact.html">Contact</a></div>
-</footer>
+<footer><div>House Accounts — know which house accounts deserve a call this week, and why.</div><div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Contact</a></div></footer>
 
 <script>
 // Global state for signal mode
@@ -2046,7 +2027,7 @@ function handleFile(file){
     return;
   }
   if(!file.name.toLowerCase().endsWith('.csv')){
-    showError('Please upload a .csv file.');
+    showError('This file type is not supported yet. Please choose the customer list you exported from your sales system.');
     return;
   }
   const reader = new FileReader();
@@ -2055,7 +2036,7 @@ function handleFile(file){
       const rows = parseCSV(e.target.result);
       processData(rows);
     }catch(err){
-      showError('Could not parse file: ' + err.message);
+      showError('We could not read that customer list. Please check the file and try again.');
     }
   };
   reader.onerror = () => showError('Could not read file.');

@@ -124,7 +124,7 @@ function handleFile(file){
     return;
   }
   if(!file.name.toLowerCase().endsWith('.csv')){
-    showError('Please upload a .csv file.');
+    showError('This file type is not supported yet. Please choose the customer list you exported from your sales system.');
     return;
   }
   const reader = new FileReader();
@@ -133,7 +133,7 @@ function handleFile(file){
       const rows = parseCSV(e.target.result);
       processData(rows);
     }catch(err){
-      showError('Could not parse file: ' + err.message);
+      showError('We could not read that customer list. Please check the file and try again.');
     }
   };
   reader.onerror = () => showError('Could not read file.');
