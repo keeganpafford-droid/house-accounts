@@ -1668,12 +1668,12 @@
 
     <!-- Opportunity Cards Section -->
     <div class="opportunities-section">
-      <div class="section-header">Today's Best Reasons To Reach Out</div>
+      <div class="section-header">This Week's Priorities</div>
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
       <div class="legend">
-        <span><b>Goal</b> — who should I contact today, and why?</span>
+        <span><b>Goal</b> — who should I contact this week, and why?</span>
         <span><b>Follow-Up Signals</b> — recent orders or completed projects</span>
         <span><b>Repeat / Pattern Signals</b> — seasonal or similar historical buys</span>
         <span><b>Business Activity Signals</b> — verified public signals from web research</span>
@@ -1705,6 +1705,8 @@ let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
+let showAllWeeklyPriorities = false;
+const WEEKLY_PRIORITY_LIMIT = 15;
 
 function getSavedLead(){
   try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
@@ -2980,13 +2982,7 @@ function getValueLabel(opp){
 function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
-  const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
-  const grid = document.getElementById('opportunitiesGrid');
-  const resultCount = document.getElementById('resultCount');
-  if(resultCount) resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} reasons to reach out from ${accounts.length} accounts · ${feedSummary(displayedOpportunities)}</span>`;
-  if(grid){
-    grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence — not projected revenue.</div>` + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
-  }
+  const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts);
   const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.forEach(a => (a.futureOpportunities || []).forEach(o => assignOpportunityScore(o, a)));
@@ -3877,39 +3873,46 @@ function limitReasonsPerAccount(opps, maxPerAccount=2){
   return selected;
 }
 
-function prepareDailyReasons(opps, limit=20){
+function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
   const collapsed = collapseDuplicateFollowUps(opps || []);
-  const sorted = limitReasonsPerAccount(sortDailyReasons(collapsed), 2);
+  const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 2);
+  return ranked.slice(0, limit);
+}
 
-  // Keep follow-ups highest priority, but do not let them monopolize the feed.
-  // If repeat/pattern or business signals exist, reserve room so reps can scan different kinds of reasons.
-  const groups = {
-    follow: sorted.filter(o => signalLayerLabel(o) === 'Follow-Up Signal'),
-    repeat: sorted.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal'),
-    business: sorted.filter(o => signalLayerLabel(o) === 'Business Activity Signal')
-  };
-  const targets = {
-    follow: groups.repeat.length || groups.business.length ? Math.min(8, limit) : limit,
-    repeat: groups.repeat.length ? 7 : 0,
-    business: groups.business.length ? 5 : 0
-  };
-  const selected = [];
-  const used = new Set();
-  function take(arr, n){
-    for(const opp of arr){
-      if(selected.length >= limit || n <= 0) break;
-      const key = `${opp.account}|${opp.opportunity}|${opp.signalLayerType}|${opp.signalDate || ''}`;
-      if(used.has(key)) continue;
-      selected.push(opp);
-      used.add(key);
-      n--;
-    }
+function prepareAllOpportunities(opps){
+  return sortDailyReasons(collapseDuplicateFollowUps(opps || []));
+}
+
+function toggleWeeklyPrioritiesView(showAll){
+  showAllWeeklyPriorities = Boolean(showAll);
+  refreshOpportunityViews();
+}
+
+function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
+  const grid = document.getElementById('opportunitiesGrid');
+  const resultCount = document.getElementById('resultCount');
+  const allOpportunities = prepareAllOpportunities(opportunities || []);
+  const priorityOpportunities = prepareDailyReasons(opportunities || [], WEEKLY_PRIORITY_LIMIT);
+  const displayedOpportunities = showAllWeeklyPriorities ? allOpportunities : priorityOpportunities;
+  const accountCount = (accounts || []).length;
+  const accountListOnlyCount = (accounts || []).filter(a => a.orderCount === 0 && a.activePipelineCount === 0).length;
+  const showingLabel = showAllWeeklyPriorities
+    ? `Showing all ${displayedOpportunities.length} opportunities`
+    : `Showing top ${displayedOpportunities.length} of ${allOpportunities.length} recommendations`;
+  if(resultCount){
+    resultCount.innerHTML = `<span>${showingLabel} from ${accountCount} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
   }
-  take(groups.follow, targets.follow);
-  take(groups.repeat, targets.repeat);
-  take(groups.business, targets.business);
-  take(sorted, limit - selected.length);
-  return selected.slice(0, limit);
+  if(grid){
+    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">No high-priority recommendations found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`) : '';
+    const actionButton = allOpportunities.length > WEEKLY_PRIORITY_LIMIT
+      ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
+      : '';
+    const note = showAllWeeklyPriorities
+      ? 'All opportunities are shown for review. The priority view is intentionally shorter so reps know where to start.'
+      : 'This Week’s Priorities shows the highest-scoring recommendations first and limits repeated accounts so the feed feels like a focused call list, not a report.';
+    grid.innerHTML = `<div class="weekly-priority-actions"><div class="priority-note">${note}</div>${actionButton}</div>` + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+  }
+  return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }
 
 function feedSummary(opps){
@@ -4136,16 +4139,12 @@ function processData(records){
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
-  const displayedOpportunities = prepareDailyReasons(futureOpportunities, 20);
+  showAllWeeklyPriorities = false;
 
-  // Render opportunities grid
-  const grid = document.getElementById('opportunitiesGrid');
-  const resultCount = document.getElementById('resultCount');
-  const accountListOnlyCount = accounts.filter(a => a.orderCount === 0 && a.activePipelineCount === 0).length;
-  resultCount.innerHTML = `<span>Showing top ${displayedOpportunities.length} of ${futureOpportunities.length} reasons to reach out from ${accounts.length} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
-
-  const noOpportunitiesMessage = displayedOpportunities.length === 0 ? `<div class="no-signals-message">No order-history-based reasons to reach out found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>` : '';
-  grid.innerHTML = `<div class="limit-note">Today's Best Reasons To Reach Out ranks by actionability, freshness, and confidence. Strong business signals can move quiet accounts into the feed.</div>` + noOpportunitiesMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+  // Render this week’s focused recommendation feed
+  const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
+    emptyMessage: `<div class="no-signals-message">No order-history-based priorities found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`
+  });
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
