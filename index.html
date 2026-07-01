@@ -1220,12 +1220,34 @@
   .recommendation-badge.reorder-due{background:#e6f7f5;color:#0f766e;border-color:#99f6e4;}
   .recommendation-badge.annual-buying-pattern{background:#fff8e8;color:#92400e;border-color:#fde68a;}
   .recommendation-badge.business-trigger{background:#eef6ff;color:#1d4ed8;border-color:#bfdbfe;}
-  .recommendation-badge.category-expansion{background:#f3e8ff;color:#6b21a8;border-color:#d8b4fe;}
+  .recommendation-badge.category-expansion,
+  .recommendation-badge.relationship-expansion{background:#f3e8ff;color:#6b21a8;border-color:#d8b4fe;}
   .recommendation-badge.dormant-high-value-account{background:#fee2e2;color:#991b1b;border-color:#fecaca;}
   .recommendation-badge.recent-project-follow-up{background:#f0fdf4;color:#166534;border-color:#bbf7d0;}
   .recommendation-badge.buying-spike{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
   .recommendation-badge.relationship-risk{background:#fef2f2;color:#b91c1c;border-color:#fecaca;}
   .recommendation-badge.reason-to-reach-out{background:#f8fafc;color:#334155;border-color:#cbd5e1;}
+
+  .buying-opportunity-map{
+    background:#f8fafc;
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:10px 12px;
+    margin:10px 0 12px;
+    font-size:0.84rem;
+    line-height:1.45;
+  }
+  .buying-opportunity-map strong{color:var(--ink);} 
+  .intro-path-note{
+    background:#fff8e8;
+    border-left:3px solid var(--signal);
+    border-radius:4px;
+    padding:10px 12px;
+    margin-top:8px;
+    font-size:0.86rem;
+    line-height:1.45;
+  }
+
   .recommendation-subtype{
     font-family:var(--mono);
     font-size:0.68rem;
@@ -1858,13 +1880,135 @@ function uniqueDashboardOpportunities(items){
 }
 
 
+function cleanOpportunityToken(value){
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(manager|director|lead|coordinator|specialist|team|department|dept|contact|buyer|relevant)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function primaryCategoryFromOpportunity(opp){
+  const candidates = [
+    opp?.buyingCategory,
+    opp?.category,
+    opp?.opportunityCategory,
+    opp?.opportunity,
+    opp?.opportunityName,
+    ...(Array.isArray(opp?.commonPromoCategories) ? opp.commonPromoCategories : []),
+    ...(Array.isArray(opp?.suggestedProducts) ? opp.suggestedProducts : []),
+    ...(Array.isArray(opp?.likelyProducts) ? opp.likelyProducts : [])
+  ].filter(Boolean).map(String);
+  const text = candidates.join(' ').toLowerCase();
+  if(/uniform|safety|hi-vis|ppe/.test(text)) return 'Uniforms / Safety';
+  if(/onboarding|welcome|new hire|recruit/.test(text)) return 'Onboarding / Recruiting';
+  if(/recognition|award|milestone|anniversary/.test(text)) return 'Recognition / Awards';
+  if(/trade show|event|booth|conference|expo|giveaway/.test(text)) return 'Events / Giveaways';
+  if(/drinkware|tumbler|bottle|mug/.test(text)) return 'Drinkware';
+  if(/apparel|shirt|tee|polo|outerwear|jacket|hoodie|hat|cap|headwear/.test(text)) return 'Apparel / Headwear';
+  if(/client|gift|premium|thank/.test(text)) return 'Client Gifts';
+  if(/signage|display|banner|print|stationery/.test(text)) return 'Print / Displays';
+  return candidates[0] ? shortText(candidates[0], 36) : 'General Promo';
+}
+
+function departmentFromText(text){
+  const t = String(text || '').toLowerCase();
+  if(/human resources|\bhr\b|people|talent|recruit|onboarding|employee experience/.test(t)) return 'HR / People';
+  if(/event|events|trade show|conference|field marketing/.test(t)) return 'Events';
+  if(/marketing|brand|communications|community|public relations|creative/.test(t)) return 'Marketing';
+  if(/operations|facility|facilities|plant|warehouse|safety|ehs|production/.test(t)) return 'Operations / Facilities';
+  if(/procurement|purchasing|sourcing|buyer/.test(t)) return 'Procurement';
+  if(/sales|business development|customer success|client/.test(t)) return 'Sales / Client Experience';
+  if(/executive|president|ceo|founder|leadership/.test(t)) return 'Leadership';
+  return '';
+}
+
+function likelyDepartmentFromOpportunity(opp){
+  if(opp?.department) return opp.department;
+  if(opp?.affectedDepartment) return opp.affectedDepartment;
+  const buyerText = [
+    opp?.buyer,
+    opp?.contactTitle,
+    opp?.contact,
+    opp?.suggestedContact,
+    ...(Array.isArray(opp?.likelyBuyers) ? opp.likelyBuyers : [])
+  ].filter(Boolean).join(' ');
+  const fromBuyer = departmentFromText(buyerText);
+  if(fromBuyer) return fromBuyer;
+  const category = primaryCategoryFromOpportunity(opp);
+  const fromCategory = departmentFromText(category);
+  if(fromCategory) return fromCategory;
+  const oppText = `${opp?.opportunity || ''} ${opp?.opportunityName || ''} ${opp?.reasonToReachOut || ''} ${opp?.whyNow || ''}`;
+  return departmentFromText(oppText) || 'Unknown Department';
+}
+
+function isGenericContactLabel(value){
+  const v = String(value || '').trim().toLowerCase();
+  if(!v) return true;
+  return /(manager|director|lead|team|department|dept|contact|buyer|relevant|tbd|unknown|owner|hr|marketing|events|procurement|operations|facilities)\b/.test(v) && !/\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(String(value || ''));
+}
+
+function likelyKnownBuyer(opp){
+  const candidates = [opp?.buyer, opp?.contactName, opp?.contact, opp?.contactTitle].filter(Boolean);
+  const named = candidates.find(c => !isGenericContactLabel(c));
+  return named ? String(named).trim() : '';
+}
+
+function likelySuggestedContact(opp){
+  const candidates = [opp?.suggestedContact, ...(Array.isArray(opp?.likelyBuyers) ? opp.likelyBuyers : []), opp?.contactTitle].filter(Boolean);
+  const named = candidates.find(c => !isGenericContactLabel(c));
+  if(named) return String(named).trim();
+  return opp?.suggestedContact || (Array.isArray(opp?.likelyBuyers) && opp.likelyBuyers[0]) || '';
+}
+
+function isRelationshipExpansionOpportunity(opp){
+  const text = `${opp?.recommendationType || ''} ${opp?.opportunityType || ''} ${opp?.opportunity || ''} ${opp?.opportunityName || ''} ${opp?.reasonToReachOut || ''} ${opp?.whyNow || ''} ${Array.isArray(opp?.evidence) ? opp.evidence.join(' ') : opp?.evidence || ''}`.toLowerCase();
+  return /category expansion|relationship expansion|department expansion|wallet|adjacent|never purchased|new department|intro|introduction|no historical spend|account expansion|multi-department/.test(text);
+}
+
+function buyingOpportunityIdentity(opp){
+  const account = cleanOpportunityToken(opp?.account || opp?.accountName || '');
+  const type = cleanOpportunityToken(getRecommendationType(opp || {}));
+  const department = cleanOpportunityToken(likelyDepartmentFromOpportunity(opp));
+  const category = cleanOpportunityToken(primaryCategoryFromOpportunity(opp));
+  const buyer = cleanOpportunityToken(likelyKnownBuyer(opp) || likelySuggestedContact(opp) || department);
+  const topic = cleanOpportunityToken(opp?.signalTitle || opp?.signalSummary || opp?.reasonToReachOut || opp?.whyNow || opp?.opportunity || '').slice(0,70);
+  return {account, type, department, category, buyer, topic};
+}
+
+function buyingConversationLabel(opp){
+  const dept = likelyDepartmentFromOpportunity(opp);
+  const category = primaryCategoryFromOpportunity(opp);
+  const buyer = likelyKnownBuyer(opp) || likelySuggestedContact(opp);
+  const buyerText = buyer && !isGenericContactLabel(buyer) ? ` • ${buyer}` : '';
+  return `${dept} • ${category}${buyerText}`;
+}
+
+function suggestedIntroductionPath(opp){
+  if(!isRelationshipExpansionOpportunity(opp)) return '';
+  const currentBuyer = likelyKnownBuyer(opp) || opp?.contactName || opp?.contact || 'your existing buyer';
+  const target = likelySuggestedContact(opp);
+  const dept = likelyDepartmentFromOpportunity(opp);
+  const category = primaryCategoryFromOpportunity(opp);
+  if(target && !isGenericContactLabel(target)){
+    return `Use your existing relationship with ${currentBuyer} to ask who owns ${category.toLowerCase()} for ${dept}. An initial target may be ${target}.`;
+  }
+  return `Use your existing relationship with ${currentBuyer} to ask who owns ${category.toLowerCase()} for ${dept}.`;
+}
+
+
 function opportunityDedupeKey(opp){
-  const account = String(opp?.account || opp?.accountName || '').toLowerCase().trim();
+  // V43.5: dedupe by buying conversation, not merely by account or signal type.
+  // Two annual patterns should remain separate when they involve different departments,
+  // buyers, or product categories. Only merge recommendations that would create the
+  // same sales conversation.
+  const id = buyingOpportunityIdentity(opp || {});
   const layer = signalLayerLabel(opp || {});
-  const type = String(opp?.signalType || opp?.opportunityCategory || opp?.opportunity || '').toLowerCase().trim();
-  const title = String(opp?.signalTitle || opp?.signalSummary || opp?.reasonToReachOut || opp?.whyNow || opp?.opportunity || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,90);
-  const source = sourceDomain(opp?.sourceUrl || '') || String(opp?.cleanSourceName || '').toLowerCase().trim();
-  return `${account}|${layer}|${type}|${title}|${source}`;
+  const source = layer === 'Business Activity Signal'
+    ? (sourceDomain(opp?.sourceUrl || '') || cleanOpportunityToken(opp?.cleanSourceName || ''))
+    : '';
+  return `${id.account}|${id.type}|${id.department}|${id.category}|${id.buyer}|${id.topic}|${source}`;
 }
 
 function dedupeOpportunities(items){
@@ -2437,6 +2581,12 @@ function getRepFriendlyWhy(opp){
   const layer = signalLayerLabel(opp);
   const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
+  if(getRecommendationType(opp) === 'Relationship Expansion'){
+    const dept = likelyDepartmentFromOpportunity(opp);
+    const category = primaryCategoryFromOpportunity(opp).toLowerCase();
+    const path = suggestedIntroductionPath(opp);
+    return path || `There is a credible opportunity to expand into ${category} with ${dept}.`;
+  }
   if(layer === 'Follow-Up Signal'){
     if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
       return 'A recent apparel project is fresh enough for a simple check-in on fit, feedback, and any follow-up needs.';
@@ -2488,6 +2638,12 @@ function getSuggestedOpener(opp){
   const layer = signalLayerLabel(opp);
   const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
+  if(getRecommendationType(opp) === 'Relationship Expansion'){
+    const current = likelyKnownBuyer(opp) || 'your current contact';
+    const dept = likelyDepartmentFromOpportunity(opp);
+    const category = primaryCategoryFromOpportunity(opp).toLowerCase();
+    return `Hey ${contact} — we’ve done good work together in one part of the account. Who typically owns ${category} for ${dept}? I’d love to see if we can support that team too.`;
+  }
   if(layer === 'Follow-Up Signal'){
     if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
       return `Hey ${contact} — quick check-in on the recent apparel project. How did everything turn out?`;
@@ -2531,9 +2687,10 @@ function renderRepOpportunityCard(opp){
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="recommendation-subtype">${escapeHtml(badge.label)}${age ? ` · ${escapeHtml(age)}` : ''}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
-        <div class="opp-card-account">${escapeHtml(opp.contactTitle || opp.contact || 'Suggested contact TBD')}</div>
+        <div class="opp-card-account">${escapeHtml(buyingConversationLabel(opp))}</div>
       </div>
       <div class="confidence-badge ${tier.cls}">${escapeHtml(confidenceWord(opp))} confidence · Why Now ${Math.round(getOpportunityScore(opp))}</div>
+      <div class="buying-opportunity-map"><strong>Buying conversation:</strong> ${escapeHtml(buyingConversationLabel(opp))}${suggestedIntroductionPath(opp) ? `<div class="intro-path-note"><strong>Suggested path:</strong> ${escapeHtml(suggestedIntroductionPath(opp))}</div>` : ''}</div>
       <div class="opp-section"><div class="opp-label">Why this account</div><div class="opp-content">${escapeHtml(recommendationOneLine(opp))}</div></div>
       <div class="opp-section"><div class="opp-label">Suggested opener</div><div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
       ${bullets.length ? `<div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content"><ul style="padding-left:18px; margin:0;">${bullets.map(b=>`<li>${escapeHtml(b)}</li>`).join('')}</ul></div></div>` : ''}
@@ -2622,7 +2779,10 @@ function addSignalDerivedOpportunities(account, signals){
     opp.likelyProducts = products;
     opp.likelyConversations = signal.likelyConversations || signal.conversationThemes || products;
     opp.likelyBuyers = signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead'];
+    opp.suggestedContact = signal.suggestedContact || (Array.isArray(signal.likelyBuyers) ? signal.likelyBuyers[0] : '') || '';
     opp.affectedDepartment = signal.affectedDepartment || (opp.likelyBuyers[0] || '');
+    opp.department = likelyDepartmentFromOpportunity(opp);
+    opp.buyingCategory = primaryCategoryFromOpportunity(opp);
     opp.evidence = [
       `Source: ${signal.cleanSourceName || sourceDomain(signal.sourceUrl) || 'public source'}`,
       cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet) || 'External business activity detected',
@@ -3231,6 +3391,10 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
     relationshipMode,
     contact: account.contactName || contactTitle,
     contactTitle,
+    buyer: account.contactName || '',
+    suggestedContact: '',
+    department: departmentFromText(contactTitle) || departmentFromText(name) || 'Unknown Department',
+    buyingCategory: primaryCategoryFromOpportunity({opportunity:name, suggestedProducts:products}),
     email: account.contactEmail,
     evidence: buildEvidence(account, evidenceCats),
     suggestedProducts: products,
@@ -3350,6 +3514,8 @@ function createRepeatPatternOpportunities(account){
     ].filter(Boolean).slice(0,3);
     opp.commonPromoCategories = products;
     opp.likelyConversations = products;
+    opp.department = departmentFromText(contactTitle) || likelyDepartmentFromOpportunity(opp);
+    opp.buyingCategory = primaryCategoryFromOpportunity(opp);
     assignOpportunityScore(opp, account);
     return opp;
   });
@@ -3759,7 +3925,7 @@ function getRecommendationType(opp){
   const orders = Number(opp?.accountOrderCount || 0);
   const recent = Number(opp?.accountRecencyScore || 0);
   if(layer === 'Business Activity Signal') return 'Business Trigger';
-  if(/category expansion|wallet|adjacent|never purchased|expansion opportunity|account expansion|multi-department/.test(text)) return 'Category Expansion';
+  if(isRelationshipExpansionOpportunity(opp) || /category expansion|wallet|adjacent|never purchased|expansion opportunity|account expansion|multi-department/.test(text)) return 'Relationship Expansion';
   if(/annual|seasonal|same time|repeat|coming up again|ordered .* times|purchase history spans/.test(text)) return 'Annual Buying Pattern';
   if(/recent order|recent project|delivered|completed|check in/.test(text) || layer === 'Follow-Up Signal') return 'Recent Project Follow-Up';
   if(revenue >= 10000 && orders > 0 && recent < 35) return 'Dormant High-Value Account';
@@ -3781,7 +3947,7 @@ function recommendationBadgeMeta(opp){
     'Reorder Due': {icon:'🔁', label:'Reorder Due'},
     'Annual Buying Pattern': {icon:'📅', label:'Annual Buying Pattern'},
     'Business Trigger': {icon:'🌐', label:'Business Trigger'},
-    'Category Expansion': {icon:'🧩', label:'Category Expansion'},
+    'Relationship Expansion': {icon:'🧩', label:'Relationship Expansion'},
     'Dormant High-Value Account': {icon:'💤', label:'Dormant High-Value'},
     'Recent Project Follow-Up': {icon:'✅', label:'Recent Project Follow-Up'},
     'Buying Spike': {icon:'📈', label:'Buying Spike'},
@@ -3803,8 +3969,9 @@ function recommendationOneLine(opp){
   if(type === 'Reorder Due' || type === 'Annual Buying Pattern'){
     return why || 'Past buying timing suggests this need may be coming up again.';
   }
-  if(type === 'Category Expansion'){
-    return why || 'Purchase history suggests a credible opportunity to introduce an adjacent promo category.';
+  if(type === 'Relationship Expansion'){
+    const path = suggestedIntroductionPath(opp);
+    return why || path || 'Existing account history suggests a credible opportunity to expand into another buying conversation.';
   }
   if(type === 'Recent Project Follow-Up'){
     return why || 'A recent order creates a natural reason to check in while the project is still fresh.';
@@ -3852,7 +4019,7 @@ function calculateOpportunityScore(opp){
   score += actionability * 4;
 
   // Category expansion deserves a boost when there is enough account context to make it credible.
-  if(recommendationType === 'Category Expansion') score += Math.min(12, 5 + diversityScore * 0.08);
+  if(recommendationType === 'Relationship Expansion') score += Math.min(14, 6 + diversityScore * 0.08);
   if(recommendationType === 'Dormant High-Value Account') score += 10;
   if(recommendationType === 'Business Trigger' && confidence >= 70) score += 6;
 
@@ -4062,7 +4229,7 @@ function renderDetailedAccountViews(accounts){
         </div>
         <div class="section-title">🎯 Reasons To Reach Out</div>
         <ul class="opps">
-          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</li>`; }).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
+          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}

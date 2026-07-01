@@ -78,3 +78,18 @@ A rep should immediately know why an account appears in the weekly feed before r
 - Restored saved historical purchase evidence in returning dashboards.
 - Saved account records now carry purchases, historical projects, active pipeline data, and stored historical opportunities forward.
 - Loosened weekly priority ranking from top 15 / 2-per-account to top 25 / 3-per-account so the feed stays curated without becoming empty.
+
+## V43.6 — Buying Opportunity Engine Foundation
+
+This release changes the unit of recommendation from account-level signals to buying conversations inside accounts.
+
+### Added
+- Buying conversation identity: account + department + buyer/contact + product category + why-now signal.
+- Smarter deduping: only merges recommendations that would result in the same sales conversation.
+- Keeps multiple Annual Buying Pattern signals when they represent different departments, buyers, or product categories.
+- Renames Category Expansion behavior into **Relationship Expansion** where appropriate.
+- Adds buying conversation context to priority cards and Account Intelligence.
+- Adds suggested introduction path for relationship-expansion opportunities when a current buyer or suggested contact is available.
+
+### Product principle
+Every recommendation should represent a real buying conversation — not just a signal.
