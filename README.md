@@ -93,3 +93,11 @@ This release changes the unit of recommendation from account-level signals to bu
 
 ### Product principle
 Every recommendation should represent a real buying conversation — not just a signal.
+
+
+## V44.0 Relationship Intelligence Engine
+- Introduced Relationship Intelligence architecture.
+- Recommendation identity is now Account + Department + Buyer + Category + Conversation.
+- Existing Relationships and Suggested Relationships become first-class concepts.
+- Added Introduction Path planning for future UI.
+- Relationship Expansion supersedes generic Category Expansion.
