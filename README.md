@@ -73,3 +73,8 @@ This release makes every recommendation easier to understand at a glance.
 
 ### Goal
 A rep should immediately know why an account appears in the weekly feed before reading the evidence.
+
+## V43.5 recommendation tuning
+- Restored saved historical purchase evidence in returning dashboards.
+- Saved account records now carry purchases, historical projects, active pipeline data, and stored historical opportunities forward.
+- Loosened weekly priority ranking from top 15 / 2-per-account to top 25 / 3-per-account so the feed stays curated without becoming empty.

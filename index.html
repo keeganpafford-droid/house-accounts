@@ -1744,7 +1744,7 @@ let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
 let showAllWeeklyPriorities = false;
-const WEEKLY_PRIORITY_LIMIT = 15;
+const WEEKLY_PRIORITY_LIMIT = 25;
 
 function getSavedLead(){
   try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
@@ -1788,24 +1788,38 @@ async function captureLead(stage, payload){
 
 function normalizeSavedAccount(account){
   const a = account || {};
+  const metrics = a.metrics || {};
+  const raw = a.rawData || a.raw_data || {};
   a.name = a.name || a.accountName || a.account_name || 'Saved account';
   a.industry = a.industry || 'Saved Account';
   a.contactName = a.contactName || a.contact_name || '';
   a.contactEmail = a.contactEmail || a.contact_email || '';
-  a.revenue = Number(a.revenue || 0) || 0;
-  a.orderCount = Number(a.orderCount || 0) || 0;
-  a.confidence = Number(a.confidence || a.quickWinScore || 0) || 0;
-  a.relationshipStrength = Number(a.relationshipStrength || 0) || 0;
-  a.mostRecentDate = a.mostRecentDate || 'Unknown';
-  a.activePipelineValue = Number(a.activePipelineValue || 0) || 0;
-  a.activePipelineCount = Number(a.activePipelineCount || 0) || 0;
-  a.subscores = a.subscores || {revenue:0, frequency:0, recency:0, diversity:0};
-  a.purchases = Array.isArray(a.purchases) ? a.purchases : [];
-  a.projects = Array.isArray(a.projects) ? a.projects : [];
-  a.allProjects = Array.isArray(a.allProjects) ? a.allProjects : [];
-  a.activePipeline = Array.isArray(a.activePipeline) ? a.activePipeline : [];
-  a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : []);
-  a.futureOpportunities = dedupeOpportunities(Array.isArray(a.futureOpportunities) ? a.futureOpportunities : []);
+  a.revenue = Number(a.revenue ?? metrics.revenue ?? 0) || 0;
+  a.orderCount = Number(a.orderCount ?? metrics.orderCount ?? 0) || 0;
+  a.confidence = Number(a.confidence ?? metrics.confidence ?? a.quickWinScore ?? 0) || 0;
+  a.relationshipStrength = Number(a.relationshipStrength ?? metrics.relationshipStrength ?? 0) || 0;
+  a.mostRecentDate = a.mostRecentDate || metrics.mostRecentDate || 'Unknown';
+  a.activePipelineValue = Number(a.activePipelineValue ?? metrics.activePipelineValue ?? 0) || 0;
+  a.activePipelineCount = Number(a.activePipelineCount ?? metrics.activePipelineCount ?? 0) || 0;
+  a.subscores = a.subscores || metrics.subscores || {revenue:0, frequency:0, recency:0, diversity:0};
+  const rawPurchases = Array.isArray(a.purchases) ? a.purchases : (Array.isArray(raw.purchases) ? raw.purchases : []);
+  const rawProjects = Array.isArray(a.projects) ? a.projects : (Array.isArray(raw.historicalProjects) ? raw.historicalProjects : []);
+  const rawAllProjects = Array.isArray(a.allProjects) ? a.allProjects : (Array.isArray(raw.allProjects) ? raw.allProjects : rawProjects);
+  a.purchases = rawPurchases.length ? rawPurchases : rawProjects.map(p => ({
+    project: p.project || p.name || p.description || p.orderName || 'Historical order',
+    category: p.category || p.productCategory || p.type || '',
+    revenue: Number(p.revenue || p.amount || p.total || 0) || 0,
+    dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '',
+    status: p.status || 'Historical'
+  }));
+  a.projects = rawProjects;
+  a.allProjects = rawAllProjects;
+  a.activePipeline = Array.isArray(a.activePipeline) ? a.activePipeline : (Array.isArray(raw.activePipeline) ? raw.activePipeline : []);
+  a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : (Array.isArray(raw.historicalCategories) ? raw.historicalCategories : []));
+  const storedOpps = Array.isArray(a.futureOpportunities) ? a.futureOpportunities : [];
+  const rawSignals = Array.isArray(raw.existingSignals) ? raw.existingSignals : [];
+  const rawRepeats = Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [];
+  a.futureOpportunities = dedupeOpportunities([...storedOpps, ...rawSignals, ...rawRepeats]);
   a.signals = dedupeVerifiedSignals(Array.isArray(a.signals) ? a.signals : []);
   a.futureOpportunities.forEach(opp => {
     opp.account = opp.account || a.name || a.accountName || 'Saved account';
@@ -3963,7 +3977,7 @@ function limitReasonsPerAccount(opps, maxPerAccount=2){
 
 function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
   const collapsed = collapseDuplicateFollowUps(opps || []);
-  const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 2);
+  const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 3);
   return ranked.slice(0, limit);
 }
 
@@ -4066,7 +4080,7 @@ function renderDetailedAccountViews(accounts){
 
 function serializeAccountForStorage(account){
   const signals = Array.isArray(account.signals) ? account.signals.filter(s => s && s.isReal !== false) : [];
-  const opportunities = Array.isArray(account.futureOpportunities) ? account.futureOpportunities.slice(0, 12) : [];
+  const opportunities = Array.isArray(account.futureOpportunities) ? account.futureOpportunities.slice(0, 40) : [];
   return {
     name: account.name,
     industry: account.industry || '',
@@ -4086,8 +4100,10 @@ function serializeAccountForStorage(account){
       employees: account.employees || '',
       historicalCategories: [...(account.categoryTypes || [])],
       historicalProjects: account.projects || [],
+      purchases: account.purchases || [],
       allProjects: account.allProjects || [],
-      recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date).filter(Boolean).slice(0, 12),
+      activePipeline: account.activePipeline || [],
+      recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date || p.dateStr).filter(Boolean).slice(0, 12),
       repeatPatterns: opportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').slice(0, 8),
       existingSignals: opportunities.slice(0, 12),
       records: (account.allRecords || []).slice(0, 100)
