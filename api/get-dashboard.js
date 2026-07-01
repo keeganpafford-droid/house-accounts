@@ -148,6 +148,19 @@ export default async function handler(req, res){
     const uniqueSignals = uniqueSignalRows(signals || []);
     const byAccount = new Map();
     for(const a of accounts || []){
+      const raw = a.raw_data || {};
+      const historicalProjects = Array.isArray(raw.historicalProjects) ? raw.historicalProjects : [];
+      const purchases = Array.isArray(raw.purchases) && raw.purchases.length ? raw.purchases : historicalProjects.map(p => ({
+        project: p.project || p.name || p.description || p.orderName || 'Historical order',
+        category: p.category || p.productCategory || p.type || '',
+        revenue: Number(p.revenue || p.amount || p.total || 0) || 0,
+        dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '',
+        status: p.status || 'Historical'
+      }));
+      const storedOpps = [
+        ...(Array.isArray(raw.existingSignals) ? raw.existingSignals : []),
+        ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
+      ];
       byAccount.set(a.account_name, {
         name: a.account_name,
         industry: a.industry || 'Saved Account',
@@ -158,9 +171,16 @@ export default async function handler(req, res){
         confidence: Number(a.metrics?.confidence || a.metrics?.quickWinScore || 0),
         relationshipStrength: Number(a.metrics?.relationshipStrength || 0),
         mostRecentDate: a.metrics?.mostRecentDate || 'Unknown',
-        categoryTypes: Array.isArray(a.raw_data?.historicalCategories) ? a.raw_data.historicalCategories : [],
+        activePipelineValue: Number(a.metrics?.activePipelineValue || 0),
+        activePipelineCount: Number(a.metrics?.activePipelineCount || 0),
+        subscores: a.metrics?.subscores || {revenue:0, frequency:0, recency:0, diversity:0},
+        purchases,
+        projects: historicalProjects,
+        allProjects: Array.isArray(raw.allProjects) ? raw.allProjects : historicalProjects,
+        activePipeline: Array.isArray(raw.activePipeline) ? raw.activePipeline : [],
+        categoryTypes: Array.isArray(raw.historicalCategories) ? raw.historicalCategories : [],
         signals: [],
-        futureOpportunities: []
+        futureOpportunities: storedOpps
       });
     }
     for(const row of uniqueSignals || []){
