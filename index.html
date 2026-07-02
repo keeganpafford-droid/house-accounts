@@ -119,6 +119,37 @@
   .btn-secondary:hover{background:var(--signal);}
   .btn:disabled{opacity:0.5; cursor:not-allowed;}
 
+
+  .timebox-tabs{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin:12px 0 14px;
+  }
+  .timebox-tab{
+    border:1px solid var(--line);
+    background:#fff;
+    color:var(--ink);
+    border-radius:999px;
+    padding:9px 13px;
+    font-family:var(--mono);
+    font-size:0.72rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    cursor:pointer;
+  }
+  .timebox-tab.active{
+    background:var(--ink);
+    color:var(--paper);
+    border-color:var(--ink);
+  }
+  .timebox-helper{
+    font-size:0.86rem;
+    color:var(--muted);
+    line-height:1.45;
+    margin-bottom:12px;
+  }
+
   .csv-hint{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:24px; line-height:1.6;}
   .csv-hint code{background:var(--line); padding:2px 6px; border-radius:2px;}
 
@@ -1728,12 +1759,19 @@
 
     <!-- Opportunity Cards Section -->
     <div class="opportunities-section">
-      <div class="section-header">This Week's Priorities</div>
+      <div class="section-header" id="timeboxSectionHeader">This Week's Priorities</div>
+      <div class="timebox-tabs" role="tablist" aria-label="Planning window">
+        <button class="timebox-tab active" type="button" data-timebox="week" onclick="setActiveTimebox('week')">This Week</button>
+        <button class="timebox-tab" type="button" data-timebox="month" onclick="setActiveTimebox('month')">This Month</button>
+        <button class="timebox-tab" type="button" data-timebox="quarter" onclick="setActiveTimebox('quarter')">This Quarter</button>
+        <button class="timebox-tab" type="button" data-timebox="annual" onclick="setActiveTimebox('annual')">This Year</button>
+      </div>
+      <div class="timebox-helper" id="timeboxHelper">Who should I contact this week, and why?</div>
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
       <div class="legend">
-        <span><b>Goal</b> — who should I contact this week, and why?</span>
+        <span><b>Goal</b> — who should I contact, when, and why?</span>
         <span><b>Follow-Up Signals</b> — recent orders or completed projects</span>
         <span><b>Repeat / Pattern Signals</b> — seasonal or similar historical buys</span>
         <span><b>Business Activity Signals</b> — verified public signals from web research</span>
@@ -1766,7 +1804,14 @@ let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
 let showAllWeeklyPriorities = false;
+let activeTimebox = 'week';
 const WEEKLY_PRIORITY_LIMIT = 25;
+const TIMEBOX_CONFIG = {
+  week: {label:"This Week", header:"This Week's Priorities", helper:"Who should I contact this week, and why?", limit:25},
+  month: {label:"This Month", header:"This Month's Pipeline", helper:"What should I start working in the next 30 days?", limit:40},
+  quarter: {label:"This Quarter", header:"Quarter Planning", helper:"What opportunities should I begin planning before they become urgent?", limit:50},
+  annual: {label:"This Year", header:"Annual Opportunities", helper:"Which recurring revenue opportunities should I prepare for this year?", limit:75}
+};
 
 function getSavedLead(){
   try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
@@ -3504,6 +3549,9 @@ function createRepeatPatternOpportunities(account){
     opp.whyNow = `${account.name} has ordered ${pattern.category.toLowerCase()} ${pattern.orderCount} times${pattern.years.length > 1 ? ` across ${pattern.years.length} years` : ''}${pattern.monthLabel ? `, with activity around ${pattern.monthLabel}` : ''}.`;
     opp.conversationStarter = `Ask if the ${pattern.category.toLowerCase()} program is happening again this year.`;
     opp.signalDate = pattern.lastDate ? pattern.lastDate.toISOString() : '';
+    opp.purchaseMonth = pattern.lastDate ? pattern.lastDate.getMonth() : monthIndexFromName(pattern.monthLabel);
+    opp.purchaseMonthLabel = pattern.monthLabel || '';
+    opp.planningWindow = classifyMonthWindow(opp.purchaseMonth);
     opp.confidence = Math.max(opp.confidence || 0, pattern.confidence);
     opp.quickWinScore = Math.max(opp.quickWinScore || 0, pattern.confidence);
     opp.closeProbability = Math.max(opp.closeProbability || 0, pattern.confidence - 5);
@@ -4142,6 +4190,81 @@ function limitReasonsPerAccount(opps, maxPerAccount=2){
   return selected;
 }
 
+
+function monthIndexFromName(name){
+  if(!name) return null;
+  const months = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+  const n = String(name).toLowerCase();
+  const idx = months.findIndex(m => n.includes(m));
+  return idx >= 0 ? idx : null;
+}
+
+function inferPurchaseMonth(opp){
+  if(Number.isInteger(opp?.purchaseMonth)) return opp.purchaseMonth;
+  const text = [opp?.purchaseMonthLabel, opp?.whyNow, opp?.reasonToReachOut, Array.isArray(opp?.evidence) ? opp.evidence.join(' ') : opp?.evidence].filter(Boolean).join(' ');
+  return monthIndexFromName(text);
+}
+
+function monthDistanceFromNow(monthIndex){
+  if(!Number.isInteger(monthIndex)) return null;
+  const nowMonth = new Date().getMonth();
+  return (monthIndex - nowMonth + 12) % 12;
+}
+
+function classifyMonthWindow(monthIndex){
+  const delta = monthDistanceFromNow(monthIndex);
+  if(delta === null) return 'annual';
+  if(delta === 0) return 'week';
+  if(delta <= 1) return 'month';
+  if(delta <= 3) return 'quarter';
+  return 'annual';
+}
+
+function getOpportunityPlanningWindow(opp){
+  if(opp?.planningWindow && TIMEBOX_CONFIG[opp.planningWindow]) return opp.planningWindow;
+  const layer = signalLayerLabel(opp || {});
+  const recType = getRecommendationType(opp || {});
+  if(layer === 'Business Activity Signal'){
+    const days = daysSinceDate(opp.signalDate || opp.publishedDate || opp.detectedAt);
+    return days !== null && days <= 45 ? 'week' : 'month';
+  }
+  if(layer === 'Follow-Up Signal' || recType === 'Recent Project Follow-Up'){
+    const days = daysSinceDate(opp.lastOrderDate || opp.mostRecentDate || opp.signalDate);
+    if(days !== null && days <= 30) return 'week';
+    if(days !== null && days <= 90) return 'month';
+    return 'quarter';
+  }
+  if(layer === 'Repeat / Pattern Signal' || recType === 'Annual Buying Pattern' || /annual|seasonal|repeat|same time/i.test(`${opp?.whyNow || ''} ${opp?.reasonToReachOut || ''}`)){
+    return classifyMonthWindow(inferPurchaseMonth(opp));
+  }
+  return 'quarter';
+}
+
+function opportunityMatchesTimebox(opp, timebox){
+  const windowName = getOpportunityPlanningWindow(opp);
+  if(timebox === 'annual'){
+    const recType = getRecommendationType(opp || {});
+    return windowName === 'annual' || recType === 'Annual Buying Pattern' || signalLayerLabel(opp || {}) === 'Repeat / Pattern Signal';
+  }
+  return windowName === timebox;
+}
+
+function setActiveTimebox(timebox){
+  if(!TIMEBOX_CONFIG[timebox]) return;
+  activeTimebox = timebox;
+  showAllWeeklyPriorities = false;
+  document.querySelectorAll('.timebox-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.timebox === timebox));
+  refreshOpportunityViews();
+}
+
+function prepareTimeboxReasons(opps, timebox=activeTimebox){
+  const config = TIMEBOX_CONFIG[timebox] || TIMEBOX_CONFIG.week;
+  const collapsed = collapseDuplicateFollowUps(opps || []);
+  const filtered = collapsed.filter(opp => opportunityMatchesTimebox(opp, timebox));
+  const ranked = limitReasonsPerAccount(sortDailyReasons(filtered), timebox === 'annual' ? 4 : 3);
+  return ranked.slice(0, config.limit);
+}
+
 function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
   const collapsed = collapseDuplicateFollowUps(opps || []);
   const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 3);
@@ -4160,25 +4283,31 @@ function toggleWeeklyPrioritiesView(showAll){
 function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
-  const allOpportunities = prepareAllOpportunities(opportunities || []);
-  const priorityOpportunities = prepareDailyReasons(opportunities || [], WEEKLY_PRIORITY_LIMIT);
+  const config = TIMEBOX_CONFIG[activeTimebox] || TIMEBOX_CONFIG.week;
+  const sectionHeader = document.getElementById('timeboxSectionHeader');
+  const helper = document.getElementById('timeboxHelper');
+  if(sectionHeader) sectionHeader.textContent = config.header;
+  if(helper) helper.textContent = config.helper;
+  document.querySelectorAll('.timebox-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.timebox === activeTimebox));
+  const allOpportunities = prepareAllOpportunities(opportunities || []).filter(opp => opportunityMatchesTimebox(opp, activeTimebox));
+  const priorityOpportunities = prepareTimeboxReasons(opportunities || [], activeTimebox);
   const displayedOpportunities = showAllWeeklyPriorities ? allOpportunities : priorityOpportunities;
   const accountCount = (accounts || []).length;
   const accountListOnlyCount = (accounts || []).filter(a => a.orderCount === 0 && a.activePipelineCount === 0).length;
   const showingLabel = showAllWeeklyPriorities
-    ? `Showing all ${displayedOpportunities.length} opportunities`
-    : `Showing top ${displayedOpportunities.length} of ${allOpportunities.length} recommendations`;
+    ? `Showing all ${displayedOpportunities.length} ${config.label.toLowerCase()} opportunities`
+    : `Showing top ${displayedOpportunities.length} of ${allOpportunities.length} ${config.label.toLowerCase()} recommendations`;
   if(resultCount){
     resultCount.innerHTML = `<span>${showingLabel} from ${accountCount} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
   }
   if(grid){
     const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">No high-priority recommendations found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`) : '';
-    const actionButton = allOpportunities.length > WEEKLY_PRIORITY_LIMIT
+    const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
     const note = showAllWeeklyPriorities
-      ? 'All opportunities are shown for review. The priority view is intentionally shorter so reps know where to start.'
-      : 'This Week’s Priorities shows the highest-scoring recommendations first and limits repeated accounts so the feed feels like a focused call list, not a report.';
+      ? 'All opportunities for this planning window are shown for review. The priority view stays shorter so reps know where to start.'
+      : `${config.header} shows the highest-scoring recommendations for this planning window and limits repeated accounts so the feed feels like a focused call list, not a report.`;
     grid.innerHTML = `<div class="weekly-priority-actions"><div class="priority-note">${note}</div>${actionButton}</div>` + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
@@ -4411,8 +4540,9 @@ function processData(records){
   // Future opportunities only. Historical orders are evidence, not opportunities.
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
   showAllWeeklyPriorities = false;
+  activeTimebox = 'week';
 
-  // Render this week’s focused recommendation feed
+  // Render the focused recommendation feed
   const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
     emptyMessage: `<div class="no-signals-message">No order-history-based priorities found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`
   });
