@@ -3769,7 +3769,7 @@ window.createSalesPlayPanel = function(opp){
               <div class="sales-play-card subject-row">
                 <h3 style="margin:0;"><span class="section-icon">✉</span> Email Subject</h3>
                 <div class="subject-line">${escapeHtml(play.emailSubject)}</div>
-                <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.emailSubject)})">Copy Subject</button>
+                <button class="copy-mini" data-copy-sales-play="subject">Copy Subject</button>
               </div>
             </div>
             <div class="sales-play-section full">
@@ -3779,7 +3779,7 @@ window.createSalesPlayPanel = function(opp){
                   <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
                   <div class="why-subject"><strong>Why this subject?</strong>${escapeHtml(play.subjectRationale)}</div>
                 </div>
-                <div style="margin-top:14px; text-align:right;"><button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.outreachEmail)})">Copy Email</button></div>
+                <div style="margin-top:14px; text-align:right;"><button class="copy-mini" data-copy-sales-play="email">Copy Email</button></div>
               </div>
             </div>
             <div class="sales-play-section">
@@ -3805,7 +3805,6 @@ window.createSalesPlayPanel = function(opp){
                 <h3><span class="section-icon">♢</span> Coaching Note</h3>
                 <div class="coaching-content">
                   <div class="section-content">${escapeHtml(play.coachingNote)}</div>
-                  <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(allText)})">Copy All</button>
                 </div>
               </div>
             </div>
@@ -3814,6 +3813,14 @@ window.createSalesPlayPanel = function(opp){
       </div>
     </div>`;
   document.body.insertAdjacentHTML('beforeend', html);
+  const modal = document.body.lastElementChild;
+  modal.querySelectorAll('[data-copy-sales-play]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.copySalesPlay;
+      const text = field === 'subject' ? play.emailSubject : play.outreachEmail;
+      copySalesPlayField(btn, text);
+    });
+  });
 }
 
 function buildConciseSalesPlay(ctx){
@@ -3980,11 +3987,41 @@ function formatSalesPlayClipboard(play, account, reasonTitle, mode){
 }
 
 window.copySalesPlayField = function(btn, text){
-  navigator.clipboard.writeText(text).then(() => {
+  const value = String(text || '');
+  const showCopied = () => {
     const original = btn.textContent;
     btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = original, 1600);
-  }).catch(() => alert('Could not copy to clipboard'));
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 1600);
+  };
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(value).then(showCopied).catch(() => fallbackCopySalesPlayText(value, showCopied));
+  } else {
+    fallbackCopySalesPlayText(value, showCopied);
+  }
+}
+
+function fallbackCopySalesPlayText(text, onSuccess){
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    onSuccess();
+  } catch (err) {
+    console.error('Failed to copy sales play text:', err);
+    alert('Could not copy to clipboard');
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function isClosedHistoricalRecord(record){
