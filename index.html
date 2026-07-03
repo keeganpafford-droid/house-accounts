@@ -91,6 +91,28 @@
   .upload-zone h2{font-family:var(--display); font-size:1.6rem; margin-bottom:8px;}
   .upload-zone p{color:var(--muted); font-size:0.9rem; margin-bottom:16px;}
   .upload-zone input{display:none;}
+  .upload-intro{max-width:820px; margin:0 auto;}
+  .upload-eyebrow{font-family:var(--mono); font-size:0.74rem; font-weight:700; letter-spacing:0.11em; text-transform:uppercase; color:var(--signal); margin-bottom:8px;}
+  .upload-helper{max-width:760px; margin:22px auto 0; text-align:left; display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+  .upload-helper-card{background:#F7F8FA; border:1px solid var(--line); border-radius:8px; padding:18px;}
+  .upload-helper-card h3{font-size:0.78rem; font-family:var(--mono); letter-spacing:0.08em; text-transform:uppercase; color:var(--ink); margin-bottom:10px;}
+  .field-chip-list{display:flex; gap:8px; flex-wrap:wrap;}
+  .field-chip{display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:999px; background:#fff; border:1px solid var(--line); color:var(--ink); font-size:0.82rem; font-weight:600;}
+  .field-chip::before{content:'✓'; color:var(--radar); font-weight:800;}
+  .upload-trust-card{max-width:760px; margin:22px auto 0; background:#F7F8FA; border:1px solid var(--line); border-left:4px solid var(--radar); border-radius:8px; padding:18px 20px; text-align:left;}
+  .upload-trust-title{display:flex; align-items:center; gap:8px; color:var(--ink); font-weight:800; margin-bottom:10px;}
+  .upload-trust-title span{font-size:1rem;}
+  .upload-trust-list{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; list-style:none; color:var(--muted); font-size:0.86rem;}
+  .upload-trust-list li::before{content:'✓'; color:var(--radar); font-weight:800; margin-right:7px;}
+  .export-guide-note{margin-top:14px; font-size:0.84rem; color:var(--muted);}
+  .export-guide-note a{color:var(--ink); font-weight:700; text-decoration:none; border-bottom:1px solid var(--radar);}
+  .upload-progress{display:none; max-width:760px; margin:22px auto 0; background:#fff; border:1px solid var(--line); border-radius:8px; padding:18px; text-align:left;}
+  .upload-progress.active{display:block;}
+  .upload-progress-title{font-weight:800; margin-bottom:12px;}
+  .upload-progress-steps{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; list-style:none;}
+  .upload-progress-steps li{font-size:0.86rem; color:var(--ink); background:#F7F8FA; border:1px solid var(--line); border-radius:6px; padding:10px 12px;}
+  .upload-progress-steps li::before{content:'•'; color:var(--signal); font-weight:900; margin-right:8px;}
+  @media(max-width:760px){.upload-helper,.upload-trust-list,.upload-progress-steps{grid-template-columns:1fr}.upload-zone{padding:36px 20px}}
   .btn{
     display:inline-block;
     font-family:var(--mono);
@@ -1599,15 +1621,53 @@
   </section>
 
   <div class="upload-zone locked" id="dropzone">
-    <h2>Analyze Your Accounts</h2>
-    <p>Choose your customer list and discover who your team should contact today — and why.</p>
-    <button class="btn" id="browseBtn" type="button">Choose Customer List</button>
-    <input type="file" id="fileInput" accept=".csv">
-    <div class="csv-hint">
-      Works best when your customer list includes:<br>
-      <code>Customer or company name</code> · <code>Project or order name</code> · <code>Order date</code> · <code>Revenue</code><br>
-      Helpful if available:<br>
-      <code>Contact name</code> · <code>Contact email</code> · <code>Margin</code>
+    <div class="upload-intro">
+      <div class="upload-eyebrow">Customer Order History</div>
+      <h2>Upload Your Customer Order History</h2>
+      <p>Upload your customer order history to discover who deserves your attention this week — and why.</p>
+      <button class="btn" id="browseBtn" type="button">Choose Customer Order File</button>
+      <input type="file" id="fileInput" accept=".csv">
+      <div class="export-guide-note">Need help finding the right file? <a href="/export-guides">View export guides →</a></div>
+    </div>
+
+    <div class="upload-helper">
+      <div class="upload-helper-card">
+        <h3>Most customer exports work without any changes.</h3>
+        <div class="field-chip-list">
+          <span class="field-chip">Customer / Company Name</span>
+          <span class="field-chip">Order Date</span>
+          <span class="field-chip">Project or Order Name</span>
+          <span class="field-chip">Revenue</span>
+        </div>
+      </div>
+      <div class="upload-helper-card">
+        <h3>Helpful if available</h3>
+        <div class="field-chip-list">
+          <span class="field-chip">Contact Name</span>
+          <span class="field-chip">Contact Email</span>
+          <span class="field-chip">Margin</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="upload-trust-card">
+      <div class="upload-trust-title"><span aria-hidden="true">🔒</span> Your data stays yours.</div>
+      <ul class="upload-trust-list">
+        <li>Encrypted during upload</li>
+        <li>Never sold or shared</li>
+        <li>Used only to generate your House Accounts insights</li>
+        <li>Delete your data at any time</li>
+      </ul>
+    </div>
+
+    <div class="upload-progress" id="uploadProgress" aria-live="polite">
+      <div class="upload-progress-title">Building your House Accounts view...</div>
+      <ul class="upload-progress-steps">
+        <li>Reading customer history</li>
+        <li>Finding buying patterns</li>
+        <li>Searching recent business activity</li>
+        <li>Building your priority list</li>
+      </ul>
     </div>
     <div id="error"></div>
   </div>
@@ -2189,6 +2249,14 @@ const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
 const errorBox = document.getElementById('error');
+const uploadProgress = document.getElementById('uploadProgress');
+
+function showUploadProgress(){
+  if(uploadProgress) uploadProgress.classList.add('active');
+}
+function hideUploadProgress(){
+  if(uploadProgress) uploadProgress.classList.remove('active');
+}
 
 browseBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
 dropzone.addEventListener('click', () => fileInput.click());
@@ -2216,6 +2284,7 @@ function clearError(){
 
 function handleFile(file){
   clearError();
+  hideUploadProgress();
   currentUploadName = file && file.name ? file.name : 'Uploaded account list';
   currentUploadId = null;
   if(!currentLead && !getSavedLead()){
@@ -2229,13 +2298,23 @@ function handleFile(file){
   const reader = new FileReader();
   reader.onload = e => {
     try{
+      showUploadProgress();
       const rows = parseCSV(e.target.result);
-      processData(rows);
+      setTimeout(() => {
+        try{
+          processData(rows);
+          hideUploadProgress();
+        }catch(err){
+          hideUploadProgress();
+          showError('We could not analyze that customer order history. Please check the file and try again.');
+        }
+      }, 250);
     }catch(err){
+      hideUploadProgress();
       showError('We could not read that customer list. Please check the file and try again.');
     }
   };
-  reader.onerror = () => showError('Could not read file.');
+  reader.onerror = () => { hideUploadProgress(); showError('Could not read file.'); };
   reader.readAsText(file);
 }
 
