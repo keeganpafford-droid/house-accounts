@@ -1311,7 +1311,7 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
-// Sales Play Generator - concise, non-repetitive, reply-first promo outreach
+// Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp){
   const account = cleanSalesPlayText(opp.account || 'this account');
   const contactName = cleanSalesPlayText(opp.contactName || opp.contact || '');
@@ -1319,11 +1319,10 @@ window.createSalesPlayPanel = function(opp){
   const mode = salesPlayModeFromOpp(opp);
   const reasonTitle = cleanSalesPlayText(getReasonToReachOutTitle(opp));
   const whyNow = cleanSalesPlayText(getRepFriendlyWhy(opp));
-  const conversationStarter = cleanSalesPlayText(getSuggestedOpener(opp));
   const relationshipStrength = Math.round(Number(opp.relationshipStrength || 0));
-  const closeProbability = Math.round(Number(opp.closeProbability || opp.confidence || 0));
   const sourceLabel = opp.sourceUrl ? 'verified public signal' : 'account history';
   const category = pickPrimaryPromoCategory(opp);
+  const signalType = inferSalesPlaySignalType(opp, reasonTitle, whyNow, category);
 
   const play = buildConciseSalesPlay({
     account,
@@ -1331,13 +1330,13 @@ window.createSalesPlayPanel = function(opp){
     mode,
     reasonTitle,
     whyNow,
-    conversationStarter,
     relationshipStrength,
-    closeProbability,
     sourceLabel,
-    category
+    category,
+    signalType
   });
 
+  const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode);
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
       <div class="sales-play-modal-content">
@@ -1349,33 +1348,63 @@ window.createSalesPlayPanel = function(opp){
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
         <div class="sales-play-output">
-          <div class="sales-play-section">
-            <h3>quickRead</h3>
-            <div class="section-content">${escapeHtml(play.quickRead)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>suggestedApproach</h3>
-            <div class="section-content">${escapeHtml(play.suggestedApproach)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>emailSubject</h3>
-            <div class="section-content subject-line">${escapeHtml(play.emailSubject)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>outreachEmail</h3>
-            <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>callScript</h3>
-            <div class="section-content">${escapeHtml(play.callScript)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>discoveryQuestions</h3>
-            <div class="section-content"><ul class="discovery-list">${play.discoveryQuestions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
-          </div>
-          <div class="sales-play-section">
-            <h3>recommendedNextStep</h3>
-            <div class="section-content next-step">${escapeHtml(play.recommendedNextStep)}</div>
+          <div class="sales-play-grid">
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
+                <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card emphasis">
+                <h3><span class="section-icon">☆</span> Best Next Move</h3>
+                <div class="section-content">${escapeHtml(play.bestNextMove)}</div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card subject-row">
+                <h3 style="margin:0;"><span class="section-icon">✉</span> Email Subject</h3>
+                <div class="subject-line">${escapeHtml(play.emailSubject)}</div>
+                <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.emailSubject)})">Copy Subject</button>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">✉</span> Copy & Paste Email</h3>
+                <div class="sales-play-email-layout">
+                  <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
+                  <div class="why-subject"><strong>Why this subject?</strong>${escapeHtml(play.subjectRationale)}</div>
+                </div>
+                <div style="margin-top:14px; text-align:right;"><button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.outreachEmail)})">Copy Email</button></div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">☎</span> Call Script</h3>
+                <div class="section-content call-script-lines">${play.callScript.map(line=>`<div>${escapeHtml(line).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')}</div>`).join('')}</div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">?</span> Questions to Ask</h3>
+                <div class="section-content"><ul class="sales-play-list check-list">${play.questionsToAsk.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
+                <div class="section-content"><ul class="sales-play-list check-list success-list">${play.successLooksLike.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card coaching-card">
+                <h3><span class="section-icon">♢</span> Coaching Note</h3>
+                <div class="coaching-content">
+                  <div class="section-content">${escapeHtml(play.coachingNote)}</div>
+                  <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(allText)})">Copy All</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1384,105 +1413,174 @@ window.createSalesPlayPanel = function(opp){
 }
 
 function buildConciseSalesPlay(ctx){
-  const relationshipLine = ctx.relationshipStrength >= 75
-    ? 'Warm account with enough history to ask for direction without overexplaining.'
-    : ctx.relationshipStrength >= 40
-      ? 'Known account where a specific reconnect will work better than a generic check-in.'
-      : 'Low-history account, so lead with context and ask for the right owner.';
+  const isWarm = ctx.mode === 'Warm';
+  const isHiring = ctx.signalType === 'hiring';
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const triggerPhrase = triggerPhraseForSignal(ctx);
 
-  const quickRead = `${ctx.reasonTitle}. ${relationshipLine}`;
+  const opportunitySummary = [
+    `${triggerPhrase} creates a timely reason to reach out.`,
+    isWarm ? 'Existing relationship can be used as a bridge.' : 'A specific business reason keeps this from feeling like a cold pitch.',
+    'Goal is to earn a reply or referral before selling.'
+  ];
 
-  const suggestedApproach = ctx.sourceLabel === 'verified public signal'
-    ? `Open with the business trigger, then ask who owns ${ctx.category} before suggesting ideas.`
-    : `Use the order history as the reason to check timing, ownership, and whether a repeat need is coming up.`;
+  const bestNextMove = isWarm
+    ? `Call or email ${ctx.firstName}. Mention ${triggerPhrase.toLowerCase()}. Ask who owns ${ownerPhrase}. Offer to send a few simple ideas if relevant.`
+    : `Lead with ${triggerPhrase.toLowerCase()}. Ask for the person responsible for ${ownerPhrase}. Keep the ask small and referral-focused.`;
 
   const emailSubject = conciseSubject(ctx);
   const outreachEmail = trimToWords(buildReplyFirstEmail(ctx), 120);
-  const callScript = trimToWords(buildNaturalCallScript(ctx), 75);
-  const discoveryQuestions = uniqueSalesPlayQuestions([
-    `When would this need to be decided or in hand?`,
-    `Who typically owns ${ctx.category} for ${ctx.account}?`,
-    `What would make this useful for the team instead of just another merch order?`
-  ], ctx.conversationStarter).slice(0, 3);
-  const recommendedNextStep = ctx.mode === 'Cold'
-    ? 'Ask for the right owner.'
-    : 'Send the email.';
+  const callScript = buildNaturalCallScript(ctx);
+  const questionsToAsk = questionsForSignal(ctx).slice(0, 3);
+  const successLooksLike = ['Referral to the right person', 'Permission to send ideas', 'Meeting booked'];
+  const coachingNote = isWarm
+    ? 'You already have a relationship in the account. This approach asks for direction instead of business, which lowers resistance.'
+    : 'Do not lead with product ideas yet. Use the signal to find the right person, then ask permission to follow up.';
 
   return {
-    quickRead,
-    suggestedApproach,
+    opportunitySummary,
+    bestNextMove,
     emailSubject,
+    subjectRationale: subjectRationale(ctx, emailSubject),
     outreachEmail,
     callScript,
-    discoveryQuestions,
-    recommendedNextStep
+    questionsToAsk,
+    successLooksLike,
+    coachingNote
   };
 }
 
 function buildReplyFirstEmail(ctx){
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const trigger = triggerPhraseForSignal(ctx);
+
   if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName},\n\nI was looking at ${ctx.account} and noticed a possible follow-up around ${ctx.category}.\n\n${ctx.whyNow}\n\nIs this something you still handle, or should I ask someone else on the team?\n\nIf it is relevant, I can send a couple simple options.`;
+    return `Hey ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account} and thought of you.\n\nQuick question — does your team handle ${ownerPhrase}, or does that sit with someone else internally?\n\nIf there is a better person to ask, would you be open to pointing me in the right direction?\n\nIf helpful, I can send over a few simple ideas.\n\nBest,\n[Rep Name]`;
   }
   if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName},\n\nIt's been a bit, but I saw a timely reason to reconnect with ${ctx.account}.\n\n${ctx.whyNow}\n\nAre you the right person to ask about this, or is there someone better to contact?\n\nHappy to keep it simple if useful.`;
+    return `Hey ${ctx.firstName},\n\nIt has been a bit, but ${trigger.toLowerCase()} felt like a relevant reason to reconnect.\n\nDo you know who usually owns ${ownerPhrase} at ${ctx.account}?\n\nI am not trying to force a pitch — just trying to see whether there is a useful conversation to have.\n\nHappy to send a few simple ideas if helpful.\n\nBest,\n[Rep Name]`;
   }
-  return `Hi ${ctx.firstName},\n\nI noticed ${ctx.account} may have a timely need connected to ${ctx.category}.\n\n${ctx.whyNow}\n\nWho would be the best person to ask about this?\n\nI can share a few practical ideas if it is worth exploring.`;
+  return `Hi ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account}.\n\nDo you know who would be the best person to ask about ${ownerPhrase}?\n\nI work on branded merchandise programs and thought there may be a timely conversation, but I want to start with the right person.\n\nWould you be open to pointing me in the right direction?\n\nBest,\n[Rep Name]`;
 }
 
 function buildNaturalCallScript(ctx){
-  if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName}, I was reviewing ${ctx.account} and saw a possible need around ${ctx.category}. Are you still the best person to ask about that, or should I talk with someone else?`;
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const trigger = triggerPhraseForSignal(ctx).toLowerCase();
+  return [
+    `<strong>Open:</strong> “Hey ${ctx.firstName}, quick question based on ${trigger}.”`,
+    `<strong>Reason:</strong> “I wanted to understand whether ${ownerPhrase} is handled by your team or someone else.”`,
+    `<strong>Ask:</strong> “Are you the best person to ask, or is there someone else I should connect with?”`
+  ];
+}
+
+function questionsForSignal(ctx){
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  if(ctx.signalType === 'hiring'){
+    return [
+      'Who owns onboarding or recruiting merch?',
+      'Is that handled centrally or by different teams?',
+      'Would a few simple ideas be helpful right now?'
+    ];
   }
-  if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName}, we have not connected in a bit, but I had a specific reason for calling. ${ctx.whyNow} Who would usually own that internally?`;
+  if(ctx.signalType === 'event'){
+    return [
+      'Who is responsible for event merch or attendee giveaways?',
+      'What timing should vendors know about?',
+      'Would it help to see a few simple ideas before planning gets too far along?'
+    ];
   }
-  return `Hi ${ctx.firstName}, I will be brief. I saw something timely with ${ctx.account} and wanted to find the right person for ${ctx.category}. Who usually handles that?`;
+  if(ctx.signalType === 'expansion'){
+    return [
+      'Who coordinates branded materials for new locations or teams?',
+      'Is there a launch date or internal milestone to support?',
+      'Would a short idea list be useful for the planning team?'
+    ];
+  }
+  return [
+    `Who usually owns ${ownerPhrase}?`,
+    'Is that handled by one team or different departments?',
+    'Would a few simple ideas be helpful right now?'
+  ];
 }
 
 function conciseSubject(ctx){
-  const subject = ctx.mode === 'Warm'
-    ? `${ctx.account} follow-up`
-    : ctx.mode === 'Lukewarm'
-      ? `${ctx.account} merch question`
-      : `Question for ${ctx.account}`;
-  return trimToWords(subject, 8);
+  if(ctx.signalType === 'hiring') return ctx.mode === 'Warm' ? `Hiring at ${ctx.account}?` : 'Quick question on onboarding';
+  if(ctx.signalType === 'event') return ctx.reasonTitle && ctx.reasonTitle.length < 35 ? `Question about ${ctx.reasonTitle}` : 'Question about the event';
+  if(ctx.signalType === 'expansion') return 'Saw the expansion';
+  if(ctx.signalType === 'repeat') return ctx.mode === 'Warm' ? 'Thinking of you' : 'Quick follow-up';
+  return ctx.mode === 'Warm' ? 'Thinking of you' : `Question for ${ctx.account}`;
 }
 
-function pickPrimaryPromoCategory(opp){
-  const list = opp.commonPromoCategories || opp.suggestedProducts || [];
-  const first = Array.isArray(list) && list.length ? list[0] : '';
-  const text = cleanSalesPlayText(first || opp.opportunityName || opp.opportunity || '').toLowerCase();
-  if(/apparel|shirt|hat|jacket|gear|uniform/.test(text)) return 'apparel and employee gear';
-  if(/event|trade|conference|show|booth/.test(text)) return 'event merch';
-  if(/onboard|hire|welcome/.test(text)) return 'welcome kits';
-  if(/recognition|award|anniversary|appreciation/.test(text)) return 'recognition items';
-  if(/gift|holiday|client|customer/.test(text)) return 'client gifts';
-  return 'branded merch';
+function subjectRationale(ctx, subject){
+  if(ctx.signalType === 'hiring') return 'It references a recent hiring trigger and opens the door to a quick conversation without pitching.';
+  if(ctx.signalType === 'event') return 'It ties the note to timing and gives the recipient a clear reason to open it.';
+  if(ctx.signalType === 'expansion') return 'It uses the business news as context while keeping the ask simple.';
+  if(ctx.signalType === 'repeat') return 'It feels personal and works well when the account has prior order history.';
+  return 'It is specific enough to avoid sounding like a generic account check-in.';
 }
 
-function trimToWords(text, maxWords){
-  const words = cleanSalesPlayText(text).split(/\s+/).filter(Boolean);
-  if(words.length <= maxWords) return cleanSalesPlayText(text);
-  return words.slice(0, maxWords).join(' ');
+function ownerPhraseForSignal(ctx){
+  if(ctx.signalType === 'hiring') return 'onboarding or recruiting merch';
+  if(ctx.signalType === 'event') return 'event merch or giveaways';
+  if(ctx.signalType === 'expansion') return 'launch materials or team gear';
+  if(ctx.signalType === 'repeat') return 'repeat orders or upcoming merch needs';
+  return ctx.category || 'branded merch';
 }
 
-function cleanSalesPlayText(text){
-  return String(text || '').replace(/\s+/g, ' ').trim();
+function triggerPhraseForSignal(ctx){
+  if(ctx.signalType === 'hiring') return 'recent hiring activity';
+  if(ctx.signalType === 'event') return 'an upcoming event or campaign';
+  if(ctx.signalType === 'expansion') return 'recent expansion news';
+  if(ctx.signalType === 'repeat') return 'past ordering activity';
+  if(ctx.whyNow) return ctx.whyNow.replace(/[.]+$/,'');
+  return 'a timely account signal';
 }
 
-function normalizeForQuestionCompare(text){
-  return cleanSalesPlayText(text).toLowerCase().replace(/[^a-z0-9 ]/g, '');
+function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
+  const text = [reasonTitle, whyNow, category, opp.opportunityName, opp.opportunity, opp.signalType, opp.signalTitle, opp.evidence].join(' ').toLowerCase();
+  if(/hiring|career|jobs|recruit|new hire|onboard/.test(text)) return 'hiring';
+  if(/event|conference|trade show|expo|campaign|booth/.test(text)) return 'event';
+  if(/expansion|opening|opened|new location|facility|branch/.test(text)) return 'expansion';
+  if(/repeat|reorder|historical|past order|last year|annual/.test(text)) return 'repeat';
+  return 'general';
 }
 
-function uniqueSalesPlayQuestions(questions, bannedText){
-  const seen = new Set();
-  const banned = normalizeForQuestionCompare(bannedText);
-  return questions.filter(q => {
-    const key = normalizeForQuestionCompare(q);
-    if(!key || key === banned || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function formatSalesPlayClipboard(play, account, reasonTitle, mode){
+  return [
+    `SALES PLAY: ${account} · ${reasonTitle} · ${mode} Play`,
+    '',
+    'OPPORTUNITY SUMMARY',
+    ...play.opportunitySummary.map(item => `- ${item}`),
+    '',
+    'BEST NEXT MOVE',
+    play.bestNextMove,
+    '',
+    'EMAIL SUBJECT',
+    play.emailSubject,
+    '',
+    'COPY & PASTE EMAIL',
+    play.outreachEmail,
+    '',
+    'CALL SCRIPT',
+    ...play.callScript.map(line => line.replace(/<[^>]+>/g, '')),
+    '',
+    'QUESTIONS TO ASK',
+    ...play.questionsToAsk.map(item => `- ${item}`),
+    '',
+    'SUCCESS LOOKS LIKE',
+    ...play.successLooksLike.map(item => `- ${item}`),
+    '',
+    'COACHING NOTE',
+    play.coachingNote
+  ].join('\n');
+}
+
+window.copySalesPlayField = function(btn, text){
+  navigator.clipboard.writeText(text).then(() => {
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = original, 1600);
+  }).catch(() => alert('Could not copy to clipboard'));
 }
 
 function isClosedHistoricalRecord(record){
