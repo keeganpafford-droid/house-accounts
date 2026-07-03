@@ -1001,208 +1001,142 @@
   /* Sales Play Modal */
   .sales-play-modal{
     position:fixed;
-    top:0;
-    left:0;
-    right:0;
-    bottom:0;
-    background:rgba(0,0,0,0.5);
+    inset:0;
+    background:rgba(23,55,94,0.34);
     display:flex;
     align-items:center;
     justify-content:center;
     z-index:10000;
-    padding:20px;
+    padding:18px;
   }
   .sales-play-modal-content{
     background:#fff;
-    border-radius:12px;
-    box-shadow:0 20px 60px rgba(0,0,0,0.3);
-    max-width:900px;
-    max-height:85vh;
+    border:1px solid #D8DEE9;
+    border-radius:14px;
+    box-shadow:0 24px 70px rgba(23,55,94,0.24);
+    max-width:1120px;
+    max-height:94vh;
     overflow-y:auto;
     width:100%;
+    color:#17375E;
   }
   .sales-play-header{
     display:flex;
     justify-content:space-between;
     align-items:flex-start;
-    padding:24px;
-    border-bottom:2px solid var(--line);
+    gap:18px;
+    padding:24px 28px 18px;
+    border-bottom:1px solid #D8DEE9;
     position:sticky;
     top:0;
     background:#fff;
+    z-index:2;
   }
   .sales-play-header h2{
     font-family:var(--display);
     font-weight:700;
-    font-size:1.6rem;
-    margin-bottom:4px;
+    font-size:1.85rem;
+    margin:0 0 6px;
+    color:#17375E;
   }
   .sales-play-subheader{
     font-family:var(--mono);
-    font-size:0.8rem;
-    color:var(--muted);
+    font-size:0.82rem;
+    color:#667085;
+  }
+  .relationship-badge{
+    display:inline-flex;
+    align-items:center;
+    padding:4px 9px;
+    margin-left:8px;
+    border-radius:999px;
+    background:rgba(31,183,174,0.15);
+    color:#0F766E;
+    font-family:var(--mono);
+    font-size:0.68rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    font-weight:700;
   }
   .sales-play-close{
     background:none;
     border:none;
-    font-size:1.6rem;
-    color:var(--muted);
+    font-size:1.9rem;
+    color:#667085;
     cursor:pointer;
     padding:0;
-    width:32px;
-    height:32px;
+    width:34px;
+    height:34px;
     display:flex;
     align-items:center;
     justify-content:center;
   }
-  .sales-play-close:hover{
-    color:var(--ink);
-  }
-
-  .sales-play-style-selector{
-    padding:20px 24px;
-    border-bottom:1px solid var(--line);
-    background:#fafaf6;
-  }
-  .sales-play-style-selector label{
-    display:block;
-    font-family:var(--mono);
-    font-size:0.7rem;
-    text-transform:uppercase;
-    letter-spacing:0.1em;
-    color:var(--signal);
-    margin-bottom:12px;
-    font-weight:600;
-  }
-  .style-buttons{
-    display:flex;
-    gap:8px;
-    flex-wrap:wrap;
-    margin-bottom:12px;
-  }
-  .style-btn{
-    padding:8px 12px;
-    font-family:var(--mono);
-    font-size:0.75rem;
-    text-transform:uppercase;
-    letter-spacing:0.05em;
+  .sales-play-close:hover{color:#17375E;}
+  .sales-play-output{padding:22px 28px 28px; background:#fff;}
+  .sales-play-grid{display:grid; grid-template-columns:1fr 1.08fr; gap:22px;}
+  .sales-play-section{margin:0;}
+  .sales-play-section.full{grid-column:1 / -1;}
+  .sales-play-card{
     background:#fff;
-    color:var(--ink);
-    border:1px solid var(--line);
-    border-radius:4px;
-    cursor:pointer;
-    transition:all 0.2s;
+    border:1px solid #D8DEE9;
+    border-radius:9px;
+    padding:20px;
+    height:100%;
   }
-  .style-btn:hover{
-    border-color:var(--signal);
-    background:#fff9f6;
-  }
-  .style-btn.active{
-    background:var(--signal);
-    color:#fff;
-    border-color:var(--signal);
-  }
-  .style-description{
-    font-family:var(--mono);
-    font-size:0.75rem;
-    color:var(--muted);
-    font-style:italic;
-  }
-
-  .sales-play-output{
-    padding:24px;
-  }
-  .sales-play-sections > .sales-play-section{
-    margin-bottom:28px;
+  .sales-play-card.emphasis{
+    border-color:rgba(31,183,174,0.65);
+    background:linear-gradient(135deg, #FFFFFF 0%, #F7FBFB 100%);
+    box-shadow:0 0 0 2px rgba(31,183,174,0.08) inset;
   }
   .sales-play-section h3{
-    font-family:var(--display);
-    font-weight:600;
-    font-size:1.1rem;
-    margin-bottom:12px;
-    color:var(--ink);
-  }
-  .section-content{
-    background:#fafaf6;
-    border:1px solid var(--line);
-    border-radius:6px;
-    padding:16px;
-    line-height:1.6;
-    font-size:0.95rem;
-  }
-  .subject-line{
-    background:var(--paper);
-    border:2px solid var(--signal);
-    font-weight:600;
-    color:var(--signal);
-  }
-  .sales-play-email-body{
-    white-space:pre-wrap;
-    word-wrap:break-word;
-  }
-  .sales-play-call-script{
-    background:#fff;
-  }
-  .script-section{
-    margin-bottom:16px;
-    padding:12px;
-    background:#fafaf6;
-    border-radius:4px;
-    border-left:3px solid var(--signal);
-  }
-  .script-label{
+    display:flex;
+    align-items:center;
+    gap:10px;
     font-family:var(--mono);
-    font-size:0.7rem;
+    font-size:0.78rem;
     text-transform:uppercase;
     letter-spacing:0.08em;
-    color:var(--signal);
-    font-weight:600;
-    margin-bottom:6px;
+    color:#17375E;
+    margin:0 0 14px;
+    font-weight:800;
   }
-  .script-text{
-    font-size:0.9rem;
-    line-height:1.5;
-  }
-  .discovery-list{
-    list-style:none;
-    padding:0;
-  }
-  .discovery-list li{
-    padding:8px 0 8px 24px;
-    position:relative;
-  }
-  .discovery-list li:before{
-    content:"✓";
-    position:absolute;
-    left:0;
-    color:var(--radar);
-    font-weight:bold;
-  }
-  .next-step{
-    background:linear-gradient(135deg, var(--paper) 0%, #f0ede6 100%);
-    border:2px solid var(--radar);
-    font-weight:600;
-  }
-  .sales-play-meta{
-    text-align:center;
-    padding:12px;
-    border-top:1px solid var(--line);
+  .section-icon{color:#1FB7AE; font-size:1.05rem;}
+  .section-content{font-size:0.97rem; line-height:1.55; color:#17375E;}
+  .sales-play-list{list-style:none; padding:0; margin:0; display:grid; gap:10px;}
+  .sales-play-list li{position:relative; padding-left:22px;}
+  .sales-play-list li:before{content:'•'; position:absolute; left:3px; top:0; color:#17375E; font-weight:800;}
+  .check-list li:before{content:'✓'; color:#1FB7AE;}
+  .subject-row{display:flex; align-items:center; justify-content:space-between; gap:14px;}
+  .subject-line{font-weight:650; background:#F7F8FA; border-radius:7px; padding:10px 12px; flex:1;}
+  .sales-play-email-layout{display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:22px; align-items:stretch;}
+  .sales-play-email-body{white-space:pre-wrap; word-wrap:break-word;}
+  .why-subject{background:#F7F8FA; border:1px solid #D8DEE9; border-radius:9px; padding:18px; font-size:0.92rem; line-height:1.55;}
+  .why-subject strong{display:block; font-family:var(--mono); text-transform:uppercase; letter-spacing:0.08em; font-size:0.72rem; margin-bottom:10px; color:#17375E;}
+  .call-script-lines{display:grid; gap:8px;}
+  .call-script-lines div strong{font-weight:800;}
+  .success-list{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:18px;}
+  .coaching-card{background:linear-gradient(135deg, rgba(31,183,174,0.11), rgba(247,248,250,0.9)); border-color:rgba(31,183,174,0.35);}
+  .coaching-content{display:flex; justify-content:space-between; gap:18px; align-items:center;}
+  .copy-mini{
+    border:1px solid #D8DEE9;
+    background:#fff;
+    color:#17375E;
+    border-radius:7px;
+    padding:9px 12px;
     font-family:var(--mono);
+    font-weight:700;
     font-size:0.75rem;
-    color:var(--muted);
+    cursor:pointer;
+    white-space:nowrap;
   }
-
-  .sales-play-actions{
-    display:flex;
-    gap:12px;
-    padding:16px 24px;
-    border-top:1px solid var(--line);
-    background:#fafaf6;
-    position:sticky;
-    bottom:0;
-  }
-  .sales-play-actions .btn{
-    flex:1;
+  .copy-mini:hover{border-color:#1FB7AE; color:#0F766E;}
+  .sales-play-actions{display:none;}
+  @media(max-width:900px){
+    .sales-play-grid,.sales-play-email-layout{grid-template-columns:1fr;}
+    .success-list{grid-template-columns:1fr;}
+    .sales-play-modal-content{max-height:90vh;}
+    .sales-play-header{padding:20px;}
+    .sales-play-output{padding:18px;}
   }
 
 
@@ -3753,7 +3687,7 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
-// Sales Play Generator - concise, non-repetitive, reply-first promo outreach
+// Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp){
   const account = cleanSalesPlayText(opp.account || 'this account');
   const contactName = cleanSalesPlayText(opp.contactName || opp.contact || '');
@@ -3761,11 +3695,10 @@ window.createSalesPlayPanel = function(opp){
   const mode = salesPlayModeFromOpp(opp);
   const reasonTitle = cleanSalesPlayText(getReasonToReachOutTitle(opp));
   const whyNow = cleanSalesPlayText(getRepFriendlyWhy(opp));
-  const conversationStarter = cleanSalesPlayText(getSuggestedOpener(opp));
   const relationshipStrength = Math.round(Number(opp.relationshipStrength || 0));
-  const closeProbability = Math.round(Number(opp.closeProbability || opp.confidence || 0));
   const sourceLabel = opp.sourceUrl ? 'verified public signal' : 'account history';
   const category = pickPrimaryPromoCategory(opp);
+  const signalType = inferSalesPlaySignalType(opp, reasonTitle, whyNow, category);
 
   const play = buildConciseSalesPlay({
     account,
@@ -3773,13 +3706,13 @@ window.createSalesPlayPanel = function(opp){
     mode,
     reasonTitle,
     whyNow,
-    conversationStarter,
     relationshipStrength,
-    closeProbability,
     sourceLabel,
-    category
+    category,
+    signalType
   });
 
+  const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode);
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
       <div class="sales-play-modal-content">
@@ -3791,33 +3724,63 @@ window.createSalesPlayPanel = function(opp){
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
         <div class="sales-play-output">
-          <div class="sales-play-section">
-            <h3>quickRead</h3>
-            <div class="section-content">${escapeHtml(play.quickRead)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>suggestedApproach</h3>
-            <div class="section-content">${escapeHtml(play.suggestedApproach)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>emailSubject</h3>
-            <div class="section-content subject-line">${escapeHtml(play.emailSubject)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>outreachEmail</h3>
-            <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>callScript</h3>
-            <div class="section-content">${escapeHtml(play.callScript)}</div>
-          </div>
-          <div class="sales-play-section">
-            <h3>discoveryQuestions</h3>
-            <div class="section-content"><ul class="discovery-list">${play.discoveryQuestions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
-          </div>
-          <div class="sales-play-section">
-            <h3>recommendedNextStep</h3>
-            <div class="section-content next-step">${escapeHtml(play.recommendedNextStep)}</div>
+          <div class="sales-play-grid">
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
+                <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card emphasis">
+                <h3><span class="section-icon">☆</span> Best Next Move</h3>
+                <div class="section-content">${escapeHtml(play.bestNextMove)}</div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card subject-row">
+                <h3 style="margin:0;"><span class="section-icon">✉</span> Email Subject</h3>
+                <div class="subject-line">${escapeHtml(play.emailSubject)}</div>
+                <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.emailSubject)})">Copy Subject</button>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">✉</span> Copy & Paste Email</h3>
+                <div class="sales-play-email-layout">
+                  <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
+                  <div class="why-subject"><strong>Why this subject?</strong>${escapeHtml(play.subjectRationale)}</div>
+                </div>
+                <div style="margin-top:14px; text-align:right;"><button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(play.outreachEmail)})">Copy Email</button></div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">☎</span> Call Script</h3>
+                <div class="section-content call-script-lines">${play.callScript.map(line=>`<div>${escapeHtml(line).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')}</div>`).join('')}</div>
+              </div>
+            </div>
+            <div class="sales-play-section">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">?</span> Questions to Ask</h3>
+                <div class="section-content"><ul class="sales-play-list check-list">${play.questionsToAsk.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card">
+                <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
+                <div class="section-content"><ul class="sales-play-list check-list success-list">${play.successLooksLike.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+              </div>
+            </div>
+            <div class="sales-play-section full">
+              <div class="sales-play-card coaching-card">
+                <h3><span class="section-icon">♢</span> Coaching Note</h3>
+                <div class="coaching-content">
+                  <div class="section-content">${escapeHtml(play.coachingNote)}</div>
+                  <button class="copy-mini" onclick="copySalesPlayField(this, ${JSON.stringify(allText)})">Copy All</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3826,105 +3789,174 @@ window.createSalesPlayPanel = function(opp){
 }
 
 function buildConciseSalesPlay(ctx){
-  const relationshipLine = ctx.relationshipStrength >= 75
-    ? 'Warm account with enough history to ask for direction without overexplaining.'
-    : ctx.relationshipStrength >= 40
-      ? 'Known account where a specific reconnect will work better than a generic check-in.'
-      : 'Low-history account, so lead with context and ask for the right owner.';
+  const isWarm = ctx.mode === 'Warm';
+  const isHiring = ctx.signalType === 'hiring';
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const triggerPhrase = triggerPhraseForSignal(ctx);
 
-  const quickRead = `${ctx.reasonTitle}. ${relationshipLine}`;
+  const opportunitySummary = [
+    `${triggerPhrase} creates a timely reason to reach out.`,
+    isWarm ? 'Existing relationship can be used as a bridge.' : 'A specific business reason keeps this from feeling like a cold pitch.',
+    'Goal is to earn a reply or referral before selling.'
+  ];
 
-  const suggestedApproach = ctx.sourceLabel === 'verified public signal'
-    ? `Open with the business trigger, then ask who owns ${ctx.category} before suggesting ideas.`
-    : `Use the order history as the reason to check timing, ownership, and whether a repeat need is coming up.`;
+  const bestNextMove = isWarm
+    ? `Call or email ${ctx.firstName}. Mention ${triggerPhrase.toLowerCase()}. Ask who owns ${ownerPhrase}. Offer to send a few simple ideas if relevant.`
+    : `Lead with ${triggerPhrase.toLowerCase()}. Ask for the person responsible for ${ownerPhrase}. Keep the ask small and referral-focused.`;
 
   const emailSubject = conciseSubject(ctx);
   const outreachEmail = trimToWords(buildReplyFirstEmail(ctx), 120);
-  const callScript = trimToWords(buildNaturalCallScript(ctx), 75);
-  const discoveryQuestions = uniqueSalesPlayQuestions([
-    `When would this need to be decided or in hand?`,
-    `Who typically owns ${ctx.category} for ${ctx.account}?`,
-    `What would make this useful for the team instead of just another merch order?`
-  ], ctx.conversationStarter).slice(0, 3);
-  const recommendedNextStep = ctx.mode === 'Cold'
-    ? 'Ask for the right owner.'
-    : 'Send the email.';
+  const callScript = buildNaturalCallScript(ctx);
+  const questionsToAsk = questionsForSignal(ctx).slice(0, 3);
+  const successLooksLike = ['Referral to the right person', 'Permission to send ideas', 'Meeting booked'];
+  const coachingNote = isWarm
+    ? 'You already have a relationship in the account. This approach asks for direction instead of business, which lowers resistance.'
+    : 'Do not lead with product ideas yet. Use the signal to find the right person, then ask permission to follow up.';
 
   return {
-    quickRead,
-    suggestedApproach,
+    opportunitySummary,
+    bestNextMove,
     emailSubject,
+    subjectRationale: subjectRationale(ctx, emailSubject),
     outreachEmail,
     callScript,
-    discoveryQuestions,
-    recommendedNextStep
+    questionsToAsk,
+    successLooksLike,
+    coachingNote
   };
 }
 
 function buildReplyFirstEmail(ctx){
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const trigger = triggerPhraseForSignal(ctx);
+
   if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName},\n\nI was looking at ${ctx.account} and noticed a possible follow-up around ${ctx.category}.\n\n${ctx.whyNow}\n\nIs this something you still handle, or should I ask someone else on the team?\n\nIf it is relevant, I can send a couple simple options.`;
+    return `Hey ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account} and thought of you.\n\nQuick question — does your team handle ${ownerPhrase}, or does that sit with someone else internally?\n\nIf there is a better person to ask, would you be open to pointing me in the right direction?\n\nIf helpful, I can send over a few simple ideas.\n\nBest,\n[Rep Name]`;
   }
   if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName},\n\nIt's been a bit, but I saw a timely reason to reconnect with ${ctx.account}.\n\n${ctx.whyNow}\n\nAre you the right person to ask about this, or is there someone better to contact?\n\nHappy to keep it simple if useful.`;
+    return `Hey ${ctx.firstName},\n\nIt has been a bit, but ${trigger.toLowerCase()} felt like a relevant reason to reconnect.\n\nDo you know who usually owns ${ownerPhrase} at ${ctx.account}?\n\nI am not trying to force a pitch — just trying to see whether there is a useful conversation to have.\n\nHappy to send a few simple ideas if helpful.\n\nBest,\n[Rep Name]`;
   }
-  return `Hi ${ctx.firstName},\n\nI noticed ${ctx.account} may have a timely need connected to ${ctx.category}.\n\n${ctx.whyNow}\n\nWho would be the best person to ask about this?\n\nI can share a few practical ideas if it is worth exploring.`;
+  return `Hi ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account}.\n\nDo you know who would be the best person to ask about ${ownerPhrase}?\n\nI work on branded merchandise programs and thought there may be a timely conversation, but I want to start with the right person.\n\nWould you be open to pointing me in the right direction?\n\nBest,\n[Rep Name]`;
 }
 
 function buildNaturalCallScript(ctx){
-  if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName}, I was reviewing ${ctx.account} and saw a possible need around ${ctx.category}. Are you still the best person to ask about that, or should I talk with someone else?`;
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  const trigger = triggerPhraseForSignal(ctx).toLowerCase();
+  return [
+    `<strong>Open:</strong> “Hey ${ctx.firstName}, quick question based on ${trigger}.”`,
+    `<strong>Reason:</strong> “I wanted to understand whether ${ownerPhrase} is handled by your team or someone else.”`,
+    `<strong>Ask:</strong> “Are you the best person to ask, or is there someone else I should connect with?”`
+  ];
+}
+
+function questionsForSignal(ctx){
+  const ownerPhrase = ownerPhraseForSignal(ctx);
+  if(ctx.signalType === 'hiring'){
+    return [
+      'Who owns onboarding or recruiting merch?',
+      'Is that handled centrally or by different teams?',
+      'Would a few simple ideas be helpful right now?'
+    ];
   }
-  if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName}, we have not connected in a bit, but I had a specific reason for calling. ${ctx.whyNow} Who would usually own that internally?`;
+  if(ctx.signalType === 'event'){
+    return [
+      'Who is responsible for event merch or attendee giveaways?',
+      'What timing should vendors know about?',
+      'Would it help to see a few simple ideas before planning gets too far along?'
+    ];
   }
-  return `Hi ${ctx.firstName}, I will be brief. I saw something timely with ${ctx.account} and wanted to find the right person for ${ctx.category}. Who usually handles that?`;
+  if(ctx.signalType === 'expansion'){
+    return [
+      'Who coordinates branded materials for new locations or teams?',
+      'Is there a launch date or internal milestone to support?',
+      'Would a short idea list be useful for the planning team?'
+    ];
+  }
+  return [
+    `Who usually owns ${ownerPhrase}?`,
+    'Is that handled by one team or different departments?',
+    'Would a few simple ideas be helpful right now?'
+  ];
 }
 
 function conciseSubject(ctx){
-  const subject = ctx.mode === 'Warm'
-    ? `${ctx.account} follow-up`
-    : ctx.mode === 'Lukewarm'
-      ? `${ctx.account} merch question`
-      : `Question for ${ctx.account}`;
-  return trimToWords(subject, 8);
+  if(ctx.signalType === 'hiring') return ctx.mode === 'Warm' ? `Hiring at ${ctx.account}?` : 'Quick question on onboarding';
+  if(ctx.signalType === 'event') return ctx.reasonTitle && ctx.reasonTitle.length < 35 ? `Question about ${ctx.reasonTitle}` : 'Question about the event';
+  if(ctx.signalType === 'expansion') return 'Saw the expansion';
+  if(ctx.signalType === 'repeat') return ctx.mode === 'Warm' ? 'Thinking of you' : 'Quick follow-up';
+  return ctx.mode === 'Warm' ? 'Thinking of you' : `Question for ${ctx.account}`;
 }
 
-function pickPrimaryPromoCategory(opp){
-  const list = opp.commonPromoCategories || opp.suggestedProducts || [];
-  const first = Array.isArray(list) && list.length ? list[0] : '';
-  const text = cleanSalesPlayText(first || opp.opportunityName || opp.opportunity || '').toLowerCase();
-  if(/apparel|shirt|hat|jacket|gear|uniform/.test(text)) return 'apparel and employee gear';
-  if(/event|trade|conference|show|booth/.test(text)) return 'event merch';
-  if(/onboard|hire|welcome/.test(text)) return 'welcome kits';
-  if(/recognition|award|anniversary|appreciation/.test(text)) return 'recognition items';
-  if(/gift|holiday|client|customer/.test(text)) return 'client gifts';
-  return 'branded merch';
+function subjectRationale(ctx, subject){
+  if(ctx.signalType === 'hiring') return 'It references a recent hiring trigger and opens the door to a quick conversation without pitching.';
+  if(ctx.signalType === 'event') return 'It ties the note to timing and gives the recipient a clear reason to open it.';
+  if(ctx.signalType === 'expansion') return 'It uses the business news as context while keeping the ask simple.';
+  if(ctx.signalType === 'repeat') return 'It feels personal and works well when the account has prior order history.';
+  return 'It is specific enough to avoid sounding like a generic account check-in.';
 }
 
-function trimToWords(text, maxWords){
-  const words = cleanSalesPlayText(text).split(/\s+/).filter(Boolean);
-  if(words.length <= maxWords) return cleanSalesPlayText(text);
-  return words.slice(0, maxWords).join(' ');
+function ownerPhraseForSignal(ctx){
+  if(ctx.signalType === 'hiring') return 'onboarding or recruiting merch';
+  if(ctx.signalType === 'event') return 'event merch or giveaways';
+  if(ctx.signalType === 'expansion') return 'launch materials or team gear';
+  if(ctx.signalType === 'repeat') return 'repeat orders or upcoming merch needs';
+  return ctx.category || 'branded merch';
 }
 
-function cleanSalesPlayText(text){
-  return String(text || '').replace(/\s+/g, ' ').trim();
+function triggerPhraseForSignal(ctx){
+  if(ctx.signalType === 'hiring') return 'recent hiring activity';
+  if(ctx.signalType === 'event') return 'an upcoming event or campaign';
+  if(ctx.signalType === 'expansion') return 'recent expansion news';
+  if(ctx.signalType === 'repeat') return 'past ordering activity';
+  if(ctx.whyNow) return ctx.whyNow.replace(/[.]+$/,'');
+  return 'a timely account signal';
 }
 
-function normalizeForQuestionCompare(text){
-  return cleanSalesPlayText(text).toLowerCase().replace(/[^a-z0-9 ]/g, '');
+function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
+  const text = [reasonTitle, whyNow, category, opp.opportunityName, opp.opportunity, opp.signalType, opp.signalTitle, opp.evidence].join(' ').toLowerCase();
+  if(/hiring|career|jobs|recruit|new hire|onboard/.test(text)) return 'hiring';
+  if(/event|conference|trade show|expo|campaign|booth/.test(text)) return 'event';
+  if(/expansion|opening|opened|new location|facility|branch/.test(text)) return 'expansion';
+  if(/repeat|reorder|historical|past order|last year|annual/.test(text)) return 'repeat';
+  return 'general';
 }
 
-function uniqueSalesPlayQuestions(questions, bannedText){
-  const seen = new Set();
-  const banned = normalizeForQuestionCompare(bannedText);
-  return questions.filter(q => {
-    const key = normalizeForQuestionCompare(q);
-    if(!key || key === banned || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function formatSalesPlayClipboard(play, account, reasonTitle, mode){
+  return [
+    `SALES PLAY: ${account} · ${reasonTitle} · ${mode} Play`,
+    '',
+    'OPPORTUNITY SUMMARY',
+    ...play.opportunitySummary.map(item => `- ${item}`),
+    '',
+    'BEST NEXT MOVE',
+    play.bestNextMove,
+    '',
+    'EMAIL SUBJECT',
+    play.emailSubject,
+    '',
+    'COPY & PASTE EMAIL',
+    play.outreachEmail,
+    '',
+    'CALL SCRIPT',
+    ...play.callScript.map(line => line.replace(/<[^>]+>/g, '')),
+    '',
+    'QUESTIONS TO ASK',
+    ...play.questionsToAsk.map(item => `- ${item}`),
+    '',
+    'SUCCESS LOOKS LIKE',
+    ...play.successLooksLike.map(item => `- ${item}`),
+    '',
+    'COACHING NOTE',
+    play.coachingNote
+  ].join('\n');
+}
+
+window.copySalesPlayField = function(btn, text){
+  navigator.clipboard.writeText(text).then(() => {
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = original, 1600);
+  }).catch(() => alert('Could not copy to clipboard'));
 }
 
 function isClosedHistoricalRecord(record){
