@@ -1311,6 +1311,34 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
+function cleanSalesPlayText(value){
+  return String(value || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function pickPrimaryPromoCategory(opp){
+  const candidates = []
+    .concat(Array.isArray(opp.commonPromoCategories) ? opp.commonPromoCategories : [])
+    .concat(Array.isArray(opp.suggestedProducts) ? opp.suggestedProducts : [])
+    .concat(Array.isArray(opp.productCategories) ? opp.productCategories : [])
+    .concat(opp.category || opp.primaryCategory || opp.opportunity || '');
+  const text = candidates.filter(Boolean).join(' ').toLowerCase();
+  if(/hiring|onboard|welcome|recruit/.test(text)) return 'onboarding';
+  if(/event|conference|trade show|expo|booth|campaign/.test(text)) return 'event';
+  if(/recognition|award|gift|appreciation|milestone/.test(text)) return 'recognition';
+  if(/apparel|shirt|uniform|hat|headwear|outerwear/.test(text)) return 'apparel';
+  if(/print|stationery|notebook|signage/.test(text)) return 'print';
+  return cleanSalesPlayText(candidates.find(Boolean) || 'promo');
+}
+
+function trimToWords(text, maxWords){
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if(words.length <= maxWords) return String(text || '').trim();
+  return words.slice(0, maxWords).join(' ').replace(/[,.!?;:]+$/, '') + '...';
+}
+
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp){
   const account = cleanSalesPlayText(opp.account || 'this account');
