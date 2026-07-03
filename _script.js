@@ -1311,62 +1311,32 @@ function getPriorityTier(opp){
   return {label:'Low Priority', cls:'confidence-low'};
 }
 
-// Sales Play Generator - reason-to-reach-out and relationship-aware
+// Sales Play Generator - concise, non-repetitive, reply-first promo outreach
 window.createSalesPlayPanel = function(opp){
-  const account = opp.account || 'this account';
-  const contactName = opp.contactName || opp.contact || '';
-  const mode = salesPlayModeFromOpp(opp);
-  const relationshipStrength = Math.round(opp.relationshipStrength || 0);
-  const closeProbability = Math.round(opp.closeProbability || 0);
+  const account = cleanSalesPlayText(opp.account || 'this account');
+  const contactName = cleanSalesPlayText(opp.contactName || opp.contact || '');
   const firstName = contactName && !contactName.includes('/') ? contactName.split(' ')[0] : 'there';
-  const reasonTitle = getReasonToReachOutTitle(opp);
-  const whyNow = getRepFriendlyWhy(opp);
-  const conversationStarter = getSuggestedOpener(opp);
-  const categories = (opp.commonPromoCategories || opp.suggestedProducts || ['apparel', 'giveaways', 'recognition items']).slice(0,4);
-  const categoryText = categories.join(', ');
+  const mode = salesPlayModeFromOpp(opp);
+  const reasonTitle = cleanSalesPlayText(getReasonToReachOutTitle(opp));
+  const whyNow = cleanSalesPlayText(getRepFriendlyWhy(opp));
+  const conversationStarter = cleanSalesPlayText(getSuggestedOpener(opp));
+  const relationshipStrength = Math.round(Number(opp.relationshipStrength || 0));
+  const closeProbability = Math.round(Number(opp.closeProbability || opp.confidence || 0));
   const sourceLabel = opp.sourceUrl ? 'verified public signal' : 'account history';
-  const relationshipLine = relationshipStrength >= 75
-    ? 'This is a warm account. Keep the ask casual and relationship-led.'
-    : relationshipStrength >= 40
-      ? 'This is a lukewarm account. Reopen the conversation with a specific reason, not a generic check-in.'
-      : 'This is a low-history account. Lead with the signal and ask for the right person.';
+  const category = pickPrimaryPromoCategory(opp);
 
-  let subject, email, callOpen, questions, nextStep;
-
-  if(mode === 'Warm'){
-    subject = `Quick question for ${account}`;
-    email = `Hey ${firstName},\n\nHope all is well.\n\nAppreciate being able to help with the branded merch work so far. I had one quick adjacent thought for you.\n\n${conversationStarter}\n\nThe reason I ask: ${whyNow}\n\nIf helpful, I can send a couple simple options — or point you to the right category if someone else owns it.\n\nWorth a quick look?`;
-    callOpen = `“Hey ${firstName}, appreciate the work we've been able to help with. I had one quick related question based on what you're already doing.”`;
-    questions = [
-      conversationStarter,
-      'Is that handled by you, or does another department own it?',
-      'Are different teams ordering this kind of merch separately today?',
-      'Would it help if I sent a quick good / better / best option set?'
-    ];
-    nextStep = 'Send a short relationship-based note. Goal: earn a reply or referral, not pitch a full program.';
-  } else if(mode === 'Lukewarm'){
-    subject = `Quick idea for ${account}`;
-    email = `Hey ${firstName},\n\nIt's been a bit since we've connected, but I was looking back at ${account} and had a specific reason to reach out.\n\n${conversationStarter}\n\nWhy now: ${whyNow}\n\nIf this is already covered, no worries. If not, I can send a couple simple ideas or help find the right person.\n\nIs this worth revisiting?`;
-    callOpen = `“Hey ${firstName}, we haven't connected in a bit, but I had a specific idea for ${account} — not just a generic check-in.”`;
-    questions = [
-      conversationStarter,
-      'Is this still relevant for the team?',
-      'Has ownership for branded merch changed internally?',
-      'Who would be the right person to include if we explored it?'
-    ];
-    nextStep = 'Use this as a reactivation touch. Ask for direction first, then offer a few examples.';
-  } else {
-    subject = `${account} question`;
-    email = `Hi ${firstName},\n\nI noticed something timely about ${account} and had a quick question.\n\n${conversationStarter}\n\nWhy now: ${whyNow}\n\nWe help teams turn moments like that into practical branded merch ideas without making it a huge project.\n\nIf you're not the right person, who usually owns that internally?`;
-    callOpen = `“Hi ${firstName}, I noticed something timely about ${account} and wanted to find the right person to ask.”`;
-    questions = [
-      conversationStarter,
-      'Who typically owns employee, event, customer, or department merch programs?',
-      'Is there an upcoming timing or initiative this would need to support?',
-      'Would it be useful to see a few examples?'
-    ];
-    nextStep = 'Lead with the reason to reach out. Confirm ownership and timing before discussing products.';
-  }
+  const play = buildConciseSalesPlay({
+    account,
+    firstName,
+    mode,
+    reasonTitle,
+    whyNow,
+    conversationStarter,
+    relationshipStrength,
+    closeProbability,
+    sourceLabel,
+    category
+  });
 
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
@@ -1380,55 +1350,139 @@ window.createSalesPlayPanel = function(opp){
         </div>
         <div class="sales-play-output">
           <div class="sales-play-section">
-            <h3>Quick-Win Read</h3>
-            <div class="section-content">
-              <strong>Reason to reach out:</strong> ${escapeHtml(reasonTitle)}<br>
-              <strong>Relationship Strength:</strong> ${relationshipStrength}/100<br>
-              <strong>Estimated Close Probability:</strong> ${closeProbability}%<br>
-              <strong>Source:</strong> ${escapeHtml(sourceLabel)}<br>
-              <strong>Rep guidance:</strong> ${escapeHtml(relationshipLine)}
-            </div>
+            <h3>quickRead</h3>
+            <div class="section-content">${escapeHtml(play.quickRead)}</div>
           </div>
           <div class="sales-play-section">
-            <h3>Why Now</h3>
-            <div class="section-content">${escapeHtml(whyNow)}</div>
+            <h3>suggestedApproach</h3>
+            <div class="section-content">${escapeHtml(play.suggestedApproach)}</div>
           </div>
           <div class="sales-play-section">
-            <h3>Conversation Starter</h3>
-            <div class="section-content">${escapeHtml(conversationStarter)}</div>
+            <h3>emailSubject</h3>
+            <div class="section-content subject-line">${escapeHtml(play.emailSubject)}</div>
           </div>
           <div class="sales-play-section">
-            <h3>Common Promo Categories</h3>
-            <div class="section-content">${escapeHtml(categoryText)}</div>
+            <h3>outreachEmail</h3>
+            <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
           </div>
           <div class="sales-play-section">
-            <h3>Subject Line</h3>
-            <div class="section-content subject-line">${escapeHtml(subject)}</div>
+            <h3>callScript</h3>
+            <div class="section-content">${escapeHtml(play.callScript)}</div>
           </div>
           <div class="sales-play-section">
-            <h3>Outreach Email</h3>
-            <div class="section-content sales-play-email-body">${escapeHtml(email)}</div>
+            <h3>discoveryQuestions</h3>
+            <div class="section-content"><ul class="discovery-list">${play.discoveryQuestions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
           </div>
           <div class="sales-play-section">
-            <h3>Call Script</h3>
-            <div class="section-content">
-              <div class="script-section"><div class="script-label">Open</div><div class="script-text">${escapeHtml(callOpen)}</div></div>
-              <div class="script-section"><div class="script-label">Reason</div><div class="script-text">“${escapeHtml(whyNow)}”</div></div>
-              <div class="script-section"><div class="script-label">Ask</div><div class="script-text">“${escapeHtml(conversationStarter)}”</div></div>
-            </div>
-          </div>
-          <div class="sales-play-section">
-            <h3>Discovery Questions</h3>
-            <div class="section-content"><ul class="discovery-list">${questions.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
-          </div>
-          <div class="sales-play-section">
-            <h3>Recommended Next Step</h3>
-            <div class="section-content next-step">${escapeHtml(nextStep)}</div>
+            <h3>recommendedNextStep</h3>
+            <div class="section-content next-step">${escapeHtml(play.recommendedNextStep)}</div>
           </div>
         </div>
       </div>
     </div>`;
   document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function buildConciseSalesPlay(ctx){
+  const relationshipLine = ctx.relationshipStrength >= 75
+    ? 'Warm account with enough history to ask for direction without overexplaining.'
+    : ctx.relationshipStrength >= 40
+      ? 'Known account where a specific reconnect will work better than a generic check-in.'
+      : 'Low-history account, so lead with context and ask for the right owner.';
+
+  const quickRead = `${ctx.reasonTitle}. ${relationshipLine}`;
+
+  const suggestedApproach = ctx.sourceLabel === 'verified public signal'
+    ? `Open with the business trigger, then ask who owns ${ctx.category} before suggesting ideas.`
+    : `Use the order history as the reason to check timing, ownership, and whether a repeat need is coming up.`;
+
+  const emailSubject = conciseSubject(ctx);
+  const outreachEmail = trimToWords(buildReplyFirstEmail(ctx), 120);
+  const callScript = trimToWords(buildNaturalCallScript(ctx), 75);
+  const discoveryQuestions = uniqueSalesPlayQuestions([
+    `When would this need to be decided or in hand?`,
+    `Who typically owns ${ctx.category} for ${ctx.account}?`,
+    `What would make this useful for the team instead of just another merch order?`
+  ], ctx.conversationStarter).slice(0, 3);
+  const recommendedNextStep = ctx.mode === 'Cold'
+    ? 'Ask for the right owner.'
+    : 'Send the email.';
+
+  return {
+    quickRead,
+    suggestedApproach,
+    emailSubject,
+    outreachEmail,
+    callScript,
+    discoveryQuestions,
+    recommendedNextStep
+  };
+}
+
+function buildReplyFirstEmail(ctx){
+  if(ctx.mode === 'Warm'){
+    return `Hey ${ctx.firstName},\n\nI was looking at ${ctx.account} and noticed a possible follow-up around ${ctx.category}.\n\n${ctx.whyNow}\n\nIs this something you still handle, or should I ask someone else on the team?\n\nIf it is relevant, I can send a couple simple options.`;
+  }
+  if(ctx.mode === 'Lukewarm'){
+    return `Hey ${ctx.firstName},\n\nIt's been a bit, but I saw a timely reason to reconnect with ${ctx.account}.\n\n${ctx.whyNow}\n\nAre you the right person to ask about this, or is there someone better to contact?\n\nHappy to keep it simple if useful.`;
+  }
+  return `Hi ${ctx.firstName},\n\nI noticed ${ctx.account} may have a timely need connected to ${ctx.category}.\n\n${ctx.whyNow}\n\nWho would be the best person to ask about this?\n\nI can share a few practical ideas if it is worth exploring.`;
+}
+
+function buildNaturalCallScript(ctx){
+  if(ctx.mode === 'Warm'){
+    return `Hey ${ctx.firstName}, I was reviewing ${ctx.account} and saw a possible need around ${ctx.category}. Are you still the best person to ask about that, or should I talk with someone else?`;
+  }
+  if(ctx.mode === 'Lukewarm'){
+    return `Hey ${ctx.firstName}, we have not connected in a bit, but I had a specific reason for calling. ${ctx.whyNow} Who would usually own that internally?`;
+  }
+  return `Hi ${ctx.firstName}, I will be brief. I saw something timely with ${ctx.account} and wanted to find the right person for ${ctx.category}. Who usually handles that?`;
+}
+
+function conciseSubject(ctx){
+  const subject = ctx.mode === 'Warm'
+    ? `${ctx.account} follow-up`
+    : ctx.mode === 'Lukewarm'
+      ? `${ctx.account} merch question`
+      : `Question for ${ctx.account}`;
+  return trimToWords(subject, 8);
+}
+
+function pickPrimaryPromoCategory(opp){
+  const list = opp.commonPromoCategories || opp.suggestedProducts || [];
+  const first = Array.isArray(list) && list.length ? list[0] : '';
+  const text = cleanSalesPlayText(first || opp.opportunityName || opp.opportunity || '').toLowerCase();
+  if(/apparel|shirt|hat|jacket|gear|uniform/.test(text)) return 'apparel and employee gear';
+  if(/event|trade|conference|show|booth/.test(text)) return 'event merch';
+  if(/onboard|hire|welcome/.test(text)) return 'welcome kits';
+  if(/recognition|award|anniversary|appreciation/.test(text)) return 'recognition items';
+  if(/gift|holiday|client|customer/.test(text)) return 'client gifts';
+  return 'branded merch';
+}
+
+function trimToWords(text, maxWords){
+  const words = cleanSalesPlayText(text).split(/\s+/).filter(Boolean);
+  if(words.length <= maxWords) return cleanSalesPlayText(text);
+  return words.slice(0, maxWords).join(' ');
+}
+
+function cleanSalesPlayText(text){
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeForQuestionCompare(text){
+  return cleanSalesPlayText(text).toLowerCase().replace(/[^a-z0-9 ]/g, '');
+}
+
+function uniqueSalesPlayQuestions(questions, bannedText){
+  const seen = new Set();
+  const banned = normalizeForQuestionCompare(bannedText);
+  return questions.filter(q => {
+    const key = normalizeForQuestionCompare(q);
+    if(!key || key === banned || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function isClosedHistoricalRecord(record){
