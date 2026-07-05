@@ -521,28 +521,103 @@ function mailtoHref(email){
   return `mailto:${e.replace(/"/g,'')}`;
 }
 
+
+function opportunityHeadline(opp){
+  const type = typeof getRecommendationType === 'function' ? getRecommendationType(opp || {}) : '';
+  const layer = signalLayerLabel(opp);
+  const kind = businessSignalKind(opp);
+  const cats = (opp.commonPromoCategories || opp.suggestedProducts || []).join(' ').toLowerCase();
+  const text = `${opp.opportunity || ''} ${opp.opportunityName || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''} ${opp.whyNow || ''} ${cats}`.toLowerCase();
+  if(type === 'Relationship Expansion') return 'Warm relationship + expansion opportunity';
+  if(type === 'Recent Project Follow-Up') return 'Recent order creates a natural follow-up';
+  if(type === 'Reorder Due' || type === 'Annual Buying Pattern') return 'Repeat buying window detected';
+  if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
+  if(kind === 'hiring' || /hiring|recruit|onboarding|new hire/.test(text)) return 'Recent hiring creates a timely reason to reconnect';
+  if(kind === 'event' || /event|conference|trade show|expo/.test(text)) return 'Upcoming activity creates a relevant opening';
+  if(kind === 'expansion' || /expansion|new location|growth/.test(text)) return 'Growth activity creates a reason to reach out';
+  if(layer === 'Follow-Up Signal') return 'Past order history suggests a follow-up opportunity';
+  if(layer === 'Repeat / Pattern Signal') return 'Historical timing suggests a repeat opportunity';
+  return 'Timely signal creates a reason to reconnect';
+}
+
+function whyThisMattersText(opp){
+  const why = getRepFriendlyWhy(opp) || (typeof recommendationOneLine === 'function' ? recommendationOneLine(opp) : '') || dailyReasonSummary(opp);
+  return shortText(why, 190);
+}
+
+function firstEvidenceMatch(evidence, pattern){
+  const items = Array.isArray(evidence) ? evidence : [String(evidence || '')];
+  return items.find(item => pattern.test(String(item || '')));
+}
+
+function extractHistoricalOrderCount(opp){
+  const direct = Number(opp.accountOrderCount || opp.historicalOrders || opp.orderCount || opp.totalOrders || 0);
+  if(direct > 0) return String(direct);
+  const matchText = firstEvidenceMatch(opp.evidence, /historical orders?\s*:?\s*\d+/i) || '';
+  const match = String(matchText).match(/historical orders?\s*:?\s*(\d+)/i);
+  return match ? match[1] : '';
+}
+
+function evidenceSourceLabel(opp){
+  const layer = signalLayerLabel(opp);
+  if(opp.sourceUrl) return sourceDomain(opp.sourceUrl) || 'Public business signal';
+  if(layer === 'Business Activity Signal') return 'Public business signal';
+  if(layer === 'Follow-Up Signal') return 'Account history';
+  if(layer === 'Repeat / Pattern Signal') return 'Account history';
+  return '';
+}
+
+function structuredEvidenceRows(opp){
+  const rows = [];
+  const orders = extractHistoricalOrderCount(opp);
+  if(orders) rows.push({label:'Historical orders', value:orders});
+  const age = formatSignalAge(opp);
+  if(age) rows.push({label:'Last signal', value:age});
+  const source = evidenceSourceLabel(opp);
+  if(source) rows.push({label:'Source', value:source});
+  const cats = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
+  if(cats.length) rows.push({label:'Prior categories', value:cats.join(', ')});
+  const revenue = Number(opp.accountRevenue || opp.historicalRevenue || 0);
+  if(revenue > 0) rows.push({label:'Historical revenue', value:fmtMoney(revenue)});
+  return rows.slice(0,5);
+}
+
 function renderRepOpportunityCard(opp){
   const badge = signalBadgeMeta(opp);
-  const bullets = getRepEvidenceBullets(opp).slice(0,3);
   const tier = getPriorityTier(opp);
-  const age = formatSignalAge(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
+  const evidenceRows = structuredEvidenceRows(opp);
+  const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
+  const score = typeof getOpportunityScore === 'function' ? Math.round(getOpportunityScore(opp)) : Math.round(Number(opp.score || opp.quickWinScore || opp.closeProbability || 0));
   return `
     <div class="opportunity-card daily-reason-card">
       <div class="opp-card-header">
-        <div class="signal-badge ${badge.cls}"><span>${badge.icon}</span>${escapeHtml(badge.label)}</div>
-        ${age ? `<div class="signal-age">${escapeHtml(age)}</div>` : ''}
+        <div class="opp-card-topline">
+          <div class="signal-badge ${badge.cls}"><span>${badge.icon}</span>${escapeHtml(badge.label)}</div>
+          <div class="confidence-badge ${tier.cls}">${escapeHtml(confidenceWord(opp))}${score ? ` · Why Now ${score}` : ''}</div>
+        </div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
-        <div class="opp-card-account">${escapeHtml(opp.contactTitle || opp.contact || 'Suggested contact TBD')}</div>
+        <div class="recommendation-subtype">${escapeHtml(opp.contactTitle || opp.contact || 'Suggested contact TBD')}</div>
+        <div class="opp-headline">${escapeHtml(opportunityHeadline(opp))}</div>
       </div>
-      <div class="confidence-badge ${tier.cls}">${escapeHtml(confidenceWord(opp))} confidence</div>
-      <div class="opp-section"><div class="opp-label">Why reach out</div><div class="opp-content">${escapeHtml(getRepFriendlyWhy(opp) || dailyReasonSummary(opp))}</div></div>
-      <div class="opp-section"><div class="opp-label">Suggested opener</div><div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
-      ${bullets.length ? `<div class="opp-section"><div class="opp-label">Evidence</div><div class="opp-content"><ul style="padding-left:18px; margin:0;">${bullets.map(b=>`<li>${escapeHtml(b)}</li>`).join('')}</ul></div></div>` : ''}
-      ${(opp.commonPromoCategories || opp.suggestedProducts || []).length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${(opp.commonPromoCategories || opp.suggestedProducts || []).slice(0,4).map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
+
+      <div class="opp-section why-matters-card">
+        <div class="opp-label">Why this matters</div>
+        <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
+      </div>
+
+      <div class="opp-section opener-card">
+        <div class="opp-label">Suggested opener</div>
+        <div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div>
+      </div>
+
+      ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
+
+      ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
+
       <div class="opp-card-actions">
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Generate Sales Play</button>
+        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Sales Play</button>
       </div>
     </div>`;
 }
