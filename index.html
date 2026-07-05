@@ -1553,9 +1553,79 @@
   }
 
 .low-confidence-signals{margin-top:12px;border:1px dashed var(--line);border-radius:10px;padding:10px 12px;background:#fffdf8}.low-confidence-signals summary{cursor:pointer;font-family:var(--mono);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
+.beta-top-banner{
+  min-height:30px;
+  padding:6px 16px;
+  background:#fff8e8;
+  border-bottom:1px solid #D8DEE9;
+  color:#17375E;
+  font-family:var(--mono, ui-monospace, monospace);
+  font-size:0.76rem;
+  line-height:1.35;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  gap:6px;
+}
+.beta-top-banner a{
+  color:#17375E;
+  font-weight:800;
+  text-decoration:none;
+  border-bottom:1px solid #F5A623;
+}
+.beta-top-banner a:hover{color:#1FB7AE;border-bottom-color:#1FB7AE;}
+.beta-modal-backdrop{
+  display:none;
+  position:fixed;
+  inset:0;
+  z-index:1000;
+  background:rgba(23,55,94,0.45);
+  padding:24px;
+  align-items:center;
+  justify-content:center;
+}
+.beta-modal-backdrop.active{display:flex;}
+.beta-modal{
+  width:min(560px,100%);
+  background:#fff;
+  border:2px solid #17375E;
+  border-radius:10px;
+  padding:30px;
+  box-shadow:0 20px 60px rgba(23,55,94,0.22);
+}
+.beta-modal h2{
+  font-family:var(--display, Georgia, serif);
+  font-size:1.9rem;
+  line-height:1.12;
+  margin-bottom:14px;
+  color:#17375E;
+}
+.beta-modal p{margin:0 0 12px;color:#17375E;line-height:1.5;}
+.beta-mission{
+  margin:14px 0;
+  padding:16px;
+  border-left:4px solid #1FB7AE;
+  background:#F7F8FA;
+  color:#17375E;
+  font-weight:800;
+  line-height:1.45;
+}
+.beta-setup-time{
+  display:inline-block;
+  margin:6px 0 18px;
+  font-family:var(--mono, ui-monospace, monospace);
+  font-size:0.78rem;
+  color:#6B7280;
+}
+@media(max-width:640px){
+  .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
+  .beta-modal{padding:24px;}
+}
 </style>
 </head>
 <body>
+<div class="beta-top-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact.html">Leave Feedback →</a></div>
 
 <header>
   <div class="brand">
@@ -1731,11 +1801,6 @@
 
   <div id="results">
 
-    <div class="beta-banner" id="betaBanner">
-      <div><strong>🚧 House Accounts Beta</strong><span>Thanks for helping us improve House Accounts. Your feedback directly influences what we build next.</span></div>
-      <a class="beta-feedback-link" href="#feedback">Leave Feedback →</a>
-    </div>
-
     <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
       <div class="customer-dashboard-top">
         <div>
@@ -1806,18 +1871,6 @@
         <span><b>Business Activity Signals</b> — verified public signals from web research</span>
       </div>
 
-      <div class="whats-next-card" id="whatsNextCard">
-        <h3>What's Next?</h3>
-        <p><strong>You're all set!</strong> House Accounts will continue monitoring your customer accounts for new opportunities.</p>
-        <p>Here's what to do next:</p>
-        <ol>
-          <li>Review your opportunities.</li>
-          <li>Open a Sales Play.</li>
-          <li>Check back every Monday for your Weekly Brief.</li>
-          <li>Tell us what works—and what doesn't.</li>
-        </ol>
-        <a class="beta-feedback-link" href="#feedback">Leave Feedback →</a>
-      </div>
       <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
       <div id="researchDiagnostics" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#eef8ff; border-left:3px solid var(--teal); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
       <div class="opportunities-grid" id="opportunitiesGrid"></div>
