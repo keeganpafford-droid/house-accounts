@@ -775,15 +775,18 @@
 
   .opp-card-actions{
     display:flex;
+    flex-wrap:wrap;
     gap:8px;
     margin-top:auto;
-    padding-top:12px;
+    padding-top:16px;
     border-top:1px solid var(--line);
   }
   .btn-generate-play{
-    flex:1;
-    padding:8px 12px;
-    font-size:0.75rem;
+    flex:0 0 100%;
+    width:100%;
+    min-height:46px;
+    padding:12px 16px;
+    font-size:0.82rem;
     background:var(--signal);
     color:#fff;
   }
@@ -2843,7 +2846,7 @@ function renderRepOpportunityCard(opp){
 
       <div class="opp-card-actions">
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Sales Play</button>
+        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Full Sales Play →</button>
       </div>
     </div>`;
 }

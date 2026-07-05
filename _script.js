@@ -617,7 +617,7 @@ function renderRepOpportunityCard(opp){
 
       <div class="opp-card-actions">
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Sales Play</button>
+        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Full Sales Play →</button>
       </div>
     </div>`;
 }
