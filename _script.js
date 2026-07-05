@@ -45,8 +45,39 @@ async function captureLead(stage, payload){
   }catch(e){}
 }
 
+
+function getBetaFirstName(){
+  const lead = currentLead || getSavedLead();
+  if(!lead || !lead.name) return '';
+  return String(lead.name).trim().split(/\s+/)[0] || '';
+}
+
+function showBetaWelcomeModal(){
+  const modal = document.getElementById('betaWelcomeModal');
+  if(!modal) return;
+  if(localStorage.getItem('houseAccountsBetaWelcomeDismissed') === 'true') return;
+  modal.classList.add('active');
+}
+
+function dismissBetaWelcomeModal(){
+  localStorage.setItem('houseAccountsBetaWelcomeDismissed', 'true');
+  const modal = document.getElementById('betaWelcomeModal');
+  if(modal) modal.classList.remove('active');
+}
+
+function maybeShowBetaWelcomeForSignedInUser(){
+  const saved = getSavedLead();
+  if(saved && saved.email) showBetaWelcomeModal();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
+  maybeShowBetaWelcomeForSignedInUser();
+
+  const betaWelcomeStartBtn = document.getElementById('betaWelcomeStartBtn');
+  if(betaWelcomeStartBtn){
+    betaWelcomeStartBtn.addEventListener('click', dismissBetaWelcomeModal);
+  }
 
   const leadForm = document.getElementById('leadForm');
   if(leadForm){
@@ -68,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.setItem('houseAccountsLead', JSON.stringify(lead));
       await captureLead('report_gate', {lead});
       setLeadGateState();
+      showBetaWelcomeModal();
       clearError();
     });
   }

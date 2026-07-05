@@ -1567,6 +1567,18 @@
 </header>
 
 <main>
+
+  <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
+    <div class="beta-modal">
+      <h2 id="betaWelcomeTitle">Welcome to the House Accounts Beta 👋</h2>
+      <p>Thanks for being one of our first Beta users.</p>
+      <p>Our mission is simple:</p>
+      <div class="beta-mission">Help promotional products sales reps answer one question:<br>Who should I contact today, and why?</div>
+      <p>As a beta user, your feedback will directly influence what we build next.</p>
+      <div class="beta-setup-time">Estimated setup time: 3–5 minutes</div>
+      <button class="btn" type="button" id="betaWelcomeStartBtn">Get Started</button>
+    </div>
+  </div>
   <section class="lead-gate" id="leadGate">
     <h2>Know which house accounts to call this week.</h2>
     <div class="promise">Enter your information and upload your customer list. House Accounts automatically analyzes your accounts and shows your team the best reasons to reach out.</div>
@@ -1719,6 +1731,11 @@
 
   <div id="results">
 
+    <div class="beta-banner" id="betaBanner">
+      <div><strong>🚧 House Accounts Beta</strong><span>Thanks for helping us improve House Accounts. Your feedback directly influences what we build next.</span></div>
+      <a class="beta-feedback-link" href="#feedback">Leave Feedback →</a>
+    </div>
+
     <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
       <div class="customer-dashboard-top">
         <div>
@@ -1787,6 +1804,19 @@
         <span><b>Follow-Up Signals</b> — recent orders or completed projects</span>
         <span><b>Repeat / Pattern Signals</b> — seasonal or similar historical buys</span>
         <span><b>Business Activity Signals</b> — verified public signals from web research</span>
+      </div>
+
+      <div class="whats-next-card" id="whatsNextCard">
+        <h3>What's Next?</h3>
+        <p><strong>You're all set!</strong> House Accounts will continue monitoring your customer accounts for new opportunities.</p>
+        <p>Here's what to do next:</p>
+        <ol>
+          <li>Review your opportunities.</li>
+          <li>Open a Sales Play.</li>
+          <li>Check back every Monday for your Weekly Brief.</li>
+          <li>Tell us what works—and what doesn't.</li>
+        </ol>
+        <a class="beta-feedback-link" href="#feedback">Leave Feedback →</a>
       </div>
       <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
       <div id="researchDiagnostics" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#eef8ff; border-left:3px solid var(--teal); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
@@ -2219,8 +2249,39 @@ async function loadSavedDashboard(email){
   }
 }
 
+
+function getBetaFirstName(){
+  const lead = currentLead || getSavedLead();
+  if(!lead || !lead.name) return '';
+  return String(lead.name).trim().split(/\s+/)[0] || '';
+}
+
+function showBetaWelcomeModal(){
+  const modal = document.getElementById('betaWelcomeModal');
+  if(!modal) return;
+  if(localStorage.getItem('houseAccountsBetaWelcomeDismissed') === 'true') return;
+  modal.classList.add('active');
+}
+
+function dismissBetaWelcomeModal(){
+  localStorage.setItem('houseAccountsBetaWelcomeDismissed', 'true');
+  const modal = document.getElementById('betaWelcomeModal');
+  if(modal) modal.classList.remove('active');
+}
+
+function maybeShowBetaWelcomeForSignedInUser(){
+  const saved = getSavedLead();
+  if(saved && saved.email) showBetaWelcomeModal();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
+  maybeShowBetaWelcomeForSignedInUser();
+
+  const betaWelcomeStartBtn = document.getElementById('betaWelcomeStartBtn');
+  if(betaWelcomeStartBtn){
+    betaWelcomeStartBtn.addEventListener('click', dismissBetaWelcomeModal);
+  }
 
   const leadForm = document.getElementById('leadForm');
   if(leadForm){
@@ -2242,6 +2303,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.setItem('houseAccountsLead', JSON.stringify(lead));
       await captureLead('report_gate', {lead});
       setLeadGateState();
+      showBetaWelcomeModal();
       clearError();
     });
   }
