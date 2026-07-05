@@ -88,7 +88,7 @@
   </section>
 
   <section class="grid" aria-label="Feedback options">
-    <form class="card" action="mailto:hello@houseaccounts.ai" method="post" enctype="text/plain">
+    <form class="card" data-feedback-type="Feedback">
       <h3>💬 Share Feedback</h3>
       <p>Tell us what would make the product clearer, faster, or more useful.</p>
       <div class="form-row">
@@ -98,7 +98,7 @@
       <button class="btn" type="submit">Submit</button>
     </form>
 
-    <form class="card" action="mailto:hello@houseaccounts.ai" method="post" enctype="text/plain">
+    <form class="card" data-feedback-type="Bug">
       <h3>🐞 Report a Bug</h3>
       <p>Share what happened so we can fix it quickly.</p>
       <div class="form-row">
@@ -112,7 +112,7 @@
       <button class="btn" type="submit">Submit</button>
     </form>
 
-    <form class="card" action="mailto:hello@houseaccounts.ai" method="post" enctype="text/plain">
+    <form class="card" data-feedback-type="Feature Request">
       <h3>💡 Suggest a Feature</h3>
       <p>Tell us what would help your team find better reasons to reach out.</p>
       <div class="form-row">
@@ -139,4 +139,71 @@
   © 2026 House Accounts · Built for promotional products distributors.
   <div class="footer-links"><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></div>
 </footer>
+
+<script>
+(function(){
+  const forms = document.querySelectorAll('form[data-feedback-type]');
+
+  function getMessage(form){
+    return Array.from(form.querySelectorAll('textarea'))
+      .map(function(field){
+        const label = form.querySelector('label[for="' + field.id + '"]');
+        const labelText = label ? label.textContent.trim() : field.name;
+        const value = field.value.trim();
+        return value ? labelText + ': ' + value : '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  forms.forEach(function(form){
+    form.addEventListener('submit', async function(event){
+      event.preventDefault();
+
+      const button = form.querySelector('button[type="submit"]');
+      const originalText = button ? button.textContent : 'Submit';
+      const message = getMessage(form);
+
+      if(!message){
+        alert('Please add a quick note before submitting.');
+        return;
+      }
+
+      if(button){
+        button.disabled = true;
+        button.textContent = 'Submitting...';
+      }
+
+      try{
+        const response = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: form.dataset.feedbackType,
+            message: message,
+            currentPage: window.location.pathname,
+            timestamp: new Date().toISOString()
+          })
+        });
+
+        const result = await response.json().catch(function(){ return {}; });
+        if(!response.ok || result.success === false){
+          throw new Error(result.error || 'Submission failed');
+        }
+
+        form.reset();
+        alert('Thanks — your feedback was submitted.');
+      }catch(error){
+        console.error('Feedback submission error:', error);
+        alert('Sorry, your feedback could not be submitted. Please email hello@houseaccounts.ai.');
+      }finally{
+        if(button){
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+    });
+  });
+})();
+</script>
 </body></html>
