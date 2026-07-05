@@ -86,10 +86,143 @@ async function sendEmail({to, subject, html}){
   if(!resp.ok) throw new Error(`Resend ${resp.status}: ${data.message || JSON.stringify(data)}`);
   return data;
 }
-function reportHtml(user, upload, newSignals, baseUrl){
-  const rows = newSignals.slice(0,10).map(s => `<tr><td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong>${s.account_name}</strong><br><span style="color:#6b7280;">${s.signal_type}</span></td><td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong>${s.title}</strong><br>${s.why_reach_out || ''}</td></tr>`).join('');
+function escapeHtml(value=''){
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function firstNameFromUser(user={}){
+  const name = clean(user.name || '');
+  if(!name || name.includes('@')) return '';
+  return name.split(/\s+/)[0] || '';
+}
+function weeklyBriefSubject(newSignals=[]){
+  const count = newSignals.length;
+  if(count === 1){
+    const topAccount = clean(newSignals[0]?.account_name) || 'your top account';
+    return `1 new reason to reach out this week: ${topAccount}`;
+  }
+  return `${count} new reasons to reach out this week`;
+}
+function metricRows(summary={}){
+  const rows = [
+    ['New Opportunities', summary.opportunityCount],
+    ['Business Activity Signals', summary.businessSignalCount],
+    ['Follow-up Opportunities', summary.followUpCount],
+    ['Repeat Buying Opportunities', summary.repeatBuyingCount],
+    ['Accounts Monitored', summary.accountsMonitored]
+  ];
+  return rows
+    .filter(([,value]) => Number.isFinite(Number(value)) && Number(value) >= 0)
+    .map(([label,value]) => `<li style="margin:6px 0;"><strong>${Number(value)}</strong> ${escapeHtml(label)}</li>`)
+    .join('');
+}
+function signalCategory(signalType=''){
+  const type = String(signalType || '').toLowerCase();
+  if(type.includes('repeat') || type.includes('reorder') || type.includes('buying')) return 'repeat';
+  if(type.includes('follow')) return 'followUp';
+  return 'business';
+}
+function suggestedNextMove(signal={}){
+  const payload = signal.payload || {};
+  return clean(
+    payload.suggestedNextMove ||
+    payload.recommendedNextStep ||
+    payload.suggestedOpener ||
+    payload.nextStep ||
+    signal.why_reach_out ||
+    'Open the account and decide whether to call, email, or ask for a referral this week.'
+  );
+}
+function whyItMatters(signal={}){
+  const payload = signal.payload || {};
+  return clean(
+    signal.why_reach_out ||
+    payload.whyItMattersForPromo ||
+    payload.whyItMatters ||
+    payload.opportunitySummary ||
+    payload.signalTitle ||
+    signal.title ||
+    'This account showed a timely reason to reconnect.'
+  );
+}
+function opportunityCardHtml(signal={}){
+  const account = escapeHtml(signal.account_name || 'Account');
+  const signalType = escapeHtml(signal.signal_type || 'Business Activity');
+  const why = escapeHtml(whyItMatters(signal));
+  const nextMove = escapeHtml(suggestedNextMove(signal));
+
+  return `<div style="border:1px solid #D8DEE9;border-radius:14px;background:#ffffff;padding:18px 18px 16px;margin:16px 0;">
+    <h2 style="font-size:18px;line-height:1.3;margin:0 0 12px;color:#17375E;">${account}</h2>
+    <div style="margin:0 0 12px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-bottom:3px;">Signal</div>
+      <div style="font-size:14px;color:#17375E;">${signalType}</div>
+    </div>
+    <div style="margin:0 0 12px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-bottom:3px;">Why it matters</div>
+      <div style="font-size:14px;color:#25364d;line-height:1.5;">${why}</div>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-bottom:3px;">Suggested next move</div>
+      <div style="font-size:14px;color:#25364d;line-height:1.5;">${nextMove}</div>
+    </div>
+  </div>`;
+}
+function weeklySummaryFromSignals(newSignals=[], accountsMonitored){
+  const summary = {
+    opportunityCount: newSignals.length,
+    businessSignalCount: 0,
+    followUpCount: 0,
+    repeatBuyingCount: 0,
+    accountsMonitored
+  };
+  for(const signal of newSignals){
+    const category = signalCategory(signal.signal_type || signal.title || '');
+    if(category === 'repeat') summary.repeatBuyingCount += 1;
+    else if(category === 'followUp') summary.followUpCount += 1;
+    else summary.businessSignalCount += 1;
+  }
+  return summary;
+}
+function reportHtml(user, upload, newSignals, baseUrl, summary={}){
+  const firstName = firstNameFromUser(user);
+  const opportunityCount = newSignals.length;
   const dashboardUrl = `${String(baseUrl || '').replace(/\/$/,'')}?dashboardEmail=${encodeURIComponent(user.email || '')}`;
-  return `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#0b2d4d;"><h1>House Accounts: New reasons to reach out</h1><p>${newSignals.length} new business signal${newSignals.length===1?'':'s'} found for ${upload.upload_name || 'your account list'}.</p><table style="border-collapse:collapse;width:100%;">${rows}</table><p style="margin-top:24px;"><a href="${dashboardUrl}" style="background:#12b9a6;color:white;padding:12px 18px;text-decoration:none;border-radius:4px;font-weight:bold;">View Dashboard</a></p><p style="margin-top:24px;color:#6b7280;font-size:13px;">House Accounts scans public business activity and your uploaded account data to identify who to contact and why.</p></div>`;
+  const topOpportunities = newSignals.slice(0,3);
+  const cards = topOpportunities.map(opportunityCardHtml).join('');
+  const extraCount = Math.max(opportunityCount - topOpportunities.length, 0);
+  const extraCopy = extraCount > 0
+    ? `<p style="margin:8px 0 0;color:#5b677a;font-size:14px;">There ${extraCount===1?'is':'are'} ${extraCount} more ${extraCount===1?'opportunity':'opportunities'} waiting in your dashboard.</p>`
+    : '';
+  const summaryRows = metricRows(summary);
+  const greeting = firstName ? `Good morning, ${escapeHtml(firstName)}.` : 'Good morning.';
+
+  return `<div style="margin:0;padding:0;background:#F7F8FA;font-family:Arial,sans-serif;color:#17375E;">
+    <div style="max-width:680px;margin:0 auto;padding:28px 16px;">
+      <div style="background:#ffffff;border:1px solid #D8DEE9;border-radius:18px;padding:28px;">
+        <div style="font-size:13px;font-weight:700;color:#1FB7AE;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px;">House Accounts</div>
+        <h1 style="font-size:28px;line-height:1.2;margin:0 0 12px;color:#17375E;">Your Monday House Accounts Brief</h1>
+        <p style="font-size:16px;line-height:1.55;margin:0 0 4px;color:#25364d;">${greeting}</p>
+        <p style="font-size:16px;line-height:1.55;margin:0 0 20px;color:#25364d;">We found <strong>${opportunityCount}</strong> new ${opportunityCount===1?'opportunity':'opportunities'} across your monitored accounts this week.</p>
+
+        ${cards}
+        ${extraCopy}
+
+        ${summaryRows ? `<div style="background:#F7F8FA;border:1px solid #D8DEE9;border-radius:14px;padding:16px 18px;margin:22px 0 0;">
+          <h3 style="font-size:16px;margin:0 0 8px;color:#17375E;">This Week's Summary</h3>
+          <ul style="margin:0;padding-left:20px;color:#25364d;font-size:14px;line-height:1.45;">${summaryRows}</ul>
+        </div>` : ''}
+
+        <div style="margin:26px 0 0;">
+          <a href="${dashboardUrl}" style="display:inline-block;background:#1FB7AE;color:#ffffff;padding:14px 22px;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;">Open Dashboard →</a>
+        </div>
+      </div>
+      <p style="text-align:center;margin:16px 0 0;color:#7b8794;font-size:12px;">House Accounts helps you focus on who to contact this week, and why.</p>
+    </div>
+  </div>`;
 }
 
 export default async function handler(req, res){
@@ -149,7 +282,7 @@ export default async function handler(req, res){
         if(newSignalRows.length){
           await supabase('ha_signals', {method:'POST', prefer:'return=minimal', body: JSON.stringify(newSignalRows)});
           if(!dryRun){
-            await sendEmail({to:user.email, subject:`${newSignalRows.length} new House Accounts reason${newSignalRows.length===1?'':'s'} to reach out`, html:reportHtml(user, upload, newSignalRows, baseUrl)});
+            await sendEmail({to:user.email, subject:weeklyBriefSubject(newSignalRows), html:reportHtml(user, upload, newSignalRows, baseUrl, weeklySummaryFromSignals(newSignalRows, accountPayloads.length))});
           }
         }
         await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run?.id)}`, {method:'PATCH', body: JSON.stringify({status:'complete', finished_at:new Date().toISOString(), summary:{accounts:accountPayloads.length, newSignals:newSignalRows.length, diagnostics:research.diagnostics || {}}})});
