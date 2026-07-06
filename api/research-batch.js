@@ -407,7 +407,7 @@ Do not summarize companies. Do not return generic company descriptions. Return o
 
 For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext field that explains the company situation behind the signal, not just the surface signal. For hiring signals, do not stop at "company is hiring"; try to identify whether hiring appears tied to growth, expansion, a new facility, a product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally.
 
-Then explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
+Then explain why it matters to promo, the recommended buying team, likely categories, and a casual opener. If public evidence identifies one or two relevant people, include them as potentialContacts; do not invent names and omit potentialContacts if no reliable person is found. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
   const body = {
     model,
     input: prompt,
@@ -487,6 +487,61 @@ function contextToOpener(context = '', type = '') {
 }
 
 
+function inferRecommendedBuyingTeam(type = '', context = '', summary = '', raw = {}) {
+  const explicit = safeArray(raw.recommendedBuyingTeam || raw.buyingTeam || raw.likelyBuyingTeam || raw.likelyBuyers, 4);
+  const text = clean(`${type} ${context} ${summary} ${explicit.join(' ')}`).toLowerCase();
+  let team = [];
+  if (/hiring|recruit|talent|onboarding|employee|people|best places|workforce|headcount/.test(text)) {
+    team = ['HR / People', 'Talent Acquisition'];
+  } else if (/trade show|conference|expo|event|summit|booth|sponsor|launch|rebrand|brand awareness|community|csr|charity|fundraiser/.test(text)) {
+    team = ['Marketing', /community|csr|charity|fundraiser|sponsor/.test(text) ? 'Community Relations' : 'Events'];
+  } else if (/product launch|new product|rollout|new service|unveil/.test(text)) {
+    team = ['Marketing', 'Product Marketing'];
+  } else if (/facility|warehouse|plant|manufacturing|production|capacity|second shift|safety|distribution center|operations/.test(text)) {
+    team = ['Operations', 'HR / People'];
+  } else if (/funding|investment|capital|acquisition|merger|integration|leadership|new ceo|president|vp/.test(text)) {
+    team = ['Marketing', 'HR / People'];
+  } else if (/award|recognition|milestone|anniversary/.test(text)) {
+    team = ['Marketing', 'HR / People'];
+  } else if (/contract|customer win|partnership|major deal/.test(text)) {
+    team = ['Marketing', 'Sales'];
+  }
+  for (const item of explicit) {
+    if (!team.some(t => t.toLowerCase() === item.toLowerCase())) team.push(item);
+  }
+  if (!team.length) team = ['Marketing', 'HR / People'];
+  return team.map(t => t.replace(/human resources/i, 'HR / People').replace(/people operations/i, 'HR / People')).filter(Boolean).slice(0, 3);
+}
+
+function normalizePotentialContacts(value, max = 2) {
+  const items = Array.isArray(value) ? value : [];
+  return items.map(c => {
+    if (typeof c === 'string') {
+      const parts = c.split(/\s+[-–—]\s+/);
+      return { name: clean(parts[0]), title: clean(parts.slice(1).join(' — ')), reason: '' };
+    }
+    return {
+      name: clean(c?.name || c?.fullName || c?.person || ''),
+      title: clean(c?.title || c?.role || c?.jobTitle || ''),
+      reason: clean(c?.reason || c?.whyRelevant || c?.relevance || c?.why || ''),
+      sourceUrl: clean(c?.sourceUrl || c?.url || '')
+    };
+  }).filter(c => c.name && !/unknown|n\/a|not available|team|department/i.test(c.name)).slice(0, max);
+}
+
+function buildWhyTheseContacts(contacts = [], team = [], type = '', context = '') {
+  const explicit = contacts.map(c => c.reason).filter(Boolean).join(' ');
+  if (explicit) return compact(explicit, 220);
+  if (!contacts.length) return '';
+  const c = clean(`${type} ${context} ${team.join(' ')}`).toLowerCase();
+  if (/hiring|recruit|talent|onboarding|people|hr/.test(c)) return 'These roles appear closest to recruiting, onboarding, or employee engagement tied to this opportunity.';
+  if (/event|conference|expo|community|csr|sponsor/.test(c)) return 'These roles appear closest to the event, community, or brand initiative behind this opportunity.';
+  if (/product|launch|marketing|rebrand/.test(c)) return 'These roles appear closest to the marketing or launch initiative behind this opportunity.';
+  if (/operations|facility|production|safety|warehouse/.test(c)) return 'These roles appear closest to the operational change creating the outreach opportunity.';
+  return 'These contacts appear to be the most relevant public starting points for this opportunity.';
+}
+
+
 function hasUnclearBusinessContext(context = '') {
   return /specific business initiative driving|specific growth driver|not yet clear|could not be determined|unclear/i.test(clean(context));
 }
@@ -520,6 +575,9 @@ function makeSignal(raw = {}) {
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories, 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);
+  const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, summary, raw);
+  const potentialContacts = normalizePotentialContacts(raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
+  const whyTheseContacts = compact(raw.whyTheseContacts || raw.contactRationale || buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, type, businessContext), 220);
   const sources = Array.isArray(raw.sources) ? raw.sources.map(s => ({ name: clean(s.name || s.sourceName || sourceDomain(s.url || '')), url: clean(s.url || s.sourceUrl || '') })).filter(s => s.url || s.name).slice(0, 4) : [];
   if (sourceUrl && !sources.some(s => s.url === sourceUrl)) sources.unshift({ name: clean(raw.sourceName || sourceDomain(sourceUrl) || 'Public source'), url: sourceUrl });
   return {
@@ -553,9 +611,13 @@ function makeSignal(raw = {}) {
     whyItMattersForPromo: why,
     conversationStarter: opener,
     suggestedOpener: opener,
-    suggestedContact: buyers[0] || clean(raw.suggestedContact || raw.contactRole || 'Relevant department lead'),
-    likelyBuyers: buyers.length ? buyers : [clean(raw.suggestedContact || 'Relevant department lead')],
-    affectedDepartment: clean(raw.likelyDepartment || raw.department || buyers[0] || ''),
+    recommendedBuyingTeam,
+    buyingTeam: recommendedBuyingTeam,
+    potentialContacts,
+    whyTheseContacts,
+    suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0] || buyers[0] || clean(raw.suggestedContact || raw.contactRole || 'Relevant department lead'),
+    likelyBuyers: recommendedBuyingTeam.length ? recommendedBuyingTeam : (buyers.length ? buyers : [clean(raw.suggestedContact || 'Relevant department lead')]),
+    affectedDepartment: clean(raw.likelyDepartment || raw.department || recommendedBuyingTeam[0] || buyers[0] || ''),
     likelyConversations: conversations.length ? conversations : [compact(raw.likelyConversation || raw.conversationAngle || why, 90)].filter(Boolean),
     likelyProducts: products,
     commonPromoCategories: products,
@@ -690,8 +752,19 @@ Internally score every candidate on:
 
 Return meaningful signals with confidence >= 60. Rank richer business context higher, but do not discard a useful hiring, expansion, event, funding, leadership, award, contract, or community signal solely because the exact business driver is unclear.
 
+Recommended Buying Team rules:
+- Always include recommendedBuyingTeam with 1 to 3 departments inferred from the signal and business context.
+- Examples: HR / People, Talent Acquisition, Marketing, Events, Operations, Community Relations, Product Marketing, Sales.
+- This should answer who the rep should start with, not every possible buyer.
+
+Potential Contacts rules:
+- Include potentialContacts only when a public source supports the person and role.
+- Return at most 2 contacts.
+- Never invent names, placeholder people, or generic departments as contacts.
+- Explain why the contact is relevant using whyTheseContacts or each contact reason.
+
 Return strict JSON only with shape:
-{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
+{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
 
 Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
