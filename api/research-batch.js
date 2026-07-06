@@ -407,7 +407,7 @@ Do not summarize companies. Do not return generic company descriptions. Return o
 
 For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext field that explains the company situation behind the signal, not just the surface signal. For hiring signals, do not stop at "company is hiring"; try to identify whether hiring appears tied to growth, expansion, a new facility, a product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally.
 
-Then explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing for weak or unverifiable signals.`;
+Then explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
   const body = {
     model,
     input: prompt,
@@ -454,7 +454,7 @@ function buildBusinessContext(raw = {}, type = '', summary = '', accountName = '
     return `${company} appears to be increasing production capacity, which can create timely needs around team apparel, safety programs, and employee engagement.`;
   }
   if (/hiring|jobs|careers|recruit|open position|now hiring|headcount/.test(text) || /hiring/i.test(type)) {
-    return `Hiring activity creates a timely reason to check in, though the specific growth driver is not yet clear.`;
+    return `The company is actively hiring, although the specific business initiative driving the hiring could not be determined from public information.`;
   }
   if (/event|conference|expo|trade show|summit|open house/.test(text)) {
     return `${company} appears to be preparing for a public event or industry presence, which can create needs around booth materials, attendee gifts, apparel, and follow-up campaigns.`;
@@ -478,7 +478,7 @@ function contextToPromoWhy(context = '', type = '') {
 function contextToOpener(context = '', type = '') {
   const c = clean(context);
   if (/specific growth driver is not yet clear/i.test(c) || /hiring/i.test(type)) {
-    return 'Saw some hiring activity and had a quick question — who typically owns onboarding or recruiting merch?';
+    return "I noticed you're growing your team recently. Is anything changing internally that your team is planning around?";
   }
   if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return 'Saw the event activity and had a quick question — who handles branded materials or attendee follow-up?';
   if (/funding|capital|investment|growth/i.test(c)) return 'Saw the recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?';
@@ -486,16 +486,35 @@ function contextToOpener(context = '', type = '') {
   return 'Saw some recent company activity and had a quick question — who would be best to ask about related internal or brand needs?';
 }
 
+
+function hasUnclearBusinessContext(context = '') {
+  return /specific business initiative driving|specific growth driver|not yet clear|could not be determined|unclear/i.test(clean(context));
+}
+
+function hasMeaningfulSignal(raw = {}, type = '', summary = '', businessContext = '') {
+  const text = clean(`${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''} ${raw.sourceUrl || ''}`).toLowerCase();
+  if (isJunkText(text)) return false;
+  return /hiring|jobs|careers|recruit|open position|now hiring|expansion|facility|new office|new location|warehouse|plant|funding|investment|acquisition|merger|contract|customer win|partnership|event|conference|expo|trade show|summit|award|recognition|milestone|anniversary|leadership|appoint|promot|launch|new product|rebrand|community|charity|sponsor|sustainability|safety|employee engagement/.test(text);
+}
+
+function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summary = '', businessContext = '') {
+  let score = Number(confidencePct || 0);
+  if (hasUnclearBusinessContext(businessContext)) score = Math.max(55, score - 8);
+  if (hasMeaningfulSignal(raw, type, summary, businessContext)) score = Math.max(score, hasUnclearBusinessContext(businessContext) ? 58 : 64);
+  return Math.round(Math.max(0, Math.min(100, score)));
+}
+
 function makeSignal(raw = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
-  const confidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
-  if (confidencePct < 72) return null; // gate weak/filler signals while still allowing useful medium evidence during beta.
+  const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
   const type = normalizeSignalType(raw.signalType || raw.opportunityType || raw.type);
   const title = compact(raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 140);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 220);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
+  const confidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
+  if (confidencePct < 55 || !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
   const why = compact(raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || contextToPromoWhy(businessContext, type), 280);
   const opener = compact(raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || contextToOpener(businessContext, type), 240);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
@@ -639,7 +658,7 @@ Act like a senior promotional products account executive doing account research 
 
 You are given account context and targeted public web search snippets/page content. Use ONLY the supplied evidence and URLs. Do not invent.
 
-Return only the strongest 0, 1, or 2 business signals per account. It is better to return nothing than weak filler.
+Return the strongest 0, 1, or 2 business signals per account. Do not require perfect business context. If a meaningful business signal exists but the underlying driver is unclear, keep the signal, explain the uncertainty transparently, and assign an appropriately lower confidence score.
 
 High-value triggers:
 - hiring/recruiting spikes
@@ -658,7 +677,7 @@ Reject:
 - old/irrelevant news unless still useful
 - contact/about/privacy/nav text
 - social posts with no clear business relevance
-- generic careers page existence with no specific hiring/recruiting reason
+- generic careers page existence with no specific hiring/recruiting reason, unless the evidence shows meaningful hiring activity or a clear recruiting push
 
 For each accepted signal, translate it into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
 
@@ -669,7 +688,7 @@ Internally score every candidate on:
 - confidence that the event is real
 - urgency/actionability for a sales rep
 
-Only return signals with confidence >= 80 unless the source is extremely strong and the reason to reach out is obvious.
+Return meaningful signals with confidence >= 60. Rank richer business context higher, but do not discard a useful hiring, expansion, event, funding, leadership, award, contract, or community signal solely because the exact business driver is unclear.
 
 Return strict JSON only with shape:
 {"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
