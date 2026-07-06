@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prospect Intelligence | House Accounts</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#17375E;--radar:#1FB7AE;--signal:#F5A623;--bg:#F7F8FA;--line:#D8DEE9;--muted:#6B7280;--display:'Inter',sans-serif;--mono:'IBM Plex Mono',monospace;}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--display);background:var(--bg);color:var(--ink);line-height:1.55}.beta-banner{min-height:30px;background:#fff7e8;border-bottom:1px solid rgba(245,166,35,.35);display:flex;align-items:center;justify-content:center;padding:6px 18px;font-size:.83rem;color:#5f4517}.beta-banner a{color:var(--ink);font-weight:800;text-decoration:none}.topnav{background:#fff;border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}.brand{font-weight:900;font-size:1.25rem;color:var(--ink);text-decoration:none}.navlinks{display:flex;gap:18px;align-items:center}.navlinks a{color:var(--ink);text-decoration:none;font-weight:700;font-size:.9rem}.navlinks a.active{color:var(--radar)}.container{max-width:1120px;margin:0 auto;padding:38px 22px}.hero{background:#fff;border:1px solid var(--line);border-radius:18px;padding:34px;box-shadow:0 14px 40px rgba(23,55,94,.08);margin-bottom:22px}.eyebrow{font-family:var(--mono);font-size:.75rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--signal);margin-bottom:8px}.hero h1{font-size:2.35rem;line-height:1.08;margin-bottom:12px}.hero p{color:var(--muted);max-width:760px}.workflow-note{margin-top:18px;display:inline-flex;gap:10px;align-items:center;padding:10px 12px;background:#eefdfb;border:1px solid rgba(31,183,174,.25);border-radius:10px;color:var(--ink);font-size:.9rem;font-weight:700}.grid{display:grid;grid-template-columns:380px 1fr;gap:22px;align-items:start}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:0 12px 32px rgba(23,55,94,.06)}.panel h2{font-size:1.35rem;margin-bottom:8px}.panel p{color:var(--muted);font-size:.92rem;margin-bottom:16px}.field{margin-bottom:12px}.field label{display:block;font-weight:800;font-size:.8rem;margin-bottom:6px}.field input{width:100%;border:1px solid var(--line);border-radius:9px;padding:11px 12px;font:inherit}.upload-box{border:2px dashed var(--line);border-radius:14px;padding:24px;text-align:center;background:#fbfcfd;margin-top:16px}.upload-box.drag{border-color:var(--radar);background:#eefdfb}.upload-box input{display:none}.btn{display:inline-flex;align-items:center;justify-content:center;background:var(--signal);color:#fff;border:0;border-radius:10px;padding:13px 18px;font-weight:900;cursor:pointer;text-decoration:none;min-height:44px}.btn.secondary{background:var(--ink)}.btn:disabled{opacity:.65;cursor:not-allowed}.helper{margin-top:14px;color:var(--muted);font-size:.85rem}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.chip{background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 9px;font-size:.78rem;font-weight:800;color:var(--ink)}.progress{display:none;margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.progress.active{display:block}.progress ul{margin:8px 0 0 18px;color:var(--muted);font-size:.9rem}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:18px}.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px}.stat strong{display:block;font-size:2rem;line-height:1;color:var(--ink)}.stat span{font-family:var(--mono);font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}.empty{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px;text-align:center;color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.opp-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.06)}.opp-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}.badge{font-family:var(--mono);font-size:.7rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--radar);background:#eefdfb;border:1px solid rgba(31,183,174,.28);border-radius:999px;padding:6px 8px}.score{font-weight:900;color:var(--ink);background:#fff8e9;border:1px solid rgba(245,166,35,.35);border-radius:999px;padding:6px 8px;font-size:.74rem}.opp-card h3{font-size:1.25rem;margin-bottom:4px}.headline{font-weight:900;margin:8px 0 14px}.section{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}.label{font-family:var(--mono);font-size:.72rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}.section p{color:#374151;font-size:.92rem}.opener{background:#F7F8FA;border:1px solid var(--line);border-radius:10px;padding:12px;color:#111827}.source{font-size:.84rem}.source a{color:var(--radar);font-weight:800}.error{display:none;margin-top:14px;color:#9f1239;background:#fff1f2;border:1px solid #fecdd3;padding:12px;border-radius:10px}.notice{display:none;margin-top:14px;color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;padding:12px;border-radius:10px}@media(max-width:900px){.grid,.cards{grid-template-columns:1fr}.hero h1{font-size:1.9rem}.navlinks{display:none}}
+</style>
+</head>
+<body>
+<div class="beta-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact">Leave Feedback →</a></div>
+<nav class="topnav"><a class="brand" href="/">House Accounts</a><div class="navlinks"><a href="/">Existing Customers</a><a class="active" href="/prospects">Prospect Intelligence</a><a href="/export-guides">Export Guides</a><a href="/contact">Feedback</a></div></nav>
+<main class="container">
+  <section class="hero">
+    <div class="eyebrow">Beta workflow</div>
+    <h1>Prospect Intelligence</h1>
+    <p>Upload a list of target companies. House Accounts will research public business activity and surface timely reasons to start a relevant prospecting conversation.</p>
+    <div class="workflow-note">Existing Customer analysis is unchanged. This workflow runs separately.</div>
+  </section>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Upload Target Accounts</h2>
+      <p>Company Name is required. Website, industry, and location are helpful but optional.</p>
+      <div id="leadFields">
+        <div class="field"><label for="prospectName">Your Name</label><input id="prospectName" placeholder="Jane Smith"></div>
+        <div class="field"><label for="prospectEmail">Work Email</label><input id="prospectEmail" type="email" placeholder="you@company.com"></div>
+        <div class="field"><label for="prospectCompany">Your Company</label><input id="prospectCompany" placeholder="Your distributor name"></div>
+      </div>
+      <div class="chips"><span class="chip">Company Name</span><span class="chip">Website</span><span class="chip">Industry</span><span class="chip">Location</span></div>
+      <div class="upload-box" id="prospectDropzone">
+        <button class="btn" id="prospectBrowse" type="button">Choose Target Account CSV</button>
+        <input type="file" id="prospectFile" accept=".csv">
+        <div class="helper">Company Name alone is enough to begin research.</div>
+      </div>
+      <div class="progress" id="prospectProgress"><strong>Researching target accounts...</strong><ul><li>Reading company list</li><li>Searching recent business activity</li><li>Extracting outreach signals</li><li>Building prospect opportunity cards</li></ul></div>
+      <div class="error" id="prospectError"></div>
+      <div class="notice" id="prospectNotice"></div>
+    </section>
+
+    <section>
+      <div class="stats"><div class="stat"><strong id="accountCount">0</strong><span>Uploaded target accounts</span></div><div class="stat"><strong id="signalCount">0</strong><span>Business signals found</span></div></div>
+      <div id="prospectResults" class="empty">Upload a target account list to start prospect research.</div>
+    </section>
+  </div>
+</main>
+<script>
+function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function clean(v){return String(v||'').trim();}
+function sourceDomain(url=''){try{return new URL(url).hostname.replace(/^www\./,'')}catch{return ''}}
+function getSavedLead(){try{return JSON.parse(localStorage.getItem('houseAccountsLead')||'null')}catch{return null}}
+function saveLead(lead){try{localStorage.setItem('houseAccountsLead',JSON.stringify(lead))}catch{}}
+function parseCSV(text){
+  text=String(text||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const rows=[];let row=[],field='',q=false;
+  for(let i=0;i<text.length;i++){const c=text[i];if(q){if(c==='"'){if(text[i+1]==='"'){field+='"';i++}else q=false}else field+=c}else{if(c==='"')q=true;else if(c===','){row.push(field);field=''}else if(c==='\n'){row.push(field);rows.push(row);row=[];field=''}else field+=c}}
+  if(field.length||row.length){row.push(field);rows.push(row)}
+  const filtered=rows.filter(r=>r.some(c=>clean(c))); if(filtered.length<2) throw new Error('No data rows found.');
+  const norm=h=>clean(h).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  const headers=filtered[0].map(norm);
+  const idx={
+    name: find(headers,['company_name','company','account_name','account','customer_name','customer','client_name','client','name','organization','business_name']),
+    website: find(headers,['website','url','domain','company_website','web_site']),
+    industry: find(headers,['industry','vertical','market','sector']),
+    location: find(headers,['location','city_state','city','state','region','headquarters','hq_location'])
+  };
+  if(idx.name<0) throw new Error('Could not identify a Company Name column.');
+  return filtered.slice(1).map(r=>({
+    name: clean(r[idx.name]),
+    companyName: clean(r[idx.name]),
+    website: idx.website>=0 ? clean(r[idx.website]) : '',
+    industry: idx.industry>=0 ? clean(r[idx.industry]) : '',
+    location: idx.location>=0 ? clean(r[idx.location]) : '',
+    rawData: Object.fromEntries(headers.map((h,i)=>[h,r[i]||'']))
+  })).filter(a=>a.name).slice(0,50);
+}
+function find(headers, names){for(const n of names){const i=headers.indexOf(n);if(i>=0)return i}return -1}
+function signalHeadline(sig){
+  const t=`${sig.signalType||''} ${sig.title||''} ${sig.whatChanged||''} ${sig.whyNow||''}`.toLowerCase();
+  if(/hiring|recruit|onboarding/.test(t)) return 'Hiring activity creates a timely opening';
+  if(/event|conference|expo|trade show|sponsor/.test(t)) return 'Event activity creates a relevant reason to reach out';
+  if(/expansion|new office|facility|growth/.test(t)) return 'Growth activity creates a prospecting trigger';
+  if(/funding|acquisition|investment|merger/.test(t)) return 'Business change creates a natural conversation';
+  if(/award|recognition|milestone/.test(t)) return 'Recognition creates a timely reason to connect';
+  return 'Recent business activity creates a reason to reach out';
+}
+function renderCard(sig){
+  const cats=(sig.commonPromoCategories||sig.likelyProducts||[]).filter(Boolean).slice(0,4);
+  const source=sig.sourceUrl?`<a target="_blank" href="${escapeHtml(sig.sourceUrl)}">${escapeHtml(sourceDomain(sig.sourceUrl)||'View source')}</a>`:escapeHtml(sig.cleanSourceName||sig.sourceName||'Public source');
+  return `<div class="opp-card"><div class="opp-top"><span class="badge">${escapeHtml(sig.signalType||'Business Activity')}</span><span class="score">Why Now ${Math.round(Number(sig.confidenceScore||sig.confidence*100||75))}</span></div><h3>${escapeHtml(sig.accountName||sig.account||'Target Account')}</h3><div class="headline">${escapeHtml(signalHeadline(sig))}</div><div class="section"><div class="label">Why this matters</div><p>${escapeHtml(sig.whyNow||sig.whyItMattersForPromo||sig.reasonToReachOut||'Recent public business activity creates a timely reason to start a conversation.')}</p></div><div class="section"><div class="label">Suggested opener</div><div class="opener">“${escapeHtml(sig.suggestedOpener||sig.conversationStarter||'Saw some recent activity and wanted to ask who handles this kind of initiative.') }”</div></div><div class="section"><div class="label">Evidence</div><p class="source">${source}${sig.publishedDate?` · ${escapeHtml(sig.publishedDate)}`:''}</p></div>${cats.length?`<div class="section"><div class="label">Common promo categories</div><div class="chips">${cats.map(c=>`<span class="chip">${escapeHtml(c)}</span>`).join('')}</div></div>`:''}</div>`;
+}
+const dz=document.getElementById('prospectDropzone'), file=document.getElementById('prospectFile'), browse=document.getElementById('prospectBrowse'), err=document.getElementById('prospectError'), notice=document.getElementById('prospectNotice'), progress=document.getElementById('prospectProgress');
+const saved=getSavedLead(); if(saved){document.getElementById('prospectName').value=saved.name||'';document.getElementById('prospectEmail').value=saved.email||'';document.getElementById('prospectCompany').value=saved.company||'';}
+function showErr(m){err.textContent=m;err.style.display='block'}function clearErr(){err.style.display='none';notice.style.display='none'}function setBusy(b){progress.classList.toggle('active',b);browse.disabled=b;browse.textContent=b?'Researching...':'Choose Target Account CSV'}
+browse.addEventListener('click',e=>{e.stopPropagation();file.click()});dz.addEventListener('click',()=>file.click());['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>{if(e.dataTransfer.files.length)handle(e.dataTransfer.files[0])});file.addEventListener('change',e=>{if(e.target.files.length)handle(e.target.files[0])});
+async function handle(f){
+  clearErr(); if(!f.name.toLowerCase().endsWith('.csv')) return showErr('Please choose a CSV file with target company names.');
+  const lead={name:clean(document.getElementById('prospectName').value),email:clean(document.getElementById('prospectEmail').value).toLowerCase(),company:clean(document.getElementById('prospectCompany').value)};
+  if(!lead.email) return showErr('Enter your work email before researching target accounts.'); saveLead(lead);
+  const text=await f.text(); let accounts=[]; try{accounts=parseCSV(text)}catch(e){return showErr(e.message||'Could not read that CSV.')} if(!accounts.length)return showErr('No company names found.');
+  setBusy(true); document.getElementById('accountCount').textContent=accounts.length; document.getElementById('signalCount').textContent='…'; document.getElementById('prospectResults').className='empty'; document.getElementById('prospectResults').textContent='Researching public business signals...';
+  try{
+    const res=await fetch('/api/research-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'prospect-intelligence',accounts:accounts.map(a=>({name:a.name,website:a.website,industry:a.industry,location:a.location}))})});
+    const data=await res.json(); if(!res.ok) throw new Error(data.error||'Prospect research failed');
+    const signals=data.signals||[]; document.getElementById('signalCount').textContent=signals.length;
+    const byName={}; accounts.forEach(a=>byName[a.name]=[]); signals.forEach(s=>{(byName[s.accountName]||(byName[s.accountName]=[])).push(s)});
+    const enriched=accounts.map(a=>({...a,signals:byName[a.name]||[]}));
+    await fetch('/api/save-prospect-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary:{accountCount:accounts.length,businessSignals:signals.length,savedAt:new Date().toISOString()},accounts:enriched})}).catch(()=>{});
+    const results=document.getElementById('prospectResults');
+    if(signals.length){results.className='cards';results.innerHTML=signals.slice(0,12).map(renderCard).join('');}
+    else{results.className='empty';results.textContent='No high-confidence business signals found yet. Try adding websites, industry, or location to improve research quality.';}
+    notice.textContent='Prospect research complete.';notice.style.display='block';
+  }catch(e){showErr(e.message||'Prospect research failed.');document.getElementById('prospectResults').className='empty';document.getElementById('prospectResults').textContent='Upload a target account list to start prospect research.';document.getElementById('signalCount').textContent='0'}finally{setBusy(false)}
+}
+</script>
+</body>
+</html>
