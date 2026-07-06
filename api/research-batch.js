@@ -405,7 +405,9 @@ For each company, find recent public developments from the last 18 months when p
 
 Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation.
 
-For each accepted signal, explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing for weak or unverifiable signals.`;
+For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext field that explains the company situation behind the signal, not just the surface signal. For hiring signals, do not stop at "company is hiring"; try to identify whether hiring appears tied to growth, expansion, a new facility, a product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally.
+
+Then explain why it matters to promo, who the likely buyers are, likely categories, and a casual opener. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing for weak or unverifiable signals.`;
   const body = {
     model,
     input: prompt,
@@ -422,6 +424,68 @@ For each accepted signal, explain why it matters to promo, who the likely buyers
   return responseOutputText(data);
 }
 
+
+function buildBusinessContext(raw = {}, type = '', summary = '', accountName = '') {
+  const explicit = compact(raw.businessContext || raw.companyContext || raw.strategicContext || raw.whyItHappened || raw.growthDriver || raw.businessDriver || '', 260);
+  if (explicit) return explicit;
+
+  const text = clean(`${raw.whatChanged || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${raw.summary || ''} ${raw.signalDetail || ''} ${raw.whyItMattersForPromo || ''}`).toLowerCase();
+  const company = accountName || 'The company';
+
+  if (/new facility|facility opening|opens? (a )?new|distribution center|warehouse|plant|manufacturing site/.test(text)) {
+    return `${company} appears to be expanding physical operations through a new facility or location, which can create onboarding, apparel, signage, and internal communication needs.`;
+  }
+  if (/contract|customer win|awarded|selected by|major deal|agreement/.test(text)) {
+    return `${company} appears to be supporting new customer or contract demand, which can lead to hiring, production ramp-up, and customer-facing brand needs.`;
+  }
+  if (/funding|investment|raised|series [abc]|capital|private equity/.test(text)) {
+    return `${company} appears to have new capital available for growth, which may support hiring, marketing, onboarding, or expansion initiatives.`;
+  }
+  if (/acquisition|acquired|merger|integrat/.test(text)) {
+    return `${company} appears to be going through a business change that may require internal alignment, employee communication, and brand consistency.`;
+  }
+  if (/launch|new product|unveils|introduces|rollout/.test(text)) {
+    return `${company} appears to be bringing a new product or initiative to market, creating a timely reason to ask about launch support and brand visibility.`;
+  }
+  if (/seasonal|temporary|peak season|holiday ramp/.test(text)) {
+    return `${company} appears to be preparing for a seasonal ramp, which can create short-term needs around recruiting, onboarding, uniforms, and recognition.`;
+  }
+  if (/second shift|third shift|production capacity|capacity|ramp up|increased demand/.test(text)) {
+    return `${company} appears to be increasing production capacity, which can create timely needs around team apparel, safety programs, and employee engagement.`;
+  }
+  if (/hiring|jobs|careers|recruit|open position|now hiring|headcount/.test(text) || /hiring/i.test(type)) {
+    return `Hiring activity creates a timely reason to check in, though the specific growth driver is not yet clear.`;
+  }
+  if (/event|conference|expo|trade show|summit|open house/.test(text)) {
+    return `${company} appears to be preparing for a public event or industry presence, which can create needs around booth materials, attendee gifts, apparel, and follow-up campaigns.`;
+  }
+  if (/award|recognition|honor|winner|best of|milestone|anniversary/.test(text)) {
+    return `${company} has a recognition or milestone moment that can create a natural conversation around employee appreciation, customer gifts, or branded celebration items.`;
+  }
+  if (/leadership|appoint|promot|named|joins as|new ceo|president|vp|director/.test(text)) {
+    return `${company} appears to have leadership changes that may signal new priorities, team-building needs, or upcoming internal communication initiatives.`;
+  }
+  return compact(summary || 'Recent public business activity creates a timely reason to learn what is changing inside the company.', 240);
+}
+
+function contextToPromoWhy(context = '', type = '') {
+  const c = clean(context);
+  if (!c) return 'Recent public business activity creates a timely reason to start a conversation.';
+  if (/specific growth driver is not yet clear/i.test(c)) return 'Hiring creates a practical reason to ask who owns onboarding, recruiting, and employee engagement support.';
+  return compact(`${c} That creates a practical reason to ask about onboarding, employee engagement, events, apparel, recognition, or brand support tied to the change.`, 280);
+}
+
+function contextToOpener(context = '', type = '') {
+  const c = clean(context);
+  if (/specific growth driver is not yet clear/i.test(c) || /hiring/i.test(type)) {
+    return 'Saw some hiring activity and had a quick question — who typically owns onboarding or recruiting merch?';
+  }
+  if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return 'Saw the event activity and had a quick question — who handles branded materials or attendee follow-up?';
+  if (/funding|capital|investment|growth/i.test(c)) return 'Saw the recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?';
+  if (/facility|location|distribution center|production capacity/i.test(c)) return 'Saw the expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?';
+  return 'Saw some recent company activity and had a quick question — who would be best to ask about related internal or brand needs?';
+}
+
 function makeSignal(raw = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
   if (!accountName) return null;
@@ -431,8 +495,9 @@ function makeSignal(raw = {}) {
   const type = normalizeSignalType(raw.signalType || raw.opportunityType || raw.type);
   const title = compact(raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 140);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 220);
-  const why = compact(raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || 'Recent public business activity creates a timely reason to check in.', 260);
-  const opener = compact(raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || 'Saw some recent activity and wanted to check in — anything coming up where support would be helpful?', 240);
+  const businessContext = buildBusinessContext(raw, type, summary, accountName);
+  const why = compact(raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || contextToPromoWhy(businessContext, type), 280);
+  const opener = compact(raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || contextToOpener(businessContext, type), 240);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories, 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);
@@ -450,6 +515,8 @@ function makeSignal(raw = {}) {
     shortSummary: summary,
     signalSnippet: summary,
     whatChanged: summary,
+    businessContext,
+    companyContext: businessContext,
     evidence: `${sources[0]?.name || sourceDomain(sourceUrl) || clean(raw.sourceName || 'public source')}: ${summary}`,
     sourceUrl: sourceUrl || sources[0]?.url || '',
     sourceType: clean(raw.sourceType || raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || 'Public source'),
@@ -474,7 +541,7 @@ function makeSignal(raw = {}) {
     likelyProducts: products,
     commonPromoCategories: products,
     opportunityCategory: compact(raw.opportunityCategory || conversations[0] || type, 90),
-    opportunityExplanation: compact(raw.whyItMattersForPromo || raw.whyItMatters || why, 260),
+    opportunityExplanation: compact(raw.whyItMattersForPromo || raw.whyItMatters || why, 280),
     valueSource: 'AI Opportunity Discovery',
     aiQualified: true,
     source: 'targeted-search-ai'
@@ -593,7 +660,7 @@ Reject:
 - social posts with no clear business relevance
 - generic careers page existence with no specific hiring/recruiting reason
 
-For each accepted signal, translate it into promo sales language. Do not just say "they are hiring." Explain why it creates a legitimate conversation and who should care.
+For each accepted signal, translate it into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
 
 Internally score every candidate on:
 - promo relevance
@@ -605,7 +672,7 @@ Internally score every candidate on:
 Only return signals with confidence >= 80 unless the source is extremely strong and the reason to reach out is obvious.
 
 Return strict JSON only with shape:
-{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
+{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
 
 Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
