@@ -113,6 +113,16 @@
   .upload-progress-steps li{font-size:0.86rem; color:var(--ink); background:#F7F8FA; border:1px solid var(--line); border-radius:6px; padding:10px 12px;}
   .upload-progress-steps li::before{content:'•'; color:var(--signal); font-weight:900; margin-right:8px;}
   @media(max-width:760px){.upload-helper,.upload-trust-list,.upload-progress-steps{grid-template-columns:1fr}.upload-zone{padding:36px 20px}}
+
+  .workflow-switcher{max-width:960px;margin:28px auto 18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}
+  .workflow-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.07);text-decoration:none;color:inherit;display:block;transition:.15s ease;}
+  .workflow-card:hover{transform:translateY(-1px);border-color:var(--radar);box-shadow:0 14px 34px rgba(23,55,94,.10);}
+  .workflow-card.active{border-color:var(--radar);box-shadow:0 0 0 3px rgba(31,183,174,.12),0 14px 34px rgba(23,55,94,.10);}
+  .workflow-label{font-family:var(--mono);font-size:.72rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--signal);margin-bottom:8px;}
+  .workflow-title{font-family:var(--display);font-size:1.25rem;color:var(--ink);margin-bottom:7px;}
+  .workflow-copy{font-size:.9rem;color:var(--muted);line-height:1.45;}
+  .workflow-cta{display:inline-flex;margin-top:12px;font-weight:800;color:var(--radar);font-size:.88rem;}
+  @media(max-width:760px){.workflow-switcher{grid-template-columns:1fr}}
   .btn{
     display:inline-block;
     font-family:var(--mono);
@@ -1718,6 +1728,21 @@
           <button class="btn btn-secondary" type="submit">View Dashboard</button>
         </form>
       </div>
+  </section>
+
+
+  <section class="workflow-switcher" aria-label="Choose analysis workflow">
+    <a class="workflow-card active" href="#dropzone">
+      <div class="workflow-label">Current workflow</div>
+      <div class="workflow-title">Existing Customers</div>
+      <div class="workflow-copy">Upload customer order history to find repeat buying patterns, follow-ups, and timely reasons to reconnect.</div>
+    </a>
+    <a class="workflow-card" href="/prospects">
+      <div class="workflow-label">New beta workflow</div>
+      <div class="workflow-title">Target Accounts</div>
+      <div class="workflow-copy">Upload a target company list and research public business signals for prospect outreach.</div>
+      <span class="workflow-cta">Open Prospect Intelligence →</span>
+    </a>
   </section>
 
   <div class="upload-zone locked" id="dropzone">
