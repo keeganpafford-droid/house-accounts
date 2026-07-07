@@ -269,13 +269,27 @@ function adjustedConfidence(raw = {}, sourceUrl = '', sourceType = '') {
 async function serperSearch(query) {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) return [];
+  let httpStatus = 0;
   try {
     const resp = await fetch('https://google.serper.dev/search', {
       method: 'POST',
       headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ q: query, num: 8 })
     });
-    if (!resp.ok) return [];
+    httpStatus = resp.status;
+    if (!resp.ok) {
+      return [{
+        title: '',
+        snippet: '',
+        url: '',
+        source: '',
+        date: '',
+        provider: 'serper',
+        query,
+        httpStatus,
+        searchError: `Serper returned HTTP ${httpStatus}`
+      }];
+    }
     const data = await resp.json();
     return [...(data.organic || []), ...(data.news || [])].map(r => ({
       title: clean(r.title),
@@ -284,9 +298,22 @@ async function serperSearch(query) {
       source: r.source || sourceDomain(r.link || r.url || ''),
       date: r.date || '',
       provider: 'serper',
-      query
+      query,
+      httpStatus
     })).filter(r => r.url || r.title).slice(0, 8);
-  } catch { return []; }
+  } catch (error) {
+    return [{
+      title: '',
+      snippet: '',
+      url: '',
+      source: '',
+      date: '',
+      provider: 'serper',
+      query,
+      httpStatus,
+      searchError: error?.message || 'Serper request failed'
+    }];
+  }
 }
 
 async function tavilySearch(query) {
@@ -333,12 +360,9 @@ async function braveSearch(query) {
 }
 
 async function runSearch(query) {
-  // Prefer purpose-built search APIs. They return clean snippets and are much more reliable than scraping.
-  let results = [];
-  results = results.concat(await serperSearch(query));
-  results = results.concat(await tavilySearch(query));
-  results = results.concat(await braveSearch(query));
-  return results;
+  // Prospect Intelligence uses Serper as the configured search provider.
+  // Do not require Tavily or Brave for targeted search.
+  return await serperSearch(query);
 }
 
 function scoreCandidate(r, accountName) {
@@ -434,7 +458,8 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     // Existing customer workflows retain the previous cap.
     const queries = allQueries.slice(0, mode === 'prospect-intelligence' ? 18 : 12);
     const resultSets = await Promise.all(queries.map(runSearch));
-    let raw = resultSets.flat();
+    const rawSearchResults = resultSets.flat();
+    let raw = rawSearchResults.filter(r => r && (r.url || r.title));
     if (mode === 'prospect-intelligence') raw = raw.concat(priorityOwnedPages(account));
 
     const scored = raw.map(r => ({
@@ -451,10 +476,19 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
 
     const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
     const highIntentCandidateCount = ranked.filter(r => r.score >= 28).length;
-    const queriesWithResults = queries.map((q, i) => ({
-      query: q,
-      resultsReturned: (resultSets[i] || []).length
-    }));
+    const queriesWithResults = queries.map((q, i) => {
+      const set = resultSets[i] || [];
+      const realResults = set.filter(r => r && (r.url || r.title));
+      const statuses = [...new Set(set.map(r => r.httpStatus).filter(Boolean))];
+      const errors = set.map(r => r.searchError).filter(Boolean);
+      return {
+        query: q,
+        provider: 'serper',
+        serperHttpStatus: statuses.length ? statuses.join(',') : (process.env.SERPER_API_KEY ? 'no-status' : 'not-configured'),
+        resultsReturned: realResults.length,
+        error: errors[0] || ''
+      };
+    });
 
     diagnostics.push({
       companyName: account.name,
@@ -1165,18 +1199,21 @@ export default async function handler(req, res) {
     let rawText = '';
     let providerMode = 'openai-web-search';
 
-    // If any dedicated search provider is configured, use targeted search operators first.
-    const hasSearchProvider = !!(process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY);
+    // Prospect Intelligence uses Serper for intent-driven targeted search.
+    // Tavily/Brave are intentionally not required for this beta workflow.
+    const serperConfigured = !!process.env.SERPER_API_KEY;
+    const targetedSearchEnabled = mode === 'prospect-intelligence' && serperConfigured;
+    const hasSearchProvider = serperConfigured;
     if (mode === 'prospect-intelligence') {
       prospectDebugLog('Request received', {
         mode,
         accountsReceived: accounts.length,
         uniqueAccountsResearched: safeAccounts.length,
-        providerMode: hasSearchProvider ? 'targeted-search' : 'openai-web-search',
-        serperConfigured: !!process.env.SERPER_API_KEY,
-        tavilyConfigured: !!process.env.TAVILY_API_KEY,
-        braveConfigured: !!process.env.BRAVE_SEARCH_API_KEY,
-        firecrawlConfigured: !!process.env.FIRECRAWL_API_KEY
+        providerMode: hasSearchProvider ? 'serper-targeted-search' : 'openai-web-search',
+        serperConfigured,
+        targetedSearchEnabled,
+        firecrawlConfigured: !!process.env.FIRECRAWL_API_KEY,
+        supabaseReuse: 'none - /api/research-batch does not read cached prospect rows before researching'
       });
     }
     if (hasSearchProvider) {
@@ -1198,7 +1235,10 @@ export default async function handler(req, res) {
       }
     } else if (mode === 'prospect-intelligence') {
       prospectDebugLog('Targeted search skipped', {
-        reason: 'No SERPER_API_KEY, TAVILY_API_KEY, or BRAVE_SEARCH_API_KEY configured. Prospect research will use OpenAI web-search fallback instead of intent-driven query chains.'
+        mode,
+        serperConfigured,
+        targetedSearchEnabled,
+        reason: 'SERPER_API_KEY is not configured. Prospect research will use OpenAI web-search fallback instead of Serper intent-driven query chains.'
       });
     }
 
@@ -1321,6 +1361,24 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
           liveSignals: signals.filter(s => s.accountName === a.name).length
         }))
       });
+      for (const account of safeAccounts) {
+        if (/sparkfun/i.test(account.name)) {
+          const rawForAccount = rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase().includes(account.name.toLowerCase()) || account.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase()));
+          const filteredForAccount = signals.filter(s => s.accountName === account.name);
+          prospectDebugLog('SparkFun LLM/filtering diagnostics', {
+            mode,
+            company: account.name,
+            candidatesPassedToLLM: candidates.filter(c => c.accountName === account.name).length,
+            llmOutput: rawForAccount.slice(0, 3),
+            filteringResult: {
+              rawSignalsForCompany: rawForAccount.length,
+              liveSignalsAfterFiltering: filteredForAccount.length,
+              liveSignalTitles: filteredForAccount.map(s => s.concreteTrigger || s.signalTitle || s.whatChanged || s.signalType)
+            },
+            fallbackWouldBeUsed: filteredForAccount.length === 0
+          });
+        }
+      }
     }
     const byAccount = {};
     for (const sig of signals) {
@@ -1333,7 +1391,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         if (!byAccount[account.name] || !byAccount[account.name].length) {
           const accountDiag = searchDiagnostics.find(d => d.companyName === account.name) || {};
           const fallbackReason = !hasSearchProvider
-            ? 'targeted search provider not configured; no live signal returned by OpenAI web search'
+            ? 'SERPER_API_KEY not configured; no live signal returned by OpenAI web search'
             : candidates.filter(c => c.accountName === account.name).length === 0
               ? 'targeted search completed but returned no ranked candidates above threshold'
               : 'targeted search candidates were passed to LLM but no valid live opportunity survived parsing/filtering';
@@ -1391,7 +1449,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         accountsWithNoSignals: Math.max(0, safeAccounts.length - new Set(finalSignals.filter(s => !s.isFallbackOpportunity).map(s => s.accountName)).size),
         avgConfidence,
         webSearchEnabled: !hasSearchProvider,
-        targetedSearchEnabled: hasSearchProvider,
+        targetedSearchEnabled,
         mode,
         sourceCoverage,
         candidateSamples,
