@@ -399,15 +399,22 @@ async function callOpenAIJson({ apiKey, model, prompt }) {
 }
 
 async function callOpenAIWebSearch({ apiKey, model, accounts }) {
-  const prompt = `Research these companies for public business signals that create legitimate reasons for a promotional-products salesperson to start a conversation: ${accounts.map(a => a.name).join(', ')}.
+  const prompt = `Research these companies for public business signals that create legitimate reasons for a promotional-products salesperson to start a conversation.
+
+Use the account context below, including any uploaded contacts. Research each company once. If uploaded contacts align with the recommended buying team, they may be used as potentialContacts. Do not invent people.
+
+Accounts:
+${JSON.stringify(accountPromptContext(accounts), null, 2)}
 
 For each company, find recent public developments from the last 18 months when possible. Look broadly: hiring, awards, trade shows, conferences, summits, product launches, partnerships, customer wins, expansion, acquisition/funding, leadership changes, community events, sustainability, safety, recruiting, employee engagement.
 
 Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation.
 
+Preserve the concrete trigger. Do not reduce a specific event like "secured a major medical contract" to only "expansion" or "hosting FTC Scrimmage at headquarters" to only "community engagement." The signalTitle and whatChanged should name the specific event whenever evidence supports it.
+
 For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext field that explains the company situation behind the signal, not just the surface signal. For hiring signals, do not stop at "company is hiring"; try to identify whether hiring appears tied to growth, expansion, a new facility, a product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally.
 
-Then explain why it matters to promo, the recommended buying team, likely categories, and a casual opener. If public evidence identifies one or two relevant people, include them as potentialContacts; do not invent names and omit potentialContacts if no reliable person is found. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
+Then explain why it matters to promo, the recommended buying team, likely categories, and a casual opener that references the concrete trigger when possible. If public evidence identifies one or two relevant people, include them as potentialContacts; do not invent names and omit potentialContacts if no reliable person is found. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
   const body = {
     model,
     input: prompt,
@@ -529,6 +536,83 @@ function normalizePotentialContacts(value, max = 2) {
   }).filter(c => c.name && !/unknown|n\/a|not available|team|department/i.test(c.name)).slice(0, max);
 }
 
+function contactText(contact = {}) {
+  return clean(`${contact.name || ''} ${contact.title || ''} ${contact.role || ''} ${contact.email || ''} ${contact.linkedin || ''}`).toLowerCase();
+}
+
+function buyingTeamKeywords(team = []) {
+  const text = clean(team.join(' ')).toLowerCase();
+  const keywords = new Set();
+  if (/hr|human resources|people|talent|recruit|onboard|employee/.test(text)) {
+    ['hr','human resources','people','talent','recruit','recruiting','recruitment','onboarding','employee','culture','workforce'].forEach(k => keywords.add(k));
+  }
+  if (/marketing|brand|product marketing|event|events|community|relations|csr/.test(text)) {
+    ['marketing','marketer','marcomm','communications','brand','branding','events','event','community','relations','csr','partnerships','sponsorship','product marketing'].forEach(k => keywords.add(k));
+  }
+  if (/operations|production|manufacturing|warehouse|facility|safety|distribution/.test(text)) {
+    ['operations','operation','production','manufacturing','plant','facility','facilities','warehouse','distribution','safety','ehs','supply chain'].forEach(k => keywords.add(k));
+  }
+  if (/sales|business development|customer/.test(text)) {
+    ['sales','business development','customer','account'].forEach(k => keywords.add(k));
+  }
+  return [...keywords];
+}
+
+function contactMatchesBuyingTeam(contact = {}, team = []) {
+  const txt = contactText(contact);
+  if (!txt) return false;
+  const keywords = buyingTeamKeywords(team);
+  return keywords.some(k => txt.includes(k));
+}
+
+function normalizeUploadedContacts(contacts = []) {
+  const seen = new Set();
+  return safeArray(contacts, 12).map(c => {
+    if (typeof c === 'string') return { name: clean(c), title: '', email: '', linkedin: '', source: 'Uploaded CSV' };
+    return {
+      name: clean(c?.name || c?.contactName || c?.fullName || ''),
+      title: clean(c?.title || c?.role || c?.jobTitle || ''),
+      email: clean(c?.email || c?.contactEmail || ''),
+      linkedin: clean(c?.linkedin || c?.linkedIn || c?.linkedinUrl || ''),
+      reason: clean(c?.reason || ''),
+      source: clean(c?.source || 'Uploaded CSV')
+    };
+  }).filter(c => c.name || c.email).filter(c => {
+    const key = `${c.name}|${c.email}|${c.title}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function selectUploadedContactsForTeam(contacts = [], team = [], max = 2) {
+  return normalizeUploadedContacts(contacts)
+    .filter(c => contactMatchesBuyingTeam(c, team))
+    .slice(0, max)
+    .map(c => ({
+      name: c.name || c.email,
+      title: c.title,
+      email: c.email,
+      linkedin: c.linkedin,
+      reason: c.reason || 'Uploaded contact aligns with the recommended buying team for this opportunity.',
+      source: 'Uploaded CSV'
+    }));
+}
+
+function mergePotentialContacts(uploaded = [], publicContacts = [], max = 2) {
+  const out = [];
+  const seen = new Set();
+  for (const c of [...uploaded, ...publicContacts]) {
+    if (!c || !c.name) continue;
+    const key = `${c.name}|${c.email || ''}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 function buildWhyTheseContacts(contacts = [], team = [], type = '', context = '') {
   const explicit = contacts.map(c => c.reason).filter(Boolean).join(' ');
   if (explicit) return compact(explicit, 220);
@@ -559,7 +643,7 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
   return Math.round(Math.max(0, Math.min(100, score)));
 }
 
-function makeSignal(raw = {}) {
+function makeSignal(raw = {}, account = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
@@ -576,7 +660,9 @@ function makeSignal(raw = {}) {
   const products = safeArray(raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories, 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);
   const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, summary, raw);
-  const potentialContacts = normalizePotentialContacts(raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
+  const uploadedContacts = selectUploadedContactsForTeam(account.contacts || raw.uploadedContacts || [], recommendedBuyingTeam, 2);
+  const publicContacts = normalizePotentialContacts(raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
+  const potentialContacts = mergePotentialContacts(uploadedContacts, publicContacts, 2);
   const whyTheseContacts = compact(raw.whyTheseContacts || raw.contactRationale || buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, type, businessContext), 220);
   const sources = Array.isArray(raw.sources) ? raw.sources.map(s => ({ name: clean(s.name || s.sourceName || sourceDomain(s.url || '')), url: clean(s.url || s.sourceUrl || '') })).filter(s => s.url || s.name).slice(0, 4) : [];
   if (sourceUrl && !sources.some(s => s.url === sourceUrl)) sources.unshift({ name: clean(raw.sourceName || sourceDomain(sourceUrl) || 'Public source'), url: sourceUrl });
@@ -614,6 +700,7 @@ function makeSignal(raw = {}) {
     recommendedBuyingTeam,
     buyingTeam: recommendedBuyingTeam,
     potentialContacts,
+    uploadedContacts: normalizeUploadedContacts(account.contacts || []),
     whyTheseContacts,
     suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0] || buyers[0] || clean(raw.suggestedContact || raw.contactRole || 'Relevant department lead'),
     likelyBuyers: recommendedBuyingTeam.length ? recommendedBuyingTeam : (buyers.length ? buyers : [clean(raw.suggestedContact || 'Relevant department lead')]),
@@ -667,9 +754,9 @@ export default async function handler(req, res) {
 
   try {
     const { accounts = [], mode = 'ranked' } = req.body || {};
+    const seenAccountKeys = new Set();
     const safeAccounts = (Array.isArray(accounts) ? accounts : [])
       .filter(a => a && a.name)
-      .slice(0, 50)
       .map((a, idx) => ({
         id: String(idx),
         name: clean(a.name),
@@ -679,7 +766,7 @@ export default async function handler(req, res) {
         notes: clean(a.notes || ''),
         website: clean(a.website || ''),
         categories: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
-        contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 6) : [],
+        contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 12) : [],
         recentOrderDates: Array.isArray(a.recentOrderDates) ? a.recentOrderDates.slice(0, 5) : [],
         repeatPatterns: Array.isArray(a.repeatPatterns) ? a.repeatPatterns.slice(0, 5) : [],
         existingSignals: Array.isArray(a.existingSignals) ? a.existingSignals.slice(0, 5) : [],
@@ -687,7 +774,14 @@ export default async function handler(req, res) {
         quickWinScore: a.quickWinScore || '',
         revenue: Number(a.revenue || 0),
         orderCount: Number(a.orderCount || 0)
-      }));
+      }))
+      .filter(a => {
+        const key = a.name.toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g, '').replace(/[^a-z0-9]+/g, ' ').trim() || a.name.toLowerCase();
+        if (seenAccountKeys.has(key)) return false;
+        seenAccountKeys.add(key);
+        return true;
+      })
+      .slice(0, 50);
     if (!safeAccounts.length) return res.status(400).json({ error: 'No accounts provided' });
 
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -718,7 +812,7 @@ Act like a senior promotional products account executive doing account research 
 
 "If I sold promotional products, branded apparel, onboarding kits, uniforms, recognition programs, safety incentives, event merchandise, print, awards, or corporate gifts, is there anything happening at this company that gives me a legitimate reason to start a conversation?"
 
-You are given account context and targeted public web search snippets/page content. Use ONLY the supplied evidence and URLs. Do not invent.
+You are given account context and targeted public web search snippets/page content. Use ONLY the supplied evidence, URLs, and uploaded contact context. Do not invent.
 
 Return the strongest 0, 1, or 2 business signals per account. Do not require perfect business context. If a meaningful business signal exists but the underlying driver is unclear, keep the signal, explain the uncertainty transparently, and assign an appropriately lower confidence score.
 
@@ -741,7 +835,7 @@ Reject:
 - social posts with no clear business relevance
 - generic careers page existence with no specific hiring/recruiting reason, unless the evidence shows meaningful hiring activity or a clear recruiting push
 
-For each accepted signal, translate it into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
+For each accepted signal, preserve the concrete business trigger. Do not reduce specific events like "secured a significant medical contract" to only "Expansion" or "hosting FTC Scrimmage at headquarters" to only "Community engagement." Then translate the specific trigger into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
 
 Internally score every candidate on:
 - promo relevance
@@ -762,6 +856,7 @@ Potential Contacts rules:
 - Return at most 2 contacts.
 - Never invent names, placeholder people, or generic departments as contacts.
 - Explain why the contact is relevant using whyTheseContacts or each contact reason.
+- If an uploaded contact in knownContacts aligns with the recommended buying team, you may include that contact even if they were not found in public search results.
 
 Return strict JSON only with shape:
 {"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
@@ -793,7 +888,10 @@ ${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, 
       return found ? { ...s, accountName: found.name } : s;
     });
 
-    const signals = dedupeSignals(fixedSignals.map(makeSignal).filter(Boolean).filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()))).slice(0, 80);
+    const signals = dedupeSignals(fixedSignals.map(s => {
+      const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || '').toLowerCase()) || {};
+      return makeSignal(s, account);
+    }).filter(Boolean).filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()))).slice(0, 80);
     const byAccount = {};
     for (const sig of signals) {
       if (!byAccount[sig.accountName]) byAccount[sig.accountName] = [];
@@ -818,6 +916,9 @@ ${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, 
         signalsRejected: Math.max(0, rawSignals.length - finalSignals.length),
         signalsReturned: finalSignals.length,
         highConfidenceOpportunities: finalSignals.filter(s => Number(s.confidenceScore || 0) >= 80).length,
+        mediumConfidenceOpportunities: finalSignals.filter(s => Number(s.confidenceScore || 0) >= 60 && Number(s.confidenceScore || 0) < 80).length,
+        accountsWithSignals: Object.keys(byAccount).length,
+        accountsWithNoSignals: Math.max(0, safeAccounts.length - Object.keys(byAccount).length),
         avgConfidence,
         webSearchEnabled: !hasSearchProvider,
         targetedSearchEnabled: hasSearchProvider,

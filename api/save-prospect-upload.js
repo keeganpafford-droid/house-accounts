@@ -94,7 +94,7 @@ export default async function handler(req, res){
       location: clean(a.location || a.cityState),
       signal_count: Array.isArray(a.signals) ? a.signals.length : 0,
       signals: Array.isArray(a.signals) ? a.signals : [],
-      raw_data: a.rawData || {},
+      raw_data: { ...(a.rawData || {}), uploaded_contacts: Array.isArray(a.contacts) ? a.contacts : [], raw_rows: Array.isArray(a.rawRows) ? a.rawRows : [] },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     })).filter(a => a.company_name);
