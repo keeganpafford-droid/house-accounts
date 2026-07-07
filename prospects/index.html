@@ -212,9 +212,31 @@ async function handle(f){
   const text=await f.text(); let accounts=[]; try{accounts=parseCSV(text)}catch(e){return showErr(e.message||'Could not read that CSV.')} if(!accounts.length)return showErr('No company names found.');
   currentSignals=[]; currentVisibleSignals=[]; document.getElementById('prospectControls').classList.remove('active'); setBusy(true); document.getElementById('accountCount').textContent=accounts.length; document.getElementById('signalCount').textContent='…'; renderResearchSummary({companiesUploaded:accounts.length,companiesResearched:'…'}); document.getElementById('prospectResults').className='empty'; document.getElementById('prospectResults').textContent='Researching public business signals...';
   try{
-    const res=await fetch('/api/research-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'prospect-intelligence',accounts:accounts.map(a=>({name:a.name,website:a.website,industry:a.industry,location:a.location,contacts:a.contacts}))})});
-    const data=await res.json(); if(!res.ok) throw new Error(data.error||'Prospect research failed');
-    const signals=sortSignals(data.signals||[]); currentSignals=signals; document.getElementById('signalCount').textContent=signals.length;
+    const researchEndpoint='/api/research-batch';
+    const researchPayload={mode:'prospect-intelligence',accounts:accounts.map(a=>({name:a.name,website:a.website,industry:a.industry,location:a.location,contacts:a.contacts}))};
+    console.log('[Prospect UI] Calling research endpoint', new URL(researchEndpoint, window.location.origin).href);
+    console.log('[Prospect UI] Research payload', researchPayload);
+    const res=await fetch(researchEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(researchPayload)});
+    const data=await res.json();
+    console.log('[Prospect UI] Raw /api/research-batch response', data);
+    if(!res.ok) throw new Error(data.error||'Prospect research failed');
+    const rawSignals=Array.isArray(data.signals)?data.signals:[];
+    console.log('[Prospect UI] Raw signal summary', rawSignals.map(s=>({
+      accountName:s.accountName||s.account||s.company||s.company_name||s.companyName||'',
+      signalType:s.signalType||s.signal_type||'',
+      trigger:s.concrete_trigger||s.concreteTrigger||s.signalTitle||s.title||'',
+      isFallbackOpportunity:!!s.isFallbackOpportunity,
+      confidenceScore:s.confidenceScore||s.why_now_score||s.confidence||''
+    })));
+    const signals=sortSignals(rawSignals); currentSignals=signals; document.getElementById('signalCount').textContent=signals.length;
+    console.log('[Prospect UI] Signals after client sort', signals.map(s=>({
+      accountName:s.accountName||s.account||s.company||s.company_name||s.companyName||'',
+      signalType:s.signalType||s.signal_type||'',
+      trigger:s.concrete_trigger||s.concreteTrigger||s.signalTitle||s.title||'',
+      isFallbackOpportunity:!!s.isFallbackOpportunity,
+      clientIsFallback:isFallback(s),
+      clientScore:getScore(s)
+    })));
     const byName={}; accounts.forEach(a=>byName[a.name]=[]); signals.forEach(s=>{(byName[s.accountName]||(byName[s.accountName]=[])).push(s)});
     const enriched=accounts.map(a=>({...a,signals:byName[a.name]||[],rawData:{...(a.rawData||{}),uploaded_contacts:a.contacts,raw_rows:a.rawRows}}));
     const liveSignals=signals.filter(s=>!s.isFallbackOpportunity);
