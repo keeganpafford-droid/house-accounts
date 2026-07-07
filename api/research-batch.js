@@ -1327,7 +1327,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         rawSignalsReturned: rawSignals.length,
         rawSignalsByAccount: safeAccounts.map(a => ({
           company: a.name,
-          rawSignals: rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase())).length
+          rawSignals: rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase())).length
         }))
       });
     }
@@ -1344,7 +1344,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
 
     const madeSignalsRaw = fixedSignals.map(s => {
-      const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || '').toLowerCase()) || {};
+      const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
       return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
@@ -1363,7 +1363,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       });
       for (const account of safeAccounts) {
         if (/sparkfun/i.test(account.name)) {
-          const rawForAccount = rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase().includes(account.name.toLowerCase()) || account.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase()));
+          const rawForAccount = rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase().includes(account.name.toLowerCase()) || account.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()));
           const filteredForAccount = signals.filter(s => s.accountName === account.name);
           prospectDebugLog('SparkFun LLM/filtering diagnostics', {
             mode,
