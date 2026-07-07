@@ -144,23 +144,50 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
   const domain = String(context.website || '').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0] || '';
 
   if (mode === 'prospect-intelligence') {
-    // Prospect Intelligence is buying-moment driven. Keep this list surgical so search pulls
-    // events that create timely promo conversations instead of generic company summaries.
+    // Prospect Intelligence must attempt an intent-driven buying-moment search chain
+    // before creating Predictable Timing fallback opportunities. Keep searches surgical:
+    // the goal is to find concrete reasons to contact the company now, not summarize it.
+    const industryLower = String(context.industry || '').toLowerCase();
+    const industryEventTerms =
+      /packaging|manufactur|industrial|automation|food|beverage|consumer goods/.test(industryLower) ? `"PACK EXPO" OR "Battery Show" OR "MD&M" OR "CES"` :
+      /medical|health|device|biotech|pharma/.test(industryLower) ? `"MD&M" OR "BIO International" OR "AACC" OR "HIMSS"` :
+      /software|technology|electronics|robotics|ai|data/.test(industryLower) ? `"CES" OR "TechCrunch" OR "AWS re:Invent" OR "SaaStr"` :
+      '';
+
     return [
-      `${quoted}${loc} ("facility expansion" OR "new facility" OR "new location" OR "ribbon cutting" OR "new office" OR "distribution center" OR warehouse OR plant)`,
-      `${quoted}${loc} ("trade show" OR exhibitor OR booth OR conference OR expo OR summit OR webinar OR "open house" OR "customer event" OR "dealer meeting" OR "sales meeting")`,
-      `${quoted}${loc} ("product launch" OR unveiled OR introduces OR rollout OR rebrand OR merger OR acquisition)`,
-      `${quoted}${loc} ("hiring HR" OR "hiring marketing" OR "event manager" OR "field marketing" OR "employee experience" OR "talent acquisition" OR onboarding)`,
-      `${quoted}${loc} ("contract win" OR "major contract" OR partnership OR "customer win" OR awarded OR selected)`,
-      `${quoted}${loc} ("safety milestone" OR anniversary OR award OR recognition OR "best places to work" OR "Inc. 5000")`,
-      `${quoted}${loc} ("community event" OR sponsorship OR sponsor OR fundraiser OR philanthropy OR volunteer OR CSR)`,
-      `${quoted}${loc} ("career fair" OR recruiting OR "now hiring" OR "open positions" OR careers)`,
+      // A. Growth / Launch / Corporate Change
+      `${quoted} AND ("subsidiary" OR "launch" OR "spin-off" OR acquired OR merger OR rebrand)`,
+      `${quoted} AND ("new facility" OR expansion OR "ribbon cutting" OR headquarters OR "manufacturing plant" OR "new location" OR "distribution center")`,
+
+      // B. Events / Conferences / Trade Shows
+      `${quoted} AND (exhibitor OR booth OR conference OR expo OR "trade show" OR summit OR "open house" OR "customer event" OR webinar)`,
+      industryEventTerms ? `${quoted} AND (${industryEventTerms})` : '',
+
+      // C. Hiring / People / Culture
+      `${quoted} AND (hiring OR careers OR jobs OR "now hiring")`,
+      `${quoted} AND ("employee experience" OR "talent acquisition" OR "people operations" OR HR OR onboarding)`,
+      `${quoted} AND ("event coordinator" OR "field marketing" OR "trade show manager" OR "marketing manager")`,
+
+      // D. Community / Sponsorship / CSR
+      `${quoted} AND (sponsor OR "community event" OR charity OR volunteer OR "golf tournament" OR "5K")`,
+      `${quoted} AND (school OR STEM OR foundation OR donation OR fundraiser)`,
+
+      // E. Awards / Milestones / Recognition
+      `${quoted} AND (award OR recognized OR anniversary OR milestone)`,
+      `${quoted} AND ("safety milestone" OR "years without" OR "lost-time accident")`,
+
+      // F. Operational Friction / Internal Morale. These are only usable when handled with care.
+      `${quoted} AND (lawsuit OR "legal dispute" OR court OR town OR "power outage" OR "facility issue")`,
+
+      // G. Media / Trade Publication Coverage
+      `${quoted} AND ("featured in" OR interview OR magazine OR profile)`,
+
+      // Owned-site intent pages. Firecrawl enrichment will prioritize these later.
       domain ? `site:${domain} (news OR press OR "press release" OR blog OR careers OR jobs OR events OR community OR locations OR sustainability)` : '',
-      domain ? `site:${domain} ("trade show" OR conference OR booth OR exhibitor OR "open house" OR webinar OR event)` : '',
-      domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch)` : ''
+      domain ? `site:${domain} ("trade show" OR conference OR booth OR exhibitor OR "open house" OR webinar OR event OR summit)` : '',
+      domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch OR partnership)` : ''
     ].filter(Boolean);
   }
-
   // Existing customer/house account workflows keep the original broader research strategy.
   return [
     `${quoted}${loc}${industry}`,
@@ -336,7 +363,8 @@ function scoreCandidate(r, accountName) {
   if (/expansion|new office|new location|facility|headquarters|warehouse|manufacturing/.test(t)) score += 12;
   if (/acquired|acquisition|merger|funding|investment|partnership|customer win|contract/.test(t)) score += 10;
   if (/2026|2025|today|yesterday|this week|recently|announced|upcoming|now/.test(t)) score += 10;
-  if (/layoff|downsizing|bankruptcy|lawsuit|closure|recall|scandal|investigation/.test(t)) score -= 40;
+  if (/layoff|downsizing|bankruptcy|plant closure|closure|recall|scandal|investigation/.test(t)) score -= 40;
+  if (/lawsuit|legal dispute|court|town|power outage|facility issue|operational disruption/.test(t)) score += 10;
   if (/contact us|privacy|terms|map|directions|mission statement|history/.test(t)) score -= 20;
   return Math.max(0, score);
 }
@@ -391,17 +419,64 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const sourceCoverage = {};
   const allCandidates = [];
   const samples = [];
-  const perAccount = await mapLimit(accounts, 5, async account => {
-    const queries = queryTemplates(account.name, account, mode).slice(0, mode === 'prospect-intelligence' ? 11 : 12);
+  const diagnostics = [];
+  const perAccount = await mapLimit(accounts, 4, async account => {
+    const allQueries = queryTemplates(account.name, account, mode);
+    // Prospect mode intentionally runs a deeper intent-driven chain before fallback.
+    // Existing customer workflows retain the previous cap.
+    const queries = allQueries.slice(0, mode === 'prospect-intelligence' ? 18 : 12);
     const resultSets = await Promise.all(queries.map(runSearch));
     let raw = resultSets.flat();
     if (mode === 'prospect-intelligence') raw = raw.concat(priorityOwnedPages(account));
-    const ranked = dedupeCandidates(raw.map(r => ({
+
+    const scored = raw.map(r => ({
       ...r,
       accountName: account.name,
       sourceType: classifySource(r.url, r.title),
       score: scoreCandidate(r, account.name)
-    })).filter(r => r.score >= 14).sort((a,b) => b.score - a.score)).slice(0, 12);
+    }));
+
+    const ranked = dedupeCandidates(scored
+      .filter(r => r.score >= (mode === 'prospect-intelligence' ? 10 : 14))
+      .sort((a,b) => b.score - a.score))
+      .slice(0, mode === 'prospect-intelligence' ? 20 : 12);
+
+    const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
+    const highIntentCandidateCount = ranked.filter(r => r.score >= 28).length;
+    const queriesWithResults = queries.map((q, i) => ({
+      query: q,
+      resultsReturned: (resultSets[i] || []).length
+    }));
+
+    diagnostics.push({
+      companyName: account.name,
+      targetedQueriesRun: queries.length,
+      queries: queriesWithResults,
+      sourcesReturned: raw.length,
+      rankedCandidates: ranked.length,
+      topSources: ranked.slice(0, 5).map(r => ({
+        title: r.title,
+        url: r.url,
+        domain: sourceDomain(r.url),
+        sourceType: r.sourceType,
+        score: r.score,
+        query: r.query
+      })),
+      liveSignalCandidateFound: liveCandidateCount > 0,
+      highIntentCandidateFound: highIntentCandidateCount > 0,
+      fallbackEligibleAfterSearch: highIntentCandidateCount === 0
+    });
+
+    if (mode === 'prospect-intelligence') {
+      console.log('[ProspectIntelligence SearchDiagnostics]', JSON.stringify({
+        companyName: account.name,
+        targetedQueriesRun: queries.length,
+        sourcesReturned: raw.length,
+        rankedCandidates: ranked.length,
+        highIntentCandidateCount,
+        fallbackEligibleAfterSearch: highIntentCandidateCount === 0
+      }));
+    }
 
     for (const r of ranked) {
       sourceCoverage[r.provider || 'search'] = (sourceCoverage[r.provider || 'search'] || 0) + 1;
@@ -413,12 +488,13 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       reason: `score ${r.score}`,
       title: r.title,
       domain: sourceDomain(r.url),
-      sourceType: r.sourceType
+      sourceType: r.sourceType,
+      query: r.query
     })));
     allCandidates.push(...ranked);
     return ranked;
   });
-  return { candidates: allCandidates, perAccount, sourceCoverage, samples };
+  return { candidates: allCandidates, perAccount, sourceCoverage, samples, diagnostics };
 }
 
 function responseOutputText(data = {}) {
@@ -1068,6 +1144,7 @@ export default async function handler(req, res) {
     let candidates = [];
     let sourceCoverage = {};
     let candidateSamples = [];
+    let searchDiagnostics = [];
     let rawText = '';
     let providerMode = 'openai-web-search';
 
@@ -1079,6 +1156,7 @@ export default async function handler(req, res) {
       candidates = discovered.candidates;
       sourceCoverage = discovered.sourceCoverage;
       candidateSamples = discovered.samples.slice(0, 16);
+      searchDiagnostics = discovered.diagnostics || [];
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
@@ -1103,13 +1181,14 @@ A buying moment is a concrete event that may create promotional products demand,
 - safety milestone, company anniversary, major award actively promoted by the company
 
 Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
+Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
 
 Reject:
 - generic company descriptions, mission/history/culture copy
 - generic careers page existence unless evidence shows meaningful hiring or a recruiting push
 - old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
 - vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
-- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, scandals
+- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
 
 Preserve concrete triggers. Do not generalize specific events. Examples:
 - Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
@@ -1224,6 +1303,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         mode,
         sourceCoverage,
         candidateSamples,
+        searchDiagnostics,
         outputPreview: String(rawText || '').slice(0, 500)
       }
     });
