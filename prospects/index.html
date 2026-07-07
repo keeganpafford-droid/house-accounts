@@ -133,8 +133,9 @@ function renderResearchSummary(summary){
   const items=[
     ['Companies uploaded',summary.companiesUploaded],
     ['Companies researched',summary.companiesResearched],
-    ['Companies with signals',summary.companiesWithSignals],
-    ['No current signals',summary.companiesWithNoSignals],
+    ['Live signals found',summary.liveSignalsFound],
+    ['Predictable timing opportunities',summary.predictableTimingOpportunities],
+    ['No current opportunities',summary.companiesWithNoSignals],
     ['High priority',summary.highPriority],
     ['Medium priority',summary.mediumPriority]
   ].filter(([,v])=>v!==undefined&&v!==null&&v!=='');
@@ -158,16 +159,20 @@ async function handle(f){
     const signals=data.signals||[]; document.getElementById('signalCount').textContent=signals.length;
     const byName={}; accounts.forEach(a=>byName[a.name]=[]); signals.forEach(s=>{(byName[s.accountName]||(byName[s.accountName]=[])).push(s)});
     const enriched=accounts.map(a=>({...a,signals:byName[a.name]||[],rawData:{...(a.rawData||{}),uploaded_contacts:a.contacts,raw_rows:a.rawRows}}));
-    const companiesWithSignals=new Set(signals.map(s=>s.accountName).filter(Boolean)).size;
+    const liveSignals=signals.filter(s=>!s.isFallbackOpportunity);
+    const fallbackSignals=signals.filter(s=>s.isFallbackOpportunity);
+    const companiesWithLiveSignals=new Set(liveSignals.map(s=>s.accountName).filter(Boolean)).size;
     const summary={
       accountCount:accounts.length,
       companiesUploaded:accounts.length,
       companiesResearched:data.diagnostics?.accountsResearched ?? accounts.length,
-      companiesWithSignals,
-      companiesWithNoSignals:Math.max(0,accounts.length-companiesWithSignals),
-      businessSignals:signals.length,
-      highPriority:signals.filter(s=>Number(s.confidenceScore||0)>=80).length,
-      mediumPriority:signals.filter(s=>Number(s.confidenceScore||0)>=60&&Number(s.confidenceScore||0)<80).length,
+      companiesWithSignals:companiesWithLiveSignals,
+      companiesWithNoSignals:Math.max(0,accounts.length-companiesWithLiveSignals),
+      businessSignals:liveSignals.length,
+      liveSignalsFound:data.diagnostics?.liveSignalsFound ?? liveSignals.length,
+      predictableTimingOpportunities:data.diagnostics?.predictableTimingOpportunities ?? fallbackSignals.length,
+      highPriority:data.diagnostics?.highConfidenceOpportunities ?? liveSignals.filter(s=>Number(s.confidenceScore||0)>=80).length,
+      mediumPriority:data.diagnostics?.mediumConfidenceOpportunities ?? liveSignals.filter(s=>Number(s.confidenceScore||0)>=60&&Number(s.confidenceScore||0)<80).length,
       savedAt:new Date().toISOString()
     };
     renderResearchSummary(summary);
