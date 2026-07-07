@@ -104,7 +104,7 @@ function parseCSV(text){
   return [...companies.values()].slice(0,50);
 }
 function signalHeadline(sig){
-  const specific=clean(sig.signalTitle||sig.title||sig.whatChanged||sig.shortSummary||sig.signalDetail);
+  const specific=clean(sig.concrete_trigger||sig.concreteTrigger||sig.signalTitle||sig.title||sig.whatChanged||sig.shortSummary||sig.signalDetail);
   if(specific && !/^business activity signal$/i.test(specific)) return specific;
   const t=`${sig.signalType||''} ${sig.title||''} ${sig.whatChanged||''} ${sig.whyNow||''}`.toLowerCase();
   if(/hiring|recruit|onboarding/.test(t)) return 'Hiring activity creates a timely opening';
@@ -119,14 +119,18 @@ function renderContact(c){
   return `<p><strong>${escapeHtml(c.name)}</strong>${details?` — ${details}`:''}</p>`;
 }
 function renderCard(sig){
-  const cats=(sig.commonPromoCategories||sig.likelyProducts||[]).filter(Boolean).slice(0,4);
-  const source=sig.sourceUrl?`<a target="_blank" href="${escapeHtml(sig.sourceUrl)}">${escapeHtml(sourceDomain(sig.sourceUrl)||'View source')}</a>`:escapeHtml(sig.cleanSourceName||sig.sourceName||'Public source');
-  const businessContext=sig.businessContext||sig.companyContext||sig.strategicContext||sig.whatChanged||'';
-  const why=sig.whyNow||sig.whyItMattersForPromo||sig.reasonToReachOut||'Recent public business activity creates a timely reason to start a conversation.';
-  const buyingTeam=(sig.recommendedBuyingTeam||sig.buyingTeam||sig.likelyBuyers||[]).filter(Boolean).slice(0,3);
-  const contacts=(sig.potentialContacts||[]).filter(c=>c&&c.name).slice(0,2);
-  const contactsHtml=contacts.length?`<div class="section"><div class="label">Potential Contacts</div>${contacts.map(renderContact).join('')}${sig.whyTheseContacts?`<p style="margin-top:8px"><strong>Why these contacts:</strong> ${escapeHtml(sig.whyTheseContacts)}</p>`:''}</div>`:'';
-  return `<div class="opp-card"><div class="opp-top"><span class="badge">${escapeHtml(sig.signalType||'Business Activity')}</span><span class="score">Why Now ${Math.round(Number(sig.confidenceScore||sig.confidence*100||75))}</span></div><h3>${escapeHtml(sig.accountName||sig.account||'Target Account')}</h3><div class="headline">${escapeHtml(signalHeadline(sig))}</div>${businessContext?`<div class="section"><div class="label">Business Context</div><p>${escapeHtml(businessContext)}</p></div>`:''}<div class="section"><div class="label">Why this matters</div><p>${escapeHtml(why)}</p></div>${buyingTeam.length?`<div class="section"><div class="label">Recommended Buying Team</div><div class="chips">${buyingTeam.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')}</div></div>`:''}${contactsHtml}<div class="section"><div class="label">Suggested opener</div><div class="opener">“${escapeHtml(sig.suggestedOpener||sig.conversationStarter||'Saw some recent activity and wanted to ask who handles this kind of initiative.')}”</div></div><div class="section"><div class="label">Evidence</div><p class="source">${source}${sig.publishedDate?` · ${escapeHtml(sig.publishedDate)}`:''}</p></div>${cats.length?`<div class="section"><div class="label">Common promo categories</div><div class="chips">${cats.map(c=>`<span class="chip">${escapeHtml(c)}</span>`).join('')}</div></div>`:''}</div>`;
+  const cats=(sig.commonPromoCategories||sig.promo_categories||sig.likelyProducts||[]).filter(Boolean).slice(0,4);
+  const sourceUrl=sig.sourceUrl||sig.source_url||'';
+  const source=sourceUrl?`<a target="_blank" href="${escapeHtml(sourceUrl)}">${escapeHtml(sourceDomain(sourceUrl)||'View source')}</a>`:escapeHtml(sig.cleanSourceName||sig.sourceName||sig.source_name||'Public source');
+  const trigger=sig.concrete_trigger||sig.concreteTrigger||sig.signalTitle||sig.title||'';
+  const buyingMoment=sig.buying_moment||sig.buyingMoment||'';
+  const businessContext=sig.businessContext||sig.business_context||sig.companyContext||sig.strategicContext||sig.whatChanged||'';
+  const why=sig.why_this_matters||sig.whyNow||sig.whyItMattersForPromo||sig.reasonToReachOut||'Recent public business activity creates a timely reason to start a conversation.';
+  const buyingTeam=(sig.recommendedBuyingTeam||sig.recommended_buying_team||sig.buyingTeam||sig.likelyBuyers||[]).filter(Boolean).slice(0,3);
+  const contacts=(sig.potentialContacts||sig.potential_contacts||[]).filter(c=>c&&c.name).slice(0,2);
+  const whyContacts=sig.whyTheseContacts||sig.why_these_contacts||'';
+  const contactsHtml=contacts.length?`<div class="section"><div class="label">Potential Contacts</div>${contacts.map(renderContact).join('')}${whyContacts?`<p style="margin-top:8px"><strong>Why these contacts:</strong> ${escapeHtml(whyContacts)}</p>`:''}</div>`:'';
+  return `<div class="opp-card"><div class="opp-top"><span class="badge">${escapeHtml(sig.signalType||sig.signal_type||'Business Activity')}</span><span class="score">Why Now ${Math.round(Number(sig.confidenceScore||sig.why_now_score||sig.confidence*100||75))}</span></div><h3>${escapeHtml(sig.accountName||sig.account||'Target Account')}</h3><div class="headline">${escapeHtml(signalHeadline(sig))}</div>${trigger?`<div class="section"><div class="label">Business Trigger</div><p>${escapeHtml(trigger)}</p>${buyingMoment?`<p style="margin-top:6px;color:#6B7280">${escapeHtml(buyingMoment)}</p>`:''}</div>`:''}${businessContext?`<div class="section"><div class="label">Business Context</div><p>${escapeHtml(businessContext)}</p></div>`:''}<div class="section"><div class="label">Why this matters</div><p>${escapeHtml(why)}</p></div>${buyingTeam.length?`<div class="section"><div class="label">Recommended Buying Team</div><div class="chips">${buyingTeam.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')}</div></div>`:''}${contactsHtml}<div class="section"><div class="label">Suggested opener</div><div class="opener">“${escapeHtml(sig.suggested_opener||sig.suggestedOpener||sig.conversationStarter||'Saw some recent activity and wanted to ask who handles this kind of initiative.')}”</div></div><div class="section"><div class="label">Evidence</div><p class="source">${source}${sig.publishedDate||sig.event_date?` · ${escapeHtml(sig.publishedDate||sig.event_date)}`:''}</p></div>${cats.length?`<div class="section"><div class="label">Common promo categories</div><div class="chips">${cats.map(c=>`<span class="chip">${escapeHtml(c)}</span>`).join('')}</div></div>`:''}</div>`;
 }
 function renderResearchSummary(summary){
   const el=document.getElementById('researchSummary');
