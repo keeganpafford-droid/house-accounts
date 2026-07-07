@@ -89,6 +89,7 @@ function safeArray(value, max = 6) {
 
 function normalizeSignalType(type = '') {
   const t = String(type || '').toLowerCase();
+  if (/predictable|seasonal|fallback|timing/.test(t)) return 'Predictable Timing';
   if (/hiring|job|career|recruit|talent|staff/.test(t)) return 'Hiring';
   if (/trade|expo|conference|summit|event|open house|webinar|show/.test(t)) return 'Trade Show / Event';
   if (/award|recognition|recognized|winner|milestone|anniversary|ranking|inc\.? 5000|best places/.test(t)) return 'Award / Recognition';
@@ -408,7 +409,7 @@ ${JSON.stringify(accountPromptContext(accounts), null, 2)}
 
 For each company, find recent public developments from the last 18 months when possible. Look broadly: hiring, awards, trade shows, conferences, summits, product launches, partnerships, customer wins, expansion, acquisition/funding, leadership changes, community events, sustainability, safety, recruiting, employee engagement.
 
-Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation.
+Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation. Suppress clearly negative or irrelevant signals such as layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, or scandals. Do not use generic sustainability claims unless tied to a concrete event, certification, award, facility, deadline, campaign, partnership, or active program.
 
 Preserve the concrete trigger. Do not reduce a specific event like "secured a major medical contract" to only "expansion" or "hosting FTC Scrimmage at headquarters" to only "community engagement." The signalTitle and whatChanged should name the specific event whenever evidence supports it.
 
@@ -626,6 +627,128 @@ function buildWhyTheseContacts(contacts = [], team = [], type = '', context = ''
 }
 
 
+function hasNegativeOrIrrelevantContext(text = '') {
+  const t = clean(text).toLowerCase();
+  return /layoff|laid off|downsizing|restructuring|bankruptcy|lawsuit|litigation|plant closure|closing plant|closure|investigation|recall|scandal|fraud|settlement|data breach|fined|penalty|strike|labor dispute/.test(t);
+}
+
+function isGenericSustainabilityOnly(text = '') {
+  const t = clean(text).toLowerCase();
+  return /sustainability|green|eco|environment|carbon|recycling|esg/.test(t) &&
+    !/certification|certified|award|campaign|event|deadline|facility|initiative|volunteer|earth day|report launch|new program|partnership|donation|sponsor/.test(t);
+}
+
+function isWeakOldAward(raw = {}, text = '') {
+  const t = clean(text).toLowerCase();
+  if (!/award|recognition|honor|ranking|best places|top \d+|inc\.? 5000/.test(t)) return false;
+  const fresh = freshnessScore(raw.publicationDate || raw.publishedDate || raw.date || '');
+  return fresh < 35 && !/actively promoting|celebrat|anniversary|milestone|event|campaign|press release/.test(t);
+}
+
+function prospectKillRule(raw = {}, type = '', summary = '', businessContext = '') {
+  const text = `${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''} ${raw.sourceName || ''} ${raw.sourceUrl || ''}`;
+  if (hasNegativeOrIrrelevantContext(text)) return true;
+  if (isGenericSustainabilityOnly(text)) return true;
+  if (isWeakOldAward(raw, text)) return true;
+  return false;
+}
+
+function abdScores(raw = {}, type = '', summary = '', businessContext = '') {
+  const text = clean(`${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''}`).toLowerCase();
+  let actionability = 55;
+  let budgetLikelihood = 50;
+  let deadlineUrgency = freshnessScore(raw.publicationDate || raw.publishedDate || raw.date || '') >= 80 ? 65 : 45;
+
+  if (/new facility|facility opening|new location|plant|warehouse|distribution center|expansion|headquarters|rebrand|merger|acquisition|product launch|trade show|expo|conference|open house|anniversary|safety milestone|contract|customer win/.test(text)) actionability += 22;
+  if (/hiring|recruit|onboarding|employee appreciation|recognition|event|trade show|facility|uniform|safety|sales kickoff|community event|sponsor|customer appreciation|holiday/.test(text)) budgetLikelihood += 24;
+  if (/upcoming|this month|this quarter|scheduled|opening|launching|event|conference|trade show|deadline|seasonal|hiring now|now hiring|new facility/.test(text)) deadlineUrgency += 22;
+
+  if (/generic sustainability|sustainability statement|mission statement|old award|vague community|general community/.test(text)) {
+    actionability -= 18; budgetLikelihood -= 12; deadlineUrgency -= 12;
+  }
+  if (hasUnclearBusinessContext(businessContext)) {
+    actionability -= 5; deadlineUrgency -= 4;
+  }
+
+  const clamp = n => Math.max(0, Math.min(100, Math.round(n)));
+  return { actionability: clamp(actionability), budgetLikelihood: clamp(budgetLikelihood), deadlineUrgency: clamp(deadlineUrgency) };
+}
+
+function abdAdjustedConfidence(base = 0, raw = {}, type = '', summary = '', businessContext = '') {
+  const abd = abdScores(raw, type, summary, businessContext);
+  const abdTotal = Math.round((abd.actionability * 0.4) + (abd.budgetLikelihood * 0.35) + (abd.deadlineUrgency * 0.25));
+  const blended = Math.round((Number(base || 0) * 0.62) + (abdTotal * 0.38));
+  return { score: Math.max(0, Math.min(100, blended)), abd };
+}
+
+function currentPredictableTimingTheme(now = new Date()) {
+  const month = now.getMonth() + 1;
+  if ([1,2].includes(month)) return { trigger:'Predictable Timing: New Year Sales Kickoff / Annual Planning', context:'No major current public signal was found, but many companies use Q1 to plan sales kickoff, recruiting, recognition, and employee engagement programs.', opener:'I was thinking ahead to Q1 planning and sales kickoff needs. Are branded employee, customer, or event programs on your team’s radar right now?', categories:['Sales Kickoff Items','Employee Recognition','Recruiting Materials','Customer Gifts'], team:['Sales','Marketing','HR / People'] };
+  if ([3,4].includes(month)) return { trigger:'Predictable Timing: Trade Show Season / Spring Events', context:'No major current public signal was found, but spring often brings trade shows, recruiting events, customer meetings, and community programs.', opener:'I was thinking ahead to spring events and customer-facing programs. Are there any trade shows, recruiting events, or community initiatives your team is preparing for?', categories:['Event Kits','Booth Giveaways','Employee Apparel','Customer Appreciation'], team:['Marketing','Events','Sales'] };
+  if ([5,6].includes(month)) return { trigger:'Predictable Timing: Summer Intern Onboarding / Employee Engagement', context:'No major current public signal was found, but many companies plan summer onboarding, intern programs, employee appreciation, and recruiting activities around this period.', opener:'I was thinking about summer onboarding and employee engagement programs. Would a few simple ideas for interns, new hires, or team appreciation be useful?', categories:['Onboarding Items','Employee Apparel','Recognition Gifts','Recruiting Materials'], team:['HR / People','Talent Acquisition','Marketing'] };
+  if ([7,8,9].includes(month)) return { trigger:'Predictable Timing: Employee Appreciation / Fall Planning', context:'No major current public signal was found, but this company may still have recurring promotional needs tied to employee engagement, recruiting, events, or customer appreciation.', opener:'I was thinking ahead to fall employee and customer programs and had a few timely ideas that may fit your team. Is this something you’re planning for now?', categories:['Employee Appreciation','Customer Appreciation','Event Kits','Branded Apparel'], team:['HR / People','Marketing','Events'] };
+  return { trigger:'Predictable Timing: Holiday / Q4 Gifting', context:'No major current public signal was found, but Q4 is a common planning window for holiday gifting, customer appreciation, employee recognition, and year-end events.', opener:'I was thinking ahead to holiday gifting and year-end appreciation. Are customer gifts or employee recognition programs something your team is planning now?', categories:['Holiday Gifts','Customer Appreciation','Employee Recognition','Executive Gifts'], team:['Marketing','Sales','HR / People'] };
+}
+
+function makePredictableTimingSignal(account = {}) {
+  const theme = currentPredictableTimingTheme();
+  const accountName = clean(account.name || account.accountName || 'Target Account');
+  const recommendedBuyingTeam = theme.team;
+  const potentialContacts = selectUploadedContactsForTeam(account.contacts || [], recommendedBuyingTeam, 2);
+  return {
+    accountName,
+    isReal: false,
+    isFallbackOpportunity: true,
+    signalLayerType: 'Predictable Timing',
+    type: 'Predictable Timing',
+    signalType: 'Predictable Timing',
+    opportunityType: 'PREDICTABLE_TIMING',
+    title: theme.trigger,
+    signalTitle: theme.trigger,
+    signalDetail: theme.trigger,
+    shortSummary: theme.trigger,
+    signalSnippet: theme.trigger,
+    whatChanged: theme.trigger,
+    businessContext: theme.context,
+    companyContext: theme.context,
+    evidence: 'Predictable promo buying cycle based on seasonal timing; no major live public signal found.',
+    sourceUrl: '',
+    sourceType: 'Predictable Timing',
+    sourceAuthority: 'Predictable Timing',
+    cleanSourceName: 'Predictable Timing',
+    sources: [],
+    publishedDate: '',
+    dateFound: new Date().toISOString(),
+    detectedAt: new Date().toISOString(),
+    confidence: 0.52,
+    confidenceScore: 52,
+    confidenceLevel: 'Low',
+    priority: 'Low',
+    abdScores: { actionability: 55, budgetLikelihood: 66, deadlineUrgency: 45 },
+    reasonToReachOut: 'Many companies plan branded merchandise around seasonal employee, customer, and event programs even when there is no public announcement.',
+    whyNow: 'Many companies plan branded merchandise around seasonal employee, customer, and event programs even when there is no public announcement.',
+    whyItMattersForPromo: 'Many companies plan branded merchandise around seasonal employee, customer, and event programs even when there is no public announcement.',
+    conversationStarter: theme.opener,
+    suggestedOpener: theme.opener,
+    recommendedBuyingTeam,
+    buyingTeam: recommendedBuyingTeam,
+    potentialContacts,
+    uploadedContacts: normalizeUploadedContacts(account.contacts || []),
+    whyTheseContacts: potentialContacts.length ? buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, 'Predictable Timing', theme.context) : '',
+    suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0],
+    likelyBuyers: recommendedBuyingTeam,
+    affectedDepartment: recommendedBuyingTeam[0],
+    likelyConversations: ['Seasonal program planning', 'Employee or customer appreciation', 'Upcoming events'],
+    likelyProducts: theme.categories,
+    commonPromoCategories: theme.categories,
+    opportunityCategory: theme.trigger,
+    opportunityExplanation: 'Predictable seasonal timing creates a lower-priority but still useful reason to start a planning conversation.',
+    valueSource: 'Predictable Timing',
+    aiQualified: true,
+    source: 'predictable-timing'
+  };
+}
+
 function hasUnclearBusinessContext(context = '') {
   return /specific business initiative driving|specific growth driver|not yet clear|could not be determined|unclear/i.test(clean(context));
 }
@@ -643,7 +766,7 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
   return Math.round(Math.max(0, Math.min(100, score)));
 }
 
-function makeSignal(raw = {}, account = {}) {
+function makeSignal(raw = {}, account = {}, options = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
@@ -652,7 +775,10 @@ function makeSignal(raw = {}, account = {}) {
   const title = compact(raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 140);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 220);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
-  const confidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
+  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
+  const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
+  const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
+  const confidencePct = abd.score;
   if (confidencePct < 55 || !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
   const why = compact(raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || contextToPromoWhy(businessContext, type), 280);
   const opener = compact(raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || contextToOpener(businessContext, type), 240);
@@ -692,6 +818,8 @@ function makeSignal(raw = {}, account = {}) {
     confidence: confidencePct / 100,
     confidenceScore: confidencePct,
     confidenceLevel: confidenceLabel(confidencePct),
+    priority: confidencePct >= 80 ? 'High' : confidencePct >= 60 ? 'Medium' : 'Low',
+    abdScores: abd.abd || undefined,
     reasonToReachOut: why,
     whyNow: why,
     whyItMattersForPromo: why,
@@ -834,15 +962,16 @@ Reject:
 - contact/about/privacy/nav text
 - social posts with no clear business relevance
 - generic careers page existence with no specific hiring/recruiting reason, unless the evidence shows meaningful hiring activity or a clear recruiting push
+- clearly negative or irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, scandals
+- generic sustainability language unless tied to a concrete event, certification, award, facility, deadline, campaign, partnership, or active program
 
 For each accepted signal, preserve the concrete business trigger. Do not reduce specific events like "secured a significant medical contract" to only "Expansion" or "hosting FTC Scrimmage at headquarters" to only "Community engagement." Then translate the specific trigger into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
 
-Internally score every candidate on:
-- promo relevance
-- freshness
-- source quality
-- confidence that the event is real
-- urgency/actionability for a sales rep
+Internally score every candidate on ABD:
+- Actionability: how clear is the reason to reach out?
+- Budget likelihood: does this usually create promotional spend?
+- Deadline / urgency: is there a timely reason to act now?
+Also consider freshness, source quality, and confidence that the event is real.
 
 Return meaningful signals with confidence >= 60. Rank richer business context higher, but do not discard a useful hiring, expansion, event, funding, leadership, award, contract, or community signal solely because the exact business driver is unclear.
 
@@ -890,7 +1019,7 @@ ${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, 
 
     const signals = dedupeSignals(fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || '').toLowerCase()) || {};
-      return makeSignal(s, account);
+      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
     }).filter(Boolean).filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()))).slice(0, 80);
     const byAccount = {};
     for (const sig of signals) {
@@ -898,7 +1027,19 @@ ${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, 
       if (byAccount[sig.accountName].length < 4) byAccount[sig.accountName].push(sig);
     }
     Object.keys(byAccount).forEach(name => { byAccount[name] = byAccount[name].sort((a,b)=>Number(b.confidenceScore||0)-Number(a.confidenceScore||0)).slice(0,2); });
-    const finalSignals = Object.values(byAccount).flat();
+    if (mode === 'prospect-intelligence') {
+      for (const account of safeAccounts) {
+        if (!byAccount[account.name] || !byAccount[account.name].length) {
+          byAccount[account.name] = [makePredictableTimingSignal(account)];
+        }
+      }
+    }
+    const finalSignals = Object.values(byAccount).flat().sort((a,b) => {
+      const af = a.isFallbackOpportunity ? 1 : 0;
+      const bf = b.isFallbackOpportunity ? 1 : 0;
+      if (af !== bf) return af - bf;
+      return Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0);
+    });
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
     return res.status(200).json({
@@ -915,10 +1056,12 @@ ${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, 
         signalsDiscovered: rawSignals.length,
         signalsRejected: Math.max(0, rawSignals.length - finalSignals.length),
         signalsReturned: finalSignals.length,
-        highConfidenceOpportunities: finalSignals.filter(s => Number(s.confidenceScore || 0) >= 80).length,
-        mediumConfidenceOpportunities: finalSignals.filter(s => Number(s.confidenceScore || 0) >= 60 && Number(s.confidenceScore || 0) < 80).length,
-        accountsWithSignals: Object.keys(byAccount).length,
-        accountsWithNoSignals: Math.max(0, safeAccounts.length - Object.keys(byAccount).length),
+        highConfidenceOpportunities: finalSignals.filter(s => !s.isFallbackOpportunity && Number(s.confidenceScore || 0) >= 80).length,
+        mediumConfidenceOpportunities: finalSignals.filter(s => !s.isFallbackOpportunity && Number(s.confidenceScore || 0) >= 60 && Number(s.confidenceScore || 0) < 80).length,
+        predictableTimingOpportunities: finalSignals.filter(s => s.isFallbackOpportunity).length,
+        liveSignalsFound: finalSignals.filter(s => !s.isFallbackOpportunity).length,
+        accountsWithSignals: new Set(finalSignals.filter(s => !s.isFallbackOpportunity).map(s => s.accountName)).size,
+        accountsWithNoSignals: Math.max(0, safeAccounts.length - new Set(finalSignals.filter(s => !s.isFallbackOpportunity).map(s => s.accountName)).size),
         avgConfidence,
         webSearchEnabled: !hasSearchProvider,
         targetedSearchEnabled: hasSearchProvider,
