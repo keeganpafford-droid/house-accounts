@@ -161,6 +161,17 @@ function renderPreviewCard(sig,idx){
   const signalType=sig.signalType||sig.signal_type||(isFallback(sig)?'Predictable Timing':'Business Activity');
   const preview=d.businessContext||d.why||'Review this account for a timely prospecting conversation.';
   const company=escapeHtml(sig.accountName||sig.account||'Target Account');
+  try{
+    const acctKey=normalizeCompanyName(sig.accountName||sig.account||sig.company||sig.company_name||sig.companyName||'');
+    const backendSignals=(window.__prospect_rawSignals||[]).filter(s=>normalizeCompanyName(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===acctKey);
+    console.log('[Prospect UI] Card render',{
+      account:sig.accountName||sig.account||sig.company||'',
+      backendSignals,
+      selectedSignal:sig,
+      selectedIsFallback:!!(sig.isFallbackOpportunity||/predictable timing/i.test(`${sig.signalType||sig.signal_type||sig.type||sig.concrete_trigger||sig.concreteTrigger||''}`)),
+      renderFunction:'renderPreviewCard (prospects/index.html)'
+    });
+  }catch(e){console.warn('[Prospect UI] Card render diagnostics failed',e);}
   return `<div class="opp-card compact"><div class="opp-top"><span class="badge">${escapeHtml(signalType)}</span><span class="score">Why Now ${getScore(sig)}</span></div><h3>${company}</h3><div class="headline">${escapeHtml(d.trigger)}</div><p class="preview-text">${escapeHtml(preview)}</p>${team.length?`<div class="chips">${team.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')}</div>`:''}${topContact?`<div class="contact-line"><strong>Top contact:</strong> ${escapeHtml(topContact.name)}${topContact.title?` — ${escapeHtml(topContact.title)}`:''}</div>`:''}<div class="mini-meta"><strong>Evidence:</strong> ${d.source}${sig.publishedDate||sig.event_date?` · ${escapeHtml(sig.publishedDate||sig.event_date)}`:''}</div><button class="card-cta" type="button" data-opp-index="${idx}">View Full Opportunity →</button></div>`;
 }
 function renderFullOpportunity(sig){
@@ -185,6 +196,15 @@ function renderOpportunityList(){
     return true;
   });
   currentVisibleSignals=visible;
+  try{
+    console.log('[Prospect UI] Visible signals (renderOpportunityList)',visible.map(s=>({
+      accountName:s.accountName||s.account||s.company||'',
+      selectedIsFallback:!!(s.isFallbackOpportunity||/predictable timing/i.test(`${s.signalType||s.signal_type||s.type||s.concrete_trigger||s.concreteTrigger||''}`)),
+      clientIsFallback:isFallback(s),
+      signalPreview:s.concrete_trigger||s.concreteTrigger||s.signalTitle||s.title||'',
+      clientScore:getScore(s)
+    })));
+  }catch(e){console.warn('[Prospect UI] renderOpportunityList logging failed',e);}
   controls.classList.toggle('active', currentSignals.length>0);
   if(visible.length){results.className='cards';results.innerHTML=visible.map((sig,i)=>renderPreviewCard(sig,i)).join('');}
   else{results.className='empty';results.textContent=currentSignals.length?'No opportunities match the current filters.':'No high-confidence business signals found yet. Every uploaded company was researched; no current signals met the threshold.';}
@@ -229,6 +249,8 @@ async function handle(f){
     console.log('[Prospect UI] Raw /api/research-batch response', data);
     if(!res.ok) throw new Error(data.error||'Prospect research failed');
     const rawSignals=Array.isArray(data.signals)?data.signals:[];
+    // Expose raw backend signals for render-time diagnostics.
+    window.__prospect_rawSignals = rawSignals;
     console.log('[Prospect UI] Raw signal summary', rawSignals.map(s=>({
       accountName:s.accountName||s.account||s.company||s.company_name||s.companyName||'',
       signalType:s.signalType||s.signal_type||'',
@@ -247,8 +269,14 @@ async function handle(f){
       clientRankingScore:Math.round(bestSignalScore(s)),
       publishedDate:s.publishedDate||s.eventDate||s.event_date||''
     })));
-    const byName={}; accounts.forEach(a=>byName[a.name]=[]); signals.forEach(s=>{(byName[s.accountName]||(byName[s.accountName]=[])).push(s)});
-    const enriched=accounts.map(a=>({...a,signals:byName[a.name]||[],rawData:{...(a.rawData||{}),uploaded_contacts:a.contacts,raw_rows:a.rawRows}}));
+    const byName={};
+    // Key uploaded accounts and returned signals the same way so minor casing, spacing, or punctuation differences do not drop live signals.
+    accounts.forEach(a=>{byName[normalizeCompanyName(a.name)]=[]});
+    signals.forEach(s=>{
+      const key=normalizeCompanyName(s.accountName||s.account||s.company||s.company_name||s.companyName||'');
+      (byName[key]||(byName[key]=[])).push(s);
+    });
+    const enriched=accounts.map(a=>({...a,signals:byName[normalizeCompanyName(a.name)]||[],rawData:{...(a.rawData||{}),uploaded_contacts:a.contacts,raw_rows:a.rawRows}}));
     const liveSignals=signals.filter(s=>!s.isFallbackOpportunity);
     const fallbackSignals=signals.filter(s=>s.isFallbackOpportunity);
     const companiesWithLiveSignals=new Set(liveSignals.map(s=>s.accountName).filter(Boolean)).size;
