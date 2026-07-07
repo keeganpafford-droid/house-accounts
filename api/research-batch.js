@@ -381,6 +381,14 @@ function dedupeCandidates(candidates = []) {
   return out;
 }
 
+function prospectDebugLog(label, payload = {}) {
+  try {
+    console.log(`[Prospect Research] ${label}`, JSON.stringify(payload, null, 2));
+  } catch {
+    console.log(`[Prospect Research] ${label}`, payload);
+  }
+}
+
 async function mapLimit(items, limit, mapper) {
   const results = new Array(items.length);
   let idx = 0;
@@ -468,14 +476,23 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     });
 
     if (mode === 'prospect-intelligence') {
-      console.log('[ProspectIntelligence SearchDiagnostics]', JSON.stringify({
-        companyName: account.name,
-        targetedQueriesRun: queries.length,
-        sourcesReturned: raw.length,
+      prospectDebugLog('Targeted search complete', {
+        company: account.name,
+        queriesRun: queries,
+        queryResultCounts: queriesWithResults,
+        resultsReturned: raw.length,
         rankedCandidates: ranked.length,
-        highIntentCandidateCount,
+        topResults: ranked.slice(0, 3).map(r => ({
+          title: r.title,
+          url: r.url,
+          sourceType: r.sourceType,
+          score: r.score,
+          query: r.query
+        })),
+        liveSignalCandidateFound: liveCandidateCount > 0,
+        highIntentCandidateFound: highIntentCandidateCount > 0,
         fallbackEligibleAfterSearch: highIntentCandidateCount === 0
-      }));
+      });
     }
 
     for (const r of ranked) {
@@ -1150,6 +1167,18 @@ export default async function handler(req, res) {
 
     // If any dedicated search provider is configured, use targeted search operators first.
     const hasSearchProvider = !!(process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY);
+    if (mode === 'prospect-intelligence') {
+      prospectDebugLog('Request received', {
+        mode,
+        accountsReceived: accounts.length,
+        uniqueAccountsResearched: safeAccounts.length,
+        providerMode: hasSearchProvider ? 'targeted-search' : 'openai-web-search',
+        serperConfigured: !!process.env.SERPER_API_KEY,
+        tavilyConfigured: !!process.env.TAVILY_API_KEY,
+        braveConfigured: !!process.env.BRAVE_SEARCH_API_KEY,
+        firecrawlConfigured: !!process.env.FIRECRAWL_API_KEY
+      });
+    }
     if (hasSearchProvider) {
       providerMode = 'targeted-search';
       const discovered = await discoverCandidatesForAccounts(safeAccounts, mode);
@@ -1160,6 +1189,17 @@ export default async function handler(req, res) {
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
+      if (mode === 'prospect-intelligence') {
+        prospectDebugLog('Firecrawl enrichment complete', {
+          firecrawlCalled: !!process.env.FIRECRAWL_API_KEY && candidates.length > 0,
+          candidatesSentToFirecrawl: candidates.length,
+          scrapedCount: enriched.scrapedCount || 0
+        });
+      }
+    } else if (mode === 'prospect-intelligence') {
+      prospectDebugLog('Targeted search skipped', {
+        reason: 'No SERPER_API_KEY, TAVILY_API_KEY, or BRAVE_SEARCH_API_KEY configured. Prospect research will use OpenAI web-search fallback instead of intent-driven query chains.'
+      });
     }
 
     let parsed = null;
@@ -1240,6 +1280,17 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     }
 
     const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
+    if (mode === 'prospect-intelligence') {
+      prospectDebugLog('LLM opportunity parser complete', {
+        providerMode,
+        candidateCountPassedToParser: candidates.length,
+        rawSignalsReturned: rawSignals.length,
+        rawSignalsByAccount: safeAccounts.map(a => ({
+          company: a.name,
+          rawSignals: rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || '').toLowerCase())).length
+        }))
+      });
+    }
     const validAccountNames = new Set(safeAccounts.map(a => a.name.toLowerCase()));
     const accountLookup = new Map(safeAccounts.map(a => [a.name.toLowerCase(), a.name]));
     const fixedSignals = rawSignals.map(s => {
@@ -1252,10 +1303,25 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       return found ? { ...s, accountName: found.name } : s;
     });
 
-    const signals = dedupeSignals(fixedSignals.map(s => {
+    const madeSignalsRaw = fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || '').toLowerCase()) || {};
       return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
-    }).filter(Boolean).filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()))).slice(0, 80);
+    });
+    const mappedSignals = madeSignalsRaw.filter(Boolean);
+    const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
+    const signals = dedupeSignals(validMappedSignals).slice(0, 80);
+    if (mode === 'prospect-intelligence') {
+      prospectDebugLog('Signal filtering complete', {
+        rawSignals: rawSignals.length,
+        mappedSignals: mappedSignals.length,
+        invalidAccountSignalsFiltered: Math.max(0, mappedSignals.length - validMappedSignals.length),
+        dedupedSignals: signals.length,
+        signalsByAccountBeforeFallback: safeAccounts.map(a => ({
+          company: a.name,
+          liveSignals: signals.filter(s => s.accountName === a.name).length
+        }))
+      });
+    }
     const byAccount = {};
     for (const sig of signals) {
       if (!byAccount[sig.accountName]) byAccount[sig.accountName] = [];
@@ -1265,7 +1331,33 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
         if (!byAccount[account.name] || !byAccount[account.name].length) {
+          const accountDiag = searchDiagnostics.find(d => d.companyName === account.name) || {};
+          const fallbackReason = !hasSearchProvider
+            ? 'targeted search provider not configured; no live signal returned by OpenAI web search'
+            : candidates.filter(c => c.accountName === account.name).length === 0
+              ? 'targeted search completed but returned no ranked candidates above threshold'
+              : 'targeted search candidates were passed to LLM but no valid live opportunity survived parsing/filtering';
+          prospectDebugLog('Fallback used', {
+            company: account.name,
+            fallbackUsed: true,
+            fallbackReason,
+            targetedQueriesRun: accountDiag.targetedQueriesRun || 0,
+            rankedCandidates: accountDiag.rankedCandidates || 0,
+            topResults: accountDiag.topSources || []
+          });
           byAccount[account.name] = [makePredictableTimingSignal(account)];
+        } else {
+          prospectDebugLog('Live opportunity generated', {
+            company: account.name,
+            fallbackUsed: false,
+            liveOpportunityCount: byAccount[account.name].length,
+            opportunities: byAccount[account.name].map(s => ({
+              trigger: s.concreteTrigger || s.signalTitle || s.whatChanged || s.signalType,
+              signalType: s.signalType,
+              confidenceScore: s.confidenceScore,
+              sourceUrl: s.sourceUrl
+            }))
+          });
         }
       }
     }
