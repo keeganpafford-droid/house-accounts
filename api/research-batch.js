@@ -1127,6 +1127,57 @@ function signalKeywordKey(text = '') {
   return clean(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length > 3 && !['company','business','activity','public','signal','recent','creates','reason','promo'].includes(w)).slice(0, 8).join(' ');
 }
 
+function isFallbackSignal(sig = {}) {
+  return !!(sig.isFallbackOpportunity || /predictable timing/i.test(`${sig.signalType || ''} ${sig.signal_type || ''} ${sig.type || ''} ${sig.concreteTrigger || sig.concrete_trigger || ''}`));
+}
+
+function signalDateText(sig = {}) {
+  return clean(sig.publishedDate || sig.publicationDate || sig.eventDate || sig.event_date || sig.date || sig.dateFound || '');
+}
+
+function opportunityTypeBoost(sig = {}) {
+  const text = `${sig.signalType || sig.signal_type || sig.type || ''} ${sig.buyingMoment || sig.buying_moment || ''} ${sig.concreteTrigger || sig.concrete_trigger || ''} ${sig.title || ''}`.toLowerCase();
+  if (/expansion|facility|opening|new location|ribbon cutting|distribution center/.test(text)) return 20;
+  if (/product launch|launch|released|sparkpnt|new product/.test(text)) return 18;
+  if (/trade show|conference|expo|event|sponsor|sponsorship/.test(text)) return 17;
+  if (/contract|partnership|acquisition|funding|rebrand/.test(text)) return 15;
+  if (/hiring|recruit|onboarding|headcount/.test(text)) return 12;
+  if (/award|recognition|milestone|anniversary/.test(text)) return 9;
+  return 0;
+}
+
+function specificityBoost(sig = {}) {
+  const text = `${sig.concreteTrigger || sig.concrete_trigger || ''} ${sig.title || ''} ${sig.businessContext || sig.business_context || sig.whatChanged || ''}`.toLowerCase();
+  let score = 0;
+  if (/(20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4])/.test(text)) score += 6;
+  if (/facility|launch|opening|event|conference|contract|hiring|award|sponsor|trade show|product/.test(text)) score += 6;
+  if ((sig.sourceUrl || sig.source_url || '').trim()) score += 4;
+  if ((sig.sources || []).length > 1) score += 3;
+  return score;
+}
+
+function bestSignalScore(sig = {}) {
+  if (!sig) return -999999;
+  if (isFallbackSignal(sig)) return -10000 + Number(sig.confidenceScore || 0);
+  const confidence = Number(sig.confidenceScore || sig.why_now_score || 0);
+  const fresh = freshnessScore(signalDateText(sig));
+  const abd = sig.abdScores || {};
+  const actionability = Number(sig.actionability_score || abd.actionability || 0);
+  const budget = Number(sig.budget_score || abd.budgetLikelihood || 0);
+  const deadline = Number(sig.deadline_score || abd.deadlineUrgency || 0);
+  const abdBlend = [actionability, budget, deadline].filter(Boolean).reduce((a,b)=>a+b,0) / Math.max(1, [actionability, budget, deadline].filter(Boolean).length);
+  return confidence + (fresh * 0.35) + (abdBlend * 0.15) + opportunityTypeBoost(sig) + specificityBoost(sig);
+}
+
+function compareBestSignals(a = {}, b = {}) {
+  const af = isFallbackSignal(a) ? 1 : 0;
+  const bf = isFallbackSignal(b) ? 1 : 0;
+  if (af !== bf) return af - bf;
+  const delta = bestSignalScore(b) - bestSignalScore(a);
+  if (Math.abs(delta) > 0.001) return delta;
+  return Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0);
+}
+
 function dedupeSignals(signals = []) {
   const map = new Map();
   for (const sig of signals) {
@@ -1141,15 +1192,16 @@ function dedupeSignals(signals = []) {
     }
     const mergedSources = [...(existing.sources || []), ...(sig.sources || [])];
     if (sig.sourceUrl && !mergedSources.some(s => s.url === sig.sourceUrl)) mergedSources.push({ name: sig.cleanSourceName || sourceDomain(sig.sourceUrl), url: sig.sourceUrl });
-    const better = Number(sig.confidenceScore || 0) > Number(existing.confidenceScore || 0) ? sig : existing;
+    const better = compareBestSignals(sig, existing) < 0 ? sig : existing;
+    const mergedConfidence = Math.min(100, Math.max(Number(existing.confidenceScore || 0), Number(sig.confidenceScore || 0)) + (mergedSources.length > 1 ? 4 : 0));
     map.set(key, {
       ...better,
       sources: mergedSources.slice(0, 5),
-      confidenceScore: Math.min(100, Math.max(Number(existing.confidenceScore || 0), Number(sig.confidenceScore || 0)) + (mergedSources.length > 1 ? 4 : 0)),
-      confidenceLevel: confidenceLabel(Math.min(100, Math.max(Number(existing.confidenceScore || 0), Number(sig.confidenceScore || 0)) + (mergedSources.length > 1 ? 4 : 0)))
+      confidenceScore: mergedConfidence,
+      confidenceLevel: confidenceLabel(mergedConfidence)
     });
   }
-  return [...map.values()].sort((a,b) => Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0));
+  return [...map.values()].sort(compareBestSignals);
 }
 
 
@@ -1385,7 +1437,10 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       if (!byAccount[sig.accountName]) byAccount[sig.accountName] = [];
       if (byAccount[sig.accountName].length < 4) byAccount[sig.accountName].push(sig);
     }
-    Object.keys(byAccount).forEach(name => { byAccount[name] = byAccount[name].sort((a,b)=>Number(b.confidenceScore||0)-Number(a.confidenceScore||0)).slice(0,2); });
+    Object.keys(byAccount).forEach(name => {
+      const ranked = byAccount[name].sort(compareBestSignals);
+      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 1) : ranked.slice(0, 2);
+    });
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
         if (!byAccount[account.name] || !byAccount[account.name].length) {
@@ -1413,18 +1468,15 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
               trigger: s.concreteTrigger || s.signalTitle || s.whatChanged || s.signalType,
               signalType: s.signalType,
               confidenceScore: s.confidenceScore,
+              rankingScore: Math.round(bestSignalScore(s)),
+              publishedDate: s.publishedDate || s.eventDate || s.event_date || '',
               sourceUrl: s.sourceUrl
             }))
           });
         }
       }
     }
-    const finalSignals = Object.values(byAccount).flat().sort((a,b) => {
-      const af = a.isFallbackOpportunity ? 1 : 0;
-      const bf = b.isFallbackOpportunity ? 1 : 0;
-      if (af !== bf) return af - bf;
-      return Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0);
-    });
+    const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
     return res.status(200).json({
