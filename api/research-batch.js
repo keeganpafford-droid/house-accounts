@@ -137,11 +137,31 @@ function classifySource(url = '', title = '') {
   return 'web';
 }
 
-function queryTemplates(company, context = {}) {
+function queryTemplates(company, context = {}, mode = 'ranked') {
   const loc = context.location ? ` ${context.location}` : '';
   const industry = context.industry ? ` ${context.industry}` : '';
   const quoted = `"${company}"`;
-  // Targeted searches modeled after the Google-AI workflow: first disambiguate, then search for recent buying triggers.
+  const domain = String(context.website || '').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0] || '';
+
+  if (mode === 'prospect-intelligence') {
+    // Prospect Intelligence is buying-moment driven. Keep this list surgical so search pulls
+    // events that create timely promo conversations instead of generic company summaries.
+    return [
+      `${quoted}${loc} ("facility expansion" OR "new facility" OR "new location" OR "ribbon cutting" OR "new office" OR "distribution center" OR warehouse OR plant)`,
+      `${quoted}${loc} ("trade show" OR exhibitor OR booth OR conference OR expo OR summit OR webinar OR "open house" OR "customer event" OR "dealer meeting" OR "sales meeting")`,
+      `${quoted}${loc} ("product launch" OR unveiled OR introduces OR rollout OR rebrand OR merger OR acquisition)`,
+      `${quoted}${loc} ("hiring HR" OR "hiring marketing" OR "event manager" OR "field marketing" OR "employee experience" OR "talent acquisition" OR onboarding)`,
+      `${quoted}${loc} ("contract win" OR "major contract" OR partnership OR "customer win" OR awarded OR selected)`,
+      `${quoted}${loc} ("safety milestone" OR anniversary OR award OR recognition OR "best places to work" OR "Inc. 5000")`,
+      `${quoted}${loc} ("community event" OR sponsorship OR sponsor OR fundraiser OR philanthropy OR volunteer OR CSR)`,
+      `${quoted}${loc} ("career fair" OR recruiting OR "now hiring" OR "open positions" OR careers)`,
+      domain ? `site:${domain} (news OR press OR "press release" OR blog OR careers OR jobs OR events OR community OR locations OR sustainability)` : '',
+      domain ? `site:${domain} ("trade show" OR conference OR booth OR exhibitor OR "open house" OR webinar OR event)` : '',
+      domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch)` : ''
+    ].filter(Boolean);
+  }
+
+  // Existing customer/house account workflows keep the original broader research strategy.
   return [
     `${quoted}${loc}${industry}`,
     `${quoted}${loc} (acquired OR acquisition OR merger OR merged OR funding OR investment OR "private equity" OR partnership OR "customer win" OR contract)`,
@@ -152,10 +172,30 @@ function queryTemplates(company, context = {}) {
     `${quoted}${loc} (expansion OR "new office" OR "new location" OR facility OR headquarters OR warehouse OR manufacturing OR "new building")`,
     `${quoted}${loc} (community OR charity OR fundraiser OR sponsorship OR sustainability OR volunteer OR donation OR nonprofit)`,
     `${quoted}${loc} (CEO OR president OR "vice president" OR appointed OR named OR promoted OR leadership OR joins)`,
-    `site:${String(context.website || '').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0] || ''} (${quoted} OR news OR press OR careers OR events OR awards OR community OR leadership)`,
+    `site:${domain} (${quoted} OR news OR press OR careers OR events OR awards OR community OR leadership)`,
     `${quoted}${loc} ("trade show" OR "annual meeting" OR "open house" OR "customer event" OR "sales kickoff")`,
     `${quoted}${loc} ("safety" OR "employee engagement" OR "recognition program" OR "recruiting campaign")`
   ].filter(q => !q.startsWith('site: '));
+}
+
+function priorityOwnedPages(account = {}) {
+  const website = clean(account.website || '');
+  if (!website) return [];
+  let origin = '';
+  try { origin = new URL(website.startsWith('http') ? website : `https://${website}`).origin; } catch { return []; }
+  const paths = ['/news','/press','/press-releases','/blog','/careers','/jobs','/events','/community','/about','/sustainability','/locations'];
+  return paths.map(path => ({
+    title: `${account.name} ${path.replace('/', '') || 'site'} page`,
+    snippet: `Owned website page targeted for buying moments: ${path}`,
+    url: `${origin}${path}`,
+    source: sourceDomain(origin),
+    date: '',
+    provider: 'owned-site',
+    query: 'priority-owned-page',
+    accountName: account.name,
+    sourceType: 'owned-page',
+    score: 18
+  }));
 }
 
 function parseSignalDate(dateText = '') {
@@ -280,15 +320,24 @@ function scoreCandidate(r, accountName) {
   if (isJunkText(text)) return 0;
   let score = 0;
   if (t.includes(accountName.toLowerCase().split(' ')[0])) score += 8;
-  if (/hiring|jobs|careers|now hiring|open positions|recruiting/.test(t)) score += 18;
-  if (/summit|conference|expo|exhibitor|booth|event|sponsor|webinar/.test(t)) score += 20;
-  if (/award|recognized|inc\.? 5000|fastest growing|best places to work|winner/.test(t)) score += 18;
-  if (/launch|unveiled|rollout|new product|new division|rebrand/.test(t)) score += 18;
-  if (/expansion|new office|new location|facility|headquarters|warehouse|manufacturing/.test(t)) score += 20;
-  if (/acquired|acquisition|merger|funding|investment|partnership|customer win|contract/.test(t)) score += 18;
-  if (/community|charity|fundraiser|sustainability|volunteer|donation/.test(t)) score += 14;
+
+  // High-intent buying moments get priority over generic company activity.
+  if (/facility expansion|new facility|ribbon cutting|new location|distribution center|warehouse|plant opening|headquarters opening/.test(t)) score += 34;
+  if (/trade show|exhibitor|booth|conference|expo|summit|open house|customer event|dealer meeting|sales meeting|webinar/.test(t)) score += 32;
+  if (/product launch|unveiled|rollout|new product|new division|rebrand|merger|acquisition/.test(t)) score += 28;
+  if (/contract win|major contract|customer win|partnership|awarded|selected by|major deal/.test(t)) score += 27;
+  if (/hiring hr|hiring marketing|event manager|field marketing|employee experience|talent acquisition|people operations|onboarding/.test(t)) score += 26;
+  if (/safety milestone|anniversary|award|recognized|inc\.? 5000|fastest growing|best places to work|winner/.test(t)) score += 20;
+  if (/community event|charity|fundraiser|sponsorship|sponsor|volunteer|philanthropy/.test(t)) score += 18;
+
+  // Generic versions still count, but less.
+  if (/hiring|jobs|careers|now hiring|open positions|recruiting/.test(t)) score += 12;
+  if (/launch|unveiled|rollout|new product|new division|rebrand/.test(t)) score += 10;
+  if (/expansion|new office|new location|facility|headquarters|warehouse|manufacturing/.test(t)) score += 12;
+  if (/acquired|acquisition|merger|funding|investment|partnership|customer win|contract/.test(t)) score += 10;
   if (/2026|2025|today|yesterday|this week|recently|announced|upcoming|now/.test(t)) score += 10;
-  if (/contact us|about us|privacy|terms|map|directions/.test(t)) score -= 20;
+  if (/layoff|downsizing|bankruptcy|lawsuit|closure|recall|scandal|investigation/.test(t)) score -= 40;
+  if (/contact us|privacy|terms|map|directions|mission statement|history/.test(t)) score -= 20;
   return Math.max(0, score);
 }
 
@@ -338,14 +387,15 @@ function accountPromptContext(accounts) {
   }));
 }
 
-async function discoverCandidatesForAccounts(accounts = []) {
+async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const sourceCoverage = {};
   const allCandidates = [];
   const samples = [];
   const perAccount = await mapLimit(accounts, 5, async account => {
-    const queries = queryTemplates(account.name, account).slice(0, 12);
+    const queries = queryTemplates(account.name, account, mode).slice(0, mode === 'prospect-intelligence' ? 11 : 12);
     const resultSets = await Promise.all(queries.map(runSearch));
-    const raw = resultSets.flat();
+    let raw = resultSets.flat();
+    if (mode === 'prospect-intelligence') raw = raw.concat(priorityOwnedPages(account));
     const ranked = dedupeCandidates(raw.map(r => ({
       ...r,
       accountName: account.name,
@@ -400,22 +450,42 @@ async function callOpenAIJson({ apiKey, model, prompt }) {
 }
 
 async function callOpenAIWebSearch({ apiKey, model, accounts }) {
-  const prompt = `Research these companies for public business signals that create legitimate reasons for a promotional-products salesperson to start a conversation.
+  const prompt = `Research these companies for public buying moments that create timely reasons for a promotional-products salesperson to start a conversation.
+
+House Accounts is not trying to summarize companies. It is trying to answer: "Why should I contact this company today?"
 
 Use the account context below, including any uploaded contacts. Research each company once. If uploaded contacts align with the recommended buying team, they may be used as potentialContacts. Do not invent people.
 
 Accounts:
 ${JSON.stringify(accountPromptContext(accounts), null, 2)}
 
-For each company, find recent public developments from the last 18 months when possible. Look broadly: hiring, awards, trade shows, conferences, summits, product launches, partnerships, customer wins, expansion, acquisition/funding, leadership changes, community events, sustainability, safety, recruiting, employee engagement.
+Extract concrete buying moments from the last 18 months when possible. Prioritize: facility expansion, new location, ribbon cutting, trade show/exhibitor participation, booth/conference/summit/webinar/customer event, product launch, hiring with HR/marketing/event/employee-experience context, community event/sponsorship, corporate philanthropy, safety milestone, company anniversary, major award actively promoted, partnership/contract win, rebrand, merger, acquisition, open house, dealer meeting, sales meeting.
 
-Do not summarize companies. Do not return generic company descriptions. Return only events that create likely promo buying intent or a natural conversation. Suppress clearly negative or irrelevant signals such as layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, or scandals. Do not use generic sustainability claims unless tied to a concrete event, certification, award, facility, deadline, campaign, partnership, or active program.
+Do not summarize companies. Do not return generic company descriptions. Suppress clearly negative or irrelevant signals such as layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, or scandals. Do not use generic sustainability claims unless tied to a concrete event, certification, award, facility, deadline, campaign, partnership, or active program.
 
-Preserve the concrete trigger. Do not reduce a specific event like "secured a major medical contract" to only "expansion" or "hosting FTC Scrimmage at headquarters" to only "community engagement." The signalTitle and whatChanged should name the specific event whenever evidence supports it.
+Preserve the concrete trigger. Do not reduce "New Facility Inauguration in Virginia" to "Expansion" or "Hosting FTC Scrimmage at headquarters" to "Community engagement." Use concrete_trigger and signalTitle to name the specific event.
 
-For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext field that explains the company situation behind the signal, not just the surface signal. For hiring signals, do not stop at "company is hiring"; try to identify whether hiring appears tied to growth, expansion, a new facility, a product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally.
+For each accepted signal, answer both: what happened and why it likely happened. Add a short businessContext. For hiring signals, identify whether hiring appears tied to growth, expansion, new facility, product launch, seasonal ramp, contract demand, leadership change, or increased production demand. If the driver is not clear, say that naturally and lower confidence rather than omitting a meaningful signal.
 
-Then explain why it matters to promo, the recommended buying team, likely categories, and a casual opener that references the concrete trigger when possible. If public evidence identifies one or two relevant people, include them as potentialContacts; do not invent names and omit potentialContacts if no reliable person is found. Return JSON only with shape: {"signals":[{"accountName":"","signalType":"","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}. Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance. If a meaningful business signal exists but the exact business driver is unclear, still return it with transparent businessContext and lower confidence rather than omitting it.`;
+Score every signal using ABD:
+- actionability_score: how clear is the reason to reach out?
+- budget_score: does this usually create promotional spend?
+- deadline_score: is there a timely reason to act now?
+
+Openers must reference the concrete trigger and suggest a specific promotional play, then ask for a simple next step. Example: "Saw [Company] is opening its new Virginia facility. For plant rollouts, teams usually balance employee onboarding, local PR, and opening-day gifts. I had a few ideas around durable branded apparel and launch kits — worth sending over?"
+
+Recommended Buying Team rules:
+- Always include recommended_buying_team with 1 to 3 departments inferred from the signal and context.
+- Examples: HR / People, Talent Acquisition, Marketing, Events, Operations, Community Relations, Product Marketing, Sales.
+
+Potential Contacts rules:
+- Include potential_contacts only when a public source or uploaded contact supports the person and role.
+- Return at most 2 contacts.
+- Never invent names, placeholder people, or generic departments as contacts.
+
+Return JSON only with shape: {"signals":[{"company_name":"","accountName":"","signal_type":"","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}.
+
+Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance.`;
   const body = {
     model,
     input: prompt,
@@ -492,6 +562,66 @@ function contextToOpener(context = '', type = '') {
   if (/funding|capital|investment|growth/i.test(c)) return 'Saw the recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?';
   if (/facility|location|distribution center|production capacity/i.test(c)) return 'Saw the expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?';
   return 'Saw some recent company activity and had a quick question — who would be best to ask about related internal or brand needs?';
+}
+
+function buildConcreteTrigger(raw = {}, type = '', accountName = '') {
+  const direct = compact(raw.concrete_trigger || raw.concreteTrigger || raw.buying_moment || raw.buyingMoment || raw.signalTitle || raw.title || raw.whatChanged || '', 150);
+  if (direct && !/^(business activity|recent activity|expansion|hiring|community engagement|recognition)$/i.test(direct)) return direct;
+  const text = clean(`${raw.signalTitle || ''} ${raw.whatChanged || ''} ${raw.summary || ''} ${raw.signalDetail || ''} ${raw.sourceName || ''}`).trim();
+  if (text) return compact(text, 120);
+  return `${accountName || 'Company'} ${type || 'Business Activity'}`;
+}
+
+function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
+  const explicit = compact(raw.buying_moment || raw.buyingMoment || raw.opportunityCategory || '', 90);
+  if (explicit) return explicit;
+  const t = clean(`${type} ${trigger} ${context}`).toLowerCase();
+  if (/facility|new location|ribbon cutting|plant|warehouse|distribution center|headquarters/.test(t)) return 'Facility / Location Expansion';
+  if (/trade show|exhibitor|booth|conference|expo|summit|open house|customer event|dealer meeting|webinar/.test(t)) return 'Event / Trade Show';
+  if (/product launch|new product|rollout|unveil/.test(t)) return 'Product Launch';
+  if (/rebrand|merger|acquisition|integrat/.test(t)) return 'Brand / Business Change';
+  if (/contract|customer win|partnership|awarded|selected/.test(t)) return 'Contract / Partnership Win';
+  if (/hiring|recruit|talent|employee experience|field marketing|event manager|onboarding/.test(t)) return 'Hiring / Team Growth';
+  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community / Sponsorship Event';
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return 'Recognition / Milestone';
+  return normalizeSignalType(type || trigger || 'Business Activity');
+}
+
+function promoCategoriesForMoment(moment = '', type = '', context = '') {
+  const t = clean(`${moment} ${type} ${context}`).toLowerCase();
+  if (/facility|location|plant|warehouse|operations|expansion|ribbon/.test(t)) return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
+  if (/trade show|event|conference|expo|booth|summit|webinar|open house/.test(t)) return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
+  if (/hiring|recruit|talent|onboarding|employee/.test(t)) return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
+  if (/product launch|launch|rebrand/.test(t)) return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
+  if (/community|sponsor|fundraiser|philanthropy|volunteer/.test(t)) return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
+  if (/contract|partnership|customer win|sales/.test(t)) return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
+  return ['Employee Apparel','Event Kits','Customer Appreciation','Recognition Gifts'];
+}
+
+function salesReadyWhy(trigger = '', context = '', moment = '', type = '') {
+  const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
+  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return 'Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.';
+  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return 'Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.';
+  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return 'Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.';
+  if (/product launch|launch|rollout|unveil/.test(t)) return 'Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.';
+  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.';
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return 'Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.';
+  if (/contract|partnership|customer win/.test(t)) return 'Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.';
+  return contextToPromoWhy(context, type);
+}
+
+function salesReadyOpener(trigger = '', context = '', moment = '', type = '') {
+  const specific = compact(trigger || moment || 'the recent activity', 90);
+  const t = clean(`${specific} ${context} ${moment} ${type}`).toLowerCase();
+  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Saw ${specific}. For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts. I had a few practical ideas around apparel and launch kits — worth sending over?`;
+  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Saw ${specific}. Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items. Want me to send over a few ideas?`;
+  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Saw ${specific}. When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely. Is there someone I should ask about that?`;
+  if (/product launch|launch|rollout|unveil/.test(t)) return `Saw ${specific}. Launches usually need internal hype, sales support, and customer-facing branded items. I had a few simple launch-kit ideas — worth sending over?`;
+  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Saw ${specific}. Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts. Want me to send over a few ideas that could fit?`;
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Saw ${specific}. Moments like that are a good chance to recognize employees or thank customers. Would a few branded celebration or recognition ideas be useful?`;
+  if (/contract|partnership|customer win/.test(t)) return `Saw ${specific}. Wins like that often create internal and customer-facing communication needs. I had a few ideas around team apparel and thank-you kits — worth sending over?`;
+  return contextToOpener(context, type);
 }
 
 
@@ -655,13 +785,13 @@ function prospectKillRule(raw = {}, type = '', summary = '', businessContext = '
 
 function abdScores(raw = {}, type = '', summary = '', businessContext = '') {
   const text = clean(`${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''}`).toLowerCase();
-  let actionability = 55;
-  let budgetLikelihood = 50;
-  let deadlineUrgency = freshnessScore(raw.publicationDate || raw.publishedDate || raw.date || '') >= 80 ? 65 : 45;
+  let actionability = Number(raw.actionability_score || raw.actionabilityScore || 55);
+  let budgetLikelihood = Number(raw.budget_score || raw.budgetScore || 50);
+  let deadlineUrgency = Number(raw.deadline_score || raw.deadlineScore || raw.why_now_score || raw.whyNowScore || (freshnessScore(raw.publicationDate || raw.publishedDate || raw.date || raw.event_date || '') >= 80 ? 65 : 45));
 
-  if (/new facility|facility opening|new location|plant|warehouse|distribution center|expansion|headquarters|rebrand|merger|acquisition|product launch|trade show|expo|conference|open house|anniversary|safety milestone|contract|customer win/.test(text)) actionability += 22;
-  if (/hiring|recruit|onboarding|employee appreciation|recognition|event|trade show|facility|uniform|safety|sales kickoff|community event|sponsor|customer appreciation|holiday/.test(text)) budgetLikelihood += 24;
-  if (/upcoming|this month|this quarter|scheduled|opening|launching|event|conference|trade show|deadline|seasonal|hiring now|now hiring|new facility/.test(text)) deadlineUrgency += 22;
+  if (/new facility|facility opening|new location|plant|warehouse|distribution center|expansion|headquarters|ribbon cutting|rebrand|merger|acquisition|product launch|trade show|expo|conference|open house|customer event|anniversary|safety milestone|contract|customer win/.test(text)) actionability += 22;
+  if (/hiring|recruit|onboarding|employee appreciation|recognition|event|trade show|facility|uniform|safety|sales kickoff|community event|sponsor|customer appreciation|holiday|booth|launch kit|opening-day/.test(text)) budgetLikelihood += 24;
+  if (/upcoming|this month|this quarter|scheduled|opening|launching|event|conference|trade show|deadline|seasonal|hiring now|now hiring|new facility|ribbon cutting|event date/.test(text)) deadlineUrgency += 22;
 
   if (/generic sustainability|sustainability statement|mission statement|old award|vague community|general community/.test(text)) {
     actionability -= 18; budgetLikelihood -= 12; deadlineUrgency -= 12;
@@ -731,8 +861,10 @@ function makePredictableTimingSignal(account = {}) {
     conversationStarter: theme.opener,
     suggestedOpener: theme.opener,
     recommendedBuyingTeam,
+    recommended_buying_team: recommendedBuyingTeam,
     buyingTeam: recommendedBuyingTeam,
     potentialContacts,
+    potential_contacts: potentialContacts,
     uploadedContacts: normalizeUploadedContacts(account.contacts || []),
     whyTheseContacts: potentialContacts.length ? buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, 'Predictable Timing', theme.context) : '',
     suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0],
@@ -771,23 +903,25 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
-  const type = normalizeSignalType(raw.signalType || raw.opportunityType || raw.type);
-  const title = compact(raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 140);
-  const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 220);
+  const type = normalizeSignalType(raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
+  const concreteTrigger = buildConcreteTrigger(raw, type, accountName);
+  const buyingMoment = inferBuyingMoment(raw, type, concreteTrigger, raw.business_context || raw.businessContext || '');
+  const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
+  const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 240);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
   if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
   const confidencePct = abd.score;
   if (confidencePct < 55 || !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
-  const why = compact(raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || contextToPromoWhy(businessContext, type), 280);
-  const opener = compact(raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || contextToOpener(businessContext, type), 240);
+  const why = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || salesReadyWhy(concreteTrigger, businessContext, buyingMoment, type), 300);
+  const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
-  const products = safeArray(raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories, 6);
+  const products = safeArray(raw.promo_categories || raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories || promoCategoriesForMoment(buyingMoment, type, businessContext), 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);
-  const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, summary, raw);
+  const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, `${summary} ${buyingMoment} ${concreteTrigger}`, raw);
   const uploadedContacts = selectUploadedContactsForTeam(account.contacts || raw.uploadedContacts || [], recommendedBuyingTeam, 2);
-  const publicContacts = normalizePotentialContacts(raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
+  const publicContacts = normalizePotentialContacts(raw.potential_contacts || raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
   const potentialContacts = mergePotentialContacts(uploadedContacts, publicContacts, 2);
   const whyTheseContacts = compact(raw.whyTheseContacts || raw.contactRationale || buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, type, businessContext), 220);
   const sources = Array.isArray(raw.sources) ? raw.sources.map(s => ({ name: clean(s.name || s.sourceName || sourceDomain(s.url || '')), url: clean(s.url || s.sourceUrl || '') })).filter(s => s.url || s.name).slice(0, 4) : [];
@@ -798,6 +932,14 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     signalLayerType: 'Business Activity Signal',
     type,
     signalType: type,
+    signal_type: type,
+    concreteTrigger,
+    concrete_trigger: concreteTrigger,
+    buyingMoment,
+    buying_moment: buyingMoment,
+    eventDate: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
+    event_date: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
+    location: clean(raw.location || raw.eventLocation || raw.cityState || ''),
     opportunityType: type.toUpperCase().replace(/[^A-Z0-9]+/g, '_'),
     title,
     signalDetail: summary,
@@ -808,6 +950,8 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     companyContext: businessContext,
     evidence: `${sources[0]?.name || sourceDomain(sourceUrl) || clean(raw.sourceName || 'public source')}: ${summary}`,
     sourceUrl: sourceUrl || sources[0]?.url || '',
+    source_url: sourceUrl || sources[0]?.url || '',
+    source_name: clean(raw.source_name || raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || ''),
     sourceType: clean(raw.sourceType || raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || 'Public source'),
     sourceAuthority: clean(raw.sourceType || raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || 'Public source'),
     cleanSourceName: clean(raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || ''),
@@ -820,21 +964,29 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     confidenceLevel: confidenceLabel(confidencePct),
     priority: confidencePct >= 80 ? 'High' : confidencePct >= 60 ? 'Medium' : 'Low',
     abdScores: abd.abd || undefined,
+    actionability_score: abd.abd?.actionability,
+    budget_score: abd.abd?.budgetLikelihood,
+    deadline_score: abd.abd?.deadlineUrgency,
+    why_now_score: confidencePct,
     reasonToReachOut: why,
     whyNow: why,
     whyItMattersForPromo: why,
     conversationStarter: opener,
     suggestedOpener: opener,
     recommendedBuyingTeam,
+    recommended_buying_team: recommendedBuyingTeam,
     buyingTeam: recommendedBuyingTeam,
     potentialContacts,
+    potential_contacts: potentialContacts,
     uploadedContacts: normalizeUploadedContacts(account.contacts || []),
     whyTheseContacts,
+    why_these_contacts: whyTheseContacts,
     suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0] || buyers[0] || clean(raw.suggestedContact || raw.contactRole || 'Relevant department lead'),
     likelyBuyers: recommendedBuyingTeam.length ? recommendedBuyingTeam : (buyers.length ? buyers : [clean(raw.suggestedContact || 'Relevant department lead')]),
     affectedDepartment: clean(raw.likelyDepartment || raw.department || recommendedBuyingTeam[0] || buyers[0] || ''),
     likelyConversations: conversations.length ? conversations : [compact(raw.likelyConversation || raw.conversationAngle || why, 90)].filter(Boolean),
     likelyProducts: products,
+    promo_categories: products,
     commonPromoCategories: products,
     opportunityCategory: compact(raw.opportunityCategory || conversations[0] || type, 90),
     opportunityExplanation: compact(raw.whyItMattersForPromo || raw.whyItMatters || why, 280),
@@ -923,7 +1075,7 @@ export default async function handler(req, res) {
     const hasSearchProvider = !!(process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY);
     if (hasSearchProvider) {
       providerMode = 'targeted-search';
-      const discovered = await discoverCandidatesForAccounts(safeAccounts);
+      const discovered = await discoverCandidatesForAccounts(safeAccounts, mode);
       candidates = discovered.candidates;
       sourceCoverage = discovered.sourceCoverage;
       candidateSamples = discovered.samples.slice(0, 16);
@@ -934,67 +1086,71 @@ export default async function handler(req, res) {
 
     let parsed = null;
     if (candidates.length) {
-      const synthesisPrompt = `You are House Accounts' Unified Signal Intelligence Engine.
+      const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
 
-Act like a senior promotional products account executive doing account research for a sales rep. Your job is NOT to summarize companies. Your job is to answer:
+Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
 
-"If I sold promotional products, branded apparel, onboarding kits, uniforms, recognition programs, safety incentives, event merchandise, print, awards, or corporate gifts, is there anything happening at this company that gives me a legitimate reason to start a conversation?"
+"Why should I contact this company today?"
 
-You are given account context and targeted public web search snippets/page content. Use ONLY the supplied evidence, URLs, and uploaded contact context. Do not invent.
+Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
 
-Return the strongest 0, 1, or 2 business signals per account. Do not require perfect business context. If a meaningful business signal exists but the underlying driver is unclear, keep the signal, explain the uncertainty transparently, and assign an appropriately lower confidence score.
+A buying moment is a concrete event that may create promotional products demand, such as:
+- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
+- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
+- product launch, rebrand, merger, acquisition, partnership, contract win
+- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
+- community event, sponsorship, corporate philanthropy
+- safety milestone, company anniversary, major award actively promoted by the company
 
-High-value triggers:
-- hiring/recruiting spikes
-- facility expansion/new office/new location
-- acquisitions/mergers/funding/investment
-- product/service launches or rebrands
-- trade shows, conferences, summits, open houses, booths, sponsorships
-- awards, fastest-growing lists, best places to work, milestones, anniversaries
-- leadership changes
-- major customer wins/contracts/partnerships
-- community/charity/fundraising/sustainability initiatives
-- safety, employee engagement, recognition, recruiting, or employer-branding initiatives
+Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
 
 Reject:
-- generic company descriptions
-- old/irrelevant news unless still useful
-- contact/about/privacy/nav text
-- social posts with no clear business relevance
-- generic careers page existence with no specific hiring/recruiting reason, unless the evidence shows meaningful hiring activity or a clear recruiting push
-- clearly negative or irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, scandals
-- generic sustainability language unless tied to a concrete event, certification, award, facility, deadline, campaign, partnership, or active program
+- generic company descriptions, mission/history/culture copy
+- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
+- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
+- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
+- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, lawsuits, plant closures, investigations, recalls, scandals
 
-For each accepted signal, preserve the concrete business trigger. Do not reduce specific events like "secured a significant medical contract" to only "Expansion" or "hosting FTC Scrimmage at headquarters" to only "Community engagement." Then translate the specific trigger into promo sales language. Do not just say "they are hiring." First explain the business context: what happened and why it likely happened. For hiring, look for the driver: growth, expansion, new facility, new product line, contract demand, seasonal ramp, leadership change, or increased production demand. If the driver is unclear, say that naturally.
+Preserve concrete triggers. Do not generalize specific events. Examples:
+- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
+- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
+- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
 
-Internally score every candidate on ABD:
-- Actionability: how clear is the reason to reach out?
-- Budget likelihood: does this usually create promotional spend?
-- Deadline / urgency: is there a timely reason to act now?
-Also consider freshness, source quality, and confidence that the event is real.
+For each accepted signal:
+1. concrete_trigger: specific event phrased as a short label.
+2. buying_moment: the category of buying moment.
+3. business_context: what happened and why it likely happened.
+4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
+5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
+6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
+7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
+8. ABD scores: actionability_score, budget_score, deadline_score.
 
-Return meaningful signals with confidence >= 60. Rank richer business context higher, but do not discard a useful hiring, expansion, event, funding, leadership, award, contract, or community signal solely because the exact business driver is unclear.
-
-Recommended Buying Team rules:
-- Always include recommendedBuyingTeam with 1 to 3 departments inferred from the signal and business context.
-- Examples: HR / People, Talent Acquisition, Marketing, Events, Operations, Community Relations, Product Marketing, Sales.
-- This should answer who the rep should start with, not every possible buyer.
+Recommended Buying Team examples:
+- Hiring expansion → HR / People, Talent Acquisition
+- Product launch → Marketing, Product Marketing
+- Community event → Marketing, Community Relations
+- Manufacturing expansion → Operations, HR / People
+- Trade show → Marketing, Events, Sales
 
 Potential Contacts rules:
-- Include potentialContacts only when a public source supports the person and role.
-- Return at most 2 contacts.
-- Never invent names, placeholder people, or generic departments as contacts.
-- Explain why the contact is relevant using whyTheseContacts or each contact reason.
-- If an uploaded contact in knownContacts aligns with the recommended buying team, you may include that contact even if they were not found in public search results.
+- Use uploaded knownContacts if they align with the recommended buying team.
+- Use public contacts only when the source supports the person and title.
+- Never invent names or use generic departments as contacts.
+- Omit potential_contacts if no reliable person is found.
+
+Score concrete, high-intent buying moments higher:
+Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
+Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
 
 Return strict JSON only with shape:
-{"signals":[{"accountName":"","signalType":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalTitle":"","whatChanged":"","businessContext":"","whyItMattersForPromo":"","recommendedBuyingTeam":[""],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"whyTheseContacts":"","likelyBuyers":[""],"likelyProducts":[""],"likelyConversations":[""],"suggestedOpener":"","sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":"","confidence":0}]}
+{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
 
 Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets and clean page content:
-${JSON.stringify(candidates.slice(0, 160).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score})), null, 2)}`;
+${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
       rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
       parsed = parseJsonLoose(rawText);
     } else {
