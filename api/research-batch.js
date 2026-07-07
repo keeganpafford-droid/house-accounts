@@ -1334,7 +1334,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const validAccountNames = new Set(safeAccounts.map(a => a.name.toLowerCase()));
     const accountLookup = new Map(safeAccounts.map(a => [a.name.toLowerCase(), a.name]));
     const fixedSignals = rawSignals.map(s => {
-      const name = clean(s.accountName || s.account || s.company || '');
+      const name = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
       const exact = accountLookup.get(name.toLowerCase());
       if (exact) return { ...s, accountName: exact };
       // Fuzzy map if the model adds parentheticals or suffixes.
