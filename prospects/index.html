@@ -68,6 +68,11 @@ function getSavedLead(){try{return JSON.parse(localStorage.getItem('houseAccount
 function saveLead(lead){try{localStorage.setItem('houseAccountsLead',JSON.stringify(lead))}catch{}}
 function find(headers, names){for(const n of names){const i=headers.indexOf(n);if(i>=0)return i}return -1}
 function normalizeCompanyName(name){return clean(name).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim()}
+// ---------- Prospect trace helpers (DO NOT CHANGE BEHAVIOR) ----------
+const TRACE_ACCOUNT_NAME='Winona Powder Coating';
+function traceKey(name){return normalizeCompanyName(name||'')}
+function isTraceAccountName(name){return traceKey(name)===traceKey(TRACE_ACCOUNT_NAME)}
+function traceSignalLabel(sig){try{return `${sig.accountName||sig.account||sig.company||''} | ${sig.concrete_trigger||sig.concreteTrigger||sig.signalTitle||sig.title||''} | fallback:${!!(sig.isFallbackOpportunity||/predictable timing/i.test(`${sig.signalType||sig.signal_type||sig.type||''}`))} | score:${getScore(sig)}`}catch(e){return String(sig)}}
 function firstNonEmpty(...vals){return vals.map(clean).find(Boolean)||''}
 function parseCSV(text){
   text=String(text||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
@@ -162,8 +167,16 @@ function renderPreviewCard(sig,idx){
   const preview=d.businessContext||d.why||'Review this account for a timely prospecting conversation.';
   const company=escapeHtml(sig.accountName||sig.account||'Target Account');
   try{
-    const acctKey=normalizeCompanyName(sig.accountName||sig.account||sig.company||sig.company_name||sig.companyName||'');
-    const backendSignals=(window.__prospect_rawSignals||[]).filter(s=>normalizeCompanyName(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===acctKey);
+    const acctKey=traceKey(sig.accountName||sig.account||sig.company||sig.company_name||sig.companyName||'');
+    const backendSignals=(window.__prospect_rawSignals||[]).filter(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===acctKey);
+    console.log('[Trace] renderPreviewCard',{
+      account:sig.accountName||sig.account||sig.company||'',
+      signalsInRaw:backendSignals.length,
+      backendSignalIndexes:backendSignals.map(s=>(window.__prospect_rawSignals||[]).indexOf(s)),
+      selectedSignalPreview:traceSignalLabel(sig),
+      selectedIsFallback:!!(sig.isFallbackOpportunity||/predictable timing/i.test(`${sig.signalType||sig.signal_type||sig.type||''}`)),
+      renderFunction:'renderPreviewCard (prospects/index.html)'
+    });
     console.log('[Prospect UI] Card render',{
       account:sig.accountName||sig.account||sig.company||'',
       backendSignals,
@@ -195,7 +208,18 @@ function renderOpportunityList(){
     if(activeFilter==='medium') return !fallback && score>=60 && score<80;
     return true;
   });
+  try{
+    console.log('[Trace] visible (pre-assign) length',visible.length);
+    console.log('[Trace] visible previews',visible.map((s,i)=>({i,preview:traceSignalLabel(s),key:traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')})));
+    const traceVisible=visible.filter(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===traceKey(TRACE_ACCOUNT_NAME));
+    console.log(`[Trace] visible entries for ${TRACE_ACCOUNT_NAME} (count):`,traceVisible.length,traceVisible.map((s,i)=>({idxInVisible:visible.indexOf(s),preview:traceSignalLabel(s),isFallback:isFallback(s)})));
+  }catch(e){console.warn('[Trace] renderOpportunityList pre-assign logging failed',e);}
   currentVisibleSignals=visible;
+  try{
+    console.log('[Trace] currentVisibleSignals.length',currentVisibleSignals.length);
+    const traceIndex=currentVisibleSignals.findIndex(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===traceKey(TRACE_ACCOUNT_NAME));
+    console.log(`[Trace] currentVisibleSignals ${TRACE_ACCOUNT_NAME} index:`,traceIndex,traceIndex>=0?{preview:traceSignalLabel(currentVisibleSignals[traceIndex]),in_rawSignals_index:(window.__prospect_rawSignals||[]).indexOf(currentVisibleSignals[traceIndex])}:'NOT PRESENT');
+  }catch(e){console.warn('[Trace] renderOpportunityList post-assign logging failed',e);}
   try{
     console.log('[Prospect UI] Visible signals (renderOpportunityList)',visible.map(s=>({
       accountName:s.accountName||s.account||s.company||'',
@@ -258,7 +282,20 @@ async function handle(f){
       isFallbackOpportunity:!!s.isFallbackOpportunity,
       confidenceScore:s.confidenceScore||s.why_now_score||s.confidence||''
     })));
+    try{
+      console.log('[Trace] rawSignals.length',rawSignals.length);
+      console.log('[Trace] rawSignals keys/preview (first 50)',rawSignals.slice(0,50).map((s,i)=>({i,key:traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||''),preview:traceSignalLabel(s)})));
+      const rawForTrace=rawSignals.filter(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===traceKey(TRACE_ACCOUNT_NAME));
+      console.log(`[Trace] rawSignals for ${TRACE_ACCOUNT_NAME} (count):`,rawForTrace.length,rawForTrace.slice(0,5).map((s,i)=>({idx:rawSignals.indexOf(s),preview:traceSignalLabel(s),raw:s})));
+    }catch(e){console.warn('[Trace] failed rawSignals trace',e);}
     const signals=selectBestSignalPerCompany(rawSignals); currentSignals=signals; document.getElementById('signalCount').textContent=signals.length;
+    try{
+      console.log('[Trace] signals.length (after selectBestSignalPerCompany)',signals.length);
+      console.log('[Trace] signals list (preview)',signals.map((s,i)=>({i,key:traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||''),preview:traceSignalLabel(s)})));
+      const sigForTrace=signals.find(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===traceKey(TRACE_ACCOUNT_NAME));
+      console.log(`[Trace] selected signal for ${TRACE_ACCOUNT_NAME} in signals[]:`,sigForTrace?{index:signals.indexOf(sigForTrace),preview:traceSignalLabel(sigForTrace),raw:sigForTrace}:'NONE');
+      if(sigForTrace){console.log('[Trace] rawSignals.indexOf(selectedSignal) =',rawSignals.indexOf(sigForTrace),'signals.indexOf(selectedSignal) =',signals.indexOf(sigForTrace));}
+    }catch(e){console.warn('[Trace] failed signals[] trace',e);}
     console.log('[Prospect UI] Signals after client sort', signals.map(s=>({
       accountName:s.accountName||s.account||s.company||s.company_name||s.companyName||'',
       signalType:s.signalType||s.signal_type||'',
@@ -277,6 +314,13 @@ async function handle(f){
       (byName[key]||(byName[key]=[])).push(s);
     });
     const enriched=accounts.map(a=>({...a,signals:byName[normalizeCompanyName(a.name)]||[],rawData:{...(a.rawData||{}),uploaded_contacts:a.contacts,raw_rows:a.rawRows}}));
+    try{
+      console.log('[Trace] enriched.length',enriched.length);
+      const traceIdx=enriched.findIndex(e=>traceKey(e.name)===traceKey(TRACE_ACCOUNT_NAME));
+      const traceEnriched=traceIdx>=0?enriched[traceIdx]:null;
+      console.log(`[Trace] enriched entry for ${TRACE_ACCOUNT_NAME} index:`,traceIdx,'entry snapshot:',traceEnriched?{name:traceEnriched.name,signalsLength:(traceEnriched.signals||[]).length,signalsPreview:(traceEnriched.signals||[]).slice(0,5).map(traceSignalLabel)}:'NOT FOUND');
+      if(traceEnriched&&traceEnriched.signals&&traceEnriched.signals.length){traceEnriched.signals.forEach(s=>console.log(`[Trace] enriched.signal identity checks for ${TRACE_ACCOUNT_NAME}`,{preview:traceSignalLabel(s),in_signals_index:signals.indexOf(s),in_rawSignals_index:rawSignals.indexOf(s)}));}
+    }catch(e){console.warn('[Trace] enriched[] trace failed',e);}
     const liveSignals=signals.filter(s=>!s.isFallbackOpportunity);
     const fallbackSignals=signals.filter(s=>s.isFallbackOpportunity);
     const companiesWithLiveSignals=new Set(liveSignals.map(s=>s.accountName).filter(Boolean)).size;
@@ -294,6 +338,11 @@ async function handle(f){
       savedAt:new Date().toISOString()
     };
     renderResearchSummary(summary);
+    try{
+      console.log('[Trace] enriched signals per account (first 50)',enriched.slice(0,50).map(e=>({name:e.name,signalsLen:(e.signals||[]).length,signalsPreview:(e.signals||[]).slice(0,3).map(traceSignalLabel)})));
+      const traceEn=enriched.find(e=>traceKey(e.name)===traceKey(TRACE_ACCOUNT_NAME));
+      console.log(`[Trace] ${TRACE_ACCOUNT_NAME} enriched summary:`,traceEn?{name:traceEn.name,signalsLen:(traceEn.signals||[]).length,signalsPreview:(traceEn.signals||[]).slice(0,5).map(traceSignalLabel)}:'NOT FOUND');
+    }catch(e){console.warn('[Trace] enriched summary failed',e);}
     await fetch('/api/save-prospect-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched})}).catch(()=>{});
     const results=document.getElementById('prospectResults');
     renderOpportunityList();
