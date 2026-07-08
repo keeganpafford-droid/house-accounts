@@ -1,7 +1,7 @@
 // Vercel Serverless Function: Save House Accounts uploads to Supabase.
 // Endpoint: POST /api/save-upload
 
-function json(res, status, body){ return res.status(status).json(body); }
+function json(res, status, body){ res.setHeader('Cache-Control','no-store, max-age=0'); return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
 function hashString(input=''){
   let h = 2166136261;
