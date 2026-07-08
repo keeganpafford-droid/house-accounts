@@ -8,6 +8,19 @@ let mode='signup'; const qs=new URLSearchParams(location.search); const next=qs.
 function setMode(m){mode=m; loginTab.classList.toggle('active',m==='login'); signupTab.classList.toggle('active',m==='signup'); signupFields.classList.toggle('hidden',m!=='signup'); submitBtn.textContent=m==='login'?'Log in':'Create account'; intro.textContent=m==='login'?'Welcome back. Log in to monitor your companies and discover new reasons to reach out.':'Create your beta account. Monitor up to 10 companies for free.';}
 function show(msg,ok=false){message.textContent=msg; message.className='msg '+(ok?'ok':'err'); message.style.display='block';}
 loginTab.onclick=()=>setMode('login'); signupTab.onclick=()=>setMode('signup');
-authForm.onsubmit=async e=>{e.preventDefault(); message.style.display='none'; submitBtn.disabled=true; try{ const payload={email:email.value.trim().toLowerCase(),password:password.value,name:name.value.trim(),organizationName:organization.value.trim()}; await HouseAuth.api(mode==='login'?'login':'signup', payload); location.href=next; }catch(err){show(err.message||'Authentication failed.')} finally{submitBtn.disabled=false;}};
+function fieldValue(id){ const el=document.getElementById(id); return (el && typeof el.value === 'string') ? el.value.trim() : ''; }
+authForm.onsubmit=async e=>{e.preventDefault(); message.style.display='none'; submitBtn.disabled=true; try{
+  const payload={
+    email:fieldValue('email').toLowerCase(),
+    password:fieldValue('password'),
+    name:fieldValue('name'),
+    organizationName:fieldValue('organization')
+  };
+  if(!payload.email || !payload.password || (mode==='signup' && (!payload.name || !payload.organizationName))){
+    show(mode==='signup'?'Please enter your name, organization, email, and password.':'Please enter your email and password.');
+    return;
+  }
+  await HouseAuth.api(mode==='login'?'login':'signup', payload); location.href=next;
+}catch(err){show(err.message||'Authentication failed.')} finally{submitBtn.disabled=false;}};
 setMode('signup');
 </script></body></html>
