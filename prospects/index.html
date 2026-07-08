@@ -66,6 +66,10 @@
 function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function clean(v){return String(v||'').trim();}
 function sourceDomain(url=''){try{return new URL(url).hostname.replace(/^www\./,'')}catch{return ''}}
+let prospectUsage=null;
+function usageLimitInfo(){const org=prospectUsage?.organization||{};const usage=prospectUsage?.usage||{};const plan=clean(org.plan||'free').toLowerCase();const limit=plan==='free'?Number(usage.companyLimit||usage.freeCompanyLimit||10):Infinity;const names=new Set((usage.monitoredCompanyNames||[]).map(normalizeCompanyName).filter(Boolean));return{plan,limit,names,isFree:plan==='free',used:Number(usage.totalMonitoredCompanies||names.size||0)}}
+async function loadProspectUsage(){try{if(!(window.HouseAuth&&HouseAuth.authHeaders))return null;const res=await fetch('/api/usage',{headers:HouseAuth.authHeaders(),cache:'no-store'});const data=await res.json().catch(()=>({}));if(res.ok){prospectUsage=data; renderProspectUsage(); return data;}}catch(e){console.warn('Usage load failed',e)}return null}
+function renderProspectUsage(){const info=usageLimitInfo();let el=document.getElementById('prospectUsageNote');if(!el){el=document.createElement('div');el.id='prospectUsageNote';el.style.cssText='margin:14px 0 0;padding:10px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.9rem;';const hero=document.querySelector('.hero'); if(hero) hero.appendChild(el);}if(!el)return;el.textContent=info.isFree?`${Math.min(info.used,info.limit)} / ${info.limit} companies monitored`:'Unlimited companies monitored';}
 function getSavedLead(){try{const authUser=window.HouseAuth&&HouseAuth.getUser?HouseAuth.getUser():null;if(authUser&&authUser.email)return {name:authUser.name||'',email:authUser.email||'',company:authUser.company||''};return JSON.parse(localStorage.getItem('houseAccountsLead')||'null')}catch{return null}}
 function saveLead(lead){try{localStorage.setItem('houseAccountsLead',JSON.stringify(lead))}catch{}}
 function find(headers, names){for(const n of names){const i=headers.indexOf(n);if(i>=0)return i}return -1}
@@ -199,13 +203,16 @@ function openOpportunity(idx){const sig=currentVisibleSignals[idx]; if(!sig)retu
 function closeOpportunity(){document.getElementById('opportunityModal').classList.remove('active'); document.body.classList.remove('modal-open');}
 
 function applyFreeCompanyLocks(signals){
-  const seen = new Set();
-  let unlocked = 0;
+  const info=usageLimitInfo();
+  if(!info.isFree) return (signals||[]).map(sig=>{sig._locked=false;return sig});
+  const monitored=new Set(info.names);
   return (signals || []).map(sig => {
     const company = normalizeCompanyName(sig.accountName || sig.account || sig.company || sig.company_name || sig.companyName || '');
-    if(!company) return sig;
-    if(!seen.has(company)) { seen.add(company); unlocked += 1; }
-    sig._locked = unlocked > 10;
+    if(!company){sig._locked=false;return sig;}
+    const already=monitored.has(company);
+    const canUnlock=already || monitored.size < info.limit;
+    if(canUnlock && !already) monitored.add(company);
+    sig._locked = !canUnlock;
     return sig;
   });
 }
@@ -273,8 +280,10 @@ document.getElementById('prospectResults').addEventListener('click',e=>{const bt
 document.getElementById('modalClose').addEventListener('click',closeOpportunity); document.getElementById('opportunityModal').addEventListener('click',e=>{if(e.target.id==='opportunityModal') closeOpportunity();}); document.addEventListener('keydown',e=>{if(e.key==='Escape') closeOpportunity();});
 document.querySelectorAll('.filter-btn').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); activeFilter=btn.dataset.filter||'all'; renderOpportunityList();}));
 document.getElementById('prospectSearch').addEventListener('input',renderOpportunityList);
+loadProspectUsage();
 async function handle(f){
-  clearErr(); if(!f.name.toLowerCase().endsWith('.csv')) return showErr('Please choose a CSV file with target company names.');
+  clearErr();
+  await loadProspectUsage(); if(!f.name.toLowerCase().endsWith('.csv')) return showErr('Please choose a CSV file with target company names.');
   const lead={name:clean(document.getElementById('prospectName').value),email:clean(document.getElementById('prospectEmail').value).toLowerCase(),company:clean(document.getElementById('prospectCompany').value)};
   if(!lead.email) return showErr('Enter your work email before researching target accounts.'); saveLead(lead);
   const text=await f.text(); let accounts=[]; try{accounts=parseCSV(text)}catch(e){return showErr(e.message||'Could not read that CSV.')} if(!accounts.length)return showErr('No company names found.');
@@ -304,7 +313,7 @@ async function handle(f){
       const rawForTrace=rawSignals.filter(s=>traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||'')===traceKey(TRACE_ACCOUNT_NAME));
       console.log(`[Trace] rawSignals for ${TRACE_ACCOUNT_NAME} (count):`,rawForTrace.length,rawForTrace.slice(0,5).map((s,i)=>({idx:rawSignals.indexOf(s),preview:traceSignalLabel(s),raw:s})));
     }catch(e){console.warn('[Trace] failed rawSignals trace',e);}
-    const signals=selectBestSignalPerCompany(rawSignals); currentSignals=signals; document.getElementById('signalCount').textContent=signals.length;
+    let signals=selectBestSignalPerCompany(rawSignals); signals=applyFreeCompanyLocks(signals); currentSignals=signals; document.getElementById('signalCount').textContent=signals.length;
     try{
       console.log('[Trace] signals.length (after selectBestSignalPerCompany)',signals.length);
       console.log('[Trace] signals list (preview)',signals.map((s,i)=>({i,key:traceKey(s.accountName||s.account||s.company||s.company_name||s.companyName||''),preview:traceSignalLabel(s)})));
@@ -360,6 +369,7 @@ async function handle(f){
       console.log(`[Trace] ${TRACE_ACCOUNT_NAME} enriched summary:`,traceEn?{name:traceEn.name,signalsLen:(traceEn.signals||[]).length,signalsPreview:(traceEn.signals||[]).slice(0,5).map(traceSignalLabel)}:'NOT FOUND');
     }catch(e){console.warn('[Trace] enriched summary failed',e);}
     await fetch('/api/save-prospect-upload',{method:'POST',headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched})}).catch(()=>{});
+    await loadProspectUsage();
     const results=document.getElementById('prospectResults');
     renderOpportunityList();
     notice.textContent='Prospect research complete.';notice.style.display='block';
