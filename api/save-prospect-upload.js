@@ -32,7 +32,9 @@ async function supabase(path, options={}){
   return data;
 }
 
-async function upsertUser(lead = {}, page = ''){
+async function upsertUser(lead = {}, page = '', req = null){
+  const authUser = req ? await getUserFromAuth(req) : null;
+  if(authUser?.id) return authUser;
   const email = clean(lead.email).toLowerCase();
   if(!email) throw new Error('Missing user email');
   const users = await supabase('ha_users?on_conflict=email', {
@@ -54,12 +56,35 @@ async function upsertUser(lead = {}, page = ''){
   return user;
 }
 
+async function authFetchUser(req){
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i,'');
+  if(!token) return null;
+  const {url, key} = env();
+  const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
+  if(!resp.ok) return null;
+  return resp.json();
+}
+async function getUserFromAuth(req){
+  const authUser = await authFetchUser(req);
+  if(!authUser?.id) return null;
+  const rows = await supabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=*&limit=1`, {method:'GET'});
+  const existing = Array.isArray(rows) ? rows[0] : null;
+  if(existing) return existing;
+  const byEmail = await supabase(`ha_users?email=eq.${encodeURIComponent(String(authUser.email||'').toLowerCase())}&select=*&limit=1`, {method:'GET'});
+  const emailUser = Array.isArray(byEmail) ? byEmail[0] : null;
+  if(emailUser?.id){
+    const updated = await supabase(`ha_users?id=eq.${encodeURIComponent(emailUser.id)}`, {method:'PATCH', body:JSON.stringify({auth_user_id:authUser.id,status:'active',updated_at:new Date().toISOString()})});
+    return Array.isArray(updated) ? updated[0] : updated;
+  }
+  return null;
+}
+
 export default async function handler(req, res){
   if(req.method !== 'POST') return json(res, 405, {error:'Method not allowed'});
   try{
     const body = req.body || {};
     const lead = body.lead || {};
-    const user = await upsertUser(lead, body.page || body.sourcePage);
+    const user = await upsertUser(lead, body.page || body.sourcePage, req);
     const accounts = Array.isArray(body.accounts) ? body.accounts : [];
     if(!accounts.length) return json(res, 400, {error:'No prospect accounts provided'});
 

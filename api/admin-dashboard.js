@@ -82,11 +82,21 @@ function feedbackCreatedAt(row){ return row?.created_at || row?.timestamp || row
 function feedbackType(row){ return row?.type || row?.feedback_type || row?.feedbackType || 'Feedback'; }
 function feedbackMessage(row){ return row?.message || row?.body || row?.comment || row?.feedback || ''; }
 
+async function authUserFromRequest(req){
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i,'');
+  if(!token) return null;
+  const {url, key} = env();
+  const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
+  if(!resp.ok) return null;
+  return resp.json();
+}
+
 export default async function handler(req, res){
   if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
   try{
-    const requesterEmail = clean(req.query?.email).toLowerCase();
     const {adminEmail} = env();
+    const authUser = await authUserFromRequest(req);
+    const requesterEmail = clean(authUser?.email).toLowerCase();
     if(!requesterEmail || requesterEmail !== adminEmail){
       return json(res, 403, {error:'Admin access only'});
     }
@@ -113,26 +123,32 @@ export default async function handler(req, res){
       totalFeedback = Number.isFinite(total) ? total : 0;
     }
 
-    const [usersRes, uploadsRes, accountsRes, signalsRes, runsRes, feedbackRes] = await Promise.all([
+    const [usersRes, orgsRes, uploadsRes, accountsRes, prospectAccountsRes, signalsRes, prospectSignalsRes, runsRes, feedbackRes] = await Promise.all([
       supabase('ha_users?select=*&order=created_at.desc&limit=500'),
+      maybeSupabase('ha_organizations?select=*&order=created_at.desc&limit=500'),
       supabase('ha_uploads?select=*&order=created_at.desc&limit=1000'),
       supabase('ha_accounts?select=id,user_id,upload_id,account_name,created_at&order=created_at.desc&limit=5000'),
+      maybeSupabase('ha_prospect_accounts?select=id,user_id,company_name,created_at&order=created_at.desc&limit=5000'),
       supabase('ha_signals?select=id,user_id,upload_id,account_name,signal_type,title,first_seen_at,last_seen_at&order=first_seen_at.desc&limit=1000'),
+      maybeSupabase('ha_prospect_signals?select=id,user_id,account_name,signal_type,title,first_seen_at,last_seen_at&order=first_seen_at.desc&limit=1000'),
       supabase('ha_weekly_runs?select=*&order=started_at.desc&limit=500'),
       maybeSupabase('ha_feedback?select=*&order=created_at.desc&limit=500')
     ]);
 
     const users = usersRes.data || [];
+    const organizations = Array.isArray(orgsRes.data) ? orgsRes.data : [];
+    const orgById = new Map(organizations.map(o => [o.id, o]));
     const uploads = uploadsRes.data || [];
     const accounts = accountsRes.data || [];
-    const signals = signalsRes.data || [];
+    const prospectAccounts = Array.isArray(prospectAccountsRes.data) ? prospectAccountsRes.data : [];
+    const signals = [...(signalsRes.data || []), ...(Array.isArray(prospectSignalsRes.data) ? prospectSignalsRes.data : [])];
     const weeklyRuns = runsRes.data || [];
     const feedback = Array.isArray(feedbackRes.data) ? feedbackRes.data : [];
 
     const userById = new Map(users.map(u => [u.id, u]));
     const userByEmail = new Map(users.map(u => [clean(u.email).toLowerCase(), u]));
     const uploadsByUser = groupByUser(uploads);
-    const accountsByUser = groupByUser(accounts);
+    const accountsByUser = groupByUser([...accounts, ...prospectAccounts.map(a => ({...a, account_name:a.company_name}))]);
     const signalsByUser = groupByUser(signals);
     const runsByUser = groupByUser(weeklyRuns);
     const feedbackByUser = new Map();
@@ -153,7 +169,11 @@ export default async function handler(req, res){
         id: user.id,
         name: user.name || '',
         email: user.email || '',
-        company: user.company || '',
+        company: user.company || orgById.get(user.organization_id)?.name || '',
+        organization: orgById.get(user.organization_id)?.name || '',
+        plan: orgById.get(user.organization_id)?.plan || 'free',
+        seatLimit: orgById.get(user.organization_id)?.seat_limit || 1,
+        lastLogin: user.last_login || '',
         role: user.role || '',
         crmErp: user.crm_erp || '',
         houseAccountCount: user.house_accounts || '',
@@ -181,6 +201,7 @@ export default async function handler(req, res){
     return json(res, 200, {
       ok:true,
       metrics: {
+        totalOrganizations: organizations.length,
         totalBetaUsers: totalUsers,
         totalUploads,
         totalAccountsAnalyzed: totalAccounts,

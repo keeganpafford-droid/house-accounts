@@ -48,31 +48,55 @@ async function supabase(path, options={}){
   return data;
 }
 
+async function authFetchUser(req){
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i,'');
+  if(!token) return null;
+  const {url, key} = env();
+  const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
+  if(!resp.ok) return null;
+  return resp.json();
+}
+async function getUserFromAuth(req){
+  const authUser = await authFetchUser(req);
+  if(!authUser?.id) return null;
+  const rows = await supabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=*&limit=1`, {method:'GET'});
+  const existing = Array.isArray(rows) ? rows[0] : null;
+  if(existing) return existing;
+  const byEmail = await supabase(`ha_users?email=eq.${encodeURIComponent(String(authUser.email||'').toLowerCase())}&select=*&limit=1`, {method:'GET'});
+  const emailUser = Array.isArray(byEmail) ? byEmail[0] : null;
+  if(emailUser?.id){
+    const updated = await supabase(`ha_users?id=eq.${encodeURIComponent(emailUser.id)}`, {method:'PATCH', body:JSON.stringify({auth_user_id:authUser.id,status:'active',updated_at:new Date().toISOString()})});
+    return Array.isArray(updated) ? updated[0] : updated;
+  }
+  return null;
+}
+
 export default async function handler(req, res){
   if(req.method !== 'POST') return json(res, 405, {error:'Method not allowed'});
   try{
     const body = req.body || {};
     const lead = body.lead || {};
-    const email = clean(lead.email).toLowerCase();
-    if(!email) return json(res, 400, {error:'Missing lead email'});
-
-    // Upsert user by email.
-    const users = await supabase('ha_users?on_conflict=email', {
-      method:'POST',
-      prefer:'resolution=merge-duplicates,return=representation',
-      body: JSON.stringify([{
-        email,
-        name: clean(lead.name),
-        company: clean(lead.company),
-        role: clean(lead.role),
-        house_accounts: clean(lead.houseAccounts || lead.house_accounts),
-        crm_erp: clean(lead.crmErp || lead.crm_erp),
-        source_page: clean(body.page || body.sourcePage),
-        updated_at: new Date().toISOString()
-      }])
-    });
-    const user = Array.isArray(users) ? users[0] : users;
-    if(!user?.id) throw new Error('User upsert did not return an id. Confirm ha_users table exists.');
+    let user = await getUserFromAuth(req);
+    if(!user){
+      const email = clean(lead.email).toLowerCase();
+      if(!email) return json(res, 401, {error:'Login required'});
+      const users = await supabase('ha_users?on_conflict=email', {
+        method:'POST',
+        prefer:'resolution=merge-duplicates,return=representation',
+        body: JSON.stringify([{
+          email,
+          name: clean(lead.name),
+          company: clean(lead.company),
+          role: clean(lead.role),
+          house_accounts: clean(lead.houseAccounts || lead.house_accounts),
+          crm_erp: clean(lead.crmErp || lead.crm_erp),
+          source_page: clean(body.page || body.sourcePage),
+          updated_at: new Date().toISOString()
+        }])
+      });
+      user = Array.isArray(users) ? users[0] : users;
+    }
+    if(!user?.id) throw new Error('User lookup did not return an id.');
 
     let uploadId = clean(body.uploadId);
     const summary = body.summary || {};
