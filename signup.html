@@ -4,10 +4,10 @@
 <body><div class="wrap"><main class="card"><div class="brand">House Accounts</div><p id="intro">Welcome back. Log in to monitor your companies and discover new reasons to reach out.</p><div class="tabs"><button class="tab active" id="loginTab">Log in</button><button class="tab" id="signupTab">Sign up</button></div>
 <form id="authForm"><div id="signupFields" class="hidden"><label>Name<input id="name" autocomplete="name"></label><label>Company / Organization<input id="organization" autocomplete="organization"></label></div><label>Email<input id="email" type="email" autocomplete="email" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="btn" id="submitBtn">Log in</button></form>
 <div class="row"><a class="link" href="/forgot-password.html">Forgot password?</a><a class="link" href="/pricing.html">Pricing</a></div><div class="msg" id="message"></div></main></div><script src="/auth-client.js"></script><script>
-let mode='login'; const qs=new URLSearchParams(location.search); const next=qs.get('next')||'/dashboard/';
+let mode='signup'; const qs=new URLSearchParams(location.search); const next=qs.get('next')||'/dashboard/';
 function setMode(m){mode=m; loginTab.classList.toggle('active',m==='login'); signupTab.classList.toggle('active',m==='signup'); signupFields.classList.toggle('hidden',m!=='signup'); submitBtn.textContent=m==='login'?'Log in':'Create account'; intro.textContent=m==='login'?'Welcome back. Log in to monitor your companies and discover new reasons to reach out.':'Create your beta account. Monitor up to 10 companies for free.';}
 function show(msg,ok=false){message.textContent=msg; message.className='msg '+(ok?'ok':'err'); message.style.display='block';}
 loginTab.onclick=()=>setMode('login'); signupTab.onclick=()=>setMode('signup');
 authForm.onsubmit=async e=>{e.preventDefault(); message.style.display='none'; submitBtn.disabled=true; try{ const payload={email:email.value.trim().toLowerCase(),password:password.value,name:name.value.trim(),organizationName:organization.value.trim()}; await HouseAuth.api(mode==='login'?'login':'signup', payload); location.href=next; }catch(err){show(err.message||'Authentication failed.')} finally{submitBtn.disabled=false;}};
-if(qs.get('signup')) setMode('signup');
+setMode('signup');
 </script></body></html>

@@ -28,16 +28,24 @@
   }
   async function requireAuth(){
     let session = getSession();
-    if(!session?.access_token) { window.location.href='/login.html?next='+encodeURIComponent(location.pathname+location.search); return false; }
+    if(!session?.access_token) { window.location.href='/login?next='+encodeURIComponent(location.pathname+location.search); return false; }
     session = await refreshIfNeeded();
-    if(!session?.access_token) { window.location.href='/login.html?next='+encodeURIComponent(location.pathname+location.search); return false; }
+    if(!session?.access_token) { window.location.href='/login?next='+encodeURIComponent(location.pathname+location.search); return false; }
     try{
       const me = await fetch('/api/auth?action=me', {headers:authHeaders()}).then(async r=>{const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||'Session expired'); return d;});
       if(me.user) writeJson(USER_KEY, me.user);
       return me.user || getUser();
-    }catch(e){ clearAuth(); window.location.href='/login.html?next='+encodeURIComponent(location.pathname+location.search); return false; }
+    }catch(e){ clearAuth(); window.location.href='/login?next='+encodeURIComponent(location.pathname+location.search); return false; }
   }
-  async function logout(){ try{ await api('logout', {}); }catch(e){} clearAuth(); window.location.href='/login.html'; }
+
+  async function redirectIfAuthenticated(defaultTarget='/dashboard/'){
+    let session = getSession();
+    if(session?.access_token) session = await refreshIfNeeded();
+    if(session?.access_token) { window.location.href = defaultTarget; return true; }
+    return false;
+  }
+
+  async function logout(){ try{ await api('logout', {}); }catch(e){} clearAuth(); window.location.href='/login'; }
   function firstName(){ const u=getUser(); return (u?.name||u?.email||'').split(/\s|@/)[0] || ''; }
   async function usage(){
     const res=await fetch('/api/usage', {headers:authHeaders()});
@@ -51,13 +59,14 @@
     if(!nav || document.getElementById('haAuthNav')) return;
     const wrap=document.createElement('span'); wrap.id='haAuthNav'; wrap.style.marginLeft='16px'; wrap.style.display='inline-flex'; wrap.style.gap='12px'; wrap.style.alignItems='center';
     if(u?.email){ wrap.innerHTML=`<a href="/settings.html">Settings</a><button type="button" id="haLogoutBtn" style="border:0;background:transparent;color:#17375E;font-weight:700;cursor:pointer">Log out</button>`; }
-    else { wrap.innerHTML=`<a href="/login.html">Log in</a>`; }
+    else { wrap.innerHTML=`<a href="/login">Log in</a>`; }
     nav.appendChild(wrap);
     const btn=document.getElementById('haLogoutBtn'); if(btn) btn.addEventListener('click', logout);
   }
-  window.HouseAuth = {api, getSession, getUser, token, authHeaders, requireAuth, logout, firstName, usage, clearAuth};
+  window.HouseAuth = {api, getSession, getUser, token, authHeaders, requireAuth, redirectIfAuthenticated, logout, firstName, usage, clearAuth};
   document.addEventListener('DOMContentLoaded', async ()=>{
     if(document.documentElement.dataset.protected === 'true') await requireAuth();
+    if(document.documentElement.dataset.authPage === 'true') await redirectIfAuthenticated('/dashboard/');
     installHeader();
   });
 })();
