@@ -1927,6 +1927,54 @@ let saveInProgress = false;
 let currentDashboardData = null;
 let showAllWeeklyPriorities = false;
 let activeTimebox = 'week';
+
+let dashboardUsage=null;
+function normalizeCompanyNameForLimit(name=''){
+  return String(name||'').trim().toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+}
+function dashboardUsageInfo(){
+  const org=dashboardUsage?.organization||{};
+  const usage=dashboardUsage?.usage||{};
+  const plan=String(org.plan||'free').trim().toLowerCase();
+  const limit=plan==='free'?Number(usage.companyLimit||usage.freeCompanyLimit||10):Infinity;
+  const names=new Set((usage.monitoredCompanyNames||[]).map(normalizeCompanyNameForLimit).filter(Boolean));
+  return {plan,limit,names,isFree:plan==='free',used:Number(usage.totalMonitoredCompanies||names.size||0)};
+}
+async function loadDashboardUsage(){
+  try{
+    if(!(window.HouseAuth&&HouseAuth.authHeaders)) return null;
+    const res=await fetch('/api/usage',{headers:HouseAuth.authHeaders(),cache:'no-store'});
+    const data=await res.json().catch(()=>({}));
+    if(res.ok){ dashboardUsage=data; renderDashboardUsage(); return data; }
+  }catch(e){ console.warn('Usage load failed',e); }
+  return null;
+}
+function renderDashboardUsage(){
+  const info=dashboardUsageInfo();
+  let el=document.getElementById('dashboardUsageNote');
+  if(!el){
+    el=document.createElement('div');
+    el.id='dashboardUsageNote';
+    el.style.cssText='max-width:960px;margin:0 auto 18px;padding:10px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.9rem;';
+    const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
+  }
+  if(el) el.textContent=info.isFree?`${Math.min(info.used,info.limit)} / ${info.limit} companies monitored`:'Unlimited companies monitored';
+}
+function applyFreeCompanyLocksToCustomerAccounts(accounts){
+  const info=dashboardUsageInfo();
+  if(!info.isFree){ (accounts||[]).forEach(a=>{a._locked=false;(a.futureOpportunities||[]).forEach(o=>o._locked=false)}); return accounts; }
+  const monitored=new Set(info.names);
+  (accounts||[]).forEach(a=>{
+    const key=normalizeCompanyNameForLimit(a.name||a.account||a.accountName||'');
+    const already=key && monitored.has(key);
+    const canUnlock=already || monitored.size < info.limit;
+    if(key && canUnlock && !already) monitored.add(key);
+    a._locked=!canUnlock;
+    (a.futureOpportunities||[]).forEach(o=>{o._locked=a._locked});
+  });
+  return accounts;
+}
+
 const WEEKLY_PRIORITY_LIMIT = 25;
 const TIMEBOX_CONFIG = {
   week: {label:"This Week", header:"This Week's Priorities", helper:"Who should I contact this week, and why?", limit:25},
@@ -1967,7 +2015,7 @@ async function captureLead(stage, payload){
   try{
     await fetch('/api/lead-capture', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
       body: JSON.stringify(body)
     });
   }catch(err){
@@ -2362,6 +2410,7 @@ function maybeShowBetaWelcomeForSignedInUser(){
 
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
+loadDashboardUsage();
   maybeShowBetaWelcomeForSignedInUser();
 
   const betaWelcomeStartBtn = document.getElementById('betaWelcomeStartBtn');
@@ -2448,8 +2497,9 @@ function clearError(){
   errorBox.style.display = 'none';
 }
 
-function handleFile(file){
+async function handleFile(file){
   clearError();
+  await loadDashboardUsage();
   hideUploadProgress();
   currentUploadName = file && file.name ? file.name : 'Uploaded account list';
   currentUploadId = null;
@@ -3274,7 +3324,7 @@ async function researchAccountsBatch(accounts, options = {}){
   try{
     const res = await fetch('/api/research-batch', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
       body: JSON.stringify({
         mode: Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked',
         accounts: batchPayloadForAccounts(accounts)
@@ -3497,7 +3547,7 @@ function refreshOpportunityViews(){
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.forEach(a => (a.futureOpportunities || []).forEach(o => assignOpportunityScore(o, a)));
   accounts.sort((a, b) => Math.max(0, ...(b.futureOpportunities || []).map(getOpportunityScore)) - Math.max(0, ...(a.futureOpportunities || []).map(getOpportunityScore)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
-  accounts.forEach((a, idx) => { if(idx >= 10){ a._locked = true; (a.futureOpportunities || []).forEach(o => { o._locked = true; }); } });
+  applyFreeCompanyLocksToCustomerAccounts(accounts);
   renderDetailedAccountViews(accounts);
   const totalAccountsEl = document.getElementById('totalAccounts');
   const totalOppEl = document.getElementById('totalOppValue');
@@ -4849,6 +4899,7 @@ function serializeAccountForStorage(account){
   const opportunities = Array.isArray(account.futureOpportunities) ? account.futureOpportunities.slice(0, 40) : [];
   return {
     name: account.name,
+    _locked: !!account._locked,
     industry: account.industry || '',
     contactName: account.contactName || '',
     contactEmail: account.contactEmail || '',
@@ -4910,6 +4961,7 @@ async function saveCurrentUpload(stage = 'uploaded'){
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Save failed');
     currentUploadId = data.uploadId || currentUploadId;
+    await loadDashboardUsage();
     const notice = document.getElementById('notice');
     if(notice && stage === 'uploaded'){
       notice.style.display = 'block';
@@ -5005,6 +5057,7 @@ function processData(records){
   }
 
   accounts.sort((a, b) => b.confidence - a.confidence || b.revenue - a.revenue || b.activePipelineValue - a.activePipelineValue);
+  applyFreeCompanyLocksToCustomerAccounts(accounts);
   window.accountRadarAccounts = accounts;
 
   // Future opportunities only. Historical orders are evidence, not opportunities.
