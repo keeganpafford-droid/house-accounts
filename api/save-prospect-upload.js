@@ -32,6 +32,51 @@ async function supabase(path, options={}){
   return data;
 }
 
+
+function normalizeCompanyName(name=''){
+  return clean(name).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+}
+async function orgUsers(orgId,userId){
+  if(orgId){
+    const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(orgId)}&select=id`, {method:'GET'}).catch(()=>[]);
+    return (Array.isArray(rows)?rows:[]).map(u=>u.id).filter(Boolean);
+  }
+  return [userId].filter(Boolean);
+}
+async function getOrganization(user){
+  if(!user?.organization_id) return null;
+  const rows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`, {method:'GET'}).catch(()=>[]);
+  return Array.isArray(rows) ? rows[0] : null;
+}
+async function getUsageContext(user){
+  const org = await getOrganization(user);
+  const plan = clean(org?.plan || 'free').toLowerCase();
+  const companyLimit = plan === 'free' ? 10 : Infinity;
+  const ids = await orgUsers(user.organization_id, user.id);
+  const inFilter = `in.(${ids.map(encodeURIComponent).join(',')})`;
+  let customer=[], prospect=[];
+  try{ customer = await supabase(`ha_accounts?user_id=${inFilter}&select=account_name`, {method:'GET'}); }catch{}
+  try{ prospect = await supabase(`ha_prospect_accounts?user_id=${inFilter}&select=company_name`, {method:'GET'}); }catch{}
+  const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name)), ...(Array.isArray(prospect)?prospect:[]).map(r=>normalizeCompanyName(r.company_name))].filter(Boolean));
+  return {org, plan, isFreePlan: plan === 'free', companyLimit, monitored};
+}
+function applyFreeLimitToAccounts(accounts, usage){
+  if(!usage?.isFreePlan) return {accounts, lockedCount:0, totalMonitoredAfter:null};
+  const monitored = new Set(usage.monitored || []);
+  let unlocked = 0, lockedCount = 0;
+  const limited = accounts.map(a => {
+    const name = clean(a.companyName || a.name || a.accountName);
+    const key = normalizeCompanyName(name);
+    const alreadyMonitored = key && monitored.has(key);
+    const canUnlock = alreadyMonitored || monitored.size < usage.companyLimit;
+    if(key && canUnlock && !alreadyMonitored) monitored.add(key);
+    if(canUnlock) unlocked += 1;
+    else lockedCount += 1;
+    return {...a, _locked: !canUnlock};
+  });
+  return {accounts: limited, lockedCount, totalMonitoredAfter: monitored.size};
+}
+
 async function upsertUser(lead = {}, page = '', req = null){
   const authUser = req ? await getUserFromAuth(req) : null;
   if(authUser?.id) return authUser;
@@ -85,8 +130,12 @@ export default async function handler(req, res){
     const body = req.body || {};
     const lead = body.lead || {};
     const user = await upsertUser(lead, body.page || body.sourcePage, req);
-    const accounts = Array.isArray(body.accounts) ? body.accounts : [];
-    if(!accounts.length) return json(res, 400, {error:'No prospect accounts provided'});
+    const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
+    if(!rawAccounts.length) return json(res, 400, {error:'No prospect accounts provided'});
+    const usageContext = await getUsageContext(user);
+    const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
+    const accounts = limitResult.accounts;
+    const unlockedAccounts = accounts.filter(a => !a._locked);
 
     const totalSignals = accounts.reduce((sum, a) => sum + (Array.isArray(a.signals) ? a.signals.length : 0), 0);
     const summary = body.summary || {
@@ -110,7 +159,7 @@ export default async function handler(req, res){
     const upload = Array.isArray(uploads) ? uploads[0] : uploads;
     if(!upload?.id) throw new Error('Prospect upload save did not return an id. Confirm prospect tables exist.');
 
-    const rows = accounts.slice(0, 500).map(a => ({
+    const rows = unlockedAccounts.slice(0, 500).map(a => ({
       user_id: user.id,
       prospect_upload_id: upload.id,
       company_name: clean(a.companyName || a.name || a.accountName),
@@ -138,7 +187,7 @@ export default async function handler(req, res){
       .map(a => [clean(a.company_name).toLowerCase(), a.id]));
 
     const signalRows = [];
-    for(const a of accounts){
+    for(const a of unlockedAccounts){
       const companyName = clean(a.companyName || a.name || a.accountName);
       const prospectAccountId = accountIdByName.get(companyName.toLowerCase()) || null;
       const signals = Array.isArray(a.signals) ? a.signals : [];
@@ -171,7 +220,7 @@ export default async function handler(req, res){
       }
     }
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId:upload.id, accountsSaved:rows.length, signalsSaved});
+    return json(res, 200, {ok:true, userId:user.id, uploadId:upload.id, accountsAnalyzed:accounts.length, accountsSaved:rows.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved});
   } catch(err){
     return json(res, 500, {error: err.message || 'Prospect save failed'});
   }

@@ -56,6 +56,51 @@ async function authFetchUser(req){
   if(!resp.ok) return null;
   return resp.json();
 }
+
+function normalizeCompanyName(name=''){
+  return clean(name).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+}
+async function orgUsers(orgId,userId){
+  if(orgId){
+    const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(orgId)}&select=id`, {method:'GET'}).catch(()=>[]);
+    return (Array.isArray(rows)?rows:[]).map(u=>u.id).filter(Boolean);
+  }
+  return [userId].filter(Boolean);
+}
+async function getOrganization(user){
+  if(!user?.organization_id) return null;
+  const rows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`, {method:'GET'}).catch(()=>[]);
+  return Array.isArray(rows) ? rows[0] : null;
+}
+async function getUsageContext(user){
+  const org = await getOrganization(user);
+  const plan = clean(org?.plan || 'free').toLowerCase();
+  const companyLimit = plan === 'free' ? 10 : Infinity;
+  const ids = await orgUsers(user.organization_id, user.id);
+  const inFilter = `in.(${ids.map(encodeURIComponent).join(',')})`;
+  let customer=[], prospect=[];
+  try{ customer = await supabase(`ha_accounts?user_id=${inFilter}&select=account_name`, {method:'GET'}); }catch{}
+  try{ prospect = await supabase(`ha_prospect_accounts?user_id=${inFilter}&select=company_name`, {method:'GET'}); }catch{}
+  const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name)), ...(Array.isArray(prospect)?prospect:[]).map(r=>normalizeCompanyName(r.company_name))].filter(Boolean));
+  return {org, plan, isFreePlan: plan === 'free', companyLimit, monitored};
+}
+function applyFreeLimitToAccounts(accounts, usage){
+  if(!usage?.isFreePlan) return {accounts, lockedCount:0, totalMonitoredAfter:null};
+  const monitored = new Set(usage.monitored || []);
+  let unlocked = 0, lockedCount = 0;
+  const limited = accounts.map(a => {
+    const name = clean(a.name || a.accountName);
+    const key = normalizeCompanyName(name);
+    const alreadyMonitored = key && monitored.has(key);
+    const canUnlock = alreadyMonitored || monitored.size < usage.companyLimit;
+    if(key && canUnlock && !alreadyMonitored) monitored.add(key);
+    if(canUnlock) unlocked += 1;
+    else lockedCount += 1;
+    return {...a, _locked: !canUnlock};
+  });
+  return {accounts: limited, lockedCount, totalMonitoredAfter: monitored.size};
+}
+
 async function getUserFromAuth(req){
   const authUser = await authFetchUser(req);
   if(!authUser?.id) return null;
@@ -123,10 +168,14 @@ export default async function handler(req, res){
     }
     if(!uploadId) throw new Error('Upload save did not return an id. Confirm ha_uploads table exists.');
 
-    const accounts = Array.isArray(body.accounts) ? body.accounts : [];
+    const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
+    const usageContext = await getUsageContext(user);
+    const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
+    const accounts = limitResult.accounts;
+    const unlockedAccounts = accounts.filter(a => !a._locked);
     if(accounts.length){
       await supabase(`ha_accounts?upload_id=eq.${encodeURIComponent(uploadId)}`, { method:'DELETE', prefer:'return=minimal' });
-      const accountRows = accounts.slice(0, 2500).map(a => ({
+      const accountRows = unlockedAccounts.slice(0, 2500).map(a => ({
         user_id: user.id,
         upload_id: uploadId,
         account_name: clean(a.name || a.accountName),
@@ -147,7 +196,7 @@ export default async function handler(req, res){
     }
 
     const signalRows = [];
-    for(const account of accounts){
+    for(const account of unlockedAccounts){
       const signals = Array.isArray(account.signals) ? account.signals : [];
       for(const s of signals){
         const h = signalHash(user.id, uploadId, account.name || account.accountName, s);
@@ -180,7 +229,7 @@ export default async function handler(req, res){
       }
     }
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId, accountsSaved:accounts.length, signalsSaved:signalRows.length});
+    return json(res, 200, {ok:true, userId:user.id, uploadId, accountsAnalyzed:accounts.length, accountsSaved:unlockedAccounts.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:signalRows.length});
   } catch(err){
     return json(res, 500, {error: err.message || 'Save failed'});
   }
