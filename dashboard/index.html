@@ -1632,7 +1632,7 @@
   .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
   .beta-modal{padding:24px;}
 }
-.locked-card{position:relative;opacity:.72}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.66);border-radius:inherit;pointer-events:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
+.locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 </style>
 <script src="/auth-client.js"></script>
 </head>
@@ -1958,7 +1958,7 @@ function renderDashboardUsage(){
     el.style.cssText='max-width:960px;margin:0 auto 18px;padding:10px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.9rem;';
     const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
   }
-  if(el) el.textContent=info.isFree?`${Math.min(info.used,info.limit)} / ${info.limit} companies monitored`:'Unlimited companies monitored';
+  if(el) el.textContent=info.isFree?`${info.used} / ${info.limit} companies monitored`:`${info.used} companies monitored`;
 }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){
   const info=dashboardUsageInfo();
@@ -2410,8 +2410,15 @@ function maybeShowBetaWelcomeForSignedInUser(){
 
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
-loadDashboardUsage();
+  loadDashboardUsage();
   maybeShowBetaWelcomeForSignedInUser();
+  setTimeout(() => {
+    const params = new URLSearchParams(window.location.search);
+    if(!params.get('dashboardEmail') && !params.get('email')){
+      const lead = getSavedLead();
+      if(lead && lead.email) loadSavedDashboard(lead.email);
+    }
+  }, 250);
 
   const betaWelcomeStartBtn = document.getElementById('betaWelcomeStartBtn');
   if(betaWelcomeStartBtn){
@@ -3010,6 +3017,10 @@ function structuredEvidenceRows(opp){
 }
 
 function renderRepOpportunityCard(opp){
+  if(opp._locked){
+    const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
+    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
+  }
   const badge = signalBadgeMeta(opp);
   const recBadge = recommendationBadgeMeta(opp);
   const tier = getPriorityTier(opp);
@@ -3017,7 +3028,7 @@ function renderRepOpportunityCard(opp){
   const evidenceRows = structuredEvidenceRows(opp);
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
   return `
-    <div class="opportunity-card daily-reason-card ${opp._locked ? 'locked-card' : ''}">
+    <div class="opportunity-card daily-reason-card">
       <div class="opp-card-header">
         <div class="opp-card-topline">
           <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
