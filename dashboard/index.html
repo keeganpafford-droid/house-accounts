@@ -1938,7 +1938,10 @@ function dashboardUsageInfo(){
   const plan=String(org.plan||'free').trim().toLowerCase();
   const limit=plan==='free'?Number(usage.companyLimit||usage.freeCompanyLimit||10):Infinity;
   const names=new Set((usage.monitoredCompanyNames||[]).map(normalizeCompanyNameForLimit).filter(Boolean));
-  return {plan,limit,names,isFree:plan==='free',used:Number(usage.totalMonitoredCompanies||names.size||0)};
+  const customerCount=Number(usage.existingCustomerCompanyCount ?? usage.customerCompanyCount ?? 0) || 0;
+  const prospectCount=Number(usage.prospectCompanyCount || 0) || 0;
+  const used=Number(usage.totalMonitoredCompanies||names.size||0);
+  return {plan,limit,names,isFree:plan==='free',used,customerCount,prospectCount};
 }
 async function loadDashboardUsage(){
   try{
@@ -1958,7 +1961,8 @@ function renderDashboardUsage(){
     el.style.cssText='max-width:960px;margin:0 auto 18px;padding:10px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.9rem;';
     const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
   }
-  if(el) el.textContent=info.isFree?`${info.used} / ${info.limit} companies monitored`:`${info.used} companies monitored`;
+  const split = ` (${info.customerCount} existing customer${info.customerCount===1?'':'s'} · ${info.prospectCount} prospect${info.prospectCount===1?'':'s'})`;
+  if(el) el.textContent=info.isFree?`${info.used} / ${info.limit} companies monitored${split}`:`${info.used} companies monitored${split}`;
 }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){
   const info=dashboardUsageInfo();
@@ -2346,7 +2350,7 @@ async function loadSavedDashboard(email){
   const banner = document.getElementById('savedDashboardBanner');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
   try{
-    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}`);
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}`, {headers:(window.HouseAuth&&HouseAuth.authHeaders)?HouseAuth.authHeaders():{}, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
     currentDashboardData = data;
