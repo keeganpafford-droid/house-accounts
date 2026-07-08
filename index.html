@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-protected="true">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1632,7 +1632,9 @@
   .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
   .beta-modal{padding:24px;}
 }
+.locked-card{position:relative;opacity:.72}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.66);border-radius:inherit;pointer-events:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 </style>
+<script src="/auth-client.js"></script>
 </head>
 <body>
 <div class="beta-top-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact.html">Leave Feedback →</a></div>
@@ -1934,7 +1936,13 @@ const TIMEBOX_CONFIG = {
 };
 
 function getSavedLead(){
-  try { return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null'); }
+  try {
+    const authUser = window.HouseAuth && HouseAuth.getUser ? HouseAuth.getUser() : null;
+    if(authUser && authUser.email){
+      return {name: authUser.name || '', email: authUser.email || '', company: authUser.company || '', role: authUser.app_role || '', houseAccounts:'', crmErp:''};
+    }
+    return JSON.parse(localStorage.getItem('houseAccountsLead') || 'null');
+  }
   catch(e){ return null; }
 }
 
@@ -2959,7 +2967,7 @@ function renderRepOpportunityCard(opp){
   const evidenceRows = structuredEvidenceRows(opp);
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
   return `
-    <div class="opportunity-card daily-reason-card">
+    <div class="opportunity-card daily-reason-card ${opp._locked ? 'locked-card' : ''}">
       <div class="opp-card-header">
         <div class="opp-card-topline">
           <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
@@ -2986,7 +2994,7 @@ function renderRepOpportunityCard(opp){
 
       <div class="opp-card-actions">
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-        <button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Full Sales Play →</button>
+        ${opp._locked ? `<div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Full Sales Play →</button>`}
       </div>
     </div>`;
 }
@@ -3143,7 +3151,7 @@ async function researchAccountByName(accountName){
   try{
     const res = await fetch('/api/research-account', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
       body: JSON.stringify({
         accountName: account.name,
         industry: account.industry,
@@ -3489,6 +3497,7 @@ function refreshOpportunityViews(){
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.forEach(a => (a.futureOpportunities || []).forEach(o => assignOpportunityScore(o, a)));
   accounts.sort((a, b) => Math.max(0, ...(b.futureOpportunities || []).map(getOpportunityScore)) - Math.max(0, ...(a.futureOpportunities || []).map(getOpportunityScore)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
+  accounts.forEach((a, idx) => { if(idx >= 10){ a._locked = true; (a.futureOpportunities || []).forEach(o => { o._locked = true; }); } });
   renderDetailedAccountViews(accounts);
   const totalAccountsEl = document.getElementById('totalAccounts');
   const totalOppEl = document.getElementById('totalOppValue');
