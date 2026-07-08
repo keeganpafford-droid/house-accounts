@@ -31,6 +31,49 @@ async function supabase(path, options={}){
   }
   return data;
 }
+
+async function authFetchUser(req){
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if(!token) return null;
+  const {url, key} = env();
+  const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
+  if(!resp.ok) return null;
+  return resp.json();
+}
+async function resolveDashboardUser(req, email){
+  const authUser = await authFetchUser(req);
+  if(authUser?.id){
+    const byAuth = await supabase(`ha_users?select=*&auth_user_id=eq.${encodeURIComponent(authUser.id)}&limit=1`);
+    const user = Array.isArray(byAuth) ? byAuth[0] : null;
+    if(user) return user;
+  }
+  if(email){
+    const users = await supabase(`ha_users?select=*&email=eq.${encodeURIComponent(email)}&limit=1`);
+    return Array.isArray(users) ? users[0] : null;
+  }
+  return null;
+}
+async function orgUserIds(user){
+  if(user?.organization_id){
+    const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id`);
+    const ids = (Array.isArray(rows) ? rows : []).map(u => u.id).filter(Boolean);
+    if(ids.length) return ids;
+  }
+  return user?.id ? [user.id] : [];
+}
+function inFilter(ids){
+  return `in.(${ids.map(id => encodeURIComponent(id)).join(',')})`;
+}
+function uniqueAccountRows(rows){
+  const map = new Map();
+  for(const row of rows || []){
+    const key = clean(row.account_name).toLowerCase();
+    if(!key) continue;
+    if(!map.has(key)) map.set(key, row);
+  }
+  return Array.from(map.values()).sort((a,b)=>clean(a.account_name).localeCompare(clean(b.account_name)));
+}
+
 function sourceDomain(url=''){
   try{ return new URL(url).hostname.replace(/^www\./,''); } catch { return ''; }
 }
@@ -133,18 +176,26 @@ export default async function handler(req, res){
   if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
   try{
     const email = clean(req.query?.email).toLowerCase();
-    if(!email) return json(res, 400, {error:'Missing email'});
-    const users = await supabase(`ha_users?select=*&email=eq.${encodeURIComponent(email)}&limit=1`);
-    const user = Array.isArray(users) ? users[0] : null;
-    if(!user) return json(res, 404, {error:'No saved dashboard found for that email.'});
+    const user = await resolveDashboardUser(req, email);
+    if(!user) return json(res, 404, {error:'No saved dashboard found for that user.'});
 
-    const uploads = await supabase(`ha_uploads?select=*&user_id=eq.${encodeURIComponent(user.id)}&order=updated_at.desc&limit=1`);
+    const ids = await orgUserIds(user);
+    if(!ids.length) return json(res, 404, {error:'No dashboard user found.'});
+    const usersFilter = inFilter(ids);
+
+    const uploads = await supabase(`ha_uploads?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=25`);
     const upload = Array.isArray(uploads) ? uploads[0] : null;
-    if(!upload) return json(res, 404, {error:'No upload found for that email yet.'});
 
-    const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=account_name.asc&limit=2500`);
-    const signals = await supabase(`ha_signals?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=first_seen_at.desc&limit=500`);
-    const weeklyRuns = await supabase(`ha_weekly_runs?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&order=started_at.desc&limit=8`);
+    const allAccounts = await supabase(`ha_accounts?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=2500`);
+    const accounts = uniqueAccountRows(allAccounts || []);
+
+    const signals = await supabase(`ha_signals?select=*&user_id=${usersFilter}&order=first_seen_at.desc&limit=1000`);
+    const weeklyRuns = await supabase(`ha_weekly_runs?select=*&user_id=${usersFilter}&order=started_at.desc&limit=8`);
+
+    if(!upload && !accounts.length && !(Array.isArray(signals) && signals.length)){
+      return json(res, 404, {error:'No existing customer dashboard data found yet.'});
+    }
+
     const uniqueSignals = uniqueSignalRows(signals || []);
     const byAccount = new Map();
     for(const a of accounts || []){
@@ -207,12 +258,14 @@ export default async function handler(req, res){
     return json(res, 200, {
       ok:true,
       user,
-      upload,
-      summary: upload.summary || {},
+      upload: upload || {},
+      summary: upload?.summary || {},
       accounts: accountList,
       signals: (uniqueSignals || []).map(rowToSignal),
       weeklyRuns: weeklyRuns || [],
-      newThisWeek
+      newThisWeek,
+      dashboardScope: user.organization_id ? 'organization' : 'user',
+      existingCustomerAccountCount: accountList.length
     });
   }catch(err){
     return json(res, 500, {error: err.message || 'Dashboard lookup failed'});
