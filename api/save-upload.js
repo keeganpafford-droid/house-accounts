@@ -74,7 +74,7 @@ async function getOrganization(user){
 }
 
 function daysRemaining(date){const t=new Date(date||0).getTime();if(!Number.isFinite(t)||t<=0)return null;return Math.max(0,Math.ceil((t-Date.now())/86400000))}
-function entitlement(org={}){const plan=clean(org.plan||'free').toLowerCase();const sub=clean(org.subscription_status||'').toLowerCase();const trial=clean(org.trial_status||'').toLowerCase();const trialDays=daysRemaining(org.trial_end);const trialActive=(trial==='active'||sub==='trialing')&&trialDays!==null&&trialDays>0;const paidActive=['active','paid','manual'].includes(sub);const unlimited=(plan!=='free')&&(trialActive||paidActive||plan==='enterprise');return{plan,isFreePlan:!unlimited,companyLimit:unlimited?Infinity:10,trialDaysRemaining:trialDays,trialExpired:(sub==='trialing'||trial==='active')&&trialDays===0}}
+function entitlement(org={}){const plan=clean(org.plan||'free').toLowerCase();const sub=clean(org.subscription_status||'').toLowerCase();const trial=clean(org.trial_status||'').toLowerCase();const trialDays=daysRemaining(org.trial_end);const trialActive=(trial==='active'||sub==='trialing')&&trialDays!==null&&trialDays>0;const paidActive=['active','paid','manual'].includes(sub);const unlimited=(plan!=='free')&&(trialActive||paidActive||plan==='enterprise');const expired=(sub==='trialing'||trial==='active')&&trialDays===0;return{plan,isFreePlan:!unlimited,companyLimit:unlimited?Infinity:10,trialDaysRemaining:trialDays,trialExpired:expired,trialUsed:!!org.trial_used,trialStartedAt:org.trial_started_at||''}}
 async function getUsageContext(user){
   const org = await getOrganization(user);
   const ent = entitlement(org || {});

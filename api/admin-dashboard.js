@@ -64,6 +64,11 @@ function latestDate(rows, field){
   const latest = Math.max(0, ...(rows || []).map(r => parseDate(r?.[field])));
   return latest ? new Date(latest).toISOString() : '';
 }
+function daysRemaining(value){
+  const t = parseDate(value);
+  if(!t) return null;
+  return Math.max(0, Math.ceil((t - Date.now()) / 86400000));
+}
 function groupByUser(rows){
   const map = new Map();
   for(const row of rows || []){
@@ -183,7 +188,10 @@ export default async function handler(req, res){
         seatLimit: orgById.get(user.organization_id)?.seat_limit || 1,
         trialStatus: orgById.get(user.organization_id)?.trial_status || '',
         subscriptionStatus: orgById.get(user.organization_id)?.subscription_status || '',
+        trialUsed: !!orgById.get(user.organization_id)?.trial_used,
+        trialStartedAt: orgById.get(user.organization_id)?.trial_started_at || '',
         trialEnd: orgById.get(user.organization_id)?.trial_end || '',
+        trialDaysRemaining: daysRemaining(orgById.get(user.organization_id)?.trial_end),
         seatsUsed: users.filter(x=>x.organization_id===user.organization_id && String(x.status||'active')!=='inactive').length,
         monitoredCompanyCount: userAccounts.length,
         lastLogin: user.last_login || '',
