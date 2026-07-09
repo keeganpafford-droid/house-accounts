@@ -1936,12 +1936,13 @@ function dashboardUsageInfo(){
   const org=dashboardUsage?.organization||{};
   const usage=dashboardUsage?.usage||{};
   const plan=String(org.plan||'free').trim().toLowerCase();
-  const limit=plan==='free'?Number(usage.companyLimit||usage.freeCompanyLimit||10):Infinity;
+  const limited=usage.isLimitedPlan!==undefined?!!usage.isLimitedPlan:plan==='free';
+  const limit=limited?Number(usage.companyLimit||usage.freeCompanyLimit||10):Infinity;
   const names=new Set((usage.monitoredCompanyNames||[]).map(normalizeCompanyNameForLimit).filter(Boolean));
   const customerCount=Number(usage.existingCustomerCompanyCount ?? usage.customerCompanyCount ?? 0) || 0;
   const prospectCount=Number(usage.prospectCompanyCount || 0) || 0;
   const used=Number(usage.totalMonitoredCompanies||names.size||0);
-  return {plan,limit,names,isFree:plan==='free',used,customerCount,prospectCount};
+  return {plan,limit,names,isFree:limited,used,customerCount,prospectCount,trialDaysRemaining:usage.trialDaysRemaining,trialExpired:usage.trialExpired};
 }
 async function loadDashboardUsage(){
   try{
@@ -1962,7 +1963,7 @@ function renderDashboardUsage(){
     const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
   }
   const split = ` (${info.customerCount} existing customer${info.customerCount===1?'':'s'} · ${info.prospectCount} prospect${info.prospectCount===1?'':'s'})`;
-  if(el) el.textContent=info.isFree?`${info.used} / ${info.limit} companies monitored${split}`:`${info.used} companies monitored${split}`;
+  if(el) el.textContent=info.trialExpired?`Your trial has expired. Upgrade to continue monitoring unlimited companies.${split}`:(info.isFree?`${info.used} / ${info.limit} companies monitored${split}`:(info.trialDaysRemaining?`You're on a ${info.plan} trial. ${info.trialDaysRemaining} days remaining.${split}`:`${info.used} companies monitored${split}`));
 }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){
   const info=dashboardUsageInfo();
