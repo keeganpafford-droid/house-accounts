@@ -368,7 +368,15 @@ async function handle(f){
       const traceEn=enriched.find(e=>traceKey(e.name)===traceKey(TRACE_ACCOUNT_NAME));
       console.log(`[Trace] ${TRACE_ACCOUNT_NAME} enriched summary:`,traceEn?{name:traceEn.name,signalsLen:(traceEn.signals||[]).length,signalsPreview:(traceEn.signals||[]).slice(0,5).map(traceSignalLabel)}:'NOT FOUND');
     }catch(e){console.warn('[Trace] enriched summary failed',e);}
-    await fetch('/api/save-prospect-upload',{method:'POST',headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched})}).catch(()=>{});
+    try{
+      const saveRes = await fetch('/api/save-prospect-upload',{method:'POST',headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched})});
+      const saveData = await saveRes.json().catch(()=>({}));
+      console.log('[Prospect UI] Save prospect upload response', {ok:saveRes.ok,status:saveRes.status,data:saveData});
+      if(!saveRes.ok){ console.warn('[Prospect UI] Prospect save failed', saveData); notice.textContent='Research complete, but saving to your account failed. Please try again or contact support.'; notice.style.display='block'; }
+    }catch(saveErr){
+      console.warn('[Prospect UI] Prospect save request failed', saveErr);
+      notice.textContent='Research complete, but saving to your account failed. Please try again or contact support.'; notice.style.display='block';
+    }
     await loadProspectUsage();
     const results=document.getElementById('prospectResults');
     renderOpportunityList();
