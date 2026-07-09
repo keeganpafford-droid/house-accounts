@@ -369,12 +369,25 @@ async function handle(f){
       console.log(`[Trace] ${TRACE_ACCOUNT_NAME} enriched summary:`,traceEn?{name:traceEn.name,signalsLen:(traceEn.signals||[]).length,signalsPreview:(traceEn.signals||[]).slice(0,5).map(traceSignalLabel)}:'NOT FOUND');
     }catch(e){console.warn('[Trace] enriched summary failed',e);}
     try{
-      const saveRes = await fetch('/api/save-prospect-upload',{method:'POST',headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),body:JSON.stringify({lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched})});
-      const saveData = await saveRes.json().catch(()=>({}));
-      console.log('[Prospect UI] Save prospect upload response', {ok:saveRes.ok,status:saveRes.status,data:saveData});
+      const savePayload={lead,uploadName:f.name,stage:'researched',page:location.href,summary,accounts:enriched};
+      const saveHeaders=(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'});
+      console.log('[Prospect Save Debug] frontend about to call /api/save-prospect-upload', {
+        endpoint:'/api/save-prospect-upload',
+        hasAuthorizationHeader:!!(saveHeaders.Authorization||saveHeaders.authorization),
+        uploadName:f.name,
+        accountCount:enriched.length,
+        signalCount:enriched.reduce((sum,a)=>sum+(Array.isArray(a.signals)?a.signals.length:0),0),
+        firstAccounts:enriched.slice(0,3).map(a=>({name:a.name||a.companyName||a.accountName, signals:Array.isArray(a.signals)?a.signals.length:0, contacts:Array.isArray(a.contacts)?a.contacts.length:0}))
+      });
+      console.log('[Prospect Save Debug] exact request body to /api/save-prospect-upload', savePayload);
+      const saveRes = await fetch('/api/save-prospect-upload',{method:'POST',headers:saveHeaders,body:JSON.stringify(savePayload)});
+      const saveText = await saveRes.text();
+      let saveData={};
+      try{ saveData=saveText?JSON.parse(saveText):{}; }catch{ saveData={raw:saveText}; }
+      console.log('[Prospect Save Debug] frontend save response', {ok:saveRes.ok,status:saveRes.status,data:saveData,rawText:saveText});
       if(!saveRes.ok){ console.warn('[Prospect UI] Prospect save failed', saveData); notice.textContent='Research complete, but saving to your account failed. Please try again or contact support.'; notice.style.display='block'; }
     }catch(saveErr){
-      console.warn('[Prospect UI] Prospect save request failed', saveErr);
+      console.warn('[Prospect Save Debug] frontend save request failed', saveErr);
       notice.textContent='Research complete, but saving to your account failed. Please try again or contact support.'; notice.style.display='block';
     }
     await loadProspectUsage();
