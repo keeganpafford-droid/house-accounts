@@ -27,7 +27,7 @@
     <section id="adminDashboard" class="hidden">
       <div class="hero"><div><p class="eyebrow">Beta Monitoring</p><h1>House Accounts Admin</h1><p>Usage snapshot from the current House Accounts Supabase tables.</p></div><button class="btn" id="refreshBtn">Refresh</button></div>
       <div class="metrics" id="metricsGrid"></div>
-      <section class="section"><h2>Beta Users</h2><div class="card table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Role</th><th>CRM / ERP</th><th>House Accounts</th><th>Signup Date</th><th>Uploads</th><th>Accounts</th><th>Signals</th><th>Last Upload</th><th>Last Brief</th><th>Feedback</th><th>Dashboard</th></tr></thead><tbody id="usersTable"></tbody></table></div></section>
+      <section class="section"><h2>Beta Users</h2><div class="card table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Org</th><th>Plan</th><th>Trial</th><th>Seats</th><th>Monitored</th><th>Last Login</th><th>Login Count</th><th>Last IP</th><th>User Agent</th><th>Uploads</th><th>Signals</th><th>Dashboard</th></tr></thead><tbody id="usersTable"></tbody></table></div></section>
       <section class="section"><h2>Recent Activity</h2><div class="activity-grid" id="activityGrid"></div></section>
     </section>
   </main>
@@ -73,7 +73,7 @@
   }
   function renderUsers(users){
     $('usersTable').innerHTML = (users || []).map(u => `<tr>
-      <td><strong>${escapeHtml(u.name || '—')}</strong></td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.company)}</td><td>${escapeHtml(u.role)}</td><td>${escapeHtml(u.crmErp)}</td><td>${escapeHtml(u.houseAccountCount)}</td><td>${escapeHtml(fmtDate(u.signupDate))}</td><td>${num(u.uploadCount)}</td><td>${num(u.accountCount)}</td><td>${num(u.signalCount)}</td><td>${escapeHtml(fmtDate(u.lastUploadDate))}</td><td>${escapeHtml(fmtDate(u.lastWeeklyRunDate))}</td><td>${u.feedbackCount === undefined ? '—' : num(u.feedbackCount)}</td><td>${u.dashboardUrl ? `<a class="dash-link" href="${escapeHtml(u.dashboardUrl)}">Open</a>` : '—'}</td>
+      <td><strong>${escapeHtml(u.name || '—')}</strong></td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.organization || u.company)}</td><td>${escapeHtml(u.plan || 'free')}</td><td>${escapeHtml(u.trialStatus || u.subscriptionStatus || '—')}${u.trialEnd?`<br><span class="muted">Ends ${escapeHtml(fmtDate(u.trialEnd))}</span>`:''}</td><td>${escapeHtml((u.seatsUsed||1)+' / '+(u.seatLimit||1))}</td><td>${num(u.monitoredCompanyCount||u.accountCount)}</td><td>${escapeHtml(fmtDateTime(u.lastLogin))}</td><td>${num(u.loginCount)}</td><td>${escapeHtml(u.lastIp||'')}</td><td>${escapeHtml(String(u.userAgent||'').slice(0,80))}</td><td>${num(u.uploadCount)}</td><td>${num(u.signalCount)}</td><td>${u.dashboardUrl ? `<a class="dash-link" href="${escapeHtml(u.dashboardUrl)}">Open</a>` : '—'}</td>
     </tr>`).join('') || '<tr><td colspan="14">No beta users yet.</td></tr>';
   }
   function activityRows(rows, type){
