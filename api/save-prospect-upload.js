@@ -32,6 +32,25 @@ async function supabase(path, options={}){
   return data;
 }
 
+async function insertWithFallback(table, payloads, options={}){
+  let lastError = null;
+  for(const payload of payloads){
+    try{
+      return await supabase(table, {
+        method:'POST',
+        prefer: options.prefer || 'return=representation',
+        body: JSON.stringify(Array.isArray(payload) ? payload : [payload])
+      });
+    } catch(err){
+      lastError = err;
+      console.warn(`[Prospect Save] ${table} insert attempt failed:`, err.message);
+    }
+  }
+  throw lastError || new Error(`Unable to insert into ${table}`);
+}
+
+function firstRow(rows){ return Array.isArray(rows) ? rows[0] : rows; }
+
 
 function normalizeCompanyName(name=''){
   return clean(name).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
@@ -144,83 +163,114 @@ export default async function handler(req, res){
       savedAt: new Date().toISOString()
     };
 
-    const uploads = await supabase('ha_prospect_uploads', {
-      method:'POST',
-      body: JSON.stringify([{
-        user_id: user.id,
-        upload_name: clean(body.uploadName || 'Uploaded target account list'),
-        stage: clean(body.stage || 'researched'),
-        summary,
-        source_page: clean(body.page || body.sourcePage),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-    });
-    const upload = Array.isArray(uploads) ? uploads[0] : uploads;
+    const now = new Date().toISOString();
+    const uploadPayload = {
+      user_id: user.id,
+      upload_name: clean(body.uploadName || 'Uploaded target account list'),
+      stage: clean(body.stage || 'researched'),
+      summary,
+      source_page: clean(body.page || body.sourcePage),
+      created_at: now,
+      updated_at: now
+    };
+    const uploads = await insertWithFallback('ha_prospect_uploads', [
+      uploadPayload,
+      { user_id: user.id, upload_name: uploadPayload.upload_name, stage: uploadPayload.stage, summary, created_at: now, updated_at: now },
+      { user_id: user.id, upload_name: uploadPayload.upload_name, stage: uploadPayload.stage, created_at: now },
+      { user_id: user.id, upload_name: uploadPayload.upload_name, created_at: now },
+      { user_id: user.id }
+    ]);
+    const upload = firstRow(uploads);
     if(!upload?.id) throw new Error('Prospect upload save did not return an id. Confirm prospect tables exist.');
 
-    const rows = unlockedAccounts.slice(0, 500).map(a => ({
-      user_id: user.id,
-      prospect_upload_id: upload.id,
-      company_name: clean(a.companyName || a.name || a.accountName),
-      website: clean(a.website),
-      industry: clean(a.industry),
-      location: clean(a.location || a.cityState),
-      signal_count: Array.isArray(a.signals) ? a.signals.length : 0,
-      signals: Array.isArray(a.signals) ? a.signals : [],
-      raw_data: { ...(a.rawData || {}), uploaded_contacts: Array.isArray(a.contacts) ? a.contacts : [], raw_rows: Array.isArray(a.rawRows) ? a.rawRows : [] },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    })).filter(a => a.company_name);
+    function buildProspectAccountRows(linkColumn, shape='full'){
+      return unlockedAccounts.slice(0, 500).map(a => {
+        const base = {
+          user_id: user.id,
+          [linkColumn]: upload.id,
+          company_name: clean(a.companyName || a.name || a.accountName),
+          website: clean(a.website),
+          industry: clean(a.industry),
+          location: clean(a.location || a.cityState),
+          created_at: now
+        };
+        if(shape === 'full'){
+          return {
+            ...base,
+            signal_count: Array.isArray(a.signals) ? a.signals.length : 0,
+            signals: Array.isArray(a.signals) ? a.signals : [],
+            raw_data: { ...(a.rawData || {}), uploaded_contacts: Array.isArray(a.contacts) ? a.contacts : [], raw_rows: Array.isArray(a.rawRows) ? a.rawRows : [] },
+            updated_at: now
+          };
+        }
+        return base;
+      }).filter(a => a.company_name);
+    }
 
     const savedAccounts = [];
-    if(rows.length){
-      const chunkSize = 200;
-      for(let i=0;i<rows.length;i+=chunkSize){
-        const inserted = await supabase('ha_prospect_accounts', { method:'POST', body: JSON.stringify(rows.slice(i, i+chunkSize)) });
-        if(Array.isArray(inserted)) savedAccounts.push(...inserted);
-      }
+    const accountInsertAttempts = [
+      buildProspectAccountRows('upload_id','full'),
+      buildProspectAccountRows('prospect_upload_id','full'),
+      buildProspectAccountRows('upload_id','minimal'),
+      buildProspectAccountRows('prospect_upload_id','minimal')
+    ].filter(rows => rows.length);
+    if(accountInsertAttempts.length){
+      const inserted = await insertWithFallback('ha_prospect_accounts', accountInsertAttempts);
+      if(Array.isArray(inserted)) savedAccounts.push(...inserted);
     }
 
     const accountIdByName = new Map(savedAccounts
       .filter(a => a && a.id && a.company_name)
-      .map(a => [clean(a.company_name).toLowerCase(), a.id]));
+      .map(a => [clean(a.company_name || a.name || a.account_name).toLowerCase(), a.id]));
 
-    const signalRows = [];
-    for(const a of unlockedAccounts){
-      const companyName = clean(a.companyName || a.name || a.accountName);
-      const prospectAccountId = accountIdByName.get(companyName.toLowerCase()) || null;
-      const signals = Array.isArray(a.signals) ? a.signals : [];
-      for(const sig of signals){
-        signalRows.push({
-          user_id: user.id,
-          prospect_upload_id: upload.id,
-          prospect_account_id: prospectAccountId,
-          account_name: companyName || clean(sig.accountName || sig.company || sig.account),
-          signal_type: clean(sig.signalType || sig.type || sig.opportunityType || 'Business Activity'),
-          title: clean(sig.title || sig.signalTitle || sig.headline || 'Business activity signal'),
-          why_reach_out: clean(sig.reasonToReachOut || sig.whyNow || sig.whyItMattersForPromo || sig.whyItMatters || sig.signalDetail),
-          confidence: Number(sig.confidenceScore || (Number(sig.confidence || 0) <= 1 ? Number(sig.confidence || 0) * 100 : sig.confidence) || 0),
-          source_url: clean(sig.sourceUrl || sig.url || sig.sources?.[0]?.url),
-          source_domain: clean(sig.sourceDomain || sig.cleanSourceName || sig.sourceType || sig.sourceAuthority),
-          published_at: clean(sig.publishedDate || sig.publicationDate || sig.date || ''),
-          payload: sig,
-          first_seen_at: new Date().toISOString(),
-          last_seen_at: new Date().toISOString()
-        });
+    function buildSignalRows(uploadLinkColumn, shape='full'){
+      const out = [];
+      for(const a of unlockedAccounts){
+        const companyName = clean(a.companyName || a.name || a.accountName);
+        const prospectAccountId = accountIdByName.get(companyName.toLowerCase()) || null;
+        const signals = Array.isArray(a.signals) ? a.signals : [];
+        for(const sig of signals){
+          const base = {
+            user_id: user.id,
+            [uploadLinkColumn]: upload.id,
+            prospect_account_id: prospectAccountId,
+            account_name: companyName || clean(sig.accountName || sig.company || sig.account || sig.company_name || sig.companyName),
+            signal_type: clean(sig.signalType || sig.signal_type || sig.type || sig.opportunityType || 'Business Activity'),
+            title: clean(sig.concrete_trigger || sig.concreteTrigger || sig.title || sig.signalTitle || sig.headline || 'Business activity signal'),
+            first_seen_at: now,
+            last_seen_at: now
+          };
+          if(shape === 'full'){
+            out.push({
+              ...base,
+              why_reach_out: clean(sig.reasonToReachOut || sig.whyNow || sig.whyThisMatters || sig.why_it_matters || sig.whyItMattersForPromo || sig.whyItMatters || sig.signalDetail),
+              confidence: Number(sig.confidenceScore || sig.why_now_score || (Number(sig.confidence || 0) <= 1 ? Number(sig.confidence || 0) * 100 : sig.confidence) || 0),
+              source_url: clean(sig.sourceUrl || sig.source_url || sig.url || sig.sources?.[0]?.url),
+              source_domain: clean(sig.sourceDomain || sig.source_name || sig.cleanSourceName || sig.sourceType || sig.sourceAuthority),
+              published_at: clean(sig.publishedDate || sig.publicationDate || sig.event_date || sig.date || ''),
+              payload: sig
+            });
+          } else {
+            out.push(base);
+          }
+        }
       }
+      return out.filter(r => r.account_name && r.title);
     }
 
     let signalsSaved = 0;
-    if(signalRows.length){
-      const chunkSize = 200;
-      for(let i=0;i<signalRows.length;i+=chunkSize){
-        await supabase('ha_prospect_signals', { method:'POST', prefer:'return=minimal', body: JSON.stringify(signalRows.slice(i, i+chunkSize)) });
-        signalsSaved += signalRows.slice(i, i+chunkSize).length;
-      }
+    const signalInsertAttempts = [
+      buildSignalRows('upload_id','full'),
+      buildSignalRows('prospect_upload_id','full'),
+      buildSignalRows('upload_id','minimal'),
+      buildSignalRows('prospect_upload_id','minimal')
+    ].filter(rows => rows.length);
+    if(signalInsertAttempts.length){
+      const insertedSignals = await insertWithFallback('ha_prospect_signals', signalInsertAttempts, {prefer:'return=minimal'});
+      signalsSaved = signalInsertAttempts[0].length;
     }
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId:upload.id, accountsAnalyzed:accounts.length, accountsSaved:rows.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved});
+    return json(res, 200, {ok:true, userId:user.id, uploadId:upload.id, accountsAnalyzed:accounts.length, accountsSaved:savedAccounts.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved});
   } catch(err){
     return json(res, 500, {error: err.message || 'Prospect save failed'});
   }
