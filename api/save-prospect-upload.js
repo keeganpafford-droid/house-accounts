@@ -2,6 +2,13 @@
 // Endpoint: POST /api/save-prospect-upload
 
 function json(res, status, body){ res.setHeader('Cache-Control','no-store, max-age=0'); return res.status(status).json(body); }
+function debugLog(label, payload){
+  try{ console.log(`[Prospect Save Debug] ${label}`, JSON.stringify(payload, null, 2)); }
+  catch{ console.log(`[Prospect Save Debug] ${label}`, payload); }
+}
+function debugError(label, err){
+  console.error(`[Prospect Save Debug] ${label}`, err?.message || err, err?.stack || '');
+}
 function clean(v=''){ return String(v || '').trim(); }
 function env(){
   const rawUrl = process.env.SUPABASE_URL;
@@ -34,16 +41,23 @@ async function supabase(path, options={}){
 
 async function insertWithFallback(table, payloads, options={}){
   let lastError = null;
+  let attempt = 0;
   for(const payload of payloads){
+    attempt += 1;
+    const rows = Array.isArray(payload) ? payload : [payload];
+    const sample = rows[0] ? Object.keys(rows[0]) : [];
+    debugLog(`${table} insert attempt`, {attempt, rowCount: rows.length, columns: sample});
     try{
-      return await supabase(table, {
+      const result = await supabase(table, {
         method:'POST',
         prefer: options.prefer || 'return=representation',
-        body: JSON.stringify(Array.isArray(payload) ? payload : [payload])
+        body: JSON.stringify(rows)
       });
+      debugLog(`${table} insert success`, {attempt, rowCountInserted: Array.isArray(result) ? result.length : (options.prefer === 'return=minimal' ? rows.length : (result ? 1 : 0)), returned: Array.isArray(result) ? result.slice(0,3) : result});
+      return result;
     } catch(err){
       lastError = err;
-      console.warn(`[Prospect Save] ${table} insert attempt failed:`, err.message);
+      debugError(`${table} insert attempt failed`, err);
     }
   }
   throw lastError || new Error(`Unable to insert into ${table}`);
@@ -122,23 +136,31 @@ async function upsertUser(lead = {}, page = '', req = null){
 
 async function authFetchUser(req){
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i,'');
+  debugLog('auth header received', {hasAuthorizationHeader: !!req.headers.authorization, hasBearerToken: !!token});
   if(!token) return null;
   const {url, key} = env();
   const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
+  debugLog('Supabase auth user lookup response', {status: resp.status, ok: resp.ok});
   if(!resp.ok) return null;
-  return resp.json();
+  const authUser = await resp.json();
+  debugLog('Supabase auth user resolved', {id: authUser?.id, email: authUser?.email});
+  return authUser;
 }
 async function getUserFromAuth(req){
   const authUser = await authFetchUser(req);
-  if(!authUser?.id) return null;
+  if(!authUser?.id){ debugLog('ha_users lookup skipped', {reason:'no auth user'}); return null; }
   const rows = await supabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=*&limit=1`, {method:'GET'});
   const existing = Array.isArray(rows) ? rows[0] : null;
+  debugLog('ha_users lookup by auth_user_id', {authUserId: authUser.id, found: !!existing, userId: existing?.id, organizationId: existing?.organization_id});
   if(existing) return existing;
   const byEmail = await supabase(`ha_users?email=eq.${encodeURIComponent(String(authUser.email||'').toLowerCase())}&select=*&limit=1`, {method:'GET'});
   const emailUser = Array.isArray(byEmail) ? byEmail[0] : null;
+  debugLog('ha_users lookup by email fallback', {email: authUser.email, found: !!emailUser, userId: emailUser?.id, organizationId: emailUser?.organization_id});
   if(emailUser?.id){
     const updated = await supabase(`ha_users?id=eq.${encodeURIComponent(emailUser.id)}`, {method:'PATCH', body:JSON.stringify({auth_user_id:authUser.id,status:'active',updated_at:new Date().toISOString()})});
-    return Array.isArray(updated) ? updated[0] : updated;
+    const updatedUser = Array.isArray(updated) ? updated[0] : updated;
+    debugLog('ha_users auth_user_id patched', {userId: updatedUser?.id, organizationId: updatedUser?.organization_id});
+    return updatedUser;
   }
   return null;
 }
@@ -148,13 +170,27 @@ export default async function handler(req, res){
   try{
     const body = req.body || {};
     const lead = body.lead || {};
-    const user = await upsertUser(lead, body.page || body.sourcePage, req);
     const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
+    debugLog('request received', {
+      method: req.method,
+      uploadName: body.uploadName,
+      stage: body.stage,
+      page: body.page || body.sourcePage,
+      hasLead: !!body.lead,
+      leadEmail: lead?.email || null,
+      accountCount: rawAccounts.length,
+      signalCount: rawAccounts.reduce((sum,a)=>sum+(Array.isArray(a.signals)?a.signals.length:0),0),
+      firstAccounts: rawAccounts.slice(0,3).map(a=>({name:a.companyName||a.name||a.accountName, signals:Array.isArray(a.signals)?a.signals.length:0, contacts:Array.isArray(a.contacts)?a.contacts.length:0}))
+    });
+    const user = await upsertUser(lead, body.page || body.sourcePage, req);
+    debugLog('resolved ha_user for save', {userId:user?.id, email:user?.email, organizationId:user?.organization_id});
     if(!rawAccounts.length) return json(res, 400, {error:'No prospect accounts provided'});
     const usageContext = await getUsageContext(user);
+    debugLog('usage context resolved', {organizationId:user.organization_id, plan:usageContext.plan, isFreePlan:usageContext.isFreePlan, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, monitoredBefore:usageContext.monitored?.size});
     const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
     const accounts = limitResult.accounts;
     const unlockedAccounts = accounts.filter(a => !a._locked);
+    debugLog('free limit applied before save', {accountsReceived:accounts.length, unlockedAccounts:unlockedAccounts.length, lockedCount:limitResult.lockedCount||0, totalMonitoredAfter:limitResult.totalMonitoredAfter});
 
     const totalSignals = accounts.reduce((sum, a) => sum + (Array.isArray(a.signals) ? a.signals.length : 0), 0);
     const summary = body.summary || {
@@ -181,6 +217,7 @@ export default async function handler(req, res){
       { user_id: user.id }
     ]);
     const upload = firstRow(uploads);
+    debugLog('ha_prospect_uploads selected upload row', {uploadId: upload?.id, keys: upload ? Object.keys(upload) : []});
     if(!upload?.id) throw new Error('Prospect upload save did not return an id. Confirm prospect tables exist.');
 
     function buildProspectAccountRows(linkColumn, shape='full'){
@@ -217,11 +254,14 @@ export default async function handler(req, res){
     if(accountInsertAttempts.length){
       const inserted = await insertWithFallback('ha_prospect_accounts', accountInsertAttempts);
       if(Array.isArray(inserted)) savedAccounts.push(...inserted);
+      debugLog('ha_prospect_accounts insert final', {savedAccounts: savedAccounts.length, firstSaved: savedAccounts.slice(0,3).map(a=>({id:a.id, company_name:a.company_name, keys:Object.keys(a||{})}))});
     }
 
     const accountIdByName = new Map(savedAccounts
       .filter(a => a && a.id && a.company_name)
       .map(a => [clean(a.company_name || a.name || a.account_name).toLowerCase(), a.id]));
+
+    debugLog('prospect account id map', {mappedCount: accountIdByName.size, sample: Array.from(accountIdByName.entries()).slice(0,5)});
 
     function buildSignalRows(uploadLinkColumn, shape='full'){
       const out = [];
@@ -265,13 +305,17 @@ export default async function handler(req, res){
       buildSignalRows('upload_id','minimal'),
       buildSignalRows('prospect_upload_id','minimal')
     ].filter(rows => rows.length);
+    debugLog('signal rows prepared', {attempts: signalInsertAttempts.length, firstAttemptRows: signalInsertAttempts[0]?.length || 0, sample: (signalInsertAttempts[0]||[]).slice(0,3).map(r=>({account_name:r.account_name, prospect_account_id:r.prospect_account_id, signal_type:r.signal_type, title:r.title, columns:Object.keys(r)}))});
     if(signalInsertAttempts.length){
-      const insertedSignals = await insertWithFallback('ha_prospect_signals', signalInsertAttempts, {prefer:'return=minimal'});
+      await insertWithFallback('ha_prospect_signals', signalInsertAttempts, {prefer:'return=minimal'});
       signalsSaved = signalInsertAttempts[0].length;
+    } else {
+      debugLog('ha_prospect_signals insert skipped', {reason:'no signal rows prepared'});
     }
 
     return json(res, 200, {ok:true, userId:user.id, uploadId:upload.id, accountsAnalyzed:accounts.length, accountsSaved:savedAccounts.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved});
   } catch(err){
+    debugError('handler failed', err);
     return json(res, 500, {error: err.message || 'Prospect save failed'});
   }
 }
