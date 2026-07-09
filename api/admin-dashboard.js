@@ -128,9 +128,10 @@ export default async function handler(req, res){
       totalFeedback = Number.isFinite(total) ? total : 0;
     }
 
-    const [usersRes, orgsRes, uploadsRes, accountsRes, prospectAccountsRes, signalsRes, prospectSignalsRes, runsRes, feedbackRes] = await Promise.all([
+    const [usersRes, orgsRes, invitesRes, uploadsRes, accountsRes, prospectAccountsRes, signalsRes, prospectSignalsRes, runsRes, feedbackRes] = await Promise.all([
       supabase('ha_users?select=*&order=created_at.desc&limit=500'),
       maybeSupabase('ha_organizations?select=*&order=created_at.desc&limit=500'),
+      maybeSupabase('ha_invitations?select=*&order=created_at.desc&limit=1000'),
       supabase('ha_uploads?select=*&order=created_at.desc&limit=1000'),
       supabase('ha_accounts?select=id,user_id,upload_id,account_name,created_at&order=created_at.desc&limit=5000'),
       maybeSupabase('ha_prospect_accounts?select=id,upload_id,company_name,created_at&order=created_at.desc&limit=5000'),
@@ -142,7 +143,13 @@ export default async function handler(req, res){
 
     const users = usersRes.data || [];
     const organizations = Array.isArray(orgsRes.data) ? orgsRes.data : [];
+    const invitations = Array.isArray(invitesRes.data) ? invitesRes.data : [];
     const orgById = new Map(organizations.map(o => [o.id, o]));
+    const pendingInvitesByOrg = new Map();
+    for(const invite of invitations.filter(i=>String(i.status||'').toLowerCase()==='pending')){
+      if(!pendingInvitesByOrg.has(invite.organization_id)) pendingInvitesByOrg.set(invite.organization_id, []);
+      pendingInvitesByOrg.get(invite.organization_id).push(invite);
+    }
     const uploads = uploadsRes.data || [];
     const accounts = accountsRes.data || [];
     const prospectAccounts = Array.isArray(prospectAccountsRes.data) ? prospectAccountsRes.data : [];
@@ -193,6 +200,7 @@ export default async function handler(req, res){
         trialEnd: orgById.get(user.organization_id)?.trial_end || '',
         trialDaysRemaining: daysRemaining(orgById.get(user.organization_id)?.trial_end),
         seatsUsed: users.filter(x=>x.organization_id===user.organization_id && String(x.status||'active')!=='inactive').length,
+        pendingInviteCount: (pendingInvitesByOrg.get(user.organization_id)||[]).length,
         monitoredCompanyCount: userAccounts.length,
         lastLogin: user.last_login || '',
         loginCount: user.login_count || 0,
@@ -231,7 +239,8 @@ export default async function handler(req, res){
         totalAccountsAnalyzed: totalAccounts,
         totalSavedSignals: totalSignals,
         totalWeeklyRuns,
-        totalFeedbackSubmissions: totalFeedback
+        totalFeedbackSubmissions: totalFeedback,
+        totalPendingInvitations: invitations.filter(i=>String(i.status||'').toLowerCase()==='pending').length
       },
       betaUsers,
       recentActivity: {
