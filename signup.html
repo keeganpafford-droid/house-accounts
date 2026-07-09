@@ -4,7 +4,7 @@
 <body><div class="wrap"><main class="card"><div class="brand">House Accounts</div><p id="intro">Welcome back. Log in to monitor your companies and discover new reasons to reach out.</p><div class="tabs"><button class="tab active" id="loginTab">Log in</button><button class="tab" id="signupTab">Sign up</button></div>
 <form id="authForm"><div id="signupFields" class="hidden"><label>Name<input id="name" autocomplete="name"></label><label>Company / Organization<input id="organization" autocomplete="organization"></label><label>Role<input id="role" autocomplete="organization-title" placeholder="Owner, sales rep, sales manager..."></label><label>Number of house accounts<input id="house_accounts" inputmode="numeric" placeholder="Example: 75"></label><label>CRM / ERP<input id="crm_erp" placeholder="Commonsku, Facilis, Antera, ESP, Excel..."></label></div><label>Email<input id="email" type="email" autocomplete="email" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="btn" id="submitBtn">Log in</button></form>
 <div class="row"><a class="link" href="/forgot-password.html">Forgot password?</a><a class="link" href="/pricing.html">Pricing</a></div><div class="msg" id="message"></div></main></div><script src="/auth-client.js"></script><script>
-let mode='signup'; const qs=new URLSearchParams(location.search); const next=qs.get('next')||'/dashboard/';
+let mode='signup'; const qs=new URLSearchParams(location.search); const next=qs.get('next')||'/dashboard/'; const allowedPlans=['free','solo','team','enterprise']; const requestedPlan=(allowedPlans.includes((qs.get('plan')||'').toLowerCase())?(qs.get('plan')||'').toLowerCase():(allowedPlans.includes((localStorage.getItem('haPendingPlan')||'').toLowerCase())?(localStorage.getItem('haPendingPlan')||'').toLowerCase():'free'));
 function setMode(m){mode=m; loginTab.classList.toggle('active',m==='login'); signupTab.classList.toggle('active',m==='signup'); signupFields.classList.toggle('hidden',m!=='signup'); submitBtn.textContent=m==='login'?'Log in':'Create account'; intro.textContent=m==='login'?'Welcome back. Log in to monitor your companies and discover new reasons to reach out.':'Create your beta account. Monitor up to 10 companies for free.';}
 function show(msg,ok=false){message.textContent=msg; message.className='msg '+(ok?'ok':'err'); message.style.display='block';}
 loginTab.onclick=()=>setMode('login'); signupTab.onclick=()=>setMode('signup');
@@ -17,13 +17,14 @@ authForm.onsubmit=async e=>{e.preventDefault(); message.style.display='none'; su
     organizationName:fieldValue('organization'),
     role:fieldValue('role'),
     house_accounts:fieldValue('house_accounts'),
-    crm_erp:fieldValue('crm_erp')
+    crm_erp:fieldValue('crm_erp'),
+    plan:requestedPlan
   };
   if(!payload.email || !payload.password || (mode==='signup' && (!payload.name || !payload.organizationName))){
     show(mode==='signup'?'Please enter your name, organization, email, and password.':'Please enter your email and password.');
     return;
   }
-  await HouseAuth.api(mode==='login'?'login':'signup', payload); location.href=next;
+  await HouseAuth.api(mode==='login'?'login':'signup', payload); try{localStorage.removeItem('haPendingPlan');}catch(e){} location.href=next;
 }catch(err){show(err.message||'Authentication failed.')} finally{submitBtn.disabled=false;}};
 setMode('signup');
 </script></body></html>
