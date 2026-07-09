@@ -128,9 +128,9 @@ export default async function handler(req, res){
       maybeSupabase('ha_organizations?select=*&order=created_at.desc&limit=500'),
       supabase('ha_uploads?select=*&order=created_at.desc&limit=1000'),
       supabase('ha_accounts?select=id,user_id,upload_id,account_name,created_at&order=created_at.desc&limit=5000'),
-      maybeSupabase('ha_prospect_accounts?select=id,user_id,company_name,created_at&order=created_at.desc&limit=5000'),
+      maybeSupabase('ha_prospect_accounts?select=id,upload_id,company_name,created_at&order=created_at.desc&limit=5000'),
       supabase('ha_signals?select=id,user_id,upload_id,account_name,signal_type,title,first_seen_at,last_seen_at&order=first_seen_at.desc&limit=1000'),
-      maybeSupabase('ha_prospect_signals?select=id,user_id,account_name,signal_type,title,first_seen_at,last_seen_at&order=first_seen_at.desc&limit=1000'),
+      maybeSupabase('ha_prospect_signals?select=id,user_email,company_name,signal_type,title,created_at&order=created_at.desc&limit=1000'),
       supabase('ha_weekly_runs?select=*&order=started_at.desc&limit=500'),
       maybeSupabase('ha_feedback?select=*&order=created_at.desc&limit=500')
     ]);
@@ -148,8 +148,14 @@ export default async function handler(req, res){
     const userById = new Map(users.map(u => [u.id, u]));
     const userByEmail = new Map(users.map(u => [clean(u.email).toLowerCase(), u]));
     const uploadsByUser = groupByUser(uploads);
-    const accountsByUser = groupByUser([...accounts, ...prospectAccounts.map(a => ({...a, account_name:a.company_name}))]);
-    const signalsByUser = groupByUser(signals);
+    const accountsByUser = groupByUser(accounts);
+    const signalsByUser = groupByUser(signals.filter(s=>s.user_id));
+    const prospectUploadsByEmail = new Map();
+    for(const up of uploads.filter(u=>u.user_email)){ const e=clean(up.user_email).toLowerCase(); if(!prospectUploadsByEmail.has(e)) prospectUploadsByEmail.set(e, []); prospectUploadsByEmail.get(e).push(up); }
+    const prospectAccountsByUpload = new Map();
+    for(const a of prospectAccounts){ if(!prospectAccountsByUpload.has(a.upload_id)) prospectAccountsByUpload.set(a.upload_id, []); prospectAccountsByUpload.get(a.upload_id).push(a); }
+    const prospectSignalsByEmail = new Map();
+    for(const s of signals.filter(s=>s.user_email)){ const e=clean(s.user_email).toLowerCase(); if(!prospectSignalsByEmail.has(e)) prospectSignalsByEmail.set(e, []); prospectSignalsByEmail.get(e).push(s); }
     const runsByUser = groupByUser(weeklyRuns);
     const feedbackByUser = new Map();
     for(const row of feedback){
@@ -161,8 +167,10 @@ export default async function handler(req, res){
 
     const betaUsers = users.map(user => {
       const userUploads = uploadsByUser.get(user.id) || [];
-      const userAccounts = accountsByUser.get(user.id) || [];
-      const userSignals = signalsByUser.get(user.id) || [];
+      const userProspectUploads = prospectUploadsByEmail.get(clean(user.email).toLowerCase()) || [];
+      const userProspectAccounts = userProspectUploads.flatMap(up => prospectAccountsByUpload.get(up.id) || []);
+      const userAccounts = [...(accountsByUser.get(user.id) || []), ...userProspectAccounts.map(a=>({...a,account_name:a.company_name}))];
+      const userSignals = [...(signalsByUser.get(user.id) || []), ...(prospectSignalsByEmail.get(clean(user.email).toLowerCase()) || [])];
       const userRuns = runsByUser.get(user.id) || [];
       const userFeedback = feedbackByUser.get(user.id) || [];
       return {
@@ -173,7 +181,15 @@ export default async function handler(req, res){
         organization: orgById.get(user.organization_id)?.name || '',
         plan: orgById.get(user.organization_id)?.plan || 'free',
         seatLimit: orgById.get(user.organization_id)?.seat_limit || 1,
+        trialStatus: orgById.get(user.organization_id)?.trial_status || '',
+        subscriptionStatus: orgById.get(user.organization_id)?.subscription_status || '',
+        trialEnd: orgById.get(user.organization_id)?.trial_end || '',
+        seatsUsed: users.filter(x=>x.organization_id===user.organization_id && String(x.status||'active')!=='inactive').length,
+        monitoredCompanyCount: userAccounts.length,
         lastLogin: user.last_login || '',
+        loginCount: user.login_count || 0,
+        lastIp: user.last_ip || '',
+        userAgent: user.user_agent || '',
         role: user.role || '',
         crmErp: user.crm_erp || '',
         houseAccountCount: user.house_accounts || '',

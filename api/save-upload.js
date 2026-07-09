@@ -72,17 +72,18 @@ async function getOrganization(user){
   const rows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`, {method:'GET'}).catch(()=>[]);
   return Array.isArray(rows) ? rows[0] : null;
 }
+
+function daysRemaining(date){const t=new Date(date||0).getTime();if(!Number.isFinite(t)||t<=0)return null;return Math.max(0,Math.ceil((t-Date.now())/86400000))}
+function entitlement(org={}){const plan=clean(org.plan||'free').toLowerCase();const sub=clean(org.subscription_status||'').toLowerCase();const trial=clean(org.trial_status||'').toLowerCase();const trialDays=daysRemaining(org.trial_end);const trialActive=(trial==='active'||sub==='trialing')&&trialDays!==null&&trialDays>0;const paidActive=['active','paid','manual'].includes(sub);const unlimited=(plan!=='free')&&(trialActive||paidActive||plan==='enterprise');return{plan,isFreePlan:!unlimited,companyLimit:unlimited?Infinity:10,trialDaysRemaining:trialDays,trialExpired:(sub==='trialing'||trial==='active')&&trialDays===0}}
 async function getUsageContext(user){
   const org = await getOrganization(user);
-  const plan = clean(org?.plan || 'free').toLowerCase();
-  const companyLimit = plan === 'free' ? 10 : Infinity;
+  const ent = entitlement(org || {});
   const ids = await orgUsers(user.organization_id, user.id);
   const inFilter = `in.(${ids.map(encodeURIComponent).join(',')})`;
-  let customer=[], prospect=[];
+  let customer=[];
   try{ customer = await supabase(`ha_accounts?user_id=${inFilter}&select=account_name`, {method:'GET'}); }catch{}
-  try{ prospect = await supabase(`ha_prospect_accounts?user_id=${inFilter}&select=company_name`, {method:'GET'}); }catch{}
-  const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name)), ...(Array.isArray(prospect)?prospect:[]).map(r=>normalizeCompanyName(r.company_name))].filter(Boolean));
-  return {org, plan, isFreePlan: plan === 'free', companyLimit, monitored};
+  const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name))].filter(Boolean));
+  return {org, plan:ent.plan, isFreePlan: ent.isFreePlan, companyLimit: ent.companyLimit, monitored};
 }
 function applyFreeLimitToAccounts(accounts, usage){
   if(!usage?.isFreePlan) return {accounts, lockedCount:0, totalMonitoredAfter:null};
