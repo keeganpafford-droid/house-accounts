@@ -81,7 +81,14 @@ async function getUsageContext(user){
   const ids = await orgUsers(user.organization_id, user.id);
   const inFilter = `in.(${ids.map(encodeURIComponent).join(',')})`;
   let customer=[];
-  try{ customer = await supabase(`ha_accounts?user_id=${inFilter}&select=account_name`, {method:'GET'}); }catch{}
+  try{
+    const uploads = await supabase(`ha_uploads?user_id=${inFilter}&select=id,stage`, {method:'GET'});
+    const activeUploadIds = (Array.isArray(uploads)?uploads:[]).filter(u=>!['paused','archived'].includes(clean(u.stage).toLowerCase())).map(u=>u.id).filter(Boolean);
+    if(activeUploadIds.length){
+      const uploadFilter = `in.(${activeUploadIds.map(encodeURIComponent).join(',')})`;
+      customer = await supabase(`ha_accounts?upload_id=${uploadFilter}&select=account_name`, {method:'GET'});
+    }
+  }catch{}
   const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name))].filter(Boolean));
   return {org, plan:ent.plan, isFreePlan: ent.isFreePlan, companyLimit: ent.companyLimit, monitored};
 }
