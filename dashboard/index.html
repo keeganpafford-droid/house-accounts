@@ -2486,6 +2486,23 @@ async function loadSavedDashboard(email){
     dashboardViewMode = data.viewMode || dashboardViewMode || defaultDashboardView();
     renderDashboardViewSwitcher();
     showJoinedWelcomeIfNeeded();
+
+    if(data.personalEmpty === true){
+      window.accountRadarAccounts = [];
+      const memberEmpty = document.getElementById('memberEmptyState');
+      const gate = document.getElementById('leadGate');
+      const dz = document.getElementById('dropzone');
+      const example = document.getElementById('exampleOpportunity');
+      const results = document.getElementById('results');
+      if(memberEmpty) memberEmpty.style.display = 'block';
+      if(gate) gate.style.display = 'block';
+      if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
+      if(example) example.style.display = 'block';
+      if(results) results.style.display = 'none';
+      if(banner) banner.style.display = 'none';
+      return;
+    }
+
     const accounts = (data.accounts || []).map(normalizeSavedAccount);
     window.accountRadarAccounts = accounts;
     currentUploadId = data.upload?.id || currentUploadId;
