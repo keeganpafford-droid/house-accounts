@@ -321,10 +321,10 @@ export default async function handler(req, res){
       viewMode,
       canViewTeam: teamAllowed,
       userRole: appRole(user),
-      organizationSnapshot: {
+      organizationSnapshot: teamAllowed ? {
         customerCount: teamCustomerCount,
         prospectCount: teamProspectCount
-      },
+      } : null,
       existingCustomerAccountCount: accountList.length
     });
   }catch(err){
