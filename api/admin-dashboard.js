@@ -1,5 +1,5 @@
 // Vercel Serverless Function: House Accounts beta admin dashboard data.
-// Endpoint: GET /api/admin-dashboard?email=<authorized-admin-email>
+// Endpoint: GET /api/admin-dashboard
 // Uses existing Supabase tables only. Service role key stays server-side.
 
 function json(res, status, body){ return res.status(status).json(body); }
@@ -9,7 +9,12 @@ function env(){
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const adminEmail = clean(process.env.ADMIN_EMAIL).toLowerCase();
   if(!rawUrl || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  if(!adminEmail) throw new Error('Missing ADMIN_EMAIL');
+  if(!adminEmail){
+    console.error('[Admin Auth] ADMIN_EMAIL is missing; admin access denied.');
+    const error = new Error('Admin access is not configured.');
+    error.code = 'ADMIN_EMAIL_MISSING';
+    throw error;
+  }
   const url = String(rawUrl).trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
   return {url, key, adminEmail};
 }
@@ -102,7 +107,10 @@ export default async function handler(req, res){
     const {adminEmail} = env();
     const authUser = await authUserFromRequest(req);
     const requesterEmail = clean(authUser?.email).toLowerCase();
-    if(!requesterEmail || requesterEmail !== adminEmail){
+    if(!authUser?.id || !requesterEmail){
+      return json(res, 401, {error:'Authentication required'});
+    }
+    if(requesterEmail !== adminEmail){
       return json(res, 403, {error:'Admin access only'});
     }
 
@@ -259,6 +267,7 @@ export default async function handler(req, res){
       feedbackStored: !feedbackRes.missing
     });
   }catch(err){
+    if(err?.code === 'ADMIN_EMAIL_MISSING') return json(res, 503, {error:'Admin access is not configured.'});
     return json(res, 500, {error: err.message || 'Admin dashboard failed'});
   }
 }
