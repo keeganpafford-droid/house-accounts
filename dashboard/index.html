@@ -1896,7 +1896,7 @@
       <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
     </div>
   </div>
-  <div class="member-empty-state" id="memberEmptyState" style="display:none;">Upload your own customer or prospect list to get your personal recommendations.</div>
+  <div class="member-empty-state" id="memberEmptyState" style="display:none;"><strong>My View</strong><br>You haven't uploaded any customer or prospect lists yet.</div>
 
   <div id="results">
 
@@ -2448,7 +2448,7 @@ function renderDashboardViewSwitcher(){
   if(snap){
     snap.textContent = canTeam
       ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
-      : `Your team is monitoring ${customerCount} customer${customerCount===1?'':'s'} and ${prospectCount} prospect${prospectCount===1?'':'s'}.`;
+      : 'Showing only customer and prospect data uploaded by you.';
   }
   if(buttons){
     buttons.style.display = canTeam ? 'flex' : 'none';
@@ -2516,6 +2516,21 @@ async function loadSavedDashboard(email){
     refreshOpportunityViews();
     window.scrollTo({top:0, behavior:'smooth'});
   }catch(err){
+    const isMember = !canCurrentUserViewTeam();
+    const noData = /No existing customer dashboard data found yet|No saved dashboard found/i.test(String(err.message || ''));
+    if(isMember && noData){
+      const memberEmpty = document.getElementById('memberEmptyState');
+      if(memberEmpty) memberEmpty.style.display = 'block';
+      const gate = document.getElementById('leadGate');
+      const dz = document.getElementById('dropzone');
+      const results = document.getElementById('results');
+      if(gate) gate.style.display = 'block';
+      if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
+      if(results) results.style.display = 'none';
+      if(banner) banner.style.display = 'none';
+      renderDashboardViewSwitcher();
+      return;
+    }
     if(banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }
   }
 }
