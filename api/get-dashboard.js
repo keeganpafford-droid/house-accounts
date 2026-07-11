@@ -225,14 +225,29 @@ export default async function handler(req, res){
     const activeOrgUsers = (Array.isArray(orgUsers) ? orgUsers : []).filter(u => clean(u.status || 'active') !== 'inactive');
     const orgUsersFilter = inFilter(activeOrgUsers.map(u => u.id).filter(Boolean));
 
-    const uploads = await supabase(`ha_uploads?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=25`);
+    // For members, upload ownership is the source of truth. Never fall back to
+    // organization_id, company-name matching, or direct user_id matches on child rows.
+    const uploads = await supabase(`ha_uploads?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=250`);
     const upload = Array.isArray(uploads) ? uploads[0] : null;
+    const ownedUploadIds = (Array.isArray(uploads) ? uploads : []).map(u => u.id).filter(Boolean);
 
-    const allAccounts = await supabase(`ha_accounts?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=2500`);
+    let allAccounts = [];
+    let signals = [];
+    let weeklyRuns = [];
+
+    if(viewMode === 'team') {
+      // Preserve owner/admin organization-wide behavior.
+      allAccounts = await supabase(`ha_accounts?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=2500`);
+      signals = await supabase(`ha_signals?select=*&user_id=${usersFilter}&order=first_seen_at.desc&limit=1000`);
+      weeklyRuns = await supabase(`ha_weekly_runs?select=*&user_id=${usersFilter}&order=started_at.desc&limit=8`);
+    } else if(ownedUploadIds.length) {
+      const uploadFilter = inFilter(ownedUploadIds);
+      allAccounts = await supabase(`ha_accounts?select=*&upload_id=${uploadFilter}&order=updated_at.desc&limit=2500`);
+      signals = await supabase(`ha_signals?select=*&upload_id=${uploadFilter}&order=first_seen_at.desc&limit=1000`);
+      weeklyRuns = await supabase(`ha_weekly_runs?select=*&user_id=eq.${encodeURIComponent(user.id)}&order=started_at.desc&limit=8`);
+    }
+
     const accounts = uniqueAccountRows(allAccounts || []);
-
-    const signals = await supabase(`ha_signals?select=*&user_id=${usersFilter}&order=first_seen_at.desc&limit=1000`);
-    const weeklyRuns = await supabase(`ha_weekly_runs?select=*&user_id=${usersFilter}&order=started_at.desc&limit=8`);
 
     let teamCustomerCount = accounts.length;
     let teamProspectCount = 0;
@@ -243,6 +258,27 @@ export default async function handler(req, res){
       }catch{}
     }
     teamProspectCount = await prospectCountForUsers(activeOrgUsers.length ? activeOrgUsers : [user]);
+
+    if(viewMode === 'my' && ownedUploadIds.length === 0){
+      return json(res, 200, {
+        ok:true,
+        user,
+        organization,
+        upload:{},
+        summary:{},
+        accounts:[],
+        signals:[],
+        weeklyRuns:[],
+        newThisWeek:[],
+        dashboardScope:'user',
+        viewMode:'my',
+        canViewTeam:teamAllowed,
+        userRole:appRole(user),
+        organizationSnapshot:null,
+        existingCustomerAccountCount:0,
+        personalEmpty:true
+      });
+    }
 
     if(!upload && !accounts.length && !(Array.isArray(signals) && signals.length)){
       return json(res, 404, {error:'No existing customer dashboard data found yet.'});
