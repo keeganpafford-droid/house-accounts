@@ -540,6 +540,52 @@
     margin-top:12px;
   }
 
+
+  .dashboard-view-switcher{
+    display:none;
+    max-width:960px;
+    margin:0 auto 18px;
+    padding:12px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:#fff;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .dashboard-view-switcher.active{display:flex;}
+  .view-toggle-buttons{display:flex;gap:8px;flex-wrap:wrap;}
+  .view-toggle-btn{
+    border:1px solid var(--line);
+    background:#fff;
+    color:var(--ink);
+    border-radius:999px;
+    padding:8px 12px;
+    font-weight:800;
+    cursor:pointer;
+  }
+  .view-toggle-btn.active{
+    background:#eefdfb;
+    border-color:rgba(31,183,174,.35);
+    color:var(--radar);
+  }
+  .team-snapshot-note{
+    color:var(--muted);
+    font-size:.9rem;
+    font-weight:700;
+  }
+  .member-empty-state{
+    max-width:960px;
+    margin:0 auto 18px;
+    padding:18px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:#fff;
+    color:var(--ink);
+    font-weight:800;
+  }
+
   #error{
     display:none; margin-top:16px; padding:12px 16px; background:#fdecea; border-left:3px solid var(--signal);
     font-family:var(--mono); font-size:0.85rem; color:#a23b1a;
@@ -1825,6 +1871,17 @@
   </section>
 
   <div class="saved-dashboard-banner" id="savedDashboardBanner"></div>
+  <div class="dashboard-view-switcher" id="dashboardViewSwitcher">
+    <div>
+      <strong id="dashboardViewTitle">Team View</strong>
+      <div class="team-snapshot-note" id="dashboardTeamSnapshot"></div>
+    </div>
+    <div class="view-toggle-buttons" id="dashboardViewButtons">
+      <button class="view-toggle-btn" type="button" data-view="my">My View</button>
+      <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
+    </div>
+  </div>
+  <div class="member-empty-state" id="memberEmptyState" style="display:none;">Upload your own customer or prospect list to get your personal recommendations.</div>
 
   <div id="results">
 
@@ -1925,6 +1982,8 @@ let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
+let dashboardViewMode = 'team';
+let dashboardCanViewTeam = false;
 let showAllWeeklyPriorities = false;
 let activeTimebox = 'week';
 
@@ -1949,7 +2008,7 @@ async function loadDashboardUsage(){
     if(!(window.HouseAuth&&HouseAuth.authHeaders)) return null;
     const res=await fetch('/api/usage',{headers:HouseAuth.authHeaders(),cache:'no-store'});
     const data=await res.json().catch(()=>({}));
-    if(res.ok){ dashboardUsage=data; renderDashboardUsage(); return data; }
+    if(res.ok){ dashboardUsage=data; if(!currentDashboardData){ dashboardViewMode = defaultDashboardView(); } renderDashboardUsage(); renderDashboardViewSwitcher(); return data; }
   }catch(e){ console.warn('Usage load failed',e); }
   return null;
 }
@@ -2339,6 +2398,59 @@ function scrollToUploadForNewList(){
   window.scrollTo({top:0, behavior:'smooth'});
 }
 
+
+function currentDashboardRole(){
+  const u = dashboardUsage?.user || currentDashboardData?.user || {};
+  return String(u.app_role || u.role || 'member').trim().toLowerCase();
+}
+function canCurrentUserViewTeam(){
+  const role = currentDashboardRole();
+  return role === 'owner' || role === 'admin' || currentDashboardData?.canViewTeam === true;
+}
+function defaultDashboardView(){
+  return canCurrentUserViewTeam() ? 'team' : 'my';
+}
+function setDashboardView(mode){
+  dashboardViewMode = (mode === 'team' && canCurrentUserViewTeam()) ? 'team' : 'my';
+  renderDashboardViewSwitcher();
+  const email = currentDashboardData?.user?.email || currentLead?.email || document.getElementById('dashboardEmail')?.value || '';
+  if(email) loadSavedDashboard(email);
+}
+function renderDashboardViewSwitcher(){
+  const wrap = document.getElementById('dashboardViewSwitcher');
+  if(!wrap) return;
+  const snapshot = currentDashboardData?.organizationSnapshot || {};
+  const canTeam = canCurrentUserViewTeam();
+  dashboardCanViewTeam = canTeam;
+  if(!currentDashboardData && !dashboardUsage){ wrap.classList.remove('active'); return; }
+  wrap.classList.add('active');
+  const title = document.getElementById('dashboardViewTitle');
+  const snap = document.getElementById('dashboardTeamSnapshot');
+  const buttons = document.getElementById('dashboardViewButtons');
+  const customerCount = Number(snapshot.customerCount ?? dashboardUsage?.usage?.existingCustomerCompanyCount ?? 0) || 0;
+  const prospectCount = Number(snapshot.prospectCount ?? dashboardUsage?.usage?.prospectCompanyCount ?? 0) || 0;
+  if(title) title.textContent = canTeam ? (dashboardViewMode === 'team' ? 'Team View' : 'My View') : 'My View';
+  if(snap){
+    snap.textContent = canTeam
+      ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
+      : `Your team is monitoring ${customerCount} customer${customerCount===1?'':'s'} and ${prospectCount} prospect${prospectCount===1?'':'s'}.`;
+  }
+  if(buttons){
+    buttons.style.display = canTeam ? 'flex' : 'none';
+    buttons.querySelectorAll('[data-view]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === dashboardViewMode);
+    });
+  }
+}
+function showJoinedWelcomeIfNeeded(){
+  const params = new URLSearchParams(window.location.search);
+  if(params.get('joined') !== '1') return;
+  const orgName = currentDashboardData?.organization?.name || dashboardUsage?.organization?.name || 'your organization';
+  const msg = `Welcome to ${orgName}. Your team is already monitoring customer and prospect accounts. Upload your own list to get personalized recommendations.`;
+  const banner = document.getElementById('savedDashboardBanner');
+  if(banner){ banner.style.display='block'; banner.innerHTML = `<strong>${escapeHtml(msg)}</strong>`; }
+}
+
 async function manualDashboardRefresh(){
   const email = currentDashboardData?.user?.email || currentLead?.email || document.getElementById('dashboardEmail')?.value || '';
   if(email) await loadSavedDashboard(email);
@@ -2351,10 +2463,14 @@ async function loadSavedDashboard(email){
   const banner = document.getElementById('savedDashboardBanner');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
   try{
-    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}`, {headers:(window.HouseAuth&&HouseAuth.authHeaders)?HouseAuth.authHeaders():{}, cache:'no-store'});
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers:(window.HouseAuth&&HouseAuth.authHeaders)?HouseAuth.authHeaders():{}, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
     currentDashboardData = data;
+    dashboardCanViewTeam = !!data.canViewTeam;
+    dashboardViewMode = data.viewMode || dashboardViewMode || defaultDashboardView();
+    renderDashboardViewSwitcher();
+    showJoinedWelcomeIfNeeded();
     const accounts = (data.accounts || []).map(normalizeSavedAccount);
     window.accountRadarAccounts = accounts;
     currentUploadId = data.upload?.id || currentUploadId;
@@ -2376,6 +2492,7 @@ async function loadSavedDashboard(email){
     if(dz) dz.style.display = 'none';
     if(example) example.style.display = 'none';
     if(results) results.style.display = 'block';
+    const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     if(banner){
       const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
       banner.innerHTML = `<strong>Saved dashboard loaded.</strong> ${escapeHtml(accounts.length)} accounts · ${escapeHtml((data.signals || []).length)} saved signal${(data.signals || []).length===1?'':'s'} · ${escapeHtml(newCount)} new this week.`;
@@ -2415,6 +2532,7 @@ function maybeShowBetaWelcomeForSignedInUser(){
 
 document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
+  document.querySelectorAll('#dashboardViewButtons [data-view]').forEach(btn=>btn.addEventListener('click',()=>setDashboardView(btn.dataset.view)));
   loadDashboardUsage();
   maybeShowBetaWelcomeForSignedInUser();
   setTimeout(() => {
