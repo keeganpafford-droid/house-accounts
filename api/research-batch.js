@@ -185,7 +185,9 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
       // Owned-site intent pages. Firecrawl enrichment will prioritize these later.
       domain ? `site:${domain} (news OR press OR "press release" OR blog OR careers OR jobs OR events OR community OR locations OR sustainability)` : '',
       domain ? `site:${domain} ("trade show" OR conference OR booth OR exhibitor OR "open house" OR webinar OR event OR summit)` : '',
-      domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch OR partnership)` : ''
+      domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch OR partnership)` : '',
+      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}" (interview OR podcast OR webinar OR conference OR speaker OR award OR promoted OR promotion OR article OR quoted OR patent OR LinkedIn)` : '',
+      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}" (community OR volunteer OR anniversary OR launch OR event OR initiative)` : ''
     ].filter(Boolean);
   }
   // Existing customer/house account workflows keep the original broader research strategy.
@@ -1226,6 +1228,8 @@ export default async function handler(req, res) {
         website: clean(a.website || ''),
         categories: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
         contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 12) : [],
+        oneOffResearch: a.oneOffResearch === true,
+        contactName: clean(a.contactName || (Array.isArray(a.contacts) ? a.contacts[0]?.name : '') || ''),
         recentOrderDates: Array.isArray(a.recentOrderDates) ? a.recentOrderDates.slice(0, 5) : [],
         repeatPatterns: Array.isArray(a.repeatPatterns) ? a.repeatPatterns.slice(0, 5) : [],
         existingSignals: Array.isArray(a.existingSignals) ? a.existingSignals.slice(0, 5) : [],
