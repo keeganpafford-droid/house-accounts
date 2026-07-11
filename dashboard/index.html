@@ -1679,6 +1679,8 @@
   .beta-modal{padding:24px;}
 }
 .locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
+
+.monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
 </style>
 <script src="/auth-client.js"></script>
 </head>
@@ -1791,6 +1793,19 @@
       <div class="workflow-copy">Upload a target company list and research public business signals for prospect outreach.</div>
       <span class="workflow-cta">Open Prospect Intelligence →</span>
     </a>
+  </section>
+
+  <section id="customerMonitoringWorkspace" class="monitoring-workspace">
+    <div class="workspace-toolbar"><div><div class="upload-eyebrow">Monitoring workspace</div><h2>Existing Customer Lists</h2></div><button class="btn" id="addCustomerListBtn" type="button">Add another list</button></div>
+    <div class="workspace-summary">
+      <div class="workspace-card"><strong id="wsActiveCustomers">0</strong><span>Active customers</span></div>
+      <div class="workspace-card"><strong id="wsPausedCustomers">0</strong><span>Paused customers</span></div>
+      <div class="workspace-card"><strong id="wsActiveProspects">0</strong><span>Active prospects</span></div>
+      <div class="workspace-card"><strong id="wsPausedProspects">0</strong><span>Paused prospects</span></div>
+      <div class="workspace-card"><strong id="wsNextScan">Monday</strong><span>Next weekly scan</span></div>
+      <div class="workspace-card"><strong id="wsMonitoringStatus">Active</strong><span>Monitoring status</span></div>
+    </div>
+    <div id="customerListGrid" class="monitor-list-grid"></div>
   </section>
 
   <div class="upload-zone locked" id="dropzone">
@@ -5250,6 +5265,17 @@ function escapeHtml(text){
   const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
   return String(text || '').replace(/[&<>"']/g, m => map[m]);
 }
+</script>
+
+<script>
+(function(){
+ const fmt=d=>{if(!d)return '—';const x=new Date(d);return Number.isNaN(x.getTime())?'—':x.toLocaleDateString()};
+ const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+ async function request(method,body){const r=await fetch('/api/monitoring-lists',{method,headers:{'Content-Type':'application/json',...(window.HouseAuth?.authHeaders?.()||{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Monitoring list request failed');return d}
+ async function load(){try{const d=await request('GET');const lists=d.lists?.customer||[];if(!lists.length)return;document.getElementById('customerMonitoringWorkspace')?.classList.add('active');document.getElementById('dropzone')?.classList.add('upload-hidden');document.getElementById('exampleOpportunity')?.classList.add('upload-hidden');const sm=d.summary||{};document.getElementById('wsActiveCustomers').textContent=sm.activeCustomers||0;document.getElementById('wsPausedCustomers').textContent=sm.pausedCustomers||0;document.getElementById('wsActiveProspects').textContent=sm.activeProspects||0;document.getElementById('wsPausedProspects').textContent=sm.pausedProspects||0;document.getElementById('wsNextScan').textContent=sm.nextWeeklyScan||'Monday';document.getElementById('wsMonitoringStatus').textContent=sm.monitoringStatus||'Active';document.getElementById('customerListGrid').innerHTML=lists.map(x=>`<article class="monitor-list-card"><div class="monitor-list-head"><div><h3>${esc(x.name)}</h3><div class="monitor-meta">${x.companyCount} compan${x.companyCount===1?'y':'ies'} · Last upload ${fmt(x.lastUpload)} · Last scan ${fmt(x.lastScan)}</div></div><span class="monitor-badge ${x.status}">${x.status==='paused'?'Paused':'Active'}</span></div><div class="monitor-actions"><button data-list-act="rename" data-list-id="${esc(x.id)}">Rename</button><button data-list-act="${x.status==='paused'?'resume':'pause'}" data-list-id="${esc(x.id)}">${x.status==='paused'?'Resume Monitoring':'Pause Monitoring'}</button><button data-list-act="view" data-list-id="${esc(x.id)}">View Accounts</button><button class="danger" data-list-act="delete" data-list-id="${esc(x.id)}">Delete</button></div></article>`).join('')}catch(e){console.warn('Customer monitoring workspace load failed',e)}}
+ document.addEventListener('click',async e=>{const b=e.target.closest('[data-list-act]');if(!b)return;const action=b.dataset.listAct,id=b.dataset.listId;if(action==='view'){document.getElementById('results')?.scrollIntoView({behavior:'smooth'});return}try{if(action==='rename'){const name=prompt('Rename this monitoring list:');if(!name)return;await request('PATCH',{type:'customer',id,action,name})}else if(action==='delete'){if(!confirm('Delete this monitoring list, its customer accounts, and associated signals? This cannot be undone.'))return;await request('DELETE',{type:'customer',id})}else await request('PATCH',{type:'customer',id,action});location.reload()}catch(err){alert(err.message)}});
+ document.addEventListener('DOMContentLoaded',()=>{document.getElementById('addCustomerListBtn')?.addEventListener('click',()=>{document.getElementById('dropzone')?.classList.remove('upload-hidden');document.getElementById('dropzone')?.scrollIntoView({behavior:'smooth'})});setTimeout(load,300)});
+})();
 </script>
 </body>
 </html>
