@@ -12,6 +12,8 @@
 .locked-card{position:relative;filter:blur(.2px);opacity:.72}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.64);border-radius:inherit;pointer-events:none}.lock-message{position:relative;z-index:2;margin-top:12px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 
 .monitoring-workspace{display:none;margin-bottom:22px}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px}.workspace-card strong{display:block;font-size:1.55rem}.workspace-card span{font-size:.75rem;color:var(--muted);font-weight:800}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:12px}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:var(--muted);font-size:.86rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary,.monitor-list-grid{grid-template-columns:1fr 1fr}}
+
+.one-off-research{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px;margin-bottom:22px;box-shadow:0 12px 32px rgba(23,55,94,.06)}.one-off-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:16px}.one-off-head h2{font-size:1.35rem;margin-bottom:5px}.one-off-head p{color:var(--muted);font-size:.92rem}.one-off-grid{display:grid;grid-template-columns:1.4fr 1fr auto;gap:12px;align-items:end}.one-off-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.one-off-result{display:none;margin-top:18px;border-top:1px solid var(--line);padding-top:18px}.one-off-result.active{display:block}.one-off-status{display:none;margin-top:12px;padding:11px 12px;border-radius:10px;font-size:.9rem;font-weight:800}.one-off-status.show{display:block}.one-off-status.info{background:#eefdfb;border:1px solid rgba(31,183,174,.28);color:#0f766e}.one-off-status.error{background:#fff1f2;border:1px solid #fecdd3;color:#9f1239}.one-off-status.success{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}.recent-searches{margin-top:14px}.recent-search-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.recent-search-item{border:1px solid var(--line);background:#F7F8FA;border-radius:999px;padding:7px 10px;font-size:.78rem;color:var(--muted)}@media(max-width:900px){.one-off-grid{grid-template-columns:1fr}.one-off-grid .btn{width:100%}}
 </style>
 <script src="/auth-client.js"></script>
 </head>
@@ -24,6 +26,19 @@
     <h1>Prospect Intelligence</h1>
     <p>Upload a list of target companies. House Accounts will research public business activity and surface timely reasons to start a relevant prospecting conversation.</p>
     <div class="workflow-note">Existing Customer analysis is unchanged. This workflow runs separately.</div>
+  </section>
+
+
+  <section class="one-off-research" id="oneOffResearchSection">
+    <div class="one-off-head"><div><div class="eyebrow">One-off research</div><h2>Research a Company or Contact</h2><p>Look up one company or person without uploading a list.</p></div></div>
+    <div class="one-off-grid">
+      <div class="field"><label for="oneOffCompany">Company or website</label><input id="oneOffCompany" placeholder="Munters or munters.com"></div>
+      <div class="field"><label for="oneOffContact">Contact name <span style="font-weight:500;color:#6B7280">(optional)</span></label><input id="oneOffContact" placeholder="Sara Worley"></div>
+      <button class="btn" id="oneOffResearchBtn" type="button">Research Now</button>
+    </div>
+    <div id="oneOffStatus" class="one-off-status" role="status"></div>
+    <div id="oneOffResult" class="one-off-result"></div>
+    <div id="recentSearches" class="recent-searches"></div>
   </section>
 
   <section id="prospectMonitoringWorkspace" class="monitoring-workspace">
@@ -409,6 +424,90 @@ async function handle(f){
     notice.textContent='Prospect research complete.';notice.style.display='block';
   }catch(e){showErr(e.message||'Prospect research failed.');document.getElementById('prospectResults').className='empty';document.getElementById('prospectResults').textContent='Upload a target account list to start prospect research.';document.getElementById('signalCount').textContent='0';renderResearchSummary({})}finally{setBusy(false)}
 }
+</script>
+
+
+<script>
+(function(){
+  const companyInput=document.getElementById('oneOffCompany');
+  const contactInput=document.getElementById('oneOffContact');
+  const button=document.getElementById('oneOffResearchBtn');
+  const status=document.getElementById('oneOffStatus');
+  const result=document.getElementById('oneOffResult');
+  const historyEl=document.getElementById('recentSearches');
+  let oneOffAccount=null;
+  let oneOffSignals=[];
+  let oneOffAlreadyMonitored=false;
+
+  function normalizeInput(raw){
+    const value=clean(raw);
+    if(!value)return {name:'',website:''};
+    const looksLikeDomain=/^(https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(value);
+    if(!looksLikeDomain)return {name:value,website:''};
+    const website=value.replace(/^https?:\/\//i,'').replace(/^www\./i,'').replace(/\/+$/,'');
+    return {name:website.split('/')[0],website:`https://${website}`};
+  }
+  function setStatus(message,type='info'){
+    status.textContent=message;status.className=`one-off-status show ${type}`;
+  }
+  function clearStatus(){status.textContent='';status.className='one-off-status'}
+  function getHistory(){try{return JSON.parse(localStorage.getItem('haRecentOneOffSearches')||'[]')}catch{return []}}
+  function saveHistory(entry){try{const next=[entry,...getHistory().filter(x=>!(x.company===entry.company&&x.contact===entry.contact))].slice(0,5);localStorage.setItem('haRecentOneOffSearches',JSON.stringify(next));renderHistory()}catch{}}
+  function renderHistory(){const items=getHistory();if(!items.length){historyEl.innerHTML='';return}historyEl.innerHTML=`<div class="label">Recent searches</div><div class="recent-search-list">${items.map(x=>`<span class="recent-search-item">${escapeHtml(x.company)}${x.contact?` · ${escapeHtml(x.contact)}`:''} · ${new Date(x.date).toLocaleDateString()}${x.saved?' · Saved':''}</span>`).join('')}</div>`}
+  function bestSignals(signals){return [...(signals||[])].sort((a,b)=>bestSignalScore(b)-bestSignalScore(a))}
+  function renderResult(){
+    const sig=bestSignals(oneOffSignals)[0];
+    const supporting=bestSignals(oneOffSignals).slice(1,4);
+    const title=oneOffAccount?.name||'Research result';
+    const already=oneOffAlreadyMonitored;
+    const main=sig?renderFullOpportunity(sig):'<div class="empty">No strong current public signal was found.</div>';
+    result.className='one-off-result active';
+    result.innerHTML=`<div class="modal-head"><div><div class="eyebrow">One-off result</div><h2>${escapeHtml(title)}</h2></div></div>${main}${supporting.length?`<div class="section"><div class="label">Supporting signals</div>${supporting.map(s=>`<p style="margin:8px 0"><strong>${escapeHtml(signalHeadline(s))}</strong> — ${escapeHtml(clean(s.businessContext||s.business_context||s.summary||s.signalDetail))}</p>`).join('')}</div>`:''}<div class="one-off-actions">${already?`<a class="btn secondary" href="/prospects">Already monitored · View Target Account</a>`:`<button class="btn" id="saveOneOffBtn" type="button">Save to Target Accounts</button>`}<button class="btn secondary" id="doneOneOffBtn" type="button">Research Only / Done</button></div>`;
+    document.getElementById('saveOneOffBtn')?.addEventListener('click',saveOneOff);
+    document.getElementById('doneOneOffBtn')?.addEventListener('click',()=>{result.className='one-off-result';result.innerHTML='';clearStatus()});
+  }
+  async function research(){
+    clearStatus();
+    const parsed=normalizeInput(companyInput?.value);
+    const contactName=clean(contactInput?.value);
+    if(!parsed.name&&!parsed.website){setStatus('Enter a company name or website to begin research.','error');return}
+    button.disabled=true;button.textContent='Researching...';
+    result.className='one-off-result';result.innerHTML='';
+    try{
+      const contacts=contactName?[{name:contactName,title:'',email:'',linkedin:''}]:[];
+      oneOffAccount={name:parsed.name,companyName:parsed.name,website:parsed.website,contactName,oneOffResearch:true,contacts};
+      const headers=window.HouseAuth?.authHeaders?.({'Content-Type':'application/json'})||{'Content-Type':'application/json'};
+      const r=await fetch('/api/research-batch',{method:'POST',headers,body:JSON.stringify({mode:'prospect-intelligence',accounts:[oneOffAccount]})});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(data.error||'One-off research failed');
+      oneOffSignals=Array.isArray(data.signals)?data.signals:[];
+      oneOffAlreadyMonitored=usageLimitInfo().names.has(normalizeCompanyName(parsed.name));
+      setStatus(oneOffSignals.length?'Research complete. Review the strongest opportunity below.':'No strong current public signal was found.','success');
+      renderResult();
+      saveHistory({company:parsed.name,contact:contactName,date:new Date().toISOString(),saved:false});
+    }catch(e){setStatus(e.message||'Research failed. Please try again.','error')}
+    finally{button.disabled=false;button.textContent='Research Now'}
+  }
+  async function saveOneOff(){
+    const saveBtn=document.getElementById('saveOneOffBtn');if(!saveBtn||!oneOffAccount)return;
+    saveBtn.disabled=true;saveBtn.textContent='Saving...';
+    try{
+      const headers=window.HouseAuth?.authHeaders?.({'Content-Type':'application/json'})||{'Content-Type':'application/json'};
+      const r=await fetch('/api/prospect-one-off',{method:'POST',headers,body:JSON.stringify({companyName:oneOffAccount.name,website:oneOffAccount.website,signals:oneOffSignals})});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(data.error||'Could not save this company');
+      oneOffAlreadyMonitored=true;
+      setStatus(data.alreadyMonitored?'This company is already monitored.':'Saved to Target Accounts.','success');
+      saveHistory({company:oneOffAccount.name,contact:clean(contactInput?.value),date:new Date().toISOString(),saved:true});
+      await loadProspectUsage();
+      renderResult();
+    }catch(e){setStatus(e.message||'Could not save this company.','error');saveBtn.disabled=false;saveBtn.textContent='Save to Target Accounts'}
+  }
+  button?.addEventListener('click',research);
+  companyInput?.addEventListener('keydown',e=>{if(e.key==='Enter')research()});
+  contactInput?.addEventListener('keydown',e=>{if(e.key==='Enter')research()});
+  document.addEventListener('DOMContentLoaded',renderHistory);
+})();
 </script>
 
 <script>
