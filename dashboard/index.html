@@ -1896,7 +1896,11 @@
       <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
     </div>
   </div>
-  <div class="member-empty-state" id="memberEmptyState" style="display:none;"><strong>My View</strong><br>You haven't uploaded any customer or prospect lists yet.</div>
+  <div class="member-empty-state" id="memberEmptyState" style="display:none;">
+    <strong>My View</strong><br>
+    You haven't uploaded any customer or prospect lists yet.<br>
+    <span>Upload your own customer order history to begin receiving your personal recommendations.</span>
+  </div>
 
   <div id="results">
 
@@ -2444,11 +2448,11 @@ function renderDashboardViewSwitcher(){
   const buttons = document.getElementById('dashboardViewButtons');
   const customerCount = Number(snapshot.customerCount ?? dashboardUsage?.usage?.existingCustomerCompanyCount ?? 0) || 0;
   const prospectCount = Number(snapshot.prospectCount ?? dashboardUsage?.usage?.prospectCompanyCount ?? 0) || 0;
-  if(title) title.textContent = canTeam ? (dashboardViewMode === 'team' ? 'Team View' : 'My View') : 'My View';
+  if(title) title.textContent = canTeam ? (dashboardViewMode === 'team' ? 'Team View' : 'My View') : 'Organization Snapshot';
   if(snap){
     snap.textContent = canTeam
       ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
-      : 'Showing only customer and prospect data uploaded by you.';
+      : `Your organization is monitoring ${customerCount} customers and ${prospectCount} prospects.`;
   }
   if(buttons){
     buttons.style.display = canTeam ? 'flex' : 'none';
@@ -2495,7 +2499,7 @@ async function loadSavedDashboard(email){
       const example = document.getElementById('exampleOpportunity');
       const results = document.getElementById('results');
       if(memberEmpty) memberEmpty.style.display = 'block';
-      if(gate) gate.style.display = 'block';
+      if(gate) gate.style.display = 'none';
       if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
       if(example) example.style.display = 'block';
       if(results) results.style.display = 'none';
@@ -2541,7 +2545,7 @@ async function loadSavedDashboard(email){
       const gate = document.getElementById('leadGate');
       const dz = document.getElementById('dropzone');
       const results = document.getElementById('results');
-      if(gate) gate.style.display = 'block';
+      if(gate) gate.style.display = 'none';
       if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
       if(results) results.style.display = 'none';
       if(banner) banner.style.display = 'none';
