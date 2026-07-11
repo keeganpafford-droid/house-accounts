@@ -64,6 +64,29 @@ async function orgUserIds(user){
 function inFilter(ids){
   return `in.(${ids.map(id => encodeURIComponent(id)).join(',')})`;
 }
+
+function lower(v=''){ return clean(v).toLowerCase(); }
+function appRole(user){ return lower(user?.app_role || user?.role || 'member'); }
+function canViewTeam(user){ const r = appRole(user); return r === 'owner' || r === 'admin'; }
+
+async function prospectCountForUsers(users){
+  const emails = (users || []).map(u => clean(u.email).toLowerCase()).filter(Boolean);
+  const names = new Set();
+  for(const email of emails){
+    try{
+      const uploads = await supabase(`ha_prospect_uploads?user_email=eq.${encodeURIComponent(email)}&select=id`);
+      const uploadIds = (Array.isArray(uploads) ? uploads : []).map(u => u.id).filter(Boolean);
+      if(uploadIds.length){
+        const rows = await supabase(`ha_prospect_accounts?upload_id=in.(${uploadIds.map(encodeURIComponent).join(',')})&select=company_name`);
+        for(const row of rows || []){
+          const n = normalizeName(row.company_name || '');
+          if(n) names.add(n);
+        }
+      }
+    }catch{}
+  }
+  return names.size;
+}
 function uniqueAccountRows(rows){
   const map = new Map();
   for(const row of rows || []){
@@ -178,10 +201,29 @@ export default async function handler(req, res){
     const email = clean(req.query?.email).toLowerCase();
     const user = await resolveDashboardUser(req, email);
     if(!user) return json(res, 404, {error:'No saved dashboard found for that user.'});
+    let organization = null;
+    if(user.organization_id){
+      try{
+        const orgRows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`);
+        organization = Array.isArray(orgRows) ? orgRows[0] : null;
+      }catch{}
+    }
 
-    const ids = await orgUserIds(user);
+    const requestedView = clean(req.query?.view || '').toLowerCase();
+    const teamAllowed = canViewTeam(user);
+    const viewMode = teamAllowed && requestedView !== 'my' ? 'team' : 'my';
+
+    const allOrgIds = await orgUserIds(user);
+    if(!allOrgIds.length) return json(res, 404, {error:'No dashboard user found.'});
+    const ids = viewMode === 'team' ? allOrgIds : [user.id].filter(Boolean);
     if(!ids.length) return json(res, 404, {error:'No dashboard user found.'});
     const usersFilter = inFilter(ids);
+
+    const orgUsers = user.organization_id
+      ? await supabase(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id,email,status,app_role,role`)
+      : [user];
+    const activeOrgUsers = (Array.isArray(orgUsers) ? orgUsers : []).filter(u => clean(u.status || 'active') !== 'inactive');
+    const orgUsersFilter = inFilter(activeOrgUsers.map(u => u.id).filter(Boolean));
 
     const uploads = await supabase(`ha_uploads?select=*&user_id=${usersFilter}&order=updated_at.desc&limit=25`);
     const upload = Array.isArray(uploads) ? uploads[0] : null;
@@ -191,6 +233,16 @@ export default async function handler(req, res){
 
     const signals = await supabase(`ha_signals?select=*&user_id=${usersFilter}&order=first_seen_at.desc&limit=1000`);
     const weeklyRuns = await supabase(`ha_weekly_runs?select=*&user_id=${usersFilter}&order=started_at.desc&limit=8`);
+
+    let teamCustomerCount = accounts.length;
+    let teamProspectCount = 0;
+    if(viewMode === 'my' && activeOrgUsers.length){
+      try{
+        const orgAccounts = await supabase(`ha_accounts?select=account_name&user_id=${orgUsersFilter}&limit=5000`);
+        teamCustomerCount = uniqueAccountRows(orgAccounts || []).length;
+      }catch{}
+    }
+    teamProspectCount = await prospectCountForUsers(activeOrgUsers.length ? activeOrgUsers : [user]);
 
     if(!upload && !accounts.length && !(Array.isArray(signals) && signals.length)){
       return json(res, 404, {error:'No existing customer dashboard data found yet.'});
@@ -258,13 +310,21 @@ export default async function handler(req, res){
     return json(res, 200, {
       ok:true,
       user,
+      organization,
       upload: upload || {},
       summary: upload?.summary || {},
       accounts: accountList,
       signals: (uniqueSignals || []).map(rowToSignal),
       weeklyRuns: weeklyRuns || [],
       newThisWeek,
-      dashboardScope: user.organization_id ? 'organization' : 'user',
+      dashboardScope: viewMode === 'team' ? 'organization' : 'user',
+      viewMode,
+      canViewTeam: teamAllowed,
+      userRole: appRole(user),
+      organizationSnapshot: {
+        customerCount: teamCustomerCount,
+        prospectCount: teamProspectCount
+      },
       existingCustomerAccountCount: accountList.length
     });
   }catch(err){
