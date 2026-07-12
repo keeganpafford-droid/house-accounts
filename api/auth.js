@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+import { createHash } from 'node:crypto';
 // House Accounts Auth API. Uses Supabase Auth + existing ha_users / ha_organizations tables.
 function json(res,status,body){return res.status(status).json(body)}
 function clean(v=''){return String(v||'').trim()}
@@ -22,7 +24,43 @@ async function ensureOrgAndUser(authUser, profile={}){const email=lower(authUser
 const row={email,name:clean(profile.name||user?.name||authUser?.user_metadata?.name),company:clean(profile.organizationName||profile.company||user?.company),role:clean(profile.role||user?.role),house_accounts:clean(profile.house_accounts||profile.houseAccounts||user?.house_accounts),crm_erp:clean(profile.crm_erp||profile.crmErp||user?.crm_erp),auth_user_id:authUser.id,organization_id:orgId,app_role:user?.app_role||'owner',status:'active',updated_at:new Date().toISOString()};
 if(user?.id){const updated=await sb(`ha_users?id=eq.${encodeURIComponent(user.id)}`,{method:'PATCH',body:JSON.stringify(row)});return Array.isArray(updated)?updated[0]:updated}
 const created=await sb('ha_users',{method:'POST',body:JSON.stringify([{...row,created_at:new Date().toISOString()}])});return Array.isArray(created)?created[0]:created}
-async function recordLogin(haUser, req){if(!haUser?.id)return;const prior=Number(haUser.login_count||0);const patch={last_login:new Date().toISOString(),last_seen_at:new Date().toISOString(),login_count:prior+1,user_agent:req.headers['user-agent']||'',last_ip:(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').toString().split(',')[0].trim(),updated_at:new Date().toISOString()};try{await sb(`ha_users?id=eq.${encodeURIComponent(haUser.id)}`,{method:'PATCH',body:JSON.stringify(patch),prefer:'return=minimal'})}catch(e){console.warn('[auth] login tracking skipped:',e.message)}}
+function trustedIp(req){
+  const candidates=[];
+  const forwarded=clean(req?.headers?.['x-forwarded-for']);
+  if(forwarded)candidates.push(...forwarded.split(',').map(x=>x.trim()));
+  candidates.push(clean(req?.headers?.['x-real-ip']),clean(req?.socket?.remoteAddress));
+  for(let value of candidates){
+    if(!value)continue;
+    value=value.replace(/^::ffff:/,'').replace(/^\[|\]$/g,'');
+    if(isIP(value))return value;
+  }
+  return'';
+}
+function loginLocation(req){
+  return{
+    country:clean(req?.headers?.['x-vercel-ip-country'])||null,
+    region:clean(req?.headers?.['x-vercel-ip-country-region'])||null,
+    city:clean(req?.headers?.['x-vercel-ip-city'])||null
+  };
+}
+function lightweightFingerprint(req){
+  const ua=clean(req?.headers?.['user-agent']);
+  const language=clean(req?.headers?.['accept-language']).split(',')[0];
+  const platform=clean(req?.headers?.['sec-ch-ua-platform']);
+  if(!ua&&!language&&!platform)return null;
+  return createHash('sha256').update([ua,platform,language].join('|').toLowerCase()).digest('hex');
+}
+async function recordLogin(haUser,req){
+  if(!haUser?.id)return;
+  const now=new Date().toISOString(),ip=trustedIp(req),userAgent=clean(req?.headers?.['user-agent']),location=loginLocation(req),fingerprint=lightweightFingerprint(req);
+  const patch={last_login:now,last_seen_at:now,login_count:Number(haUser.login_count||0)+1,user_agent:userAgent,last_ip:ip,updated_at:now};
+  try{await sb(`ha_users?id=eq.${encodeURIComponent(haUser.id)}`,{method:'PATCH',body:JSON.stringify(patch),prefer:'return=minimal'})}catch(e){console.warn('[auth] login summary update skipped:',e.message)}
+  try{
+    await sb('ha_login_events',{method:'POST',body:JSON.stringify([{user_id:haUser.id,organization_id:haUser.organization_id||null,email:lower(haUser.email),logged_in_at:now,ip_address:ip||null,user_agent:userAgent||null,device_fingerprint:fingerprint,country:location.country,region:location.region,city:location.city,created_at:now}]),prefer:'return=minimal'});
+    const cutoff=new Date(Date.now()-90*86400000).toISOString();
+    await sb(`ha_login_events?logged_in_at=lt.${encodeURIComponent(cutoff)}`,{method:'DELETE',prefer:'return=minimal'}).catch(e=>console.warn('[auth] login event cleanup skipped:',e.message));
+  }catch(e){console.warn('[auth] login event insert skipped:',e.message)}
+}
 function publicUser(authUser,haUser){return{id:haUser?.id||'',auth_user_id:authUser?.id||haUser?.auth_user_id||'',email:haUser?.email||authUser?.email||'',name:haUser?.name||authUser?.user_metadata?.name||'',company:haUser?.company||'',organization_id:haUser?.organization_id||'',app_role:haUser?.app_role||'',status:haUser?.status||''}}
 export default async function handler(req,res){try{const action=req.method==='GET'?(req.query?.action||'me'):(req.body?.action||'');if(action==='signup'){const email=lower(req.body.email),password=clean(req.body.password);if(!email||!password)return json(res,400,{error:'Email and password are required.'});let authUser;try{authUser=await authFetch('admin/users',{method:'POST',body:JSON.stringify({email,password,email_confirm:true,user_metadata:{name:clean(req.body.name),organization_name:clean(req.body.organizationName),role:clean(req.body.role),house_accounts:clean(req.body.house_accounts||req.body.houseAccounts),crm_erp:clean(req.body.crm_erp||req.body.crmErp),plan:clean(req.body.plan)}})});}catch(err){if(String(err.message||'').toLowerCase().includes('already')){return json(res,409,{error:'An account already exists for this email. Please log in.'})}throw err}const haUser=await ensureOrgAndUser(authUser,{email,name:req.body.name,organizationName:req.body.organizationName,role:req.body.role,house_accounts:req.body.house_accounts||req.body.houseAccounts,crm_erp:req.body.crm_erp||req.body.crmErp,plan:req.body.plan});const data=await authFetch('token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});await recordLogin(haUser,req);return json(res,200,{ok:true,session:{access_token:data.access_token,refresh_token:data.refresh_token,expires_in:data.expires_in,expires_at:Math.floor(Date.now()/1000)+Number(data.expires_in||3600),token_type:data.token_type},user:publicUser(data.user||authUser,haUser)})}
 if(action==='login'){const email=lower(req.body.email),password=clean(req.body.password);if(!email||!password)return json(res,400,{error:'Email and password are required.'});const data=await authFetch('token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});const authUser=data.user;const haUser=await ensureOrgAndUser(authUser,{email});await recordLogin(haUser,req);return json(res,200,{ok:true,session:{access_token:data.access_token,refresh_token:data.refresh_token,expires_in:data.expires_in,expires_at:Math.floor(Date.now()/1000)+Number(data.expires_in||3600),token_type:data.token_type},user:publicUser(authUser,haUser)})}
