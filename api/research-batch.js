@@ -1084,8 +1084,19 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
 }
 
 function makeSignal(raw = {}, account = {}, options = {}) {
+  const rejectionLog = Array.isArray(options.rejectionLog) ? options.rejectionLog : null;
+  const reject = (reason, details = {}) => {
+    if (rejectionLog) rejectionLog.push({
+      accountName: clean(raw.accountName || raw.account || raw.company || account.name || ''),
+      rawTitle: clean(raw.concrete_trigger || raw.concreteTrigger || raw.signalTitle || raw.title || raw.whatChanged || ''),
+      sourceUrl: clean(raw.sourceUrl || raw.source_url || raw.url || raw.sources?.[0]?.url || ''),
+      reason,
+      ...details
+    });
+    return null;
+  };
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
-  if (!accountName) return null;
+  if (!accountName) return reject('missing_account_name');
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
   const type = normalizeSignalType(raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
@@ -1094,11 +1105,11 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 240);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
-  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
+  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return reject('prospect_quality_kill_rule', { signalType: type });
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
   const confidencePct = abd.score;
-  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
+  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return reject('low_confidence_and_not_meaningful', { signalType: type, confidenceScore: confidencePct }); // discard only junk, duplicates, or truly low-confidence signals.
   const why = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || salesReadyWhy(concreteTrigger, businessContext, buyingMoment, type), 300);
   const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
@@ -1190,7 +1201,42 @@ function isFallbackSignal(sig = {}) {
 }
 
 function signalDateText(sig = {}) {
-  return clean(sig.publishedDate || sig.publicationDate || sig.eventDate || sig.event_date || sig.date || sig.dateFound || '');
+  // Deliberately exclude dateFound/detectedAt: those are discovery timestamps, not event dates.
+  return clean(sig.publishedDate || sig.publicationDate || sig.eventDate || sig.event_date || sig.date || '');
+}
+
+function relativeAgeDays(dateText = '') {
+  const text = clean(dateText).toLowerCase();
+  if (!text) return null;
+  if (/today|just announced|now|currently|upcoming/.test(text)) return 0;
+  if (/yesterday/.test(text)) return 1;
+  let m = text.match(/(\d+)\s*(day|week|month|year)s?\s+ago/);
+  if (m) {
+    const n = Number(m[1]);
+    return m[2] === 'day' ? n : m[2] === 'week' ? n * 7 : m[2] === 'month' ? n * 30 : n * 365;
+  }
+  if (/less than (?:two|2) weeks/.test(text)) return 13;
+  if (/this week/.test(text)) return 3;
+  if (/this month/.test(text)) return 15;
+  if (/recently/.test(text)) return 30;
+  const parsed = parseSignalDate(dateText);
+  if (!parsed) return null;
+  return Math.max(0, Math.round((Date.now() - parsed.getTime()) / 86400000));
+}
+
+function isEventSignal(sig = {}) {
+  const text = `${sig.signalType || sig.signal_type || sig.type || ''} ${sig.buyingMoment || sig.buying_moment || ''} ${sig.concreteTrigger || sig.concrete_trigger || ''} ${sig.title || ''}`.toLowerCase();
+  return /trade show|conference|expo|summit|open house|event|sponsor|sponsorship|ribbon cutting|grand opening/.test(text);
+}
+
+function staleSignalReason(sig = {}) {
+  if (isFallbackSignal(sig)) return '';
+  const dateText = signalDateText(sig);
+  const ageDays = relativeAgeDays(dateText);
+  if (isEventSignal(sig) && ageDays !== null && ageDays > 540) {
+    return `stale_event_over_18_months:${ageDays}_days`;
+  }
+  return '';
 }
 
 function opportunityTypeBoost(sig = {}) {
@@ -1218,13 +1264,21 @@ function bestSignalScore(sig = {}) {
   if (!sig) return -999999;
   if (isFallbackSignal(sig)) return -10000 + Number(sig.confidenceScore || 0);
   const confidence = Number(sig.confidenceScore || sig.why_now_score || 0);
-  const fresh = freshnessScore(signalDateText(sig));
+  const dateText = signalDateText(sig);
+  const fresh = freshnessScore(dateText);
+  const ageDays = relativeAgeDays(dateText);
   const abd = sig.abdScores || {};
   const actionability = Number(sig.actionability_score || abd.actionability || 0);
   const budget = Number(sig.budget_score || abd.budgetLikelihood || 0);
   const deadline = Number(sig.deadline_score || abd.deadlineUrgency || 0);
-  const abdBlend = [actionability, budget, deadline].filter(Boolean).reduce((a,b)=>a+b,0) / Math.max(1, [actionability, budget, deadline].filter(Boolean).length);
-  return confidence + (fresh * 0.35) + (abdBlend * 0.15) + opportunityTypeBoost(sig) + specificityBoost(sig);
+  const abdValues = [actionability, budget, deadline].filter(Number.isFinite).filter(v => v > 0);
+  const abdBlend = abdValues.reduce((a,b)=>a+b,0) / Math.max(1, abdValues.length);
+  let agePenalty = 0;
+  if (ageDays === null) agePenalty = isEventSignal(sig) ? 22 : 10;
+  else if (ageDays > 1095) agePenalty = 50;
+  else if (ageDays > 730) agePenalty = 35;
+  else if (ageDays > 365) agePenalty = 18;
+  return confidence + (fresh * 0.55) + (abdBlend * 0.15) + opportunityTypeBoost(sig) + specificityBoost(sig) - agePenalty;
 }
 
 function compareBestSignals(a = {}, b = {}) {
@@ -1283,6 +1337,15 @@ A buying moment is a concrete event that may create promotional products demand,
 
 Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
 Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
+
+RECENCY IS MANDATORY:
+- Today is ${new Date().toISOString().slice(0, 10)}.
+- Prefer the newest concrete and actionable buying moment, not the highest keyword-match score.
+- Do not return a completed trade show, conference, open house, ribbon cutting, sponsorship, or other event if it occurred more than 18 months ago.
+- Treat an old event page as historical evidence, not a current opportunity.
+- Prefer recent launches, current hiring, active contracts, current-year events, and ongoing expansions over older examples.
+- Include event_date or publicationDate whenever the supplied evidence contains a date. Never describe a past event as upcoming.
+- If all candidate events are clearly stale and no other current buying moment exists, return zero signals for that account.
 
 Reject:
 - generic company descriptions, mission/history/culture copy
@@ -1435,7 +1498,11 @@ export default async function handler(req, res) {
       const extractionResults = await mapLimit(accountsWithCandidates, 3, async account => {
         const accountCandidates = candidates
           .filter(candidate => candidate.accountName === account.name)
-          .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+          .sort((a, b) => {
+            const aRank = Number(a.score || 0) + (freshnessScore(a.date || '') * 0.45);
+            const bRank = Number(b.score || 0) + (freshnessScore(b.date || '') * 0.45);
+            return bRank - aRank;
+          })
           .slice(0, 20);
         const prompt = buildSynthesisPrompt([account], accountCandidates);
         try {
@@ -1501,13 +1568,51 @@ export default async function handler(req, res) {
       return found ? { ...s, accountName: found.name } : s;
     });
 
+    const signalRejectionDiagnostics = [];
     const madeSignalsRaw = fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
-      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
+      const signal = makeSignal(s, account, {
+        enableProspectQuality: mode === 'prospect-intelligence',
+        rejectionLog: signalRejectionDiagnostics
+      });
+      if (!signal) return null;
+      const staleReason = mode === 'prospect-intelligence' ? staleSignalReason(signal) : '';
+      if (staleReason) {
+        signalRejectionDiagnostics.push({
+          accountName: signal.accountName,
+          rawTitle: signal.concreteTrigger || signal.title || '',
+          sourceUrl: signal.sourceUrl || '',
+          signalType: signal.signalType || '',
+          signalDate: signalDateText(signal),
+          reason: staleReason
+        });
+        return null;
+      }
+      return signal;
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
-    const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
+    const validMappedSignals = mappedSignals.filter(s => {
+      const valid = validAccountNames.has(String(s.accountName || '').toLowerCase());
+      if (!valid) signalRejectionDiagnostics.push({
+        accountName: s.accountName || '',
+        rawTitle: s.concreteTrigger || s.title || '',
+        sourceUrl: s.sourceUrl || '',
+        reason: 'account_not_in_request'
+      });
+      return valid;
+    });
     const signals = dedupeSignals(validMappedSignals).slice(0, 80);
+    const dedupedKeys = new Set(signals.map(s => `${s.accountName}|${s.sourceUrl || ''}|${s.concreteTrigger || s.title || ''}`));
+    for (const s of validMappedSignals) {
+      const key = `${s.accountName}|${s.sourceUrl || ''}|${s.concreteTrigger || s.title || ''}`;
+      if (!dedupedKeys.has(key)) signalRejectionDiagnostics.push({
+        accountName: s.accountName,
+        rawTitle: s.concreteTrigger || s.title || '',
+        sourceUrl: s.sourceUrl || '',
+        signalDate: signalDateText(s),
+        reason: 'duplicate_or_superseded_during_dedupe'
+      });
+    }
     if (mode === 'prospect-intelligence') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
@@ -1545,7 +1650,20 @@ export default async function handler(req, res) {
     }
     Object.keys(byAccount).forEach(name => {
       const ranked = byAccount[name].sort(compareBestSignals);
-      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 1) : ranked.slice(0, 2);
+      const keepCount = mode === 'prospect-intelligence' ? 1 : 2;
+      const selected = ranked.slice(0, keepCount);
+      for (const rejected of ranked.slice(keepCount)) {
+        signalRejectionDiagnostics.push({
+          accountName: rejected.accountName,
+          rawTitle: rejected.concreteTrigger || rejected.title || '',
+          sourceUrl: rejected.sourceUrl || '',
+          signalDate: signalDateText(rejected),
+          rankingScore: Math.round(bestSignalScore(rejected)),
+          selectedRankingScore: selected[0] ? Math.round(bestSignalScore(selected[0])) : null,
+          reason: 'lower_ranked_than_selected_signal'
+        });
+      }
+      byAccount[name] = selected;
     });
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
@@ -1634,6 +1752,8 @@ export default async function handler(req, res) {
         candidateSamples,
         searchDiagnostics,
         extractionDiagnostics,
+        signalRejectionDiagnostics,
+        staleEventMaxAgeDays: 540,
         serper429Count,
         retriedSearches,
         failedSearches,
