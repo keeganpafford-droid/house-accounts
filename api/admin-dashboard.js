@@ -1,273 +1,106 @@
-// Vercel Serverless Function: House Accounts beta admin dashboard data.
-// Endpoint: GET /api/admin-dashboard
-// Uses existing Supabase tables only. Service role key stays server-side.
+// House Accounts Admin Dashboard V2 data endpoint.
+// GET /api/admin-dashboard. Uses existing Supabase tables only.
 
-function json(res, status, body){ return res.status(status).json(body); }
-function clean(v=''){ return String(v || '').trim(); }
+function json(res,status,body){return res.status(status).json(body)}
+function clean(v=''){return String(v??'').trim()}
+function lower(v=''){return clean(v).toLowerCase()}
 function env(){
-  const rawUrl = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const adminEmail = clean(process.env.ADMIN_EMAIL).toLowerCase();
-  if(!rawUrl || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  if(!adminEmail){
-    console.error('[Admin Auth] ADMIN_EMAIL is missing; admin access denied.');
-    const error = new Error('Admin access is not configured.');
-    error.code = 'ADMIN_EMAIL_MISSING';
-    throw error;
-  }
-  const url = String(rawUrl).trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
-  return {url, key, adminEmail};
+  const rawUrl=clean(process.env.SUPABASE_URL); const key=clean(process.env.SUPABASE_SERVICE_ROLE_KEY); const adminEmail=lower(process.env.ADMIN_EMAIL);
+  if(!rawUrl||!key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  if(!adminEmail){console.error('[Admin Auth] ADMIN_EMAIL is missing; admin access denied.');const e=new Error('Admin access is not configured.');e.code='ADMIN_EMAIL_MISSING';throw e}
+  return{url:rawUrl.replace(/\/+$/,'').replace(/\/rest\/v1$/i,''),key,adminEmail};
 }
-
-async function supabase(path, options={}){
-  const {url, key} = env();
-  const resp = await fetch(`${url}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      Prefer: options.prefer || 'return=representation',
-      ...(options.headers || {})
-    }
-  });
-  const text = await resp.text();
-  let data = null;
-  if(text){ try{ data = JSON.parse(text); } catch { data = text; } }
-  if(!resp.ok){
-    const msg = typeof data === 'string' ? data : (data?.message || data?.hint || JSON.stringify(data));
-    throw new Error(`Supabase ${resp.status}: ${msg}`);
-  }
-  return {data, headers: resp.headers};
+async function sb(path,options={}){
+  const {url,key}=env();
+  const r=await fetch(`${url}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:options.prefer||'return=representation',...(options.headers||{})}});
+  const text=await r.text(); let data=null; if(text){try{data=JSON.parse(text)}catch{data=text}}
+  if(!r.ok) throw new Error(`Supabase ${r.status}: ${typeof data==='string'?data:(data?.message||data?.hint||JSON.stringify(data))}`);
+  return data;
 }
-
-async function maybeSupabase(path, options={}){
-  try{ return await supabase(path, options); }
-  catch(err){
-    const msg = String(err?.message || '').toLowerCase();
-    if(msg.includes('ha_feedback') || msg.includes('could not find') || msg.includes('does not exist') || msg.includes('schema cache')){
-      return {data:null, headers:new Headers(), missing:true};
-    }
-    throw err;
+async function maybe(table,order='created_at.desc',limit=10000){
+  try{return await sb(`${table}?select=*&order=${order}&limit=${limit}`)}catch(e){
+    const m=lower(e.message); if(m.includes('does not exist')||m.includes('schema cache')||m.includes('could not find')) return [];
+    // Some tables do not have the requested order column. Retry without ordering.
+    try{return await sb(`${table}?select=*&limit=${limit}`)}catch(e2){const m2=lower(e2.message);if(m2.includes('does not exist')||m2.includes('schema cache')||m2.includes('could not find'))return[];throw e2}
   }
 }
-
-async function countRows(table){
-  const {headers} = await supabase(`${table}?select=id&limit=1`, {
-    headers: {Prefer: 'count=exact'}
-  });
-  const range = headers.get('content-range') || '';
-  const total = Number((range.split('/')[1] || '').trim());
-  return Number.isFinite(total) ? total : 0;
+async function authUser(req){const token=clean(req.headers.authorization).replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const r=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});return r.ok?r.json():null}
+const ts=v=>{const n=new Date(v||0).getTime();return Number.isFinite(n)&&n>0?n:0};
+const iso=v=>ts(v)?new Date(ts(v)).toISOString():'';
+const first=(o,keys)=>{for(const k of keys){if(o?.[k]!==undefined&&o?.[k]!==null&&o?.[k]!=='')return o[k]}return''};
+const rowDate=r=>first(r,['created_at','first_seen_at','started_at','updated_at','last_seen_at','finished_at','accepted_at']);
+const isPaused=r=>['paused','archived','inactive'].includes(lower(first(r,['stage','status','monitoring_status'])));
+const startOfWeek=()=>{const d=new Date();const day=d.getUTCDay();d.setUTCHours(0,0,0,0);d.setUTCDate(d.getUTCDate()-((day+6)%7));return d.getTime()};
+const ageDays=v=>ts(v)?Math.floor((Date.now()-ts(v))/86400000):null;
+const remaining=v=>ts(v)?Math.ceil((ts(v)-Date.now())/86400000):null;
+function pushMap(map,key,row){if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(row)}
+function statusRun(r){return lower(first(r,['status','run_status']))}
+function loginDate(u){return first(u,['last_login_at','last_login','last_seen_at'])}
+function activityStatus(u){const t=ts(loginDate(u));if(!t)return'Never logged in';const days=(Date.now()-t)/86400000;if(days<1)return'Active today';if(days<7)return'Active this week';if(days>=14)return'Inactive 14+ days';return'Inactive';}
+function orgIdForUpload(upload,userById,userByEmail){return userById.get(upload?.user_id)?.organization_id||userByEmail.get(lower(upload?.user_email||upload?.email))?.organization_id||''}
+function healthFor(o){
+  if(o.failedRuns>0&&o.lastRunStatus==='failed')return'Scan Failed';
+  if(Number.isFinite(o.seatLimit)&&o.seatLimit>0&&o.seatsUsed>o.seatLimit)return'Over Seat Limit';
+  if(o.trialExpired)return'Trial Expired';
+  if(o.trialDaysRemaining!==null&&o.trialDaysRemaining>=0&&o.trialDaysRemaining<=7)return'Trial Expiring';
+  if(o.lastLogin&&ageDays(o.lastLogin)>=14)return'Inactive';
+  if(!o.lastLogin&&!o.lastUpload)return'No Activity';
+  if((o.activeCustomers+o.activeProspects)>0&&!o.lastSuccessfulWeeklyScan)return'Needs Attention';
+  return'Healthy';
 }
 
-function parseDate(value){
-  const t = new Date(value || 0).getTime();
-  return Number.isFinite(t) && t > 0 ? t : 0;
-}
-function latestDate(rows, field){
-  const latest = Math.max(0, ...(rows || []).map(r => parseDate(r?.[field])));
-  return latest ? new Date(latest).toISOString() : '';
-}
-function daysRemaining(value){
-  const t = parseDate(value);
-  if(!t) return null;
-  return Math.max(0, Math.ceil((t - Date.now()) / 86400000));
-}
-function groupByUser(rows){
-  const map = new Map();
-  for(const row of rows || []){
-    const id = row?.user_id;
-    if(!id) continue;
-    if(!map.has(id)) map.set(id, []);
-    map.get(id).push(row);
-  }
-  return map;
-}
-function feedbackUserId(row){
-  return row?.user_id || row?.userId || row?.user || '';
-}
-function feedbackEmail(row){ return clean(row?.email || row?.user_email || row?.userEmail).toLowerCase(); }
-function feedbackCreatedAt(row){ return row?.created_at || row?.timestamp || row?.submitted_at || row?.createdAt || ''; }
-function feedbackType(row){ return row?.type || row?.feedback_type || row?.feedbackType || 'Feedback'; }
-function feedbackMessage(row){ return row?.message || row?.body || row?.comment || row?.feedback || ''; }
-
-async function authUserFromRequest(req){
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i,'');
-  if(!token) return null;
-  const {url, key} = env();
-  const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
-  if(!resp.ok) return null;
-  return resp.json();
-}
-
-export default async function handler(req, res){
-  if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
+export default async function handler(req,res){
+  if(req.method!=='GET')return json(res,405,{error:'Method not allowed'});
   try{
-    const {adminEmail} = env();
-    const authUser = await authUserFromRequest(req);
-    const requesterEmail = clean(authUser?.email).toLowerCase();
-    if(!authUser?.id || !requesterEmail){
-      return json(res, 401, {error:'Authentication required'});
-    }
-    if(requesterEmail !== adminEmail){
-      return json(res, 403, {error:'Admin access only'});
-    }
-
-    const [
-      totalUsers,
-      totalUploads,
-      totalAccounts,
-      totalSignals,
-      totalWeeklyRuns
-    ] = await Promise.all([
-      countRows('ha_users'),
-      countRows('ha_uploads'),
-      countRows('ha_accounts'),
-      countRows('ha_signals'),
-      countRows('ha_weekly_runs')
+    const{adminEmail}=env();const au=await authUser(req);if(!au?.id||!clean(au.email))return json(res,401,{error:'Authentication required'});if(lower(au.email)!==adminEmail)return json(res,403,{error:'Admin access only'});
+    const [organizations,users,invitations,uploads,accounts,signals,prospectUploads,prospectAccounts,prospectSignals,weeklyRuns,feedback,monitored]=await Promise.all([
+      maybe('ha_organizations'),maybe('ha_users'),maybe('ha_invitations'),maybe('ha_uploads'),maybe('ha_accounts'),maybe('ha_signals','first_seen_at.desc'),maybe('ha_prospect_uploads'),maybe('ha_prospect_accounts'),maybe('ha_prospect_signals'),maybe('ha_weekly_runs','started_at.desc'),maybe('ha_feedback'),maybe('ha_monitored_companies')
     ]);
-
-    const feedbackCountResult = await maybeSupabase('ha_feedback?select=id&limit=1', {headers:{Prefer:'count=exact'}});
-    let totalFeedback = null;
-    if(!feedbackCountResult.missing){
-      const range = feedbackCountResult.headers.get('content-range') || '';
-      const total = Number((range.split('/')[1] || '').trim());
-      totalFeedback = Number.isFinite(total) ? total : 0;
-    }
-
-    const [usersRes, orgsRes, invitesRes, uploadsRes, accountsRes, prospectAccountsRes, signalsRes, prospectSignalsRes, runsRes, feedbackRes] = await Promise.all([
-      supabase('ha_users?select=*&order=created_at.desc&limit=500'),
-      maybeSupabase('ha_organizations?select=*&order=created_at.desc&limit=500'),
-      maybeSupabase('ha_invitations?select=*&order=created_at.desc&limit=1000'),
-      supabase('ha_uploads?select=*&order=created_at.desc&limit=1000'),
-      supabase('ha_accounts?select=id,user_id,upload_id,account_name,created_at&order=created_at.desc&limit=5000'),
-      maybeSupabase('ha_prospect_accounts?select=id,upload_id,company_name,created_at&order=created_at.desc&limit=5000'),
-      supabase('ha_signals?select=id,user_id,upload_id,account_name,signal_type,title,first_seen_at,last_seen_at&order=first_seen_at.desc&limit=1000'),
-      maybeSupabase('ha_prospect_signals?select=id,user_email,company_name,signal_type,title,created_at&order=created_at.desc&limit=1000'),
-      supabase('ha_weekly_runs?select=*&order=started_at.desc&limit=500'),
-      maybeSupabase('ha_feedback?select=*&order=created_at.desc&limit=500')
-    ]);
-
-    const users = usersRes.data || [];
-    const organizations = Array.isArray(orgsRes.data) ? orgsRes.data : [];
-    const invitations = Array.isArray(invitesRes.data) ? invitesRes.data : [];
-    const orgById = new Map(organizations.map(o => [o.id, o]));
-    const pendingInvitesByOrg = new Map();
-    for(const invite of invitations.filter(i=>String(i.status||'').toLowerCase()==='pending')){
-      if(!pendingInvitesByOrg.has(invite.organization_id)) pendingInvitesByOrg.set(invite.organization_id, []);
-      pendingInvitesByOrg.get(invite.organization_id).push(invite);
-    }
-    const uploads = uploadsRes.data || [];
-    const accounts = accountsRes.data || [];
-    const prospectAccounts = Array.isArray(prospectAccountsRes.data) ? prospectAccountsRes.data : [];
-    const signals = [...(signalsRes.data || []), ...(Array.isArray(prospectSignalsRes.data) ? prospectSignalsRes.data : [])];
-    const weeklyRuns = runsRes.data || [];
-    const feedback = Array.isArray(feedbackRes.data) ? feedbackRes.data : [];
-
-    const userById = new Map(users.map(u => [u.id, u]));
-    const userByEmail = new Map(users.map(u => [clean(u.email).toLowerCase(), u]));
-    const uploadsByUser = groupByUser(uploads);
-    const accountsByUser = groupByUser(accounts);
-    const signalsByUser = groupByUser(signals.filter(s=>s.user_id));
-    const prospectUploadsByEmail = new Map();
-    for(const up of uploads.filter(u=>u.user_email)){ const e=clean(up.user_email).toLowerCase(); if(!prospectUploadsByEmail.has(e)) prospectUploadsByEmail.set(e, []); prospectUploadsByEmail.get(e).push(up); }
-    const prospectAccountsByUpload = new Map();
-    for(const a of prospectAccounts){ if(!prospectAccountsByUpload.has(a.upload_id)) prospectAccountsByUpload.set(a.upload_id, []); prospectAccountsByUpload.get(a.upload_id).push(a); }
-    const prospectSignalsByEmail = new Map();
-    for(const s of signals.filter(s=>s.user_email)){ const e=clean(s.user_email).toLowerCase(); if(!prospectSignalsByEmail.has(e)) prospectSignalsByEmail.set(e, []); prospectSignalsByEmail.get(e).push(s); }
-    const runsByUser = groupByUser(weeklyRuns);
-    const feedbackByUser = new Map();
-    for(const row of feedback){
-      const uid = feedbackUserId(row) || userByEmail.get(feedbackEmail(row))?.id;
-      if(!uid) continue;
-      if(!feedbackByUser.has(uid)) feedbackByUser.set(uid, []);
-      feedbackByUser.get(uid).push(row);
-    }
-
-    const betaUsers = users.map(user => {
-      const userUploads = uploadsByUser.get(user.id) || [];
-      const userProspectUploads = prospectUploadsByEmail.get(clean(user.email).toLowerCase()) || [];
-      const userProspectAccounts = userProspectUploads.flatMap(up => prospectAccountsByUpload.get(up.id) || []);
-      const userAccounts = [...(accountsByUser.get(user.id) || []), ...userProspectAccounts.map(a=>({...a,account_name:a.company_name}))];
-      const userSignals = [...(signalsByUser.get(user.id) || []), ...(prospectSignalsByEmail.get(clean(user.email).toLowerCase()) || [])];
-      const userRuns = runsByUser.get(user.id) || [];
-      const userFeedback = feedbackByUser.get(user.id) || [];
-      return {
-        id: user.id,
-        name: user.name || '',
-        email: user.email || '',
-        company: user.company || orgById.get(user.organization_id)?.name || '',
-        organization: orgById.get(user.organization_id)?.name || '',
-        plan: orgById.get(user.organization_id)?.plan || 'free',
-        seatLimit: orgById.get(user.organization_id)?.seat_limit || 1,
-        trialStatus: orgById.get(user.organization_id)?.trial_status || '',
-        subscriptionStatus: orgById.get(user.organization_id)?.subscription_status || '',
-        trialUsed: !!orgById.get(user.organization_id)?.trial_used,
-        trialStartedAt: orgById.get(user.organization_id)?.trial_started_at || '',
-        trialEnd: orgById.get(user.organization_id)?.trial_end || '',
-        trialDaysRemaining: daysRemaining(orgById.get(user.organization_id)?.trial_end),
-        seatsUsed: users.filter(x=>x.organization_id===user.organization_id && String(x.status||'active')!=='inactive').length,
-        pendingInviteCount: (pendingInvitesByOrg.get(user.organization_id)||[]).length,
-        monitoredCompanyCount: userAccounts.length,
-        lastLogin: user.last_login || '',
-        loginCount: user.login_count || 0,
-        lastIp: user.last_ip || '',
-        userAgent: user.user_agent || '',
-        role: user.role || '',
-        crmErp: user.crm_erp || '',
-        houseAccountCount: user.house_accounts || '',
-        signupDate: user.created_at || '',
-        uploadCount: userUploads.length,
-        accountCount: userAccounts.length,
-        signalCount: userSignals.length,
-        lastUploadDate: latestDate(userUploads, 'created_at') || latestDate(userUploads, 'updated_at'),
-        lastWeeklyRunDate: latestDate(userRuns, 'started_at') || latestDate(userRuns, 'finished_at'),
-        feedbackCount: userFeedback.length,
-        dashboardUrl: `/?dashboardEmail=${encodeURIComponent(user.email || '')}`
-      };
+    const userById=new Map(users.map(u=>[u.id,u]));const userByEmail=new Map(users.map(u=>[lower(u.email),u]));const orgById=new Map(organizations.map(o=>[o.id,o]));
+    const custUploadsByOrg=new Map(),prosUploadsByOrg=new Map(),usersByOrg=new Map(),invitesByOrg=new Map(),runsByOrg=new Map();
+    uploads.forEach(r=>pushMap(custUploadsByOrg,orgIdForUpload(r,userById,userByEmail),r));
+    prospectUploads.forEach(r=>pushMap(prosUploadsByOrg,orgIdForUpload(r,userById,userByEmail),r));
+    users.forEach(r=>pushMap(usersByOrg,r.organization_id,r));invitations.forEach(r=>pushMap(invitesByOrg,r.organization_id,r));
+    weeklyRuns.forEach(r=>{const org=userById.get(r.user_id)?.organization_id||orgIdForUpload(uploads.find(u=>u.id===r.upload_id)||{},userById,userByEmail);pushMap(runsByOrg,org,r)});
+    const custUploadOrg=new Map(uploads.map(u=>[u.id,orgIdForUpload(u,userById,userByEmail)]));const prosUploadOrg=new Map(prospectUploads.map(u=>[u.id,orgIdForUpload(u,userById,userByEmail)]));
+    const custAccountsByOrg=new Map(),prosAccountsByOrg=new Map(),custSignalsByOrg=new Map(),prosSignalsByOrg=new Map();
+    accounts.forEach(r=>pushMap(custAccountsByOrg,custUploadOrg.get(r.upload_id)||userById.get(r.user_id)?.organization_id,r));
+    prospectAccounts.forEach(r=>pushMap(prosAccountsByOrg,prosUploadOrg.get(r.upload_id),r));
+    signals.forEach(r=>pushMap(custSignalsByOrg,custUploadOrg.get(r.upload_id)||userById.get(r.user_id)?.organization_id,r));
+    prospectSignals.forEach(r=>pushMap(prosSignalsByOrg,prosUploadOrg.get(r.upload_id)||userByEmail.get(lower(r.user_email))?.organization_id,r));
+    const week=startOfWeek();
+    const orgRows=organizations.map(org=>{
+      const members=usersByOrg.get(org.id)||[],cu=custUploadsByOrg.get(org.id)||[],pu=prosUploadsByOrg.get(org.id)||[],ca=custAccountsByOrg.get(org.id)||[],pa=prosAccountsByOrg.get(org.id)||[],cs=custSignalsByOrg.get(org.id)||[],ps=prosSignalsByOrg.get(org.id)||[],runs=runsByOrg.get(org.id)||[],inv=invitesByOrg.get(org.id)||[];
+      const activeCU=new Set(cu.filter(x=>!isPaused(x)).map(x=>x.id)),activePU=new Set(pu.filter(x=>!isPaused(x)).map(x=>x.id));
+      const activeCustomers=ca.filter(x=>!isPaused(x)&&(!x.upload_id||activeCU.has(x.upload_id))).length,pausedCustomers=Math.max(0,ca.length-activeCustomers);
+      const activeProspects=pa.filter(x=>!isPaused(x)&&(!x.upload_id||activePU.has(x.upload_id))).length,pausedProspects=Math.max(0,pa.length-activeProspects);
+      const successful=runs.filter(x=>['complete','completed','success','succeeded','sent'].includes(statusRun(x))),failed=runs.filter(x=>statusRun(x)==='failed');
+      const lastLogin=[...members].sort((a,b)=>ts(loginDate(b))-ts(loginDate(a)))[0];
+      const lastUpload=[...cu,...pu].sort((a,b)=>ts(rowDate(b))-ts(rowDate(a)))[0];
+      const tr=remaining(org.trial_end),trialExpired=lower(org.subscription_status)==='trialing'&&tr!==null&&tr<0;
+      const row={id:org.id,name:org.name||'Unnamed organization',plan:org.plan||'free',trialStatus:org.trial_status||'',subscriptionStatus:org.subscription_status||'',trialStartedAt:org.trial_started_at||'',trialEnd:org.trial_end||'',trialUsed:!!org.trial_used,trialDaysRemaining:tr,trialExpired,seatLimit:Number(org.seat_limit||1),seatsUsed:members.filter(x=>lower(x.status||'active')!=='inactive').length,activeUsers:members.filter(x=>lower(x.status||'active')!=='inactive').length,activeCustomers,pausedCustomers,activeProspects,pausedProspects,customerUploads:cu.length,prospectUploads:pu.length,customerSignals:cs.length,prospectSignals:ps.length,signalsThisWeek:[...cs,...ps].filter(x=>ts(rowDate(x))>=week).length,lastLogin:loginDate(lastLogin),lastUpload:rowDate(lastUpload),lastSuccessfulWeeklyScan:rowDate(successful[0]),lastWeeklyRun:rowDate(runs[0]),lastRunStatus:statusRun(runs[0]),failedRuns:failed.length,pendingInvites:inv.filter(x=>lower(x.status)==='pending'&&(!x.expires_at||ts(x.expires_at)>Date.now())).length,expiredInvites:inv.filter(x=>lower(x.status)==='pending'&&x.expires_at&&ts(x.expires_at)<=Date.now()).length,createdAt:org.created_at||'',members,invites:inv,recentActivity:[]};
+      row.health=healthFor(row);return row;
     });
-
-    function decorate(row){
-      const user = userById.get(row?.user_id) || {};
-      return {
-        ...row,
-        userEmail: user.email || '',
-        userName: user.name || '',
-        company: user.company || ''
-      };
-    }
-
-    return json(res, 200, {
-      ok:true,
-      metrics: {
-        totalOrganizations: organizations.length,
-        totalBetaUsers: totalUsers,
-        totalUploads,
-        totalAccountsAnalyzed: totalAccounts,
-        totalSavedSignals: totalSignals,
-        totalWeeklyRuns,
-        totalFeedbackSubmissions: totalFeedback,
-        totalPendingInvitations: invitations.filter(i=>String(i.status||'').toLowerCase()==='pending').length
-      },
-      betaUsers,
-      recentActivity: {
-        uploads: uploads.slice(0, 10).map(decorate),
-        signals: signals.slice(0, 10).map(decorate),
-        weeklyRuns: weeklyRuns.slice(0, 10).map(decorate),
-        feedback: feedback.slice(0, 10).map(row => ({
-          id: row.id,
-          type: feedbackType(row),
-          message: feedbackMessage(row),
-          email: feedbackEmail(row),
-          currentPage: row.current_page || row.currentPage || '',
-          createdAt: feedbackCreatedAt(row)
-        }))
-      },
-      feedbackStored: !feedbackRes.missing
+    const orgRowById=new Map(orgRows.map(o=>[o.id,o]));
+    const userRows=users.map(u=>{
+      const org=orgRowById.get(u.organization_id)||{};const cu=uploads.filter(x=>x.user_id===u.id),pu=prospectUploads.filter(x=>lower(x.user_email)===lower(u.email));const cids=new Set(cu.map(x=>x.id)),pids=new Set(pu.map(x=>x.id));const ca=accounts.filter(x=>cids.has(x.upload_id)),pa=prospectAccounts.filter(x=>pids.has(x.upload_id)),cs=signals.filter(x=>cids.has(x.upload_id)||x.user_id===u.id),ps=prospectSignals.filter(x=>pids.has(x.upload_id)||lower(x.user_email)===lower(u.email));const inv=invitations.filter(x=>lower(x.email)===lower(u.email));
+      return{id:u.id,name:u.name||'',email:u.email||'',organizationId:u.organization_id||'',organization:org.name||u.company||'',role:u.app_role||u.role||'member',plan:org.plan||'free',status:u.status||'active',memberSince:u.created_at||'',lastLogin:loginDate(u),lastSeen:u.last_seen_at||'',loginCount:Number(u.login_count||0),lastIp:u.last_ip||'',userAgent:u.user_agent||'',customerUploads:cu.length,prospectUploads:pu.length,uploads:cu.length+pu.length,customerAccounts:ca.length,prospects:pa.length,monitoredCompanies:ca.length+pa.length,signals:cs.length+ps.length,latestActivity:[...cu,...pu,...cs,...ps].sort((a,b)=>ts(rowDate(b))-ts(rowDate(a))).map(rowDate)[0]||'',activityStatus:activityStatus(u),invitations:inv,dashboardUrl:`/?dashboardEmail=${encodeURIComponent(u.email||'')}`};
     });
-  }catch(err){
-    if(err?.code === 'ADMIN_EMAIL_MISSING') return json(res, 503, {error:'Admin access is not configured.'});
-    return json(res, 500, {error: err.message || 'Admin dashboard failed'});
-  }
+    const activity=[];const add=(type,orgId,userEmail,description,date,status='')=>{if(date)activity.push({type,organizationId:orgId,organization:orgRowById.get(orgId)?.name||'',userEmail,description,timestamp:date,status})};
+    users.forEach(u=>{if(loginDate(u))add('Login',u.organization_id,u.email,`${u.name||u.email} logged in`,loginDate(u))});
+    uploads.forEach(u=>{const user=userById.get(u.user_id);add('Upload',user?.organization_id,user?.email,`${user?.name||user?.email||'A user'} uploaded ${u.account_count||u.row_count||''} customer accounts`.replace(/\s+/g,' '),rowDate(u))});
+    prospectUploads.forEach(u=>{const user=userByEmail.get(lower(u.user_email));add('Prospect research',user?.organization_id,u.user_email,`${user?.name||u.user_email||'A user'} added ${u.account_count||''} prospect accounts`.replace(/\s+/g,' '),rowDate(u))});
+    signals.forEach(s=>add('Signal created',custUploadOrg.get(s.upload_id)||userById.get(s.user_id)?.organization_id,userById.get(s.user_id)?.email,`${s.account_name||'Account'}: ${s.title||s.signal_type||'signal'}`,rowDate(s)));
+    prospectSignals.forEach(s=>add('Signal created',prosUploadOrg.get(s.upload_id)||userByEmail.get(lower(s.user_email))?.organization_id,s.user_email,`${s.company_name||'Prospect'}: ${s.title||s.signal_type||'signal'}`,rowDate(s)));
+    weeklyRuns.forEach(r=>add(statusRun(r)==='failed'?'Weekly run failed':'Weekly run complete',userById.get(r.user_id)?.organization_id,userById.get(r.user_id)?.email,`Weekly run ${statusRun(r)||'completed'}`,rowDate(r),statusRun(r)));
+    invitations.forEach(i=>add(lower(i.status)==='accepted'?'Invitation accepted':'Invitation sent',i.organization_id,i.email,lower(i.status)==='accepted'?`${i.email} joined the organization`:`Invitation sent to ${i.email}`,i.accepted_at||i.created_at,i.status));
+    activity.sort((a,b)=>ts(b.timestamp)-ts(a.timestamp));
+    const needs=[];const attention=(type,org,user,explanation,date,action='')=>needs.push({type,organizationId:org?.id||user?.organizationId||'',organization:org?.name||user?.organization||'',user:user?.name||'',email:user?.email||'',explanation,date,ageDays:ageDays(date),action});
+    orgRows.forEach(o=>{if(o.trialExpired)attention('Trial expired',o,null,'Trial has expired.',o.trialEnd);else if(o.trialDaysRemaining!==null&&o.trialDaysRemaining>=0&&o.trialDaysRemaining<=7)attention('Trial expiring',o,null,`Ends in ${o.trialDaysRemaining} days.`,o.trialEnd);if(o.seatsUsed>o.seatLimit)attention('Over seat limit',o,null,`${o.seatsUsed} of ${o.seatLimit} seats are in use.`,o.lastLogin);if(o.failedRuns)attention('Weekly scan failed',o,null,`${o.failedRuns} failed weekly run${o.failedRuns===1?'':'s'}.`,o.lastWeeklyRun);if((o.activeCustomers+o.activeProspects)>0&&!o.lastSuccessfulWeeklyScan)attention('No successful weekly run',o,null,'Monitored accounts exist but no successful weekly run was found.',o.lastUpload);if(o.activeUsers>0&&!o.members.some(m=>['owner','admin'].includes(lower(m.app_role||m.role))&&lower(m.status||'active')!=='inactive'))attention('No active owner/admin',o,null,'Organization has users but no active owner or admin.',o.createdAt);o.invites.filter(i=>lower(i.status)==='pending'&&ageDays(i.created_at)>=3).forEach(i=>attention('Old pending invitation',o,null,`${i.email} has been pending for ${ageDays(i.created_at)} days.`,i.created_at))});
+    userRows.forEach(u=>{if(!u.lastLogin)attention('Never activated',orgRowById.get(u.organizationId),u,'Signed up but never logged in.',u.memberSince);else if(u.uploads===0)attention('No uploads',orgRowById.get(u.organizationId),u,'Logged in but has never uploaded data.',u.lastLogin);else if(u.signals===0)attention('No saved signals',orgRowById.get(u.organizationId),u,'Uploaded data but has zero saved signals.',u.latestActivity);if(u.lastLogin&&ageDays(u.lastLogin)>=14)attention('Inactive user',orgRowById.get(u.organizationId),u,`Inactive for ${ageDays(u.lastLogin)} days.`,u.lastLogin)});
+    const failedRuns=weeklyRuns.filter(r=>statusRun(r)==='failed'),successfulRuns=weeklyRuns.filter(r=>['complete','completed','success','succeeded','sent'].includes(statusRun(r))),pendingInvites=invitations.filter(i=>lower(i.status)==='pending'&&(!i.expires_at||ts(i.expires_at)>Date.now())),expiredInvites=invitations.filter(i=>lower(i.status)==='pending'&&i.expires_at&&ts(i.expires_at)<=Date.now());
+    const activeUsers7=userRows.filter(u=>u.lastLogin&&Date.now()-ts(u.lastLogin)<=7*86400000).length,activeTrials=orgRows.filter(o=>lower(o.trialStatus)==='active'||lower(o.subscriptionStatus)==='trialing').length,expiring=orgRows.filter(o=>o.trialDaysRemaining!==null&&o.trialDaysRemaining>=0&&o.trialDaysRemaining<=7).length;
+    const response={overview:{totalOrganizations:orgRows.length,totalBetaUsers:userRows.length,activeUsersLast7Days:activeUsers7,activeTrials,trialsExpiringNext7Days:expiring,totalMonitoredCompanies:orgRows.reduce((n,o)=>n+o.activeCustomers+o.activeProspects,0),signalsCreatedThisWeek:orgRows.reduce((n,o)=>n+o.signalsThisWeek,0),failedWeeklyRuns:failedRuns.length,pendingInvitations:pendingInvites.length},needsAttention:needs.sort((a,b)=>ts(b.date)-ts(a.date)),organizations:orgRows.map(o=>({...o,members:undefined,invites:undefined})),organizationDetails:Object.fromEntries(orgRows.map(o=>[o.id,o])),users:userRows,activity:activity.slice(0,2500),systemHealth:{weeklyScanning:{totalRuns:weeklyRuns.length,successfulRuns:successfulRuns.length,failedRuns:failedRuns.length,successRate:weeklyRuns.length?Math.round(successfulRuns.length/weeklyRuns.length*100):0,lastSuccessfulRun:rowDate(successfulRuns[0]),lastFailedRun:rowDate(failedRuns[0])},researchPipeline:{recentProspectSaves:prospectUploads.slice(0,20),recentCustomerSaves:uploads.slice(0,20)},email:{pendingInvitations:pendingInvites.length,expiredInvitations:expiredInvites.length},authentication:{neverLoggedIn:userRows.filter(u=>!u.lastLogin).length,inactive14Days:userRows.filter(u=>u.lastLogin&&ageDays(u.lastLogin)>=14).length,recentLogins:activity.filter(a=>a.type==='Login').slice(0,20)},monitoring:{activeLists:uploads.filter(x=>!isPaused(x)).length+prospectUploads.filter(x=>!isPaused(x)).length,pausedLists:uploads.filter(isPaused).length+prospectUploads.filter(isPaused).length,organizationsWithoutRecentScan:orgRows.filter(o=>(o.activeCustomers+o.activeProspects)>0&&!o.lastSuccessfulWeeklyScan)},failedWeeklyRuns:failedRuns.slice(0,100),staleOrganizations:orgRows.filter(o=>o.lastLogin&&ageDays(o.lastLogin)>=14),expiringTrials:orgRows.filter(o=>o.trialDaysRemaining!==null&&o.trialDaysRemaining>=0&&o.trialDaysRemaining<=7),oldPendingInvitations:pendingInvites.filter(i=>ageDays(i.created_at)>=3)},legacy:{metrics:{totalOrganizations:orgRows.length,totalBetaUsers:userRows.length,totalUploads:uploads.length+prospectUploads.length,totalAccountsAnalyzed:accounts.length+prospectAccounts.length,totalSavedSignals:signals.length+prospectSignals.length,totalWeeklyRuns:weeklyRuns.length,totalPendingInvitations:pendingInvites.length},betaUsers:userRows,recentActivity:{uploads:uploads.slice(0,10),signals:[...signals,...prospectSignals].slice(0,10),weeklyRuns:weeklyRuns.slice(0,10),feedback:feedback.slice(0,10)}}};
+    return json(res,200,response);
+  }catch(e){if(e.code==='ADMIN_EMAIL_MISSING')return json(res,503,{error:'Admin access is not configured.'});console.error('[Admin Dashboard V2]',e);return json(res,500,{error:e.message||'Admin dashboard failed'})}
 }
