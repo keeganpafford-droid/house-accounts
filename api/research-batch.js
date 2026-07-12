@@ -268,54 +268,93 @@ function adjustedConfidence(raw = {}, sourceUrl = '', sourceType = '') {
   return Math.round(Math.max(0, Math.min(100, (source * 0.35) + (fresh * 0.30) + (ai * 0.25) + (multi * 0.10))));
 }
 
+const SERPER_CONCURRENCY = Math.max(1, Number(process.env.SERPER_CONCURRENCY || 2));
+const SERPER_MAX_RETRIES = Math.max(0, Number(process.env.SERPER_MAX_RETRIES || 2));
+const SERPER_RETRY_BASE_MS = Math.max(100, Number(process.env.SERPER_RETRY_BASE_MS || 500));
+let serperActiveRequests = 0;
+const serperRequestQueue = [];
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function acquireSerperSlot() {
+  if (serperActiveRequests >= SERPER_CONCURRENCY) {
+    await new Promise(resolve => serperRequestQueue.push(resolve));
+  }
+  serperActiveRequests += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    serperActiveRequests = Math.max(0, serperActiveRequests - 1);
+    const next = serperRequestQueue.shift();
+    if (next) next();
+  };
+}
+
 async function serperSearch(query) {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) return [];
-  let httpStatus = 0;
-  try {
-    const resp = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: query, num: 8 })
-    });
-    httpStatus = resp.status;
-    if (!resp.ok) {
-      return [{
-        title: '',
-        snippet: '',
-        url: '',
-        source: '',
-        date: '',
-        provider: 'serper',
-        query,
-        httpStatus,
-        searchError: `Serper returned HTTP ${httpStatus}`
-      }];
+
+  let retryCount = 0;
+  let rateLimitHits = 0;
+  let lastStatus = 0;
+  let lastError = '';
+
+  for (let attempt = 0; attempt <= SERPER_MAX_RETRIES; attempt += 1) {
+    const release = await acquireSerperSlot();
+    try {
+      const resp = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: query, num: 8 })
+      });
+      lastStatus = resp.status;
+
+      if (resp.status === 429) {
+        rateLimitHits += 1;
+        lastError = 'Serper returned HTTP 429';
+      } else if (!resp.ok) {
+        lastError = `Serper returned HTTP ${resp.status}`;
+        return [{
+          title: '', snippet: '', url: '', source: '', date: '',
+          provider: 'serper', query, httpStatus: resp.status,
+          searchError: lastError, retryCount, rateLimitHits
+        }];
+      } else {
+        const data = await resp.json();
+        return [...(data.organic || []), ...(data.news || [])].map(r => ({
+          title: clean(r.title),
+          snippet: clean(r.snippet || r.description || ''),
+          url: r.link || r.url || '',
+          source: r.source || sourceDomain(r.link || r.url || ''),
+          date: r.date || '',
+          provider: 'serper',
+          query,
+          httpStatus: resp.status,
+          retryCount,
+          rateLimitHits
+        })).filter(r => r.url || r.title).slice(0, 8);
+      }
+    } catch (error) {
+      lastError = error?.message || 'Serper request failed';
+    } finally {
+      release();
     }
-    const data = await resp.json();
-    return [...(data.organic || []), ...(data.news || [])].map(r => ({
-      title: clean(r.title),
-      snippet: clean(r.snippet || r.description || ''),
-      url: r.link || r.url || '',
-      source: r.source || sourceDomain(r.link || r.url || ''),
-      date: r.date || '',
-      provider: 'serper',
-      query,
-      httpStatus
-    })).filter(r => r.url || r.title).slice(0, 8);
-  } catch (error) {
-    return [{
-      title: '',
-      snippet: '',
-      url: '',
-      source: '',
-      date: '',
-      provider: 'serper',
-      query,
-      httpStatus,
-      searchError: error?.message || 'Serper request failed'
-    }];
+
+    if (attempt < SERPER_MAX_RETRIES) {
+      retryCount += 1;
+      const backoff = (SERPER_RETRY_BASE_MS * (2 ** attempt)) + Math.floor(Math.random() * 250);
+      await sleep(backoff);
+    }
   }
+
+  return [{
+    title: '', snippet: '', url: '', source: '', date: '',
+    provider: 'serper', query, httpStatus: lastStatus,
+    searchError: lastError || 'Serper request failed', retryCount, rateLimitHits
+  }];
 }
 
 async function tavilySearch(query) {
@@ -492,6 +531,13 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       };
     });
 
+    const serper429Count = resultSets.reduce((sum, set) => sum + Math.max(0, ...(set || []).map(r => Number(r?.rateLimitHits || 0))), 0);
+    const retriedSearches = resultSets.filter(set => (set || []).some(r => Number(r?.retryCount || 0) > 0)).length;
+    const failedSearches = resultSets.filter(set => (set || []).some(r => r?.searchError)).length;
+    const unrecovered429Queries = queriesWithResults.filter(q => String(q.serperHttpStatus) === '429').length;
+    const serperRateLimited = unrecovered429Queries === queries.length && queries.length > 0;
+    const searchIncomplete = failedSearches > 0;
+
     diagnostics.push({
       companyName: account.name,
       targetedQueriesRun: queries.length,
@@ -508,7 +554,12 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       })),
       liveSignalCandidateFound: liveCandidateCount > 0,
       highIntentCandidateFound: highIntentCandidateCount > 0,
-      fallbackEligibleAfterSearch: highIntentCandidateCount === 0
+      fallbackEligibleAfterSearch: highIntentCandidateCount === 0 && !serperRateLimited,
+      serperRateLimited,
+      searchIncomplete,
+      serper429Count,
+      retriedSearches,
+      failedSearches
     });
 
     if (mode === 'prospect-intelligence') {
@@ -527,7 +578,12 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
         })),
         liveSignalCandidateFound: liveCandidateCount > 0,
         highIntentCandidateFound: highIntentCandidateCount > 0,
-        fallbackEligibleAfterSearch: highIntentCandidateCount === 0
+        fallbackEligibleAfterSearch: highIntentCandidateCount === 0 && !serperRateLimited,
+        serperRateLimited,
+        searchIncomplete,
+        serper429Count,
+        retriedSearches,
+        failedSearches
       });
     }
 
@@ -1449,6 +1505,18 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       for (const account of safeAccounts) {
         if (!byAccount[account.name] || !byAccount[account.name].length) {
           const accountDiag = searchDiagnostics.find(d => d.companyName === account.name) || {};
+          if (accountDiag.serperRateLimited) {
+            prospectDebugLog('Search incomplete due to Serper rate limiting', {
+              company: account.name,
+              fallbackUsed: false,
+              targetedQueriesRun: accountDiag.targetedQueriesRun || 0,
+              serper429Count: accountDiag.serper429Count || 0,
+              retriedSearches: accountDiag.retriedSearches || 0,
+              failedSearches: accountDiag.failedSearches || 0
+            });
+            byAccount[account.name] = [];
+            continue;
+          }
           const fallbackReason = !hasSearchProvider
             ? 'SERPER_API_KEY not configured; no live signal returned by OpenAI web search'
             : candidates.filter(c => c.accountName === account.name).length === 0
@@ -1482,6 +1550,15 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     }
     const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
+    const serper429Count = searchDiagnostics.reduce((sum, d) => sum + Number(d.serper429Count || 0), 0);
+    const retriedSearches = searchDiagnostics.reduce((sum, d) => sum + Number(d.retriedSearches || 0), 0);
+    const failedSearches = searchDiagnostics.reduce((sum, d) => sum + Number(d.failedSearches || 0), 0);
+    const accountsRateLimited = searchDiagnostics.filter(d => d.serperRateLimited).map(d => d.companyName);
+    const accountsWithCandidatesButFallback = safeAccounts.filter(account => {
+      const diag = searchDiagnostics.find(d => d.companyName === account.name) || {};
+      const selected = byAccount[account.name] || [];
+      return Number(diag.rankedCandidates || 0) > 0 && selected.some(s => s.isFallbackOpportunity);
+    }).map(account => account.name);
 
     return res.status(200).json({
       signals: finalSignals,
@@ -1510,6 +1587,13 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         sourceCoverage,
         candidateSamples,
         searchDiagnostics,
+        serper429Count,
+        retriedSearches,
+        failedSearches,
+        accountsRateLimited,
+        accountsWithCandidatesButFallback,
+        serperConcurrency: SERPER_CONCURRENCY,
+        serperMaxRetries: SERPER_MAX_RETRIES,
         outputPreview: String(rawText || '').slice(0, 500)
       }
     });
