@@ -1263,6 +1263,76 @@ function dedupeSignals(signals = []) {
 }
 
 
+
+function buildSynthesisPrompt(promptAccounts, promptCandidates) {
+  return `You are House Accounts' Prospect Buying Moment Extraction Engine.
+
+Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
+
+"Why should I contact this company today?"
+
+Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
+
+A buying moment is a concrete event that may create promotional products demand, such as:
+- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
+- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
+- product launch, rebrand, merger, acquisition, partnership, contract win
+- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
+- community event, sponsorship, corporate philanthropy
+- safety milestone, company anniversary, major award actively promoted by the company
+
+Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
+Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
+
+Reject:
+- generic company descriptions, mission/history/culture copy
+- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
+- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
+- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
+- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
+
+Preserve concrete triggers. Do not generalize specific events. Examples:
+- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
+- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
+- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
+
+For each accepted signal:
+1. concrete_trigger: specific event phrased as a short label.
+2. buying_moment: the category of buying moment.
+3. business_context: what happened and why it likely happened.
+4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
+5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
+6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
+7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
+8. ABD scores: actionability_score, budget_score, deadline_score.
+
+Recommended Buying Team examples:
+- Hiring expansion → HR / People, Talent Acquisition
+- Product launch → Marketing, Product Marketing
+- Community event → Marketing, Community Relations
+- Manufacturing expansion → Operations, HR / People
+- Trade show → Marketing, Events, Sales
+
+Potential Contacts rules:
+- Use uploaded knownContacts if they align with the recommended buying team.
+- Use public contacts only when the source supports the person and title.
+- Never invent names or use generic departments as contacts.
+- Omit potential_contacts if no reliable person is found.
+
+Score concrete, high-intent buying moments higher:
+Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
+Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
+
+Return strict JSON only with shape:
+{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
+
+Accounts:
+${JSON.stringify(accountPromptContext(promptAccounts), null, 2)}
+
+Candidate snippets and clean page content:
+${JSON.stringify(promptCandidates.slice(0, 40).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
@@ -1355,75 +1425,51 @@ export default async function handler(req, res) {
     }
 
     let parsed = null;
+    let extractionDiagnostics = [];
     if (candidates.length) {
-      const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
-
-Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
-
-"Why should I contact this company today?"
-
-Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
-
-A buying moment is a concrete event that may create promotional products demand, such as:
-- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
-- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
-- product launch, rebrand, merger, acquisition, partnership, contract win
-- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
-- community event, sponsorship, corporate philanthropy
-- safety milestone, company anniversary, major award actively promoted by the company
-
-Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
-Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
-
-Reject:
-- generic company descriptions, mission/history/culture copy
-- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
-- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
-- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
-- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
-
-Preserve concrete triggers. Do not generalize specific events. Examples:
-- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
-- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
-- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
-
-For each accepted signal:
-1. concrete_trigger: specific event phrased as a short label.
-2. buying_moment: the category of buying moment.
-3. business_context: what happened and why it likely happened.
-4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
-5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
-6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
-7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
-8. ABD scores: actionability_score, budget_score, deadline_score.
-
-Recommended Buying Team examples:
-- Hiring expansion → HR / People, Talent Acquisition
-- Product launch → Marketing, Product Marketing
-- Community event → Marketing, Community Relations
-- Manufacturing expansion → Operations, HR / People
-- Trade show → Marketing, Events, Sales
-
-Potential Contacts rules:
-- Use uploaded knownContacts if they align with the recommended buying team.
-- Use public contacts only when the source supports the person and title.
-- Never invent names or use generic departments as contacts.
-- Omit potential_contacts if no reliable person is found.
-
-Score concrete, high-intent buying moments higher:
-Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
-Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
-
-Return strict JSON only with shape:
-{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
-
-Accounts:
-${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
-
-Candidate snippets and clean page content:
-${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
-      rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
-      parsed = parseJsonLoose(rawText);
+      // Extract per account so one multi-company LLM response cannot omit companies
+      // that already have strong ranked candidates.
+      const accountsWithCandidates = safeAccounts.filter(account =>
+        candidates.some(candidate => candidate.accountName === account.name)
+      );
+      const extractionResults = await mapLimit(accountsWithCandidates, 3, async account => {
+        const accountCandidates = candidates
+          .filter(candidate => candidate.accountName === account.name)
+          .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+          .slice(0, 20);
+        const prompt = buildSynthesisPrompt([account], accountCandidates);
+        try {
+          const accountRawText = await callOpenAIJson({ apiKey, model, prompt });
+          const accountParsed = parseJsonLoose(accountRawText);
+          const accountSignals = Array.isArray(accountParsed?.signals) ? accountParsed.signals : [];
+          return {
+            accountName: account.name,
+            rawText: accountRawText,
+            signals: accountSignals,
+            candidateCount: accountCandidates.length,
+            error: ''
+          };
+        } catch (error) {
+          return {
+            accountName: account.name,
+            rawText: '',
+            signals: [],
+            candidateCount: accountCandidates.length,
+            error: error?.message || 'Per-account extraction failed'
+          };
+        }
+      });
+      const extractedSignals = extractionResults.flatMap(result =>
+        result.signals.map(signal => ({ ...signal, accountName: result.accountName }))
+      );
+      parsed = { signals: extractedSignals };
+      rawText = extractionResults.map(result => result.rawText).filter(Boolean).join('\n');
+      extractionDiagnostics = extractionResults.map(result => ({
+        companyName: result.accountName,
+        candidatesPassedToLLM: result.candidateCount,
+        rawSignalsReturned: result.signals.length,
+        extractionError: result.error
+      }));
     } else {
       // Fallback: ask OpenAI's web search to do the batch research in the same style as Google AI.
       rawText = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
@@ -1587,6 +1633,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         sourceCoverage,
         candidateSamples,
         searchDiagnostics,
+        extractionDiagnostics,
         serper429Count,
         retriedSearches,
         failedSearches,
