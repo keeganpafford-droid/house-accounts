@@ -811,6 +811,30 @@ function confidenceFromAI(confidence = '') {
   return { label: 'Medium', score: 0.68 };
 }
 
+function normalizeSuggestedContactDetails(raw = {}, fallbackRole = '', candidate = {}) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const name = clean(c.name || c.fullName || '');
+  const title = clean(c.title || c.role || fallbackRole || '');
+  const linkedin = clean(c.linkedin || c.linkedinUrl || '');
+  const email = clean(c.email || c.companyEmail || c.publicEmail || '');
+  const directPhone = clean(c.directPhone || c.direct_phone || c.phone || '');
+  const companyPhone = clean(c.companyPhone || c.company_phone || '');
+  const contactPage = clean(c.contactPage || c.contact_page || '');
+  const sourcesUsed = (Array.isArray(c.sourcesUsed || c.sources_used) ? (c.sourcesUsed || c.sources_used) : [])
+    .map(x => ({ name: clean(x?.name || x?.title || cleanSourceName(x?.url || '')), url: clean(x?.url || '') }))
+    .filter(x => x.name || x.url).slice(0, 4);
+  const candidateUrl = clean(candidate.url || '');
+  if (candidateUrl && name && !sourcesUsed.some(x => x.url === candidateUrl)) sourcesUsed.unshift({ name: cleanSourceName(candidateUrl), url: candidateUrl });
+  let confidence = clean(c.researchConfidence || c.confidence || '');
+  if (!/^(high|medium|low)$/i.test(confidence)) confidence = name && title && (linkedin || email || candidateUrl) ? 'High' : name ? 'Medium' : 'Low';
+  confidence = confidence.charAt(0).toUpperCase() + confidence.slice(1).toLowerCase();
+  return {
+    name, title,
+    whyThisContact: clean(c.whyThisContact || c.reason || (name ? 'This person appears aligned with the team most likely to own the detected initiative.' : 'Start with the team most likely to own the detected initiative.')),
+    linkedin, email, directPhone, companyPhone, contactPage, researchConfidence: confidence, sourcesUsed
+  };
+}
+
 function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '', multiSource = false) {
   const signalType = signalTypeFromAI(aiSignal.signalType || aiSignal.type);
   const aiConfidence = confidenceFromAI(aiSignal.confidence);
@@ -844,6 +868,10 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
   const conversations = Array.isArray(aiSignal.likelyConversations)
     ? aiSignal.likelyConversations.filter(Boolean).slice(0, 5)
     : String(aiSignal.likelyConversation || aiSignal.conversationAngle || '').split(/[;|]/).map(x => x.trim()).filter(Boolean).slice(0, 5);
+  const recommendedBuyingTeam = Array.isArray(aiSignal.recommendedBuyingTeam) && aiSignal.recommendedBuyingTeam.length
+    ? aiSignal.recommendedBuyingTeam.filter(Boolean).slice(0, 3)
+    : [aiSignal.likelyDepartment || base.affectedDepartment || aiSignal.suggestedContact || base.suggestedContact].filter(Boolean).slice(0, 3);
+  const suggestedContactDetails = normalizeSuggestedContactDetails(aiSignal.suggestedContactDetails || aiSignal.suggested_contact_details, aiSignal.suggestedContact || base.suggestedContact, candidate);
 
   return {
     ...base,
@@ -863,7 +891,10 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
     reasonToReachOut: whyReachOut,
     conversationStarter: opener,
     whyNow: whyReachOut,
-    suggestedContact: aiSignal.suggestedContact || base.suggestedContact,
+    suggestedContact: suggestedContactDetails.name || aiSignal.suggestedContact || base.suggestedContact,
+    suggestedContactDetails,
+    recommendedBuyingTeam,
+    likelyBuyers: recommendedBuyingTeam,
     affectedDepartment: aiSignal.likelyDepartment || aiSignal.affectedDepartment || base.affectedDepartment,
     likelyConversations: conversations,
     opportunityCategory: aiSignal.opportunityCategory || (conversations[0] || base.opportunityCategory),
@@ -873,7 +904,7 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
   };
 }
 
-async function aiQualifyBusinessSignals(accountName, industry, candidates = []) {
+async function aiQualifyBusinessSignals(accountName, industry, candidates = [], suppliedContactName = '') {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !candidates.length) {
     return { enabled: Boolean(apiKey), signals: [], rawCount: 0, error: apiKey ? '' : 'OPENAI_API_KEY not configured' };
@@ -890,6 +921,7 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = []) 
 
 Account: ${accountName}
 Industry: ${industry || 'Unknown'}
+User-supplied contact to verify first, if any: ${suppliedContactName || 'None'}
 
 Your job is NOT to summarize the company.
 Your job is to think like an elite promotional-products sales rep and answer one question:
@@ -908,6 +940,9 @@ Important rules:
 - If there is no strong opportunity, return {"signals":[]}.
 - Do not invent facts.
 - Do not stop at "they are hiring". Translate why it matters to promo.
+- If a user-supplied contact is provided, verify that person first and prefer them only when the sources support their company and role.
+- Surface public contact information only when it appears in the supplied candidates or page content. Never invent emails, phone numbers, LinkedIn URLs, or contact pages.
+- Research confidence describes verification quality, not buying intent.
 
 Return strict JSON only with this shape:
 {
@@ -923,6 +958,19 @@ Return strict JSON only with this shape:
       "likelyConversations": ["short conversation themes"],
       "suggestedOpener": "one natural sentence a rep could say or email",
       "suggestedContact": "likely role to contact",
+      "recommendedBuyingTeam": ["likely department/team"],
+      "suggestedContactDetails": {
+        "name": "verified public person name or empty string",
+        "title": "verified public title or inferred title",
+        "whyThisContact": "one short reason this person or role fits the signal",
+        "linkedin": "verified public LinkedIn URL or empty string",
+        "email": "verified public email or empty string",
+        "directPhone": "verified public direct phone or empty string",
+        "companyPhone": "verified public company phone or empty string",
+        "contactPage": "verified public contact page or empty string",
+        "researchConfidence": "High | Medium | Low",
+        "sourcesUsed": [{"name":"source name","url":"source URL"}]
+      },
       "likelyDepartment": "likely department/team involved",
       "publicationDate": "date if visible, otherwise empty string",
       "confidence": 0-100
@@ -1076,7 +1124,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
   try {
-    const { accountName, industry, cityState, emailDomain, notes, employees } = req.body || {};
+    const { accountName, industry, cityState, emailDomain, notes, employees, contactName } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
@@ -1124,7 +1172,7 @@ export default async function handler(req, res) {
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
 
     // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
-    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates);
+    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''));
 
     const signals = dedupeSignals([
       ...aiQualification.signals,

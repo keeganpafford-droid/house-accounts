@@ -268,93 +268,54 @@ function adjustedConfidence(raw = {}, sourceUrl = '', sourceType = '') {
   return Math.round(Math.max(0, Math.min(100, (source * 0.35) + (fresh * 0.30) + (ai * 0.25) + (multi * 0.10))));
 }
 
-const SERPER_CONCURRENCY = Math.max(1, Number(process.env.SERPER_CONCURRENCY || 2));
-const SERPER_MAX_RETRIES = Math.max(0, Number(process.env.SERPER_MAX_RETRIES || 2));
-const SERPER_RETRY_BASE_MS = Math.max(100, Number(process.env.SERPER_RETRY_BASE_MS || 500));
-let serperActiveRequests = 0;
-const serperRequestQueue = [];
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function acquireSerperSlot() {
-  if (serperActiveRequests >= SERPER_CONCURRENCY) {
-    await new Promise(resolve => serperRequestQueue.push(resolve));
-  }
-  serperActiveRequests += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    serperActiveRequests = Math.max(0, serperActiveRequests - 1);
-    const next = serperRequestQueue.shift();
-    if (next) next();
-  };
-}
-
 async function serperSearch(query) {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) return [];
-
-  let retryCount = 0;
-  let rateLimitHits = 0;
-  let lastStatus = 0;
-  let lastError = '';
-
-  for (let attempt = 0; attempt <= SERPER_MAX_RETRIES; attempt += 1) {
-    const release = await acquireSerperSlot();
-    try {
-      const resp = await fetch('https://google.serper.dev/search', {
-        method: 'POST',
-        headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: query, num: 8 })
-      });
-      lastStatus = resp.status;
-
-      if (resp.status === 429) {
-        rateLimitHits += 1;
-        lastError = 'Serper returned HTTP 429';
-      } else if (!resp.ok) {
-        lastError = `Serper returned HTTP ${resp.status}`;
-        return [{
-          title: '', snippet: '', url: '', source: '', date: '',
-          provider: 'serper', query, httpStatus: resp.status,
-          searchError: lastError, retryCount, rateLimitHits
-        }];
-      } else {
-        const data = await resp.json();
-        return [...(data.organic || []), ...(data.news || [])].map(r => ({
-          title: clean(r.title),
-          snippet: clean(r.snippet || r.description || ''),
-          url: r.link || r.url || '',
-          source: r.source || sourceDomain(r.link || r.url || ''),
-          date: r.date || '',
-          provider: 'serper',
-          query,
-          httpStatus: resp.status,
-          retryCount,
-          rateLimitHits
-        })).filter(r => r.url || r.title).slice(0, 8);
-      }
-    } catch (error) {
-      lastError = error?.message || 'Serper request failed';
-    } finally {
-      release();
+  let httpStatus = 0;
+  try {
+    const resp = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num: 8 })
+    });
+    httpStatus = resp.status;
+    if (!resp.ok) {
+      return [{
+        title: '',
+        snippet: '',
+        url: '',
+        source: '',
+        date: '',
+        provider: 'serper',
+        query,
+        httpStatus,
+        searchError: `Serper returned HTTP ${httpStatus}`
+      }];
     }
-
-    if (attempt < SERPER_MAX_RETRIES) {
-      retryCount += 1;
-      const backoff = (SERPER_RETRY_BASE_MS * (2 ** attempt)) + Math.floor(Math.random() * 250);
-      await sleep(backoff);
-    }
+    const data = await resp.json();
+    return [...(data.organic || []), ...(data.news || [])].map(r => ({
+      title: clean(r.title),
+      snippet: clean(r.snippet || r.description || ''),
+      url: r.link || r.url || '',
+      source: r.source || sourceDomain(r.link || r.url || ''),
+      date: r.date || '',
+      provider: 'serper',
+      query,
+      httpStatus
+    })).filter(r => r.url || r.title).slice(0, 8);
+  } catch (error) {
+    return [{
+      title: '',
+      snippet: '',
+      url: '',
+      source: '',
+      date: '',
+      provider: 'serper',
+      query,
+      httpStatus,
+      searchError: error?.message || 'Serper request failed'
+    }];
   }
-
-  return [{
-    title: '', snippet: '', url: '', source: '', date: '',
-    provider: 'serper', query, httpStatus: lastStatus,
-    searchError: lastError || 'Serper request failed', retryCount, rateLimitHits
-  }];
 }
 
 async function tavilySearch(query) {
@@ -531,13 +492,6 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       };
     });
 
-    const serper429Count = resultSets.reduce((sum, set) => sum + Math.max(0, ...(set || []).map(r => Number(r?.rateLimitHits || 0))), 0);
-    const retriedSearches = resultSets.filter(set => (set || []).some(r => Number(r?.retryCount || 0) > 0)).length;
-    const failedSearches = resultSets.filter(set => (set || []).some(r => r?.searchError)).length;
-    const unrecovered429Queries = queriesWithResults.filter(q => String(q.serperHttpStatus) === '429').length;
-    const serperRateLimited = unrecovered429Queries === queries.length && queries.length > 0;
-    const searchIncomplete = failedSearches > 0;
-
     diagnostics.push({
       companyName: account.name,
       targetedQueriesRun: queries.length,
@@ -554,12 +508,7 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       })),
       liveSignalCandidateFound: liveCandidateCount > 0,
       highIntentCandidateFound: highIntentCandidateCount > 0,
-      fallbackEligibleAfterSearch: highIntentCandidateCount === 0 && !serperRateLimited,
-      serperRateLimited,
-      searchIncomplete,
-      serper429Count,
-      retriedSearches,
-      failedSearches
+      fallbackEligibleAfterSearch: highIntentCandidateCount === 0
     });
 
     if (mode === 'prospect-intelligence') {
@@ -578,12 +527,7 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
         })),
         liveSignalCandidateFound: liveCandidateCount > 0,
         highIntentCandidateFound: highIntentCandidateCount > 0,
-        fallbackEligibleAfterSearch: highIntentCandidateCount === 0 && !serperRateLimited,
-        serperRateLimited,
-        searchIncomplete,
-        serper429Count,
-        retriedSearches,
-        failedSearches
+        fallbackEligibleAfterSearch: highIntentCandidateCount === 0
       });
     }
 
@@ -665,10 +609,13 @@ Recommended Buying Team rules:
 
 Potential Contacts rules:
 - Include potential_contacts only when a public source or uploaded contact supports the person and role.
+- If a user supplied a contact name, attempt to verify that person first and prefer them when the evidence supports their company and role.
 - Return at most 2 contacts.
-- Never invent names, placeholder people, or generic departments as contacts.
+- Never invent names, titles, email addresses, phone numbers, LinkedIn URLs, or contact pages.
+- For each verified public contact, return only public details actually present in the supplied research: linkedin, email, direct_phone, company_phone, contact_page, confidence, and sources_used.
+- Research confidence describes verification quality, not buying intent. Use High only when name, title, and company are verified; Medium when name/company are verified but title is inferred or incomplete; Low for department-only recommendations.
 
-Return JSON only with shape: {"signals":[{"company_name":"","accountName":"","signal_type":"","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}.
+Return JSON only with shape: {"signals":[{"company_name":"","accountName":"","signal_type":"","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}.
 
 Confidence must be 0-100. Return nothing only for clear duplicates, spam, unverifiable items, or signals with no meaningful sales relevance.`;
   const body = {
@@ -841,13 +788,32 @@ function normalizePotentialContacts(value, max = 2) {
   return items.map(c => {
     if (typeof c === 'string') {
       const parts = c.split(/\s+[-–—]\s+/);
-      return { name: clean(parts[0]), title: clean(parts.slice(1).join(' — ')), reason: '' };
+      return { name: clean(parts[0]), title: clean(parts.slice(1).join(' — ')), reason: '', confidence: 'Low', sourcesUsed: [] };
     }
+    const sourcesUsed = safeArray(c?.sourcesUsed || c?.sources_used || c?.sources, 4).map(src => ({
+      name: clean(src?.name || src?.sourceName || src?.title || sourceDomain(src?.url || src?.sourceUrl || '')),
+      url: clean(src?.url || src?.sourceUrl || '')
+    })).filter(src => src.name || src.url);
+    const linkedin = clean(c?.linkedin || c?.linkedIn || c?.linkedinUrl || c?.linkedin_profile || '');
+    const email = clean(c?.email || c?.companyEmail || c?.publicEmail || c?.directEmail || '');
+    const directPhone = clean(c?.directPhone || c?.direct_phone || c?.phone || '');
+    const companyPhone = clean(c?.companyPhone || c?.company_phone || '');
+    const contactPage = clean(c?.contactPage || c?.contact_page || '');
+    const sourceUrl = clean(c?.sourceUrl || c?.url || linkedin || contactPage || '');
+    if (sourceUrl && !sourcesUsed.some(src => src.url === sourceUrl)) {
+      sourcesUsed.unshift({ name: clean(c?.sourceName || sourceDomain(sourceUrl) || 'Public source'), url: sourceUrl });
+    }
+    let confidence = clean(c?.confidence || c?.researchConfidence || c?.research_confidence || '');
+    if (!/^(high|medium|low)$/i.test(confidence)) {
+      confidence = clean(c?.name) && clean(c?.title) && (linkedin || email || sourceUrl) ? 'High'
+        : clean(c?.name) && (clean(c?.title) || linkedin || sourceUrl) ? 'Medium' : 'Low';
+    }
+    confidence = confidence.charAt(0).toUpperCase() + confidence.slice(1).toLowerCase();
     return {
       name: clean(c?.name || c?.fullName || c?.person || ''),
       title: clean(c?.title || c?.role || c?.jobTitle || ''),
       reason: clean(c?.reason || c?.whyRelevant || c?.relevance || c?.why || ''),
-      sourceUrl: clean(c?.sourceUrl || c?.url || '')
+      sourceUrl, linkedin, email, directPhone, companyPhone, contactPage, confidence, sourcesUsed
     };
   }).filter(c => c.name && !/unknown|n\/a|not available|team|department/i.test(c.name)).slice(0, max);
 }
@@ -910,8 +876,10 @@ function selectUploadedContactsForTeam(contacts = [], team = [], max = 2) {
       title: c.title,
       email: c.email,
       linkedin: c.linkedin,
-      reason: c.reason || 'Uploaded contact aligns with the recommended buying team for this opportunity.',
-      source: 'Uploaded CSV'
+      reason: c.reason || 'This uploaded contact aligns with the recommended buying team for this opportunity.',
+      source: 'Uploaded CSV',
+      sourcesUsed: [{ name: 'Uploaded CSV', url: '' }],
+      confidence: c.title && (c.email || c.linkedin) ? 'High' : (c.title || c.email || c.linkedin ? 'Medium' : 'Low')
     }));
 }
 
@@ -941,6 +909,32 @@ function buildWhyTheseContacts(contacts = [], team = [], type = '', context = ''
   return 'These contacts appear to be the most relevant public starting points for this opportunity.';
 }
 
+
+function buildSuggestedContact(potentialContacts = [], recommendedBuyingTeam = [], raw = {}) {
+  const verified = potentialContacts[0];
+  if (verified) {
+    return {
+      name: verified.name,
+      title: verified.title || recommendedBuyingTeam[0] || '',
+      whyThisContact: clean(verified.reason || raw.whyThisContact || raw.why_this_contact || 'This person appears aligned with the buying team most likely to own the detected initiative.'),
+      linkedin: verified.linkedin || '',
+      email: verified.email || '',
+      directPhone: verified.directPhone || '',
+      companyPhone: verified.companyPhone || '',
+      contactPage: verified.contactPage || '',
+      researchConfidence: verified.confidence || 'Medium',
+      sourcesUsed: verified.sourcesUsed || []
+    };
+  }
+  return {
+    name: '',
+    title: recommendedBuyingTeam[0] || 'Relevant department lead',
+    whyThisContact: clean(raw.whyThisContact || raw.why_this_contact || 'Start with the department most likely to own the detected initiative.'),
+    linkedin: '', email: '', directPhone: '', companyPhone: '', contactPage: '',
+    researchConfidence: 'Low',
+    sourcesUsed: []
+  };
+}
 
 function hasNegativeOrIrrelevantContext(text = '') {
   const t = clean(text).toLowerCase();
@@ -1050,6 +1044,8 @@ function makePredictableTimingSignal(account = {}) {
     buyingTeam: recommendedBuyingTeam,
     potentialContacts,
     potential_contacts: potentialContacts,
+    suggestedContactDetails,
+    suggested_contact_details: suggestedContactDetails,
     uploadedContacts: normalizeUploadedContacts(account.contacts || []),
     whyTheseContacts: potentialContacts.length ? buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, 'Predictable Timing', theme.context) : '',
     suggestedContact: potentialContacts[0]?.name || recommendedBuyingTeam[0],
@@ -1084,19 +1080,8 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
 }
 
 function makeSignal(raw = {}, account = {}, options = {}) {
-  const rejectionLog = Array.isArray(options.rejectionLog) ? options.rejectionLog : null;
-  const reject = (reason, details = {}) => {
-    if (rejectionLog) rejectionLog.push({
-      accountName: clean(raw.accountName || raw.account || raw.company || account.name || ''),
-      rawTitle: clean(raw.concrete_trigger || raw.concreteTrigger || raw.signalTitle || raw.title || raw.whatChanged || ''),
-      sourceUrl: clean(raw.sourceUrl || raw.source_url || raw.url || raw.sources?.[0]?.url || ''),
-      reason,
-      ...details
-    });
-    return null;
-  };
   const accountName = clean(raw.accountName || raw.account || raw.company || '');
-  if (!accountName) return reject('missing_account_name');
+  if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
   const type = normalizeSignalType(raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
@@ -1105,11 +1090,11 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 240);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
-  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return reject('prospect_quality_kill_rule', { signalType: type });
+  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
   const confidencePct = abd.score;
-  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return reject('low_confidence_and_not_meaningful', { signalType: type, confidenceScore: confidencePct }); // discard only junk, duplicates, or truly low-confidence signals.
+  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
   const why = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || salesReadyWhy(concreteTrigger, businessContext, buyingMoment, type), 300);
   const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
@@ -1119,6 +1104,7 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const uploadedContacts = selectUploadedContactsForTeam(account.contacts || raw.uploadedContacts || [], recommendedBuyingTeam, 2);
   const publicContacts = normalizePotentialContacts(raw.potential_contacts || raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
   const potentialContacts = mergePotentialContacts(uploadedContacts, publicContacts, 2);
+  const suggestedContactDetails = buildSuggestedContact(potentialContacts, recommendedBuyingTeam, raw);
   const whyTheseContacts = compact(raw.whyTheseContacts || raw.contactRationale || buildWhyTheseContacts(potentialContacts, recommendedBuyingTeam, type, businessContext), 220);
   const sources = Array.isArray(raw.sources) ? raw.sources.map(s => ({ name: clean(s.name || s.sourceName || sourceDomain(s.url || '')), url: clean(s.url || s.sourceUrl || '') })).filter(s => s.url || s.name).slice(0, 4) : [];
   if (sourceUrl && !sources.some(s => s.url === sourceUrl)) sources.unshift({ name: clean(raw.sourceName || sourceDomain(sourceUrl) || 'Public source'), url: sourceUrl });
@@ -1174,6 +1160,8 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     buyingTeam: recommendedBuyingTeam,
     potentialContacts,
     potential_contacts: potentialContacts,
+    suggestedContactDetails,
+    suggested_contact_details: suggestedContactDetails,
     uploadedContacts: normalizeUploadedContacts(account.contacts || []),
     whyTheseContacts,
     why_these_contacts: whyTheseContacts,
@@ -1201,42 +1189,7 @@ function isFallbackSignal(sig = {}) {
 }
 
 function signalDateText(sig = {}) {
-  // Deliberately exclude dateFound/detectedAt: those are discovery timestamps, not event dates.
-  return clean(sig.publishedDate || sig.publicationDate || sig.eventDate || sig.event_date || sig.date || '');
-}
-
-function relativeAgeDays(dateText = '') {
-  const text = clean(dateText).toLowerCase();
-  if (!text) return null;
-  if (/today|just announced|now|currently|upcoming/.test(text)) return 0;
-  if (/yesterday/.test(text)) return 1;
-  let m = text.match(/(\d+)\s*(day|week|month|year)s?\s+ago/);
-  if (m) {
-    const n = Number(m[1]);
-    return m[2] === 'day' ? n : m[2] === 'week' ? n * 7 : m[2] === 'month' ? n * 30 : n * 365;
-  }
-  if (/less than (?:two|2) weeks/.test(text)) return 13;
-  if (/this week/.test(text)) return 3;
-  if (/this month/.test(text)) return 15;
-  if (/recently/.test(text)) return 30;
-  const parsed = parseSignalDate(dateText);
-  if (!parsed) return null;
-  return Math.max(0, Math.round((Date.now() - parsed.getTime()) / 86400000));
-}
-
-function isEventSignal(sig = {}) {
-  const text = `${sig.signalType || sig.signal_type || sig.type || ''} ${sig.buyingMoment || sig.buying_moment || ''} ${sig.concreteTrigger || sig.concrete_trigger || ''} ${sig.title || ''}`.toLowerCase();
-  return /trade show|conference|expo|summit|open house|event|sponsor|sponsorship|ribbon cutting|grand opening/.test(text);
-}
-
-function staleSignalReason(sig = {}) {
-  if (isFallbackSignal(sig)) return '';
-  const dateText = signalDateText(sig);
-  const ageDays = relativeAgeDays(dateText);
-  if (isEventSignal(sig) && ageDays !== null && ageDays > 540) {
-    return `stale_event_over_18_months:${ageDays}_days`;
-  }
-  return '';
+  return clean(sig.publishedDate || sig.publicationDate || sig.eventDate || sig.event_date || sig.date || sig.dateFound || '');
 }
 
 function opportunityTypeBoost(sig = {}) {
@@ -1264,21 +1217,13 @@ function bestSignalScore(sig = {}) {
   if (!sig) return -999999;
   if (isFallbackSignal(sig)) return -10000 + Number(sig.confidenceScore || 0);
   const confidence = Number(sig.confidenceScore || sig.why_now_score || 0);
-  const dateText = signalDateText(sig);
-  const fresh = freshnessScore(dateText);
-  const ageDays = relativeAgeDays(dateText);
+  const fresh = freshnessScore(signalDateText(sig));
   const abd = sig.abdScores || {};
   const actionability = Number(sig.actionability_score || abd.actionability || 0);
   const budget = Number(sig.budget_score || abd.budgetLikelihood || 0);
   const deadline = Number(sig.deadline_score || abd.deadlineUrgency || 0);
-  const abdValues = [actionability, budget, deadline].filter(Number.isFinite).filter(v => v > 0);
-  const abdBlend = abdValues.reduce((a,b)=>a+b,0) / Math.max(1, abdValues.length);
-  let agePenalty = 0;
-  if (ageDays === null) agePenalty = isEventSignal(sig) ? 22 : 10;
-  else if (ageDays > 1095) agePenalty = 50;
-  else if (ageDays > 730) agePenalty = 35;
-  else if (ageDays > 365) agePenalty = 18;
-  return confidence + (fresh * 0.55) + (abdBlend * 0.15) + opportunityTypeBoost(sig) + specificityBoost(sig) - agePenalty;
+  const abdBlend = [actionability, budget, deadline].filter(Boolean).reduce((a,b)=>a+b,0) / Math.max(1, [actionability, budget, deadline].filter(Boolean).length);
+  return confidence + (fresh * 0.35) + (abdBlend * 0.15) + opportunityTypeBoost(sig) + specificityBoost(sig);
 }
 
 function compareBestSignals(a = {}, b = {}) {
@@ -1316,85 +1261,6 @@ function dedupeSignals(signals = []) {
   return [...map.values()].sort(compareBestSignals);
 }
 
-
-
-function buildSynthesisPrompt(promptAccounts, promptCandidates) {
-  return `You are House Accounts' Prospect Buying Moment Extraction Engine.
-
-Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
-
-"Why should I contact this company today?"
-
-Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
-
-A buying moment is a concrete event that may create promotional products demand, such as:
-- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
-- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
-- product launch, rebrand, merger, acquisition, partnership, contract win
-- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
-- community event, sponsorship, corporate philanthropy
-- safety milestone, company anniversary, major award actively promoted by the company
-
-Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
-Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
-
-RECENCY IS MANDATORY:
-- Today is ${new Date().toISOString().slice(0, 10)}.
-- Prefer the newest concrete and actionable buying moment, not the highest keyword-match score.
-- Do not return a completed trade show, conference, open house, ribbon cutting, sponsorship, or other event if it occurred more than 18 months ago.
-- Treat an old event page as historical evidence, not a current opportunity.
-- Prefer recent launches, current hiring, active contracts, current-year events, and ongoing expansions over older examples.
-- Include event_date or publicationDate whenever the supplied evidence contains a date. Never describe a past event as upcoming.
-- If all candidate events are clearly stale and no other current buying moment exists, return zero signals for that account.
-
-Reject:
-- generic company descriptions, mission/history/culture copy
-- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
-- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
-- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
-- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
-
-Preserve concrete triggers. Do not generalize specific events. Examples:
-- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
-- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
-- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
-
-For each accepted signal:
-1. concrete_trigger: specific event phrased as a short label.
-2. buying_moment: the category of buying moment.
-3. business_context: what happened and why it likely happened.
-4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
-5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
-6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
-7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
-8. ABD scores: actionability_score, budget_score, deadline_score.
-
-Recommended Buying Team examples:
-- Hiring expansion → HR / People, Talent Acquisition
-- Product launch → Marketing, Product Marketing
-- Community event → Marketing, Community Relations
-- Manufacturing expansion → Operations, HR / People
-- Trade show → Marketing, Events, Sales
-
-Potential Contacts rules:
-- Use uploaded knownContacts if they align with the recommended buying team.
-- Use public contacts only when the source supports the person and title.
-- Never invent names or use generic departments as contacts.
-- Omit potential_contacts if no reliable person is found.
-
-Score concrete, high-intent buying moments higher:
-Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
-Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
-
-Return strict JSON only with shape:
-{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":""}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
-
-Accounts:
-${JSON.stringify(accountPromptContext(promptAccounts), null, 2)}
-
-Candidate snippets and clean page content:
-${JSON.stringify(promptCandidates.slice(0, 40).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -1488,55 +1354,77 @@ export default async function handler(req, res) {
     }
 
     let parsed = null;
-    let extractionDiagnostics = [];
     if (candidates.length) {
-      // Extract per account so one multi-company LLM response cannot omit companies
-      // that already have strong ranked candidates.
-      const accountsWithCandidates = safeAccounts.filter(account =>
-        candidates.some(candidate => candidate.accountName === account.name)
-      );
-      const extractionResults = await mapLimit(accountsWithCandidates, 3, async account => {
-        const accountCandidates = candidates
-          .filter(candidate => candidate.accountName === account.name)
-          .sort((a, b) => {
-            const aRank = Number(a.score || 0) + (freshnessScore(a.date || '') * 0.45);
-            const bRank = Number(b.score || 0) + (freshnessScore(b.date || '') * 0.45);
-            return bRank - aRank;
-          })
-          .slice(0, 20);
-        const prompt = buildSynthesisPrompt([account], accountCandidates);
-        try {
-          const accountRawText = await callOpenAIJson({ apiKey, model, prompt });
-          const accountParsed = parseJsonLoose(accountRawText);
-          const accountSignals = Array.isArray(accountParsed?.signals) ? accountParsed.signals : [];
-          return {
-            accountName: account.name,
-            rawText: accountRawText,
-            signals: accountSignals,
-            candidateCount: accountCandidates.length,
-            error: ''
-          };
-        } catch (error) {
-          return {
-            accountName: account.name,
-            rawText: '',
-            signals: [],
-            candidateCount: accountCandidates.length,
-            error: error?.message || 'Per-account extraction failed'
-          };
-        }
-      });
-      const extractedSignals = extractionResults.flatMap(result =>
-        result.signals.map(signal => ({ ...signal, accountName: result.accountName }))
-      );
-      parsed = { signals: extractedSignals };
-      rawText = extractionResults.map(result => result.rawText).filter(Boolean).join('\n');
-      extractionDiagnostics = extractionResults.map(result => ({
-        companyName: result.accountName,
-        candidatesPassedToLLM: result.candidateCount,
-        rawSignalsReturned: result.signals.length,
-        extractionError: result.error
-      }));
+      const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
+
+Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
+
+"Why should I contact this company today?"
+
+Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
+
+A buying moment is a concrete event that may create promotional products demand, such as:
+- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
+- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
+- product launch, rebrand, merger, acquisition, partnership, contract win
+- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
+- community event, sponsorship, corporate philanthropy
+- safety milestone, company anniversary, major award actively promoted by the company
+
+Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
+Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
+
+Reject:
+- generic company descriptions, mission/history/culture copy
+- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
+- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
+- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
+- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
+
+Preserve concrete triggers. Do not generalize specific events. Examples:
+- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
+- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
+- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
+
+For each accepted signal:
+1. concrete_trigger: specific event phrased as a short label.
+2. buying_moment: the category of buying moment.
+3. business_context: what happened and why it likely happened.
+4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
+5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
+6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
+7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
+8. ABD scores: actionability_score, budget_score, deadline_score.
+
+Recommended Buying Team examples:
+- Hiring expansion → HR / People, Talent Acquisition
+- Product launch → Marketing, Product Marketing
+- Community event → Marketing, Community Relations
+- Manufacturing expansion → Operations, HR / People
+- Trade show → Marketing, Events, Sales
+
+Potential Contacts rules:
+- Use uploaded knownContacts if they align with the recommended buying team.
+- Use public contacts only when the source supports the person and title.
+- If a user supplied a contact name, verify and prefer that person when supported.
+- Never invent names, titles, emails, phones, LinkedIn URLs, or contact pages.
+- Include public contact fields only when they appear in the supplied evidence.
+- Omit potential_contacts if no reliable person is found.
+
+Score concrete, high-intent buying moments higher:
+Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
+Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
+
+Return strict JSON only with shape:
+{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
+
+Accounts:
+${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
+
+Candidate snippets and clean page content:
+${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
+      rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
+      parsed = parseJsonLoose(rawText);
     } else {
       // Fallback: ask OpenAI's web search to do the batch research in the same style as Google AI.
       rawText = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
@@ -1568,51 +1456,13 @@ export default async function handler(req, res) {
       return found ? { ...s, accountName: found.name } : s;
     });
 
-    const signalRejectionDiagnostics = [];
     const madeSignalsRaw = fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
-      const signal = makeSignal(s, account, {
-        enableProspectQuality: mode === 'prospect-intelligence',
-        rejectionLog: signalRejectionDiagnostics
-      });
-      if (!signal) return null;
-      const staleReason = mode === 'prospect-intelligence' ? staleSignalReason(signal) : '';
-      if (staleReason) {
-        signalRejectionDiagnostics.push({
-          accountName: signal.accountName,
-          rawTitle: signal.concreteTrigger || signal.title || '',
-          sourceUrl: signal.sourceUrl || '',
-          signalType: signal.signalType || '',
-          signalDate: signalDateText(signal),
-          reason: staleReason
-        });
-        return null;
-      }
-      return signal;
+      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
-    const validMappedSignals = mappedSignals.filter(s => {
-      const valid = validAccountNames.has(String(s.accountName || '').toLowerCase());
-      if (!valid) signalRejectionDiagnostics.push({
-        accountName: s.accountName || '',
-        rawTitle: s.concreteTrigger || s.title || '',
-        sourceUrl: s.sourceUrl || '',
-        reason: 'account_not_in_request'
-      });
-      return valid;
-    });
+    const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
     const signals = dedupeSignals(validMappedSignals).slice(0, 80);
-    const dedupedKeys = new Set(signals.map(s => `${s.accountName}|${s.sourceUrl || ''}|${s.concreteTrigger || s.title || ''}`));
-    for (const s of validMappedSignals) {
-      const key = `${s.accountName}|${s.sourceUrl || ''}|${s.concreteTrigger || s.title || ''}`;
-      if (!dedupedKeys.has(key)) signalRejectionDiagnostics.push({
-        accountName: s.accountName,
-        rawTitle: s.concreteTrigger || s.title || '',
-        sourceUrl: s.sourceUrl || '',
-        signalDate: signalDateText(s),
-        reason: 'duplicate_or_superseded_during_dedupe'
-      });
-    }
     if (mode === 'prospect-intelligence') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
@@ -1650,37 +1500,12 @@ export default async function handler(req, res) {
     }
     Object.keys(byAccount).forEach(name => {
       const ranked = byAccount[name].sort(compareBestSignals);
-      const keepCount = mode === 'prospect-intelligence' ? 1 : 2;
-      const selected = ranked.slice(0, keepCount);
-      for (const rejected of ranked.slice(keepCount)) {
-        signalRejectionDiagnostics.push({
-          accountName: rejected.accountName,
-          rawTitle: rejected.concreteTrigger || rejected.title || '',
-          sourceUrl: rejected.sourceUrl || '',
-          signalDate: signalDateText(rejected),
-          rankingScore: Math.round(bestSignalScore(rejected)),
-          selectedRankingScore: selected[0] ? Math.round(bestSignalScore(selected[0])) : null,
-          reason: 'lower_ranked_than_selected_signal'
-        });
-      }
-      byAccount[name] = selected;
+      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 1) : ranked.slice(0, 2);
     });
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
         if (!byAccount[account.name] || !byAccount[account.name].length) {
           const accountDiag = searchDiagnostics.find(d => d.companyName === account.name) || {};
-          if (accountDiag.serperRateLimited) {
-            prospectDebugLog('Search incomplete due to Serper rate limiting', {
-              company: account.name,
-              fallbackUsed: false,
-              targetedQueriesRun: accountDiag.targetedQueriesRun || 0,
-              serper429Count: accountDiag.serper429Count || 0,
-              retriedSearches: accountDiag.retriedSearches || 0,
-              failedSearches: accountDiag.failedSearches || 0
-            });
-            byAccount[account.name] = [];
-            continue;
-          }
           const fallbackReason = !hasSearchProvider
             ? 'SERPER_API_KEY not configured; no live signal returned by OpenAI web search'
             : candidates.filter(c => c.accountName === account.name).length === 0
@@ -1714,15 +1539,6 @@ export default async function handler(req, res) {
     }
     const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
-    const serper429Count = searchDiagnostics.reduce((sum, d) => sum + Number(d.serper429Count || 0), 0);
-    const retriedSearches = searchDiagnostics.reduce((sum, d) => sum + Number(d.retriedSearches || 0), 0);
-    const failedSearches = searchDiagnostics.reduce((sum, d) => sum + Number(d.failedSearches || 0), 0);
-    const accountsRateLimited = searchDiagnostics.filter(d => d.serperRateLimited).map(d => d.companyName);
-    const accountsWithCandidatesButFallback = safeAccounts.filter(account => {
-      const diag = searchDiagnostics.find(d => d.companyName === account.name) || {};
-      const selected = byAccount[account.name] || [];
-      return Number(diag.rankedCandidates || 0) > 0 && selected.some(s => s.isFallbackOpportunity);
-    }).map(account => account.name);
 
     return res.status(200).json({
       signals: finalSignals,
@@ -1751,16 +1567,6 @@ export default async function handler(req, res) {
         sourceCoverage,
         candidateSamples,
         searchDiagnostics,
-        extractionDiagnostics,
-        signalRejectionDiagnostics,
-        staleEventMaxAgeDays: 540,
-        serper429Count,
-        retriedSearches,
-        failedSearches,
-        accountsRateLimited,
-        accountsWithCandidatesButFallback,
-        serperConcurrency: SERPER_CONCURRENCY,
-        serperMaxRetries: SERPER_MAX_RETRIES,
         outputPreview: String(rawText || '').slice(0, 500)
       }
     });
