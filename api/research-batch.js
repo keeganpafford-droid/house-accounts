@@ -167,6 +167,8 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
       `${quoted} AND (hiring OR careers OR jobs OR "now hiring")`,
       `${quoted} AND ("employee experience" OR "talent acquisition" OR "people operations" OR HR OR onboarding)`,
       `${quoted} AND ("event coordinator" OR "field marketing" OR "trade show manager" OR "marketing manager")`,
+      `${quoted} AND (appointed OR promoted OR "named president" OR "named CEO" OR "named vice president" OR "joins as" OR "new executive" OR "leadership change")`,
+      context.contactName ? `"${context.contactName}" "${company}" (appointed OR promoted OR promotion OR "new role" OR "joins" OR "named" OR "new company")` : '',
 
       // D. Community / Sponsorship / CSR
       `${quoted} AND (sponsor OR "community event" OR charity OR volunteer OR "golf tournament" OR "5K")`,
@@ -200,7 +202,8 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
     `${quoted}${loc} (launch OR unveiled OR rollout OR "new product" OR "new division" OR rebrand OR "new service")`,
     `${quoted}${loc} (expansion OR "new office" OR "new location" OR facility OR headquarters OR warehouse OR manufacturing OR "new building")`,
     `${quoted}${loc} (community OR charity OR fundraiser OR sponsorship OR sustainability OR volunteer OR donation OR nonprofit)`,
-    `${quoted}${loc} (CEO OR president OR "vice president" OR appointed OR named OR promoted OR leadership OR joins)`,
+    `${quoted}${loc} (CEO OR president OR "vice president" OR appointed OR named OR promoted OR leadership OR joins OR "new executive")`,
+    context.contactName ? `"${context.contactName}" "${company}" (appointed OR promoted OR promotion OR "new role" OR joins OR named OR "new company")` : '',
     `site:${domain} (${quoted} OR news OR press OR careers OR events OR awards OR community OR leadership)`,
     `${quoted}${loc} ("trade show" OR "annual meeting" OR "open house" OR "customer event" OR "sales kickoff")`,
     `${quoted}${loc} ("safety" OR "employee engagement" OR "recognition program" OR "recruiting campaign")`
@@ -634,6 +637,12 @@ Openers must reference the concrete trigger and suggest a specific promotional p
 Recommended Buying Team rules:
 - Always include recommended_buying_team with 1 to 3 departments inferred from the signal and context.
 - Examples: HR / People, Talent Acquisition, Marketing, Events, Operations, Community Relations, Product Marketing, Sales.
+
+Leadership and contact-change rules:
+- Treat executive appointments, promotions, known-contact role changes, and known-contact company changes as Leadership Change only when the person, company, and new role are supported by a credible public source.
+- Preserve the person's name, exact new title, company, and announcement date when available.
+- A leadership change is not automatically high priority. Rank it against facility expansion, acquisitions, launches, events, hiring initiatives, seasonal buying windows, and other opportunities using the same ABD / Why Now logic.
+- Penalize stale, weakly sourced, or role-only leadership mentions. Do not infer a promotion or company change from an undated directory listing alone.
 
 Potential Contacts rules:
 - Include potential_contacts only when a public source or uploaded contact supports the person and role.
@@ -1100,6 +1109,21 @@ function hasMeaningfulSignal(raw = {}, type = '', summary = '', businessContext 
   return /hiring|jobs|careers|recruit|open position|now hiring|expansion|facility|new office|new location|warehouse|plant|funding|investment|acquisition|merger|contract|customer win|partnership|event|conference|expo|trade show|summit|award|recognition|milestone|anniversary|leadership|appoint|promot|launch|new product|rebrand|community|charity|sponsor|sustainability|safety|employee engagement/.test(text);
 }
 
+function leadershipVerificationAdjustment(raw = {}, type = '', summary = '', businessContext = '', sourceUrl = '') {
+  if (!/leadership|appoint|promot|named|joins as|new executive|new ceo|new president|new vice president/i.test(`${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${summary} ${businessContext}`)) return 0;
+  const text = clean(`${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext}`);
+  const hasNamedPerson = /[A-Z][a-z]+(?:\s+[A-Z][a-z.'-]+){1,3}/.test(text) || !!clean(raw.personName || raw.contactName || raw.executiveName || '');
+  const hasRelevantTitle = /(ceo|chief|president|vice president|vp|director|head of|general manager|executive)/i.test(text);
+  const hasDate = !!clean(raw.publicationDate || raw.publishedDate || raw.date || raw.event_date || '');
+  const hasCredibleSource = !!sourceUrl || (Array.isArray(raw.sources) && raw.sources.some(s => clean(s?.url || s?.sourceUrl || '')));
+  let adjustment = 0;
+  if (!hasNamedPerson) adjustment -= 10;
+  if (!hasRelevantTitle) adjustment -= 8;
+  if (!hasDate) adjustment -= 5;
+  if (!hasCredibleSource) adjustment -= 12;
+  return adjustment;
+}
+
 function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summary = '', businessContext = '') {
   let score = Number(confidencePct || 0);
   if (hasUnclearBusinessContext(businessContext)) score = Math.max(55, score - 8);
@@ -1121,7 +1145,8 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
-  const confidencePct = abd.score;
+  const leadershipAdjustment = leadershipVerificationAdjustment(raw, type, summary, businessContext, sourceUrl);
+  const confidencePct = Math.max(0, Math.min(100, abd.score + leadershipAdjustment));
   if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
   const why = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || salesReadyWhy(concreteTrigger, businessContext, buyingMoment, type), 300);
   const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
@@ -1439,9 +1464,15 @@ Potential Contacts rules:
 - Include public contact fields only when they appear in the supplied evidence.
 - Omit potential_contacts if no reliable person is found.
 
+Leadership and contact-change rules:
+- Accept executive appointments, promotions, known-contact role changes, and known-contact company changes only when the person, company, and new role are supported by a credible public source.
+- Preserve the person's name, exact new title, company, and announcement date when available.
+- Do not treat leadership changes as automatically high priority. They must compete with every other opportunity using the existing ABD / Why Now logic.
+- Penalize stale, weakly sourced, or role-only mentions, and reject undated directory listings that do not establish a recent change.
+
 Score concrete, high-intent buying moments higher:
-Highest value: facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, HR/marketing executive change, contract win/partnership, major award actively promoted, safety milestone, company anniversary.
-Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content.
+Highest value signals generally include facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, contract win/partnership, major award actively promoted, safety milestone, and company anniversary. A verified recent HR or Marketing executive change may also rank strongly when it creates a clear, timely promotional-products conversation.
+Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content, or stale leadership listings.
 
 Return strict JSON only with shape:
 {"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}

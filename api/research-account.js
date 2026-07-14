@@ -932,6 +932,12 @@ Use the candidate public sources below. First identify what changed. Then transl
 
 Consider signals such as hiring, expansion, new facilities, trade shows, conferences, awards, product launches, partnerships, acquisitions, funding, leadership changes, community initiatives, safety initiatives, sustainability, employee engagement, rebrands, major customer wins, and government contracts.
 
+Leadership and contact-change rules:
+- Accept executive appointments, promotions, known-contact role changes, and known-contact company changes only when a credible public source supports the person, company, and new role.
+- Preserve the person's name, exact new title, company, and announcement date when available.
+- Do not automatically prioritize a leadership change because the title is senior. Rank it using the same recency, relevance, source quality, timing, relationship, and promotional-product usefulness applied to every other signal.
+- Reject stale leadership directories or undated team pages that do not establish a recent change.
+
 Reject generic About pages, Contact pages, homepages, SEO snippets, navigation text, stale news, and anything that does not create a natural reason to reach out.
 
 Important rules:
@@ -1138,7 +1144,8 @@ export default async function handler(req, res) {
       { bucket: 'events', q: `"${accountName}" ${location} event conference expo trade show open house ${context}` },
       { bucket: 'awards', q: `"${accountName}" ${location} award recognized milestone anniversary ${context}` },
       { bucket: 'community/csr', q: `"${accountName}" ${location} community charity sponsorship fundraiser sustainability ${context}` },
-      { bucket: 'leadership', q: `"${accountName}" ${location} leadership appoints names promotes new director ${context}` },
+      { bucket: 'leadership', q: `"${accountName}" ${location} leadership appoints names promotes new director new executive joins ${context}` },
+      ...(clean(contactName || '') ? [{ bucket: 'contact-change', q: `"${clean(contactName)}" "${accountName}" promoted promotion appointed named "new role" joins "new company"` }] : []),
       { bucket: 'launch/partnership', q: `"${accountName}" ${location} product launch new service partnership acquisition ${context}` },
       { bucket: 'safety/employee', q: `"${accountName}" ${location} safety sustainability employee initiative ${context}` }
     ];
