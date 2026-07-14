@@ -14,7 +14,7 @@
   const appLinks=[
     {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
     {label:'Prospects',href:'/prospects/',group:'workflow',match:['/prospects','/prospects/']},
-    {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
+    {label:'Import Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
     {label:'Customer Success',href:'/success-stories.html',group:'resource',match:['/success-stories','/success-stories.html']},
     {label:'Coming Soon',href:'/coming-soon',group:'resource',match:['/coming-soon','/coming-soon.html']},
     {label:'FAQ',href:'/faq.html',group:'resource',match:['/faq','/faq.html']},
