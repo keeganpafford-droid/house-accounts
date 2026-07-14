@@ -52,7 +52,7 @@ async function firecrawlScrape(url) {
   } catch { return ''; }
 }
 
-async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 4, totalLimit = 80) {
+async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 6, totalLimit = 100) {
   if (!process.env.FIRECRAWL_API_KEY) return { candidates, scrapedCount: 0 };
   const byAccount = new Map();
   const selectedKeys = new Set();
@@ -302,7 +302,7 @@ async function serperSearch(query) {
       provider: 'serper',
       query,
       httpStatus
-    })).filter(r => r.url || r.title).slice(0, 8);
+    })).filter(r => r.url || r.title).slice(0, 10);
   } catch (error) {
     return [{
       title: '',
@@ -395,13 +395,41 @@ function scoreCandidate(r, accountName) {
   return Math.max(0, score);
 }
 
+function normalizedCandidateUrl(value = '') {
+  try {
+    const u = new URL(value);
+    u.hash = '';
+    // Remove common tracking parameters so the same article is not treated as new evidence.
+    ['utm_source','utm_medium','utm_campaign','utm_term','utm_content','gclid','fbclid'].forEach(k => u.searchParams.delete(k));
+    return `${u.hostname.replace(/^www\./, '').toLowerCase()}${u.pathname.replace(/\/$/, '')}${u.search}`;
+  } catch {
+    return String(value || '').split('#')[0].toLowerCase();
+  }
+}
+
+function normalizedCandidateTitle(value = '') {
+  return clean(value)
+    .toLowerCase()
+    .replace(/\b(press release|news release|breaking news|updated)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(w => w.length > 2)
+    .slice(0, 14)
+    .join(' ');
+}
+
 function dedupeCandidates(candidates = []) {
-  const seen = new Set();
+  const seenUrls = new Set();
+  const seenStories = new Set();
   const out = [];
   for (const c of candidates) {
-    const key = (c.url || `${c.accountName}|${c.title}`).split('#')[0].toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const urlKey = normalizedCandidateUrl(c.url || '');
+    const titleKey = normalizedCandidateTitle(c.title || c.snippet || '');
+    const storyKey = `${String(c.accountName || '').toLowerCase()}|${titleKey}`;
+    if ((urlKey && seenUrls.has(urlKey)) || (titleKey && seenStories.has(storyKey))) continue;
+    if (urlKey) seenUrls.add(urlKey);
+    if (titleKey) seenStories.add(storyKey);
     out.push(c);
   }
   return out;
@@ -474,7 +502,7 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     const ranked = dedupeCandidates(scored
       .filter(r => r.score >= (mode === 'prospect-intelligence' ? 10 : 14))
       .sort((a,b) => b.score - a.score))
-      .slice(0, mode === 'prospect-intelligence' ? 20 : 12);
+      .slice(0, mode === 'prospect-intelligence' ? 30 : 12);
 
     const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
     const highIntentCandidateCount = ranked.filter(r => r.score >= 28).length;
@@ -1371,7 +1399,7 @@ A buying moment is a concrete event that may create promotional products demand,
 - community event, sponsorship, corporate philanthropy
 - safety milestone, company anniversary, major award actively promoted by the company
 
-Return the strongest 0, 1, or 2 buying moments per account. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
+Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
 Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
 
 Reject:
@@ -1500,7 +1528,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     }
     Object.keys(byAccount).forEach(name => {
       const ranked = byAccount[name].sort(compareBestSignals);
-      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 1) : ranked.slice(0, 2);
+      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 4) : ranked.slice(0, 2);
     });
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
