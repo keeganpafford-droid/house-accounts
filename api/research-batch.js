@@ -484,9 +484,9 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const diagnostics = [];
   const perAccount = await mapLimit(accounts, 4, async account => {
     const allQueries = queryTemplates(account.name, account, mode);
-    // Prospect mode intentionally runs a deeper intent-driven chain before fallback.
-    // Existing customer workflows retain the previous cap.
-    const queries = allQueries.slice(0, mode === 'prospect-intelligence' ? 18 : 12);
+    // Prospect mode remains deepest, while existing-customer research now receives
+    // enough coverage to find multiple distinct public buying moments per account.
+    const queries = allQueries.slice(0, mode === 'prospect-intelligence' ? 18 : 16);
     const resultSets = await Promise.all(queries.map(runSearch));
     const rawSearchResults = resultSets.flat();
     let raw = rawSearchResults.filter(r => r && (r.url || r.title));
@@ -500,9 +500,9 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     }));
 
     const ranked = dedupeCandidates(scored
-      .filter(r => r.score >= (mode === 'prospect-intelligence' ? 10 : 14))
+      .filter(r => r.score >= (mode === 'prospect-intelligence' ? 10 : 12))
       .sort((a,b) => b.score - a.score))
-      .slice(0, mode === 'prospect-intelligence' ? 30 : 12);
+      .slice(0, mode === 'prospect-intelligence' ? 30 : 24);
 
     const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
     const highIntentCandidateCount = ranked.filter(r => r.score >= 28).length;
@@ -1528,7 +1528,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     }
     Object.keys(byAccount).forEach(name => {
       const ranked = byAccount[name].sort(compareBestSignals);
-      byAccount[name] = mode === 'prospect-intelligence' ? ranked.slice(0, 4) : ranked.slice(0, 2);
+      byAccount[name] = ranked.slice(0, 4);
     });
     if (mode === 'prospect-intelligence') {
       for (const account of safeAccounts) {
