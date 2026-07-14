@@ -3192,6 +3192,20 @@ function structuredEvidenceRows(opp){
   return rows.slice(0,5);
 }
 
+function renderSuggestedContactSection(opp){
+  const raw=opp.suggestedContactDetails || opp.suggested_contact_details || {};
+  const name=String(raw.name||'').trim();
+  const title=String(raw.title||opp.suggestedContact||opp.contactTitle||'Relevant department lead').trim();
+  const links=[];
+  if(raw.linkedin) links.push(`<a target="_blank" rel="noopener" href="${escapeHtml(raw.linkedin)}">LinkedIn Profile</a>`);
+  if(raw.email) links.push(`<a href="mailto:${escapeHtml(raw.email)}">${escapeHtml(raw.email)}</a>`);
+  if(raw.directPhone) links.push(`<a href="tel:${escapeHtml(raw.directPhone)}">${escapeHtml(raw.directPhone)}</a>`);
+  if(raw.companyPhone) links.push(`<a href="tel:${escapeHtml(raw.companyPhone)}">Company: ${escapeHtml(raw.companyPhone)}</a>`);
+  if(raw.contactPage) links.push(`<a target="_blank" rel="noopener" href="${escapeHtml(raw.contactPage)}">Company Contact Page</a>`);
+  const sources=(raw.sourcesUsed||raw.sources_used||[]).filter(Boolean).slice(0,4);
+  return `<div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this contact:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>Public contact information:</strong> ${links.length?links.join(' · '):'No public contact information found.'}</div><div style="margin-top:8px"><strong>Research Confidence:</strong> ${escapeHtml(raw.researchConfidence||raw.confidence||(name?'Medium':'Low'))}</div>${sources.length?`<div style="margin-top:8px"><strong>Sources used:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
+}
+
 function renderRepOpportunityCard(opp){
   if(opp._locked){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
@@ -3219,6 +3233,9 @@ function renderRepOpportunityCard(opp){
         <div class="opp-label">Why this matters</div>
         <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
       </div>
+
+      ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
+      ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactSection(opp) : ''}
 
       <div class="opp-section opener-card">
         <div class="opp-label">Suggested opener</div>
@@ -3250,7 +3267,9 @@ function renderSingleVerifiedSignal(signal){
       </div>
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
       <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
-      <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
+      <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
+      <div class="verified-signal-row"><strong>Suggested Contact:</strong> ${escapeHtml(signal.suggestedContactDetails?.name || 'No verified individual identified')}${signal.suggestedContactDetails?.title ? ` — ${escapeHtml(signal.suggestedContactDetails.title)}` : ''}</div>
+      <div class="verified-signal-row"><strong>Public contact information:</strong> ${signal.suggestedContactDetails?.linkedin ? `<a target="_blank" rel="noopener" href="${escapeHtml(signal.suggestedContactDetails.linkedin)}">LinkedIn Profile</a>` : (signal.suggestedContactDetails?.email ? `<a href="mailto:${escapeHtml(signal.suggestedContactDetails.email)}">${escapeHtml(signal.suggestedContactDetails.email)}</a>` : 'No public contact information found.')}</div>
       <div class="verified-signal-row"><strong>Likely conversations:</strong>
         <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
       </div>
@@ -3312,7 +3331,9 @@ function addSignalDerivedOpportunities(account, signals){
     opp.commonPromoCategories = products;
     opp.likelyProducts = products;
     opp.likelyConversations = signal.likelyConversations || signal.conversationThemes || products;
-    opp.likelyBuyers = signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead'];
+    opp.recommendedBuyingTeam = signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead'];
+    opp.likelyBuyers = opp.recommendedBuyingTeam;
+    opp.suggestedContactDetails = signal.suggestedContactDetails || signal.suggested_contact_details || null;
     opp.suggestedContact = signal.suggestedContact || (Array.isArray(signal.likelyBuyers) ? signal.likelyBuyers[0] : '') || '';
     opp.affectedDepartment = signal.affectedDepartment || (opp.likelyBuyers[0] || '');
     opp.department = likelyDepartmentFromOpportunity(opp);
@@ -3394,6 +3415,7 @@ async function researchAccountByName(accountName){
         industry: account.industry,
         cityState: account.purchases?.[0]?.location || '',
         emailDomain: extractEmailDomain(account.contactEmail),
+        contactName: account.contactName || '',
         notes: account.notes || '',
         employees: account.employees || '',
         categories: [...(account.categoryTypes || [])],
