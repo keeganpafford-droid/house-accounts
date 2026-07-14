@@ -1,88 +1,275 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Success Stories | House Accounts</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>:root{--ink:#17324D;--paper:#F4F6F8;--signal:#F5A623;--radar:#14B8A6;--line:#d7dee8;--muted:#6B7280;--display:Georgia,serif;--mono:"IBM Plex Mono",ui-monospace,monospace;--body:Inter,system-ui,sans-serif;}
-*{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--body);background:var(--paper);color:var(--ink);line-height:1.55}header{padding:28px 32px;border-bottom:2px solid var(--ink);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.brand h1{font-family:var(--display);font-size:2.2rem;letter-spacing:-.03em}.brand a{color:inherit;text-decoration:none}.brand .tag{font-family:var(--mono);font-size:.68rem;color:var(--signal);text-transform:uppercase;letter-spacing:.14em;border:1px solid var(--signal);padding:4px 8px;border-radius:2px;white-space:nowrap}.site-nav{display:flex;justify-content:center;gap:20px;flex-wrap:wrap;font-family:var(--body);font-size:.92rem;font-weight:600;letter-spacing:.01em}.site-nav a{color:var(--ink);text-decoration:none}.site-nav a:hover{color:var(--radar)}.header-copy{justify-self:end;max-width:340px;text-align:right;font-family:var(--mono);font-size:.78rem;line-height:1.45;color:var(--muted)}.header-copy strong{display:block;color:var(--ink);font-family:var(--body);font-size:.92rem;font-weight:700}.header-copy span{display:block}main{max-width:1040px;margin:0 auto;padding:48px 32px}.hero{background:#fff;border:2px solid var(--ink);border-radius:8px;padding:36px;margin-bottom:28px}.eyebrow{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--signal);font-size:.75rem;margin-bottom:12px}h2{font-family:var(--display);font-size:2.4rem;line-height:1.1;margin-bottom:14px}h3{font-family:var(--display);font-size:1.45rem;margin-bottom:8px}.lead{font-size:1.1rem;max-width:760px;color:#223b55}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:22px}.card strong{display:block;margin-bottom:6px}.muted{color:var(--muted)}.price{font-family:var(--display);font-weight:900;font-size:2.2rem;margin:10px 0}.btn{display:inline-block;margin-top:18px;background:var(--radar);color:#fff;text-decoration:none;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;font-size:.8rem;padding:12px 18px;border-radius:2px}.btn.secondary{background:var(--ink)}ul{margin:12px 0 0 20px}.legal{background:#fff;border:1px solid var(--line);border-radius:8px;padding:32px}.legal h3{margin-top:24px}.legal p,.legal li{margin-bottom:10px}.note{font-family:var(--mono);font-size:.82rem;color:var(--muted);border-left:3px solid var(--signal);padding-left:14px;margin:20px 0}.faq-list{display:grid;gap:14px}.faq-item{background:#fff;border:1px solid var(--line);border-radius:8px;padding:22px}.faq-item h3{font-size:1.2rem}.trust-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:20px}.trust-good,.trust-bad{background:#fff;border:1px solid var(--line);border-radius:8px;padding:22px}.trust-good h3{color:var(--radar)}.trust-bad h3{color:var(--signal)}footer{max-width:1040px;margin:20px auto 0;padding:24px 32px 40px;border-top:1px solid var(--line);font-family:var(--mono);font-size:.76rem;color:var(--muted);text-align:center}.footer-links{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:10px}.footer-links a{color:var(--muted);text-decoration:none}.footer-links a:hover{color:var(--radar)}@media(max-width:900px){header{display:block}.site-nav{justify-content:flex-start;margin-top:18px;font-size:.86rem;gap:14px}.header-copy{text-align:left;justify-self:start;margin-top:14px;max-width:none}.brand h1{font-size:2rem}}.brand h1{font-size:2rem}h2{font-size:2rem}.hero{padding:24px}}.beta-top-banner{
-  min-height:30px;
-  padding:6px 16px;
-  background:#fff8e8;
-  border-bottom:1px solid #D8DEE9;
-  color:#17375E;
-  font-family:var(--mono, ui-monospace, monospace);
-  font-size:0.76rem;
-  line-height:1.35;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  text-align:center;
-  gap:6px;
-}
-.beta-top-banner a{
-  color:#17375E;
-  font-weight:800;
-  text-decoration:none;
-  border-bottom:1px solid #F5A623;
-}
-.beta-top-banner a:hover{color:#1FB7AE;border-bottom-color:#1FB7AE;}
-.beta-modal-backdrop{
-  display:none;
-  position:fixed;
-  inset:0;
-  z-index:1000;
-  background:rgba(23,55,94,0.45);
-  padding:24px;
-  align-items:center;
-  justify-content:center;
-}
-.beta-modal-backdrop.active{display:flex;}
-.beta-modal{
-  width:min(560px,100%);
-  background:#fff;
-  border:2px solid #17375E;
-  border-radius:10px;
-  padding:30px;
-  box-shadow:0 20px 60px rgba(23,55,94,0.22);
-}
-.beta-modal h2{
-  font-family:var(--display, Georgia, serif);
-  font-size:1.9rem;
-  line-height:1.12;
-  margin-bottom:14px;
-  color:#17375E;
-}
-.beta-modal p{margin:0 0 12px;color:#17375E;line-height:1.5;}
-.beta-mission{
-  margin:14px 0;
-  padding:16px;
-  border-left:4px solid #1FB7AE;
-  background:#F7F8FA;
-  color:#17375E;
-  font-weight:800;
-  line-height:1.45;
-}
-.beta-setup-time{
-  display:inline-block;
-  margin:6px 0 18px;
-  font-family:var(--mono, ui-monospace, monospace);
-  font-size:0.78rem;
-  color:#6B7280;
-}
-@media(max-width:640px){
-  .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
-  .beta-modal{padding:24px;}
-}
-</style><link rel="stylesheet" href="/site-header.css">
-<script src="/site-header.js" defer></script>
-</head><body>
-<div class="beta-top-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact.html">Leave Feedback →</a></div><header>
-  <div class="brand">
-    <h1><a href="/">House Accounts</a></h1>
-    <span class="tag">Promo Distributor Tool</span>
-  </div>
-  <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/pricing.html">Pricing</a><a href="/coming-soon">Coming Soon</a><a href="/faq.html">FAQ</a><a href="/security.html">Security</a><a href="/contact.html">Contact</a></nav>
-  <div class="header-copy"><strong>Turn dormant house accounts into active revenue.</strong><span>We find the signals. You close the deals.</span></div>
-</header><main>
-<section class="hero"><div class="eyebrow">Success Stories</div><h2>Customer stories are coming soon.</h2><p class="lead">We're currently working with our first group of promotional products distributors. This page will eventually showcase real examples of teams using House Accounts to uncover overlooked accounts, find timely reasons to reach out, and create new sales conversations.</p><a class="btn" href="/contact.html">Become a beta customer</a></section>
-<section class="grid">
-  <div class="card"><h3>What we'll share here</h3><p>Real customer wins, practical workflows, and examples of how distributors turn weekly signals into conversations.</p></div>
-  <div class="card"><h3>Want to be featured?</h3><p>Email <a href="mailto:hello@houseaccounts.ai">hello@houseaccounts.ai</a> if House Accounts helps your team find an opportunity worth sharing.</p></div>
-</section>
-</main><footer><div>House Accounts — know which house accounts deserve a call this week, and why.</div><div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/coming-soon">Coming Soon</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Contact</a></div></footer></body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customer Success | House Accounts</title>
+  <meta name="description" content="See anonymized examples of how House Accounts surfaces timely, relevant reasons for promotional products sales reps to start conversations.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site-header.css?v=3.7">
+  <script src="/site-header.js?v=3.7" defer></script>
+  <style>
+    :root{
+      --ink:#17375E;--paper:#F7F8FA;--signal:#F5A623;--radar:#1FB7AE;
+      --line:#D8DEE9;--muted:#66758a;--white:#fff;
+      --display:Georgia,"Times New Roman",serif;
+      --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+      --body:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);line-height:1.55}
+    main{max-width:1200px;margin:0 auto;padding:54px 28px 72px}
+    .eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.15em;text-transform:uppercase;color:#b36c00;font-weight:900;margin-bottom:12px}
+    .hero{background:var(--white);border:2px solid var(--ink);border-radius:12px;padding:clamp(30px,5vw,58px);box-shadow:0 12px 30px rgba(23,55,94,.06)}
+    .hero h1{font-family:var(--display);font-size:clamp(2.6rem,6vw,5.1rem);line-height:.96;letter-spacing:-.045em;margin:0 0 24px;max-width:830px}
+    .hero h1 span{display:block;color:var(--radar)}
+    .hero-copy{max-width:820px;font-size:1.12rem;color:#334f70}
+    .hero-copy p{margin:0 0 12px}
+    .hero-copy strong{color:var(--ink)}
+    .principle{margin:30px 0 0;padding:17px 20px;border-left:4px solid var(--signal);background:#fff9ed;font-weight:800;color:var(--ink)}
+    section{margin-top:42px}
+    .section-head{display:flex;justify-content:space-between;gap:24px;align-items:end;margin-bottom:18px}
+    .section-head h2{font-family:var(--display);font-size:clamp(2rem,4vw,3rem);line-height:1.05;margin:0}
+    .section-head p{max-width:620px;color:var(--muted);margin:0}
+    .validation-flow{background:var(--ink);color:#fff;border-radius:12px;padding:28px;overflow:hidden}
+    .flow-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:center}
+    .flow-step{min-height:88px;padding:15px 10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:8px;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:850;font-size:.88rem;position:relative}
+    .flow-step:not(:last-child):after{content:"→";position:absolute;right:-11px;z-index:2;color:var(--signal);font-size:1.2rem;font-weight:900}
+    .validation-flow p{margin:19px 0 0;color:#d9e3ef;max-width:850px}
+    .filters{display:grid;grid-template-columns:minmax(220px,1.6fr) repeat(3,minmax(150px,1fr)) auto;gap:12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:20px}
+    .field label{display:block;font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;font-weight:800}
+    .field input,.field select{width:100%;height:42px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font:inherit;padding:0 11px}
+    .field input:focus,.field select:focus{outline:2px solid rgba(31,183,174,.22);border-color:var(--radar)}
+    .clear-btn{align-self:end;height:42px;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:6px;padding:0 14px;font-weight:800;cursor:pointer}
+    .clear-btn:hover{border-color:var(--radar);color:var(--radar)}
+    .results-count{font-family:var(--mono);font-size:.76rem;color:var(--muted);margin:0 0 12px}
+    .story-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+    .story{background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px;display:flex;flex-direction:column;gap:17px;box-shadow:0 5px 16px rgba(23,55,94,.04)}
+    .story-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
+    .story h3{font-family:var(--display);font-size:1.55rem;line-height:1.12;margin:2px 0 0}
+    .story-meta{font-family:var(--mono);font-size:.69rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:800}
+    .badge{display:inline-flex;align-items:center;white-space:nowrap;border-radius:999px;padding:6px 10px;font-size:.7rem;font-weight:900;border:1px solid transparent}
+    .stage-found{background:#eef3f8;color:#36526f;border-color:#cfdae6}
+    .stage-timing{background:#e9fbf8;color:#087f75;border-color:#a8e7df}
+    .stage-meeting{background:#fff5df;color:#9b6100;border-color:#f3d38e}
+    .stage-opportunity{background:#eef0ff;color:#4d56a8;border-color:#cfd3ff}
+    .stage-won{background:#ecf8ed;color:#287534;border-color:#bee0c3}
+    .detail-grid{display:grid;gap:12px}
+    .detail{padding-top:12px;border-top:1px solid #edf0f4}
+    .detail:first-child{padding-top:0;border-top:0}
+    .detail-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:900;margin-bottom:4px}
+    .detail p{margin:0;color:#334f70}
+    .response{border-left:3px solid var(--radar);padding:10px 12px;background:#f3fbfa;color:var(--ink)!important;font-weight:750}
+    .outcome{margin-top:auto;padding:12px 14px;background:#fff8e9;border:1px solid #f2d49a;border-radius:7px;font-size:.9rem}
+    .no-results{display:none;background:#fff;border:1px dashed var(--line);border-radius:10px;padding:34px;text-align:center;color:var(--muted)}
+    .future-note{background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start}
+    .future-icon{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:#e9fbf8;font-size:1.2rem}
+    .future-note h2{font-family:var(--display);font-size:1.7rem;margin:0 0 6px}
+    .future-note p{margin:0;color:var(--muted);max-width:850px}
+    footer{max-width:1200px;margin:0 auto;padding:26px 28px 42px;border-top:1px solid var(--line);font-family:var(--mono);font-size:.75rem;color:var(--muted);text-align:center}
+    .footer-links{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:10px}
+    .footer-links a{color:var(--muted);text-decoration:none}.footer-links a:hover{color:var(--radar)}
+    @media(max-width:980px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}.clear-btn{width:100%}.flow-grid{grid-template-columns:repeat(3,1fr)}.flow-step:nth-child(3):after{display:none}}
+    @media(max-width:760px){main{padding:34px 18px 55px}.story-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}.flow-grid{grid-template-columns:1fr}.flow-step{min-height:auto}.flow-step:not(:last-child):after{content:"↓";right:auto;bottom:-17px;top:auto}.filters{grid-template-columns:1fr}.story-top{display:block}.badge{margin-top:10px}.future-note{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero" aria-labelledby="page-title">
+      <div class="eyebrow">Customer Success</div>
+      <h1 id="page-title">Real Signals.<span>Real Conversations.</span>Real Evidence.</h1>
+      <div class="hero-copy">
+        <p><strong>House Accounts isn't designed to replace sales reps.</strong></p>
+        <p>It's designed to consistently surface timely reasons to start meaningful business conversations.</p>
+        <p>Every example below documents how the signal engine performed in the real world. Some signals simply confirmed the timing. Others led to meetings, opportunities, or sales. Every stage matters.</p>
+      </div>
+      <div class="principle">The question behind this library: Does House Accounts consistently identify worthwhile opportunities to reach out?</div>
+    </section>
+
+    <section aria-labelledby="validation-title">
+      <div class="section-head">
+        <div><div class="eyebrow">How We Measure Success</div><h2 id="validation-title">Signal validation is a progression.</h2></div>
+      </div>
+      <div class="validation-flow">
+        <div class="flow-grid" aria-label="Signal validation stages">
+          <div class="flow-step">Signal Found</div><div class="flow-step">Rep Took Action</div><div class="flow-step">Timing Confirmed</div><div class="flow-step">Meeting Scheduled</div><div class="flow-step">Opportunity Created</div><div class="flow-step">Order Won</div>
+        </div>
+        <p>Not every signal becomes an immediate sale. Success begins when House Accounts identifies a relevant reason to start a conversation. A positive reply confirming the timing is already valuable validation.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="library-title">
+      <div class="section-head">
+        <div><div class="eyebrow">Validation Library</div><h2 id="library-title">What the engine surfaced.</h2></div>
+        <p>Anonymized field examples organized by signal, industry, and validation stage. The library is structured to grow as more outreach is validated.</p>
+      </div>
+
+      <div class="filters" aria-label="Customer success filters">
+        <div class="field"><label for="storySearch">Search</label><input id="storySearch" type="search" placeholder="Search signals, industries, or outcomes"></div>
+        <div class="field"><label for="signalFilter">Signal Type</label><select id="signalFilter"><option value="">All signal types</option></select></div>
+        <div class="field"><label for="stageFilter">Validation Stage</label><select id="stageFilter"><option value="">All stages</option></select></div>
+        <div class="field"><label for="industryFilter">Industry</label><select id="industryFilter"><option value="">All industries</option></select></div>
+        <button class="clear-btn" id="clearFilters" type="button">Clear</button>
+      </div>
+      <p class="results-count" id="resultsCount"></p>
+
+      <div class="story-grid" id="storyGrid">
+        <article class="story" data-signal="Seasonal Buying Pattern" data-stage="Timing Confirmed" data-industry="Manufacturing">
+          <div class="story-top"><div><div class="story-meta">Seasonal Buying Pattern · Manufacturing</div><h3>Regional Manufacturing Company</h3></div><span class="badge stage-timing">✓ Timing Confirmed</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>A recurring customer-appreciation event appeared in historical order timing, signaling that planning was likely approaching again.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Reach out before planning begins and ask whether this year's event is already on the calendar.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">“We're actually discussing that next week.”</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Follow-up meeting scheduled.</div>
+        </article>
+
+        <article class="story" data-signal="Hiring" data-stage="Timing Confirmed" data-industry="Healthcare">
+          <div class="story-top"><div><div class="story-meta">Hiring · Healthcare</div><h3>New England Healthcare Organization</h3></div><span class="badge stage-timing">✓ Timing Confirmed</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>Public hiring activity pointed to a near-term onboarding and recruiting need across several departments.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Ask who owns onboarding and recruiting merchandise, using the existing relationship as a bridge.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The contact confirmed another People-team stakeholder managed the program.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Referral to the relevant internal owner.</div>
+        </article>
+
+        <article class="story" data-signal="Trade Show" data-stage="Meeting Scheduled" data-industry="Industrial Equipment">
+          <div class="story-top"><div><div class="story-meta">Trade Show · Industrial Equipment</div><h3>Industrial Equipment Company</h3></div><span class="badge stage-meeting">Meeting Scheduled</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>The company was listed as an exhibitor at an upcoming industry conference, creating a defined planning deadline.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Reference the show directly and offer to help with booth apparel, attendee giveaways, and follow-up kits.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The marketing contact agreed the timing was relevant and invited a planning conversation.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Discovery call added to the calendar.</div>
+        </article>
+
+        <article class="story" data-signal="Leadership Change" data-stage="Signal Found" data-industry="Financial Services">
+          <div class="story-top"><div><div class="story-meta">Leadership Change · Financial Services</div><h3>Financial Services Firm</h3></div><span class="badge stage-found">Signal Found</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>A newly appointed People leader created a timely reason to introduce the account relationship and learn about upcoming priorities.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Congratulate the leader, briefly establish relevance, and ask permission to share onboarding or recognition ideas.</p></div>
+            <div class="detail"><div class="detail-label">Current validation stage</div><p>Outreach prepared; response not yet recorded.</p></div>
+          </div>
+        </article>
+
+        <article class="story" data-signal="Award Recognition" data-stage="Opportunity Created" data-industry="Manufacturing">
+          <div class="story-top"><div><div class="story-meta">Award Recognition · Manufacturing</div><h3>Contract Manufacturing Company</h3></div><span class="badge stage-opportunity">Opportunity Created</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>The company was actively promoting a newly earned industry award, creating a recognition and employee-pride moment.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Ask how the team planned to celebrate the recognition internally and whether customer-facing use was also planned.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The contact confirmed they were considering an employee celebration and client mailer.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Recognition-program ideas requested.</div>
+        </article>
+
+        <article class="story" data-signal="Repeat Buying Pattern" data-stage="Order Won" data-industry="Education">
+          <div class="story-top"><div><div class="story-meta">Repeat Buying Pattern · Education</div><h3>Regional University</h3></div><span class="badge stage-won">Order Won</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>Historical orders showed a recurring late-summer purchase associated with student orientation.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Reconnect before the historical ordering window and ask whether orientation quantities or themes had changed.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The buyer confirmed the project was beginning and requested updated options.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Repeat order secured after an earlier conversation.</div>
+        </article>
+
+        <article class="story" data-signal="Community Event" data-stage="Meeting Scheduled" data-industry="Technology">
+          <div class="story-top"><div><div class="story-meta">Community Event · Technology</div><h3>Technology Education Company</h3></div><span class="badge stage-meeting">Meeting Scheduled</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>A public STEM event at company headquarters created a concrete need for participant, volunteer, and event materials.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Reference the event by name and offer a short set of ideas for team apparel, signage, and attendee takeaways.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The organizer confirmed event planning was active and agreed to review ideas.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> Event-planning discussion scheduled.</div>
+        </article>
+
+        <article class="story" data-signal="Office Expansion" data-stage="Timing Confirmed" data-industry="Professional Services">
+          <div class="story-top"><div><div class="story-meta">Office Expansion · Professional Services</div><h3>Professional Services Firm</h3></div><span class="badge stage-timing">✓ Timing Confirmed</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>A newly announced office expansion suggested upcoming employee onboarding, internal communications, and opening events.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Ask whether the opening plan includes welcome kits, office-launch materials, or local relationship-building gifts.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The contact confirmed the office launch was still being scoped.</p></div>
+          </div>
+        </article>
+
+        <article class="story" data-signal="Webinar" data-stage="Signal Found" data-industry="Financial Services">
+          <div class="story-top"><div><div class="story-meta">Webinar · Financial Services</div><h3>Regional Advisory Firm</h3></div><span class="badge stage-found">Signal Found</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>A public webinar created a relationship signal tied to a specific speaker, topic, and date.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Reference one relevant point from the session and ask whether future events need attendee or speaker materials.</p></div>
+            <div class="detail"><div class="detail-label">Current validation stage</div><p>Conversation starter identified; outreach outcome pending.</p></div>
+          </div>
+        </article>
+
+        <article class="story" data-signal="Acquisition" data-stage="Opportunity Created" data-industry="Food Manufacturing">
+          <div class="story-top"><div><div class="story-meta">Acquisition · Food Manufacturing</div><h3>Food Manufacturer</h3></div><span class="badge stage-opportunity">Opportunity Created</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>An acquisition created a likely integration moment involving employees, facilities, customer communications, and brand alignment.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Ask who owns internal integration communications and whether welcome, recognition, or brand-transition materials are planned.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The contact connected the rep with the internal team managing integration communications.</p></div>
+          </div>
+          <div class="outcome"><strong>Outcome:</strong> New project conversation opened.</div>
+        </article>
+
+        <article class="story" data-signal="Fundraising Event" data-stage="Timing Confirmed" data-industry="Nonprofit">
+          <div class="story-top"><div><div class="story-meta">Fundraising Event · Nonprofit</div><h3>Regional Nonprofit Organization</h3></div><span class="badge stage-timing">✓ Timing Confirmed</span></div>
+          <div class="detail-grid">
+            <div class="detail"><div class="detail-label">Why House Accounts surfaced it</div><p>An annual fundraising event appeared in public event materials before sponsor and attendee planning was complete.</p></div>
+            <div class="detail"><div class="detail-label">Recommended outreach</div><p>Ask whether sponsor recognition, volunteer apparel, and donor gifts are already covered for this year's event.</p></div>
+            <div class="detail"><div class="detail-label">Prospect response</div><p class="response">The organizer confirmed sponsor packages were being finalized.</p></div>
+          </div>
+        </article>
+      </div>
+      <div class="no-results" id="noResults">No validation examples match these filters.</div>
+    </section>
+
+    <section class="future-note" aria-labelledby="future-title">
+      <div class="future-icon">↗</div>
+      <div><h2 id="future-title">This library will keep growing.</h2><p>Future versions will expand as customers choose to anonymously share validated outreach examples. No customer information will be published without permission.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <div>House Accounts — know who to contact and why.</div>
+    <div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/success-stories.html">Customer Success</a><a href="/coming-soon">Coming Soon</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Feedback</a></div>
+  </footer>
+
+  <script>
+    (function(){
+      const cards=[...document.querySelectorAll('.story')];
+      const search=document.getElementById('storySearch');
+      const signal=document.getElementById('signalFilter');
+      const stage=document.getElementById('stageFilter');
+      const industry=document.getElementById('industryFilter');
+      const count=document.getElementById('resultsCount');
+      const none=document.getElementById('noResults');
+
+      function populate(select,key){
+        [...new Set(cards.map(card=>card.dataset[key]).filter(Boolean))].sort().forEach(value=>{
+          const option=document.createElement('option'); option.value=value; option.textContent=value; select.appendChild(option);
+        });
+      }
+      populate(signal,'signal'); populate(stage,'stage'); populate(industry,'industry');
+
+      function filter(){
+        const term=(search.value||'').toLowerCase().trim();
+        let visible=0;
+        cards.forEach(card=>{
+          const matchesText=!term||card.textContent.toLowerCase().includes(term);
+          const matchesSignal=!signal.value||card.dataset.signal===signal.value;
+          const matchesStage=!stage.value||card.dataset.stage===stage.value;
+          const matchesIndustry=!industry.value||card.dataset.industry===industry.value;
+          const show=matchesText&&matchesSignal&&matchesStage&&matchesIndustry;
+          card.hidden=!show;if(show)visible++;
+        });
+        count.textContent=`Showing ${visible} of ${cards.length} validation examples`;
+        none.style.display=visible?'none':'block';
+      }
+      [search,signal,stage,industry].forEach(el=>el.addEventListener(el===search?'input':'change',filter));
+      document.getElementById('clearFilters').addEventListener('click',()=>{search.value='';signal.value='';stage.value='';industry.value='';filter();});
+      filter();
+    })();
+  </script>
+</body>
+</html>
