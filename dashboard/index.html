@@ -1094,6 +1094,19 @@
   .footer-links a:hover{color:var(--radar);}
 
 
+  .additional-signal-link{width:100%;border:1px solid #D8DEE9;background:#F7F8FA;color:#17375E;border-radius:9px;padding:10px 12px;font-weight:700;cursor:pointer;text-align:center;margin-top:4px}
+  .additional-signal-link:hover{border-color:#1FB7AE;background:#f0fbfa}
+  .sales-play-detail-card{border:1px solid #D8DEE9;background:#F7F8FA;border-radius:12px;padding:16px;margin-bottom:16px}
+  .sales-play-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .sales-play-detail-item{font-size:.9rem;line-height:1.45;color:#334155}
+  .sales-play-detail-item strong{display:block;color:#17375E;font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+  .additional-opportunity-list{display:grid;gap:10px;margin:12px 0 18px}
+  .additional-opportunity-item{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center;border:1px solid #D8DEE9;border-radius:10px;padding:12px;background:#fff}
+  .additional-opportunity-title{font-weight:800;color:#17375E;margin:3px 0}
+  .additional-opportunity-meta{font-size:.78rem;color:#64748b}
+  .additional-opportunity-summary{font-size:.86rem;color:#475569;line-height:1.4}
+  @media(max-width:720px){.sales-play-detail-grid{grid-template-columns:1fr}.additional-opportunity-item{grid-template-columns:1fr}}
+
   /* Sales Play Modal */
   .sales-play-modal{
     position:fixed;
@@ -3206,6 +3219,48 @@ function renderSuggestedContactSection(opp){
   return `<div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this contact:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>Public contact information:</strong> ${links.length?links.join(' · '):'No public contact information found.'}</div><div style="margin-top:8px"><strong>Research Confidence:</strong> ${escapeHtml(raw.researchConfidence||raw.confidence||(name?'Medium':'Low'))}</div>${sources.length?`<div style="margin-top:8px"><strong>Sources used:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
 }
 
+function accountOpportunityCluster(opp){
+  const accountName=String(opp?.account||opp?.accountName||'').trim().toLowerCase();
+  const account=(window.accountRadarAccounts||[]).find(a=>String(a?.name||'').trim().toLowerCase()===accountName);
+  const opportunities=account&&Array.isArray(account.futureOpportunities)?account.futureOpportunities:[];
+  return sortDailyReasons(dedupeOpportunities(opportunities)).filter(item=>!item?false:true);
+}
+
+function sameOpportunity(a,b){
+  return opportunityDedupeKey(a||{})===opportunityDedupeKey(b||{});
+}
+
+function additionalOpportunitiesFor(opp){
+  return accountOpportunityCluster(opp).filter(item=>!sameOpportunity(item,opp));
+}
+
+function renderOpportunityDetailForSalesPlay(opp){
+  if(!opp?.isVerifiedSignalOpportunity && signalLayerLabel(opp)!=='Business Activity Signal') return '';
+  const teams=(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).filter(Boolean).slice(0,3);
+  const cats=(opp.commonPromoCategories||opp.suggestedProducts||[]).filter(Boolean).slice(0,5);
+  const source=opp.sourceUrl?`<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName||sourceDomain(opp.sourceUrl)||'View source')}</a>`:escapeHtml(evidenceSourceLabel(opp)||'Account history');
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity Detail</h3><div class="sales-play-detail-grid">
+    <div class="sales-play-detail-item"><strong>Business Trigger</strong>${escapeHtml(opp.signalTitle||opportunityHeadline(opp))}</div>
+    <div class="sales-play-detail-item"><strong>Business Context</strong>${escapeHtml(opp.businessContext||opp.signalSummary||opp.shortSummary||whyThisMattersText(opp))}</div>
+    <div class="sales-play-detail-item"><strong>Why This Matters</strong>${escapeHtml(whyThisMattersText(opp))}</div>
+    <div class="sales-play-detail-item"><strong>Recommended Buying Team</strong>${escapeHtml(teams.join(', ')||'Relevant department lead')}</div>
+    <div class="sales-play-detail-item"><strong>Suggested Contact</strong>${escapeHtml(opp.suggestedContactDetails?.name||opp.contact||'No verified individual identified')}${opp.suggestedContactDetails?.title?` — ${escapeHtml(opp.suggestedContactDetails.title)}`:''}</div>
+    <div class="sales-play-detail-item"><strong>Suggested Opener</strong>${escapeHtml(getSuggestedOpener(opp))}</div>
+    <div class="sales-play-detail-item"><strong>Evidence</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
+    <div class="sales-play-detail-item"><strong>Promo Categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')}</div>
+  </div></div>`;
+}
+
+function renderAdditionalOpportunitiesForSalesPlay(opp){
+  const items=additionalOpportunitiesFor(opp);
+  if(!items.length) return '';
+  return `<div class="sales-play-card" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
+    const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
+    const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Open</button></div>`;
+  }).join('')}</div></div>`;
+}
+
 function renderRepOpportunityCard(opp){
   if(opp._locked){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
@@ -3245,6 +3300,8 @@ function renderRepOpportunityCard(opp){
       ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
 
       ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
+
+      ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
 
       <div class="opp-card-actions">
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
@@ -4330,6 +4387,8 @@ window.createSalesPlayPanel = function(opp){
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
         <div class="sales-play-output">
+          ${renderOpportunityDetailForSalesPlay(opp)}
+          ${renderAdditionalOpportunitiesForSalesPlay(opp)}
           <div class="sales-play-grid">
             <div class="sales-play-section">
               <div class="sales-play-card">
@@ -4990,18 +5049,18 @@ function prepareTimeboxReasons(opps, timebox=activeTimebox){
   const config = TIMEBOX_CONFIG[timebox] || TIMEBOX_CONFIG.week;
   const collapsed = collapseDuplicateFollowUps(opps || []);
   const filtered = collapsed.filter(opp => opportunityMatchesTimebox(opp, timebox));
-  const ranked = limitReasonsPerAccount(sortDailyReasons(filtered), timebox === 'annual' ? 4 : 3);
+  const ranked = limitReasonsPerAccount(sortDailyReasons(filtered), 1);
   return ranked.slice(0, config.limit);
 }
 
 function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
   const collapsed = collapseDuplicateFollowUps(opps || []);
-  const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 3);
+  const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 1);
   return ranked.slice(0, limit);
 }
 
 function prepareAllOpportunities(opps){
-  return sortDailyReasons(collapseDuplicateFollowUps(opps || []));
+  return limitReasonsPerAccount(sortDailyReasons(collapseDuplicateFollowUps(opps || [])), 1);
 }
 
 function toggleWeeklyPrioritiesView(showAll){
