@@ -2424,12 +2424,26 @@ function renderCustomerDashboard(data){
   }
 }
 
-function scrollToUploadForNewList(){
+function openLightweightCustomerUpload(){
   const gate = document.getElementById('leadGate');
   const dz = document.getElementById('dropzone');
-  if(gate) gate.style.display = 'block';
-  if(dz){ dz.style.display = 'block'; dz.classList.remove('locked'); }
-  window.scrollTo({top:0, behavior:'smooth'});
+  const fileInput = document.getElementById('fileInput');
+
+  // Existing authenticated users already have their profile and ownership context.
+  // Reuse the normal customer upload zone instead of reopening onboarding.
+  if(gate) gate.style.display = 'none';
+  if(dz){
+    dz.style.display = 'block';
+    dz.classList.remove('locked', 'upload-hidden');
+    dz.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  // Reset the browser file control so choosing the same file again still fires change.
+  if(fileInput) fileInput.value = '';
+}
+
+function scrollToUploadForNewList(){
+  openLightweightCustomerUpload();
 }
 
 
@@ -5393,7 +5407,7 @@ function escapeHtml(text){
  async function request(method,body){const r=await fetch('/api/monitoring-lists',{method,headers:{'Content-Type':'application/json',...(window.HouseAuth?.authHeaders?.()||{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Monitoring list request failed');return d}
  async function load(){try{const d=await request('GET');const lists=d.lists?.customer||[];if(!lists.length)return;document.getElementById('customerMonitoringWorkspace')?.classList.add('active');document.getElementById('dropzone')?.classList.add('upload-hidden');document.getElementById('exampleOpportunity')?.classList.add('upload-hidden');const sm=d.summary||{};document.getElementById('wsActiveCustomers').textContent=sm.activeCustomers||0;document.getElementById('wsPausedCustomers').textContent=sm.pausedCustomers||0;document.getElementById('wsActiveProspects').textContent=sm.activeProspects||0;document.getElementById('wsPausedProspects').textContent=sm.pausedProspects||0;document.getElementById('wsNextScan').textContent=sm.nextWeeklyScan||'Monday';document.getElementById('wsMonitoringStatus').textContent=sm.monitoringStatus||'Active';document.getElementById('customerListGrid').innerHTML=lists.map(x=>`<article class="monitor-list-card"><div class="monitor-list-head"><div><h3>${esc(x.name)}</h3><div class="monitor-meta">${x.companyCount} compan${x.companyCount===1?'y':'ies'} · Last upload ${fmt(x.lastUpload)} · Last scan ${fmt(x.lastScan)}</div></div><span class="monitor-badge ${x.status}">${x.status==='paused'?'Paused':'Active'}</span></div><div class="monitor-actions"><button data-list-act="rename" data-list-id="${esc(x.id)}">Rename</button><button data-list-act="${x.status==='paused'?'resume':'pause'}" data-list-id="${esc(x.id)}">${x.status==='paused'?'Resume Monitoring':'Pause Monitoring'}</button><button data-list-act="view" data-list-id="${esc(x.id)}">View Accounts</button><button class="danger" data-list-act="delete" data-list-id="${esc(x.id)}">Delete</button></div></article>`).join('')}catch(e){console.warn('Customer monitoring workspace load failed',e)}}
  document.addEventListener('click',async e=>{const b=e.target.closest('[data-list-act]');if(!b)return;const action=b.dataset.listAct,id=b.dataset.listId;if(action==='view'){document.getElementById('results')?.scrollIntoView({behavior:'smooth'});return}try{if(action==='rename'){const name=prompt('Rename this monitoring list:');if(!name)return;await request('PATCH',{type:'customer',id,action,name})}else if(action==='delete'){if(!confirm('Delete this monitoring list, its customer accounts, and associated signals? This cannot be undone.'))return;await request('DELETE',{type:'customer',id})}else await request('PATCH',{type:'customer',id,action});location.reload()}catch(err){alert(err.message)}});
- document.addEventListener('DOMContentLoaded',()=>{document.getElementById('addCustomerListBtn')?.addEventListener('click',()=>{document.getElementById('dropzone')?.classList.remove('upload-hidden');document.getElementById('dropzone')?.scrollIntoView({behavior:'smooth'})});setTimeout(load,300)});
+ document.addEventListener('DOMContentLoaded',()=>{document.getElementById('addCustomerListBtn')?.addEventListener('click',openLightweightCustomerUpload);setTimeout(load,300)});
 })();
 </script>
 </body>
