@@ -2135,6 +2135,15 @@ function normalizeSavedAccount(account){
   a.industry = a.industry || 'Saved Account';
   a.contactName = a.contactName || a.contact_name || '';
   a.contactEmail = a.contactEmail || a.contact_email || '';
+  a.contactTitle = a.contactTitle || raw.contactTitle || raw.contact_title || '';
+  a.contactDepartment = a.contactDepartment || raw.contactDepartment || raw.contact_department || '';
+  a.contactPhone = a.contactPhone || raw.contactPhone || raw.contact_phone || '';
+  a.website = a.website || raw.website || '';
+  a.location = a.location || raw.location || '';
+  a.assignedRep = a.assignedRep || raw.assignedRep || raw.assigned_rep || '';
+  a.contacts = Array.isArray(a.contacts) ? a.contacts : (Array.isArray(raw.contacts) ? raw.contacts : []);
+  if(!a.contacts.length && (a.contactName || a.contactEmail)) a.contacts = [{name:a.contactName,title:a.contactTitle,department:a.contactDepartment,email:a.contactEmail,phone:a.contactPhone,source:'From your uploaded account list'}];
+  a.intelligenceMode = a.intelligenceMode || raw.intelligenceMode || raw.intelligence_mode || (a.orderCount > 0 ? (a.contacts.length ? 'mixed' : 'historical') : 'warm');
   a.revenue = Number(a.revenue ?? metrics.revenue ?? 0) || 0;
   a.orderCount = Number(a.orderCount ?? metrics.orderCount ?? 0) || 0;
   a.confidence = Number(a.confidence ?? metrics.confidence ?? a.quickWinScore ?? 0) || 0;
@@ -2780,17 +2789,24 @@ function parseCSV(text){
     contact_name: ['contact_name','contact','contact_person','primary_contact','project_client_contact','client_contact'],
     category: ['category','product_category','item_category','project_category','order_category','type'],
     quantity: ['quantity','qty','units'],
-    contact_first: ['project_client_contact_first_name','contact_first_name','first_name'],
-    contact_last: ['project_client_contact_last_name','contact_last_name','last_name'],
-    contact_email: ['contact_email','project_client_contact_email','email','contact_email_address'],
+    contact_first: ['project_client_contact_first_name','contact_first_name','first_name','user_first_name'],
+    contact_last: ['project_client_contact_last_name','contact_last_name','last_name','user_last_name'],
+    contact_email: ['contact_email','project_client_contact_email','email','contact_email_address','user_email'],
     order_status: ['order_status','status'],
     order_tags: ['order_tags','tags'],
     client_tags: ['client_tags','account_tags'],
     ship_city: ['shipto_city','ship_city','city'],
     ship_state: ['shipto_state','ship_state','state'],
-    industry: ['industry','vertical','market','sector'],
+    industry: ['industry','industry_name','vertical','market','sector'],
     notes: ['notes','note','description','company_notes','account_notes'],
-    employees: ['employees','employee_count','staff','headcount','number_of_employees']
+    employees: ['employees','employee_count','staff','headcount','number_of_employees'],
+    website: ['website','website_url','company_website','domain','company_domain','url'],
+    contact_title: ['contact_title','job_title','title','position','contact_role','role','user_position'],
+    contact_department: ['contact_department','department','department_name','dept','team','function'],
+    contact_phone: ['contact_phone','phone','phone_number','mobile','direct_phone','all_phones'],
+    assigned_rep: ['assigned_client_rep','client_rep','assigned_rep','sales_rep','account_owner','owner'],
+    assigned_rep_first: ['sales_rep_first_name','assigned_rep_first_name'],
+    assigned_rep_last: ['sales_rep_last_name','assigned_rep_last_name']
   };
   const colIndex = {};
   const columnMappings = {};
@@ -2845,7 +2861,12 @@ function parseCSV(text){
       location: [get('ship_city'), get('ship_state')].filter(Boolean).join(', '),
       uploadedIndustry: get('industry'),
       notes: get('notes'),
-      employees: get('employees')
+      employees: get('employees'),
+      website: get('website'),
+      contactTitle: get('contact_title'),
+      contactDepartment: get('contact_department'),
+      contactPhone: get('contact_phone'),
+      assignedRep: get('assigned_rep') || [get('assigned_rep_first'), get('assigned_rep_last')].filter(Boolean).join(' ')
     });
   }
   records.missingCols = missingCols;
@@ -3230,7 +3251,10 @@ function renderSuggestedContactSection(opp){
   if(raw.companyPhone) links.push(`<a href="tel:${escapeHtml(raw.companyPhone)}">Company: ${escapeHtml(raw.companyPhone)}</a>`);
   if(raw.contactPage) links.push(`<a target="_blank" rel="noopener" href="${escapeHtml(raw.contactPage)}">Company Contact Page</a>`);
   const sources=(raw.sourcesUsed||raw.sources_used||[]).filter(Boolean).slice(0,4);
-  return `<div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this contact:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>Public contact information:</strong> ${links.length?links.join(' · '):'No public contact information found.'}</div><div style="margin-top:8px"><strong>Research Confidence:</strong> ${escapeHtml(raw.researchConfidence||raw.confidence||(name?'Medium':'Low'))}</div>${sources.length?`<div style="margin-top:8px"><strong>Sources used:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
+  const imported = raw.sourceType === 'uploaded' || sources.some(src=>/uploaded account list/i.test(src?.name||''));
+  const infoLabel = imported ? 'Contact information from your upload' : 'Public contact information';
+  const noInfo = imported ? 'No additional contact information was included in the upload.' : 'No public contact information found.';
+  return `<div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this contact:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>${infoLabel}:</strong> ${links.length?links.join(' · '):noInfo}</div><div style="margin-top:8px"><strong>${imported?'Contact Fit':'Research Confidence'}:</strong> ${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}</div>${sources.length?`<div style="margin-top:8px"><strong>Source:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
 }
 
 function accountOpportunityCluster(opp){
@@ -3253,7 +3277,9 @@ function renderOpportunityDetailForSalesPlay(opp){
   const teams=(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).filter(Boolean).slice(0,3);
   const cats=(opp.commonPromoCategories||opp.suggestedProducts||[]).filter(Boolean).slice(0,5);
   const source=opp.sourceUrl?`<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName||sourceDomain(opp.sourceUrl)||'View source')}</a>`:escapeHtml(evidenceSourceLabel(opp)||'Account history');
-  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity Detail</h3><div class="sales-play-detail-grid">
+  const account = (window.accountRadarAccounts||[]).find(a=>String(a.name||'').toLowerCase()===String(opp.account||opp.accountName||'').toLowerCase());
+  const accountContext = account && isWarmAccount(account) ? `<div class="sales-play-detail-card" style="margin-bottom:16px"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div><strong>Warm assigned account</strong> · ${(account.contacts||[]).length} imported contact${(account.contacts||[]).length===1?'':'s'} · No historical order data included</div></div>` : '';
+  return `${accountContext}<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity Detail</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Business Trigger</strong>${escapeHtml(opp.signalTitle||opportunityHeadline(opp))}</div>
     <div class="sales-play-detail-item"><strong>Business Context</strong>${escapeHtml(opp.businessContext||opp.signalSummary||opp.shortSummary||whyThisMattersText(opp))}</div>
     <div class="sales-play-detail-item"><strong>Why This Matters</strong>${escapeHtml(whyThisMattersText(opp))}</div>
@@ -3499,24 +3525,35 @@ async function researchAccountByName(accountName){
   const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
   if(panel) panel.innerHTML = `<div class="signal-loading">Researching ${escapeHtml(account.name)} across public sources...</div>`;
   try{
-    const res = await fetch('/api/research-account', {
+    const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
+    const endpoint = enhancedPublicMode ? '/api/research-batch' : '/api/research-account';
+    const payload = enhancedPublicMode ? {
+      mode:'warm-account',
+      accounts: batchPayloadForAccounts([account])
+    } : {
+      accountName: account.name,
+      industry: account.industry,
+      cityState: account.purchases?.[0]?.location || account.location || '',
+      emailDomain: extractEmailDomain(account.contactEmail),
+      website: account.website || '',
+      contactName: account.contactName || '',
+      contacts: account.contacts || [],
+      intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account),
+      notes: account.notes || '',
+      employees: account.employees || '',
+      categories: [...(account.categoryTypes || [])],
+      projects: account.projects || []
+    };
+    const res = await fetch(endpoint, {
       method:'POST',
       headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
-      body: JSON.stringify({
-        accountName: account.name,
-        industry: account.industry,
-        cityState: account.purchases?.[0]?.location || '',
-        emailDomain: extractEmailDomain(account.contactEmail),
-        contactName: account.contactName || '',
-        notes: account.notes || '',
-        employees: account.employees || '',
-        categories: [...(account.categoryTypes || [])],
-        projects: account.projects || []
-      })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Research failed');
-    account.signals = Array.isArray(data.signals) ? data.signals : [];
+    account.signals = enhancedPublicMode
+      ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
+      : (Array.isArray(data.signals) ? data.signals : []);
     const diagnostics = getResearchDiagnostics();
     const diag = data && data.diagnostics && typeof data.diagnostics === 'object' && !Array.isArray(data.diagnostics)
       ? data.diagnostics
@@ -3585,10 +3622,17 @@ function getAccountsForResearch(options = {}){
 
 function batchPayloadForAccounts(accounts){
   return accounts.map(account => {
-    const contacts = Array.from(new Set((account.purchases || [])
-      .flatMap(p => [p.contactName, p.contact, p.contactEmail].filter(Boolean))
-      .map(v => String(v).trim())
-      .filter(Boolean))).slice(0, 6);
+    const contacts = (Array.isArray(account.contacts) ? account.contacts : importedContactsFromRecords(account.allRecords || account.purchases || []))
+      .map(c => ({
+        name: String(c?.name || c?.contactName || '').trim(),
+        title: String(c?.title || c?.contactTitle || '').trim(),
+        department: String(c?.department || c?.contactDepartment || '').trim(),
+        email: String(c?.email || c?.contactEmail || '').trim(),
+        phone: String(c?.phone || c?.contactPhone || '').trim(),
+        source: c?.source || 'From your uploaded account list'
+      }))
+      .filter(c => c.name || c.email)
+      .slice(0, 8);
     const recentOrderDates = (account.purchases || [])
       .map(p => p.orderDate || p.date || p.order_date)
       .filter(Boolean)
@@ -3615,7 +3659,9 @@ function batchPayloadForAccounts(accounts){
       contacts,
       recentOrderDates,
       existingSignals,
-      repeatPatterns
+      repeatPatterns,
+      intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account),
+      assignedRep: account.assignedRep || ''
     };
   });
 }
@@ -3641,7 +3687,7 @@ async function researchAccountsBatch(accounts, options = {}){
       method:'POST',
       headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
       body: JSON.stringify({
-        mode: Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked',
+        mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
         accounts: batchPayloadForAccounts(accounts)
       })
     });
@@ -5186,19 +5232,26 @@ function renderDetailedAccountViews(accounts){
         </div>
       </div>
       <div class="account-body">
+        ${isWarmAccount(a) ? `<div class="no-signals-message" style="text-align:left;"><strong>Warm assigned account</strong><br>You have an existing account or contact relationship, but no order history was included. House Accounts will prioritize verified public business signals and the contact context from your upload.</div>
         <div class="breakdown">
+          <div class="bd-item"><div class="lbl">Account Type</div><div class="val" style="font-size:1rem;">Warm Assigned</div></div>
+          <div class="bd-item"><div class="lbl">Imported Contacts</div><div class="val">${(a.contacts||[]).length}</div></div>
+          <div class="bd-item"><div class="lbl">Assigned Rep</div><div class="val" style="font-size:1rem;">${escapeHtml(a.assignedRep||'Known relationship')}</div></div>
+          <div class="bd-item"><div class="lbl">Verified Signals</div><div class="val">${dedupeVerifiedSignals(a.signals||[]).length}</div></div>
+          <div class="bd-item"><div class="lbl">Monitoring Status</div><div class="val" style="font-size:1rem;">Active</div></div>
+        </div>` : `<div class="breakdown">
           <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
           <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
           <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
           <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
           <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate}</div></div>
-        </div>
+        </div>`}
         <div class="section-title">🎯 Reasons To Reach Out</div>
         <ul class="opps">
-          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || '<li>No reasons to reach out generated from closed historical orders.</li>'}
+          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || (isWarmAccount(a) ? '<li>No current verified business signal was found. This account remains monitored for future activity.</li>' : '<li>No reasons to reach out generated from closed historical orders.</li>')}
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
-        ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : '<div class="no-signals-message">No closed/converted historical orders found for this account.</div>'}
+        ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : `<div class="no-signals-message">${isWarmAccount(a) ? 'No historical orders were included for this account. Public business signals and uploaded contact context will drive recommendations.' : 'No closed/converted historical orders found for this account.'}</div>`}
         ${renderPipelineTable(a.activePipeline || [])}
         <div class="section-title">📡 Verified Business Signals</div>
         <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\'")}')">Research Account</button>
@@ -5240,7 +5293,15 @@ function serializeAccountForStorage(account){
       recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date || p.dateStr).filter(Boolean).slice(0, 12),
       repeatPatterns: opportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').slice(0, 8),
       existingSignals: opportunities.slice(0, 12),
-      records: (account.allRecords || []).slice(0, 100)
+      records: (account.allRecords || []).slice(0, 100),
+      contacts: account.contacts || [],
+      contactTitle: account.contactTitle || '',
+      contactDepartment: account.contactDepartment || '',
+      contactPhone: account.contactPhone || '',
+      website: account.website || '',
+      location: account.location || '',
+      assignedRep: account.assignedRep || '',
+      intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account)
     },
     signals
   };
@@ -5296,6 +5357,48 @@ async function saveCurrentUpload(stage = 'uploaded'){
   }
 }
 
+function hasMeaningfulHistoricalOrder(accountOrRecords){
+  const records = Array.isArray(accountOrRecords) ? accountOrRecords : (accountOrRecords?.allRecords || accountOrRecords?.purchases || []);
+  return records.some(record => {
+    const hasDate = !!(record?.date && !isNaN(new Date(record.date).getTime())) || !!String(record?.dateStr || '').trim();
+    const hasRevenue = Number(record?.revenue || 0) > 0;
+    const project = String(record?.project || '').trim();
+    const meaningfulProject = project && !/^unspecified$/i.test(project) && !/ order$/i.test(project);
+    return isClosedHistoricalRecord(record) && (hasDate || hasRevenue || meaningfulProject);
+  });
+}
+
+function importedContactsFromRecords(records = []){
+  const out=[]; const seen=new Set();
+  records.forEach(record=>{
+    const contact={
+      name:String(record?.contactName||'').trim(),
+      title:String(record?.contactTitle||'').trim(),
+      department:String(record?.contactDepartment||'').trim(),
+      email:String(record?.contactEmail||'').trim(),
+      phone:String(record?.contactPhone||'').trim(),
+      source:'From your uploaded account list'
+    };
+    if(!contact.name && !contact.email) return;
+    const key=`${contact.name}|${contact.email}|${contact.title}`.toLowerCase();
+    if(seen.has(key)) return; seen.add(key); out.push(contact);
+  });
+  return out.slice(0,12);
+}
+
+function deriveAccountIntelligenceMode(accountOrRecords){
+  const records = Array.isArray(accountOrRecords) ? accountOrRecords : (accountOrRecords?.allRecords || []);
+  const hasHistory = hasMeaningfulHistoricalOrder(records);
+  const hasContactContext = importedContactsFromRecords(records).length > 0 || records.some(r => r?.website || r?.assignedRep || r?.uploadedIndustry || r?.location);
+  if(hasHistory && hasContactContext) return 'mixed';
+  if(hasHistory) return 'historical';
+  return 'warm';
+}
+
+function isWarmAccount(account){
+  return String(account?.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase() === 'warm';
+}
+
 function processData(records){
   // Group by client
   const clients = {};
@@ -5344,6 +5447,8 @@ function processData(records){
     const uploadedIndustry = allOrders.find(o => o.uploadedIndustry)?.uploadedIndustry || '';
     const industry = uploadedIndustry || inferIndustry(clientName, allProjects);
     const firstRecord = scoringOrders[0] || allOrders[0] || {};
+    const contacts = importedContactsFromRecords(allOrders);
+    const intelligenceMode = deriveAccountIntelligenceMode(allOrders);
     const account = {
       name: clientName,
       industry,
@@ -5356,8 +5461,16 @@ function processData(records){
       categoryTypes: categories,
       projects,
       allProjects,
-      contactName: firstRecord.contactName || '',
-      contactEmail: firstRecord.contactEmail || '',
+      contactName: contacts[0]?.name || firstRecord.contactName || '',
+      contactEmail: contacts[0]?.email || firstRecord.contactEmail || '',
+      contactTitle: contacts[0]?.title || firstRecord.contactTitle || '',
+      contactDepartment: contacts[0]?.department || firstRecord.contactDepartment || '',
+      contactPhone: contacts[0]?.phone || firstRecord.contactPhone || '',
+      contacts,
+      website: allOrders.find(o => o.website)?.website || '',
+      location: allOrders.find(o => o.location)?.location || '',
+      assignedRep: allOrders.find(o => o.assignedRep)?.assignedRep || '',
+      intelligenceMode,
       notes: allOrders.find(o => o.notes)?.notes || '',
       employees: allOrders.find(o => o.employees)?.employees || '',
       purchases: scoringOrders,
