@@ -143,7 +143,7 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
   const quoted = `"${company}"`;
   const domain = String(context.website || '').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0] || '';
 
-  if (mode === 'prospect-intelligence') {
+  if (mode === 'prospect-intelligence' || mode === 'warm-account') {
     // Prospect Intelligence must attempt an intent-driven buying-moment search chain
     // before creating Predictable Timing fallback opportunities. Keep searches surgical:
     // the goal is to find concrete reasons to contact the company now, not summarize it.
@@ -476,7 +476,9 @@ function accountPromptContext(accounts) {
     recentOrderDates: Array.isArray(a.recentOrderDates) ? a.recentOrderDates.slice(0, 5) : [],
     knownContacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 6) : [],
     existingSignals: Array.isArray(a.existingSignals) ? a.existingSignals.slice(0, 5) : [],
-    repeatPatterns: Array.isArray(a.repeatPatterns) ? a.repeatPatterns.slice(0, 5) : []
+    repeatPatterns: Array.isArray(a.repeatPatterns) ? a.repeatPatterns.slice(0, 5) : [],
+    intelligenceMode: clean(a.intelligenceMode || ''),
+    assignedRep: clean(a.assignedRep || '')
   }));
 }
 
@@ -486,14 +488,17 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const samples = [];
   const diagnostics = [];
   const perAccount = await mapLimit(accounts, 4, async account => {
-    const allQueries = queryTemplates(account.name, account, mode);
+    const accountMode = clean(account.intelligenceMode).toLowerCase();
+    const effectiveMode = (accountMode === 'warm' || accountMode === 'mixed') ? 'warm-account' : mode;
+    const allQueries = queryTemplates(account.name, account, effectiveMode);
     // Prospect mode remains deepest, while existing-customer research now receives
     // enough coverage to find multiple distinct public buying moments per account.
-    const queries = allQueries.slice(0, mode === 'prospect-intelligence' ? 18 : 16);
+    const deepResearch = effectiveMode === 'prospect-intelligence' || effectiveMode === 'warm-account';
+    const queries = allQueries.slice(0, deepResearch ? 18 : 16);
     const resultSets = await Promise.all(queries.map(runSearch));
     const rawSearchResults = resultSets.flat();
     let raw = rawSearchResults.filter(r => r && (r.url || r.title));
-    if (mode === 'prospect-intelligence') raw = raw.concat(priorityOwnedPages(account));
+    if (deepResearch) raw = raw.concat(priorityOwnedPages(account));
 
     const scored = raw.map(r => ({
       ...r,
@@ -503,9 +508,9 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     }));
 
     const ranked = dedupeCandidates(scored
-      .filter(r => r.score >= (mode === 'prospect-intelligence' ? 10 : 12))
+      .filter(r => r.score >= (deepResearch ? 10 : 12))
       .sort((a,b) => b.score - a.score))
-      .slice(0, mode === 'prospect-intelligence' ? 30 : 24);
+      .slice(0, deepResearch ? 30 : 24);
 
     const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
     const highIntentCandidateCount = ranked.filter(r => r.score >= 28).length;
@@ -542,7 +547,7 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       fallbackEligibleAfterSearch: highIntentCandidateCount === 0
     });
 
-    if (mode === 'prospect-intelligence') {
+    if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Targeted search complete', {
         company: account.name,
         queriesRun: queries,
@@ -613,6 +618,8 @@ async function callOpenAIWebSearch({ apiKey, model, accounts }) {
   const prompt = `Research these companies for public buying moments that create timely reasons for a promotional-products salesperson to start a conversation.
 
 House Accounts is not trying to summarize companies. It is trying to answer: "Why should I contact this company today?"
+
+For accounts marked intelligenceMode="warm", treat them as known or assigned relationships without uploaded order history. Use uploaded contacts first when they align with the opportunity. Do not describe them as cold prospects and do not invent historical purchases.
 
 Use the account context below, including any uploaded contacts. Research each company once. If uploaded contacts align with the recommended buying team, they may be used as potentialContacts. Do not invent people.
 
@@ -887,14 +894,16 @@ function contactMatchesBuyingTeam(contact = {}, team = []) {
 function normalizeUploadedContacts(contacts = []) {
   const seen = new Set();
   return safeArray(contacts, 12).map(c => {
-    if (typeof c === 'string') return { name: clean(c), title: '', email: '', linkedin: '', source: 'Uploaded CSV' };
+    if (typeof c === 'string') return { name: clean(c), title: '', department: '', email: '', phone: '', linkedin: '', source: 'From your uploaded account list' };
     return {
       name: clean(c?.name || c?.contactName || c?.fullName || ''),
       title: clean(c?.title || c?.role || c?.jobTitle || ''),
+      department: clean(c?.department || c?.contactDepartment || ''),
       email: clean(c?.email || c?.contactEmail || ''),
+      phone: clean(c?.phone || c?.contactPhone || c?.directPhone || ''),
       linkedin: clean(c?.linkedin || c?.linkedIn || c?.linkedinUrl || ''),
       reason: clean(c?.reason || ''),
-      source: clean(c?.source || 'Uploaded CSV')
+      source: clean(c?.source || 'From your uploaded account list')
     };
   }).filter(c => c.name || c.email).filter(c => {
     const key = `${c.name}|${c.email}|${c.title}`.toLowerCase();
@@ -913,9 +922,11 @@ function selectUploadedContactsForTeam(contacts = [], team = [], max = 2) {
       title: c.title,
       email: c.email,
       linkedin: c.linkedin,
+      directPhone: c.phone,
+      sourceType: 'uploaded',
       reason: c.reason || 'This uploaded contact aligns with the recommended buying team for this opportunity.',
-      source: 'Uploaded CSV',
-      sourcesUsed: [{ name: 'Uploaded CSV', url: '' }],
+      source: 'From your uploaded account list',
+      sourcesUsed: [{ name: 'From your uploaded account list', url: '' }],
       confidence: c.title && (c.email || c.linkedin) ? 'High' : (c.title || c.email || c.linkedin ? 'Medium' : 'Low')
     }));
 }
@@ -960,7 +971,8 @@ function buildSuggestedContact(potentialContacts = [], recommendedBuyingTeam = [
       companyPhone: verified.companyPhone || '',
       contactPage: verified.contactPage || '',
       researchConfidence: verified.confidence || 'Medium',
-      sourcesUsed: verified.sourcesUsed || []
+      sourcesUsed: verified.sourcesUsed || [],
+      sourceType: verified.sourceType || (String(verified.source || '').toLowerCase().includes('uploaded') ? 'uploaded' : 'public')
     };
   }
   return {
@@ -969,7 +981,8 @@ function buildSuggestedContact(potentialContacts = [], recommendedBuyingTeam = [
     whyThisContact: clean(raw.whyThisContact || raw.why_this_contact || 'Start with the department most likely to own the detected initiative.'),
     linkedin: '', email: '', directPhone: '', companyPhone: '', contactPage: '',
     researchConfidence: 'Low',
-    sourcesUsed: []
+    sourcesUsed: [],
+    sourceType: 'department'
   };
 }
 
@@ -1131,12 +1144,44 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
   return Math.round(Math.max(0, Math.min(100, score)));
 }
 
+function normalizeSignalTypeFromEvidence(raw = {}, declaredType = '') {
+  const declared = normalizeSignalType(declaredType);
+  const text = clean(`${raw.concrete_trigger || raw.concreteTrigger || ''} ${raw.buying_moment || raw.buyingMoment || ''} ${raw.signalTitle || raw.title || ''} ${raw.whatChanged || raw.summary || raw.signalDetail || ''} ${raw.business_context || raw.businessContext || ''}`).toLowerCase();
+  const rules = [
+    ['Acquisition / Funding', /acquir|acquisition|merger|merged|funding|investment|capital raise|private equity/],
+    ['Award / Recognition', /award|recognition|recognized|winner|milestone|anniversary|top \d+|best place|honor/],
+    ['Expansion', /new facility|facility expansion|new location|new office|headquarters|distribution center|manufacturing plant|ribbon cutting|expansion/],
+    ['Trade Show / Event', /trade show|conference|expo|summit|webinar|open house|customer event|booth|exhibitor/],
+    ['Leadership Change', /appointed|promoted|named .*?(president|director|chief|ceo|vp)|joins as|new executive|leadership change/],
+    ['Product Launch', /product launch|service launch|new product|new service|unveil|rollout|release/],
+    ['Partnership / Contract', /contract win|awarded contract|partnership|strategic partner|customer win/],
+    ['Community / CSR', /community event|charity|fundraiser|sponsorship|volunteer|donation|csr/],
+    ['Rebrand', /rebrand|new brand|brand identity|new logo/],
+    ['Hiring', /hiring|now hiring|open positions|recruiting|jobs|careers|new hires/]
+  ];
+  for (const [type, pattern] of rules) {
+    if (pattern.test(text)) {
+      if (declared === 'Hiring' && type !== 'Hiring' && !/hiring|recruit|jobs|careers|open positions/.test(text)) return type;
+      if (declared === 'Business Activity' || declared === 'Hiring') return type;
+      if (declared === type) return declared;
+    }
+  }
+  return declared;
+}
+
+function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '') {
+  const supplied = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || '', 300);
+  const norm = value => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const repeated = supplied && [trigger, context, raw.signalTitle, raw.title].some(v => norm(v) && (norm(supplied) === norm(v) || norm(supplied).includes(norm(v)) && norm(supplied).length <= norm(v).length + 12));
+  return supplied && !repeated ? supplied : compact(salesReadyWhy(trigger, context, buyingMoment, type), 300);
+}
+
 function makeSignal(raw = {}, account = {}, options = {}) {
-  const accountName = clean(raw.accountName || raw.account || raw.company || '');
+  const accountName = clean(raw.accountName || raw.account || raw.company || raw.company_name || raw.companyName || '');
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
-  const type = normalizeSignalType(raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
+  const type = normalizeSignalTypeFromEvidence(raw, raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
   const concreteTrigger = buildConcreteTrigger(raw, type, accountName);
   const buyingMoment = inferBuyingMoment(raw, type, concreteTrigger, raw.business_context || raw.businessContext || '');
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
@@ -1148,7 +1193,7 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const leadershipAdjustment = leadershipVerificationAdjustment(raw, type, summary, businessContext, sourceUrl);
   const confidencePct = Math.max(0, Math.min(100, abd.score + leadershipAdjustment));
   if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
-  const why = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || salesReadyWhy(concreteTrigger, businessContext, buyingMoment, type), 300);
+  const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment);
   const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.promo_categories || raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories || promoCategoriesForMoment(buyingMoment, type, businessContext), 6);
@@ -1368,7 +1413,7 @@ export default async function handler(req, res) {
     const serperConfigured = !!process.env.SERPER_API_KEY;
     const targetedSearchEnabled = mode === 'prospect-intelligence' && serperConfigured;
     const hasSearchProvider = serperConfigured;
-    if (mode === 'prospect-intelligence') {
+    if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Request received', {
         mode,
         accountsReceived: accounts.length,
@@ -1390,7 +1435,7 @@ export default async function handler(req, res) {
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
-      if (mode === 'prospect-intelligence') {
+      if (mode === 'prospect-intelligence' || mode === 'warm-account') {
         prospectDebugLog('Firecrawl enrichment complete', {
           firecrawlCalled: !!process.env.FIRECRAWL_API_KEY && candidates.length > 0,
           candidatesSentToFirecrawl: candidates.length,
@@ -1492,7 +1537,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     }
 
     const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
-    if (mode === 'prospect-intelligence') {
+    if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('LLM opportunity parser complete', {
         providerMode,
         candidateCountPassedToParser: candidates.length,
@@ -1517,12 +1562,13 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
 
     const madeSignalsRaw = fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
-      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' });
+      const accountMode = clean(account.intelligenceMode).toLowerCase();
+      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
     const signals = dedupeSignals(validMappedSignals).slice(0, 80);
-    if (mode === 'prospect-intelligence') {
+    if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
         mappedSignals: mappedSignals.length,
