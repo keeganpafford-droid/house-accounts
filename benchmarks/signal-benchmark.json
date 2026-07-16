@@ -1,0 +1,38 @@
+[
+  {
+    "company": "Avidia Bank",
+    "essential": [
+      {"event":"renovated branch reopening", "family":"growth"},
+      {"event":"payment product innovation award", "family":"award"}
+    ],
+    "optional": [{"event":"employee promotion", "family":"leadership"}]
+  },
+  {
+    "company": "Lonza",
+    "essential": [
+      {"event":"facility expansion", "family":"growth"},
+      {"event":"workforce hiring tied to capacity", "family":"hiring"}
+    ],
+    "optional": [{"event":"conference participation", "family":"events"}]
+  },
+  {
+    "company": "Hussey Seating",
+    "essential": [{"event":"major venue or customer contract", "family":"financial"}],
+    "optional": [{"event":"trade show participation", "family":"events"}]
+  },
+  {
+    "company": "Amoskeag Beverages",
+    "essential": [{"event":"community sponsorship or event", "family":"community"}],
+    "optional": [{"event":"new brand or product launch", "family":"product"}]
+  },
+  {
+    "company": "Arthur J. Gallagher",
+    "essential": [{"event":"acquisition", "family":"financial"}],
+    "optional": [{"event":"leadership appointment", "family":"leadership"}]
+  },
+  {
+    "company": "Catalyst Investment Partners",
+    "essential": [{"event":"funding or investment event", "family":"financial"}],
+    "optional": [{"event":"portfolio company expansion", "family":"growth"}]
+  }
+]
