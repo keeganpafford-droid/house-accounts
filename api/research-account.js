@@ -1,3 +1,14 @@
+import {
+  buildQueryPlan,
+  normalizeCandidate as normalizeSharedCandidate,
+  clusterCandidates,
+  normalizeOpportunity,
+  validateOpportunity,
+  dedupeOpportunities,
+  classifySignalFamily,
+  displaySignalType
+} from './signal-intelligence.js';
+
 // Vercel Serverless Function: verified public signal research.
 // Uses public search plus optional OpenAI qualification when OPENAI_API_KEY is configured.
 // Returns only source-backed signals.
@@ -836,7 +847,8 @@ function normalizeSuggestedContactDetails(raw = {}, fallbackRole = '', candidate
 }
 
 function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '', multiSource = false) {
-  const signalType = signalTypeFromAI(aiSignal.signalType || aiSignal.type);
+  const signalFamily = classifySignalFamily(`${aiSignal.signalType || aiSignal.type || ''} ${aiSignal.signalTitle || aiSignal.headline || ''} ${aiSignal.whatChanged || aiSignal.summary || ''} ${candidate.title || ''} ${candidate.snippet || ''}`, candidate.signalFamily || candidate.intendedSignalFamily || '');
+  const signalType = displaySignalType(signalFamily);
   const aiConfidence = confidenceFromAI(aiSignal.confidence);
   const sourceResult = {
     url: candidate.url || aiSignal.sourceUrl || '',
@@ -941,7 +953,7 @@ Leadership and contact-change rules:
 Reject generic About pages, Contact pages, homepages, SEO snippets, navigation text, stale news, and anything that does not create a natural reason to reach out.
 
 Important rules:
-- Return at most 2 opportunities.
+- Return at most 4 independently actionable opportunities. Do not stop after the first strong event.
 - Only return opportunities with confidence >= 80.
 - If there is no strong opportunity, return {"signals":[]}.
 - Do not invent facts.
@@ -1023,7 +1035,7 @@ ${JSON.stringify(safeCandidates, null, 2)}`;
       })
       .filter(Boolean)
       .filter(signal => Number(signal.confidence || 0) >= 0.80)
-      .slice(0, 2);
+      .slice(0, 4);
 
     return { enabled: true, signals, rawCount: rawSignals.length, error: '' };
   } catch (err) {
@@ -1149,6 +1161,20 @@ export default async function handler(req, res) {
       { bucket: 'launch/partnership', q: `"${accountName}" ${location} product launch new service partnership acquisition ${context}` },
       { bucket: 'safety/employee', q: `"${accountName}" ${location} safety sustainability employee initiative ${context}` }
     ];
+    const sharedQueryPlan = buildQueryPlan(accountName, {
+      industry,
+      location: cityState,
+      website: domain,
+      contactName
+    });
+    const existingQueryKeys = new Set(sourceQueries.map(item => item.q.toLowerCase()));
+    sharedQueryPlan.forEach(item => {
+      if (!existingQueryKeys.has(item.query.toLowerCase())) {
+        sourceQueries.push({ bucket: item.signalFamily, q: item.query, intendedSignalFamily: item.signalFamily });
+        existingQueryKeys.add(item.query.toLowerCase());
+      }
+    });
+
     if (domain) {
       sourceQueries.unshift({ bucket: 'domain-news', q: `site:${domain} news press release announcement expansion events awards community leadership` });
       sourceQueries.unshift({ bucket: 'domain-careers', q: `site:${domain} careers jobs hiring open positions` });
@@ -1159,7 +1185,7 @@ export default async function handler(req, res) {
       domainProbeCandidates(domain, accountName, industry),
       Promise.allSettled(sourceQueries.map(async item => {
         const results = await webSearch(item.q);
-        return results.map(r => ({ ...r, discoverySource: item.bucket, query: item.q }));
+        return results.map(r => ({ ...r, discoverySource: item.bucket, query: item.q, intendedSignalFamily: item.intendedSignalFamily || item.bucket }));
       }))
     ]);
 
@@ -1168,12 +1194,30 @@ export default async function handler(req, res) {
       .flatMap(x => x.value || []);
 
     let allCandidates = dedupeCandidates([...domainCandidates, ...allSearchResults])
-      .map(r => ({ ...r, candidateRank: rankCandidateForAI(r, accountName) }))
+      .map(r => {
+        const normalized = normalizeSharedCandidate(r, {
+          name: accountName,
+          industry,
+          location: cityState,
+          website: domain
+        }, r.intendedSignalFamily || r.discoverySource || '');
+        return {
+          ...normalized,
+          candidateRank: Math.round((rankCandidateForAI(r, accountName) * 0.40) + ((normalized.candidateScore || 0) * 0.60))
+        };
+      })
+      .filter(r => r.entityVerification?.level !== 'rejected')
       .sort((a, b) => b.candidateRank - a.candidateRank)
-      .slice(0, 24);
+      .slice(0, 30);
 
+    allCandidates = clusterCandidates(allCandidates);
     const firecrawlEnrichment = await enrichCandidatesWithFirecrawl(allCandidates);
-    allCandidates = firecrawlEnrichment.candidates;
+    allCandidates = firecrawlEnrichment.candidates.map(r => normalizeSharedCandidate(r, {
+      name: accountName,
+      industry,
+      location: cityState,
+      website: domain
+    }, r.signalFamily || r.intendedSignalFamily || ''));
 
     const evaluatedSearchResults = allCandidates.map(r => ({ result: r, signal: signalFromResult(r, accountName, industry) }));
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
@@ -1181,10 +1225,21 @@ export default async function handler(req, res) {
     // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
     const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''));
 
-    const signals = dedupeSignals([
+    const normalizedSignals = [
       ...aiQualification.signals,
       ...acceptedSearchSignals
-    ]);
+    ].map(signal => {
+      const candidate = allCandidates.find(c => c.url && c.url === signal.sourceUrl) || {};
+      const normalized = normalizeOpportunity(signal, { name: accountName }, candidate);
+      const validation = validateOpportunity(normalized);
+      if (!validation.valid) {
+        console.warn('[Signal Intelligence] account opportunity rejected', { accountName, reasons: validation.reasons, title: normalized.signalTitle });
+        return null;
+      }
+      return normalized;
+    }).filter(Boolean);
+
+    const signals = dedupeOpportunities(dedupeSignals(normalizedSignals)).slice(0, 4);
 
     const rejectedResults = Math.max(0, allCandidates.length - acceptedSearchSignals.length);
     const candidateSamples = evaluatedSearchResults

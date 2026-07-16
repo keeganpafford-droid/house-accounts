@@ -1,7 +1,19 @@
 // Vercel Serverless Function: v38 Unified Signal Intelligence Engine.
 // Endpoint: POST /api/research-batch
 // Purpose: Google-AI-style business signal discovery for House Accounts.
-// Pipeline: targeted search operators -> candidate snippets -> LLM synthesis -> high-value promo reasons to reach out.
+// Pipeline: intent plan -> normalized candidates -> verification/clustering -> AI enrichment -> ranked opportunities.
+
+import {
+  buildQueryPlan,
+  normalizeCandidate as normalizeSharedCandidate,
+  clusterCandidates,
+  classifySignalFamily,
+  displaySignalType,
+  normalizeOpportunity,
+  validateOpportunity,
+  dedupeOpportunities
+} from './signal-intelligence.js';
+
 
 function clean(text = '') {
   return String(text || '')
@@ -87,20 +99,10 @@ function safeArray(value, max = 6) {
   return String(value || '').split(/[;|\n,]/).map(clean).filter(Boolean).slice(0, max);
 }
 
-function normalizeSignalType(type = '') {
-  const t = String(type || '').toLowerCase();
-  if (/predictable|seasonal|fallback|timing/.test(t)) return 'Predictable Timing';
-  if (/hiring|job|career|recruit|talent|staff/.test(t)) return 'Hiring';
-  if (/trade|expo|conference|summit|event|open house|webinar|show/.test(t)) return 'Trade Show / Event';
-  if (/award|recognition|recognized|winner|milestone|anniversary|ranking|inc\.? 5000|best places/.test(t)) return 'Award / Recognition';
-  if (/expansion|facility|location|office|opening|growth|building|plant|warehouse/.test(t)) return 'Expansion';
-  if (/leadership|appoint|promot|named|ceo|president|director|vp|chief/.test(t)) return 'Leadership Change';
-  if (/launch|product|service|rollout|release|new offering|unveil/.test(t)) return 'Product Launch';
-  if (/acquisition|merger|funding|investment|raise|capital|acquired|merged/.test(t)) return 'Acquisition / Funding';
-  if (/partner|partnership|customer win|contract|government|client win/.test(t)) return 'Partnership / Contract';
-  if (/community|charity|fundrais|sponsor|csr|sustainability|volunteer/.test(t)) return 'Community / CSR';
-  if (/rebrand|brand|logo|identity/.test(t)) return 'Rebrand';
-  return 'Business Activity';
+function normalizeSignalType(type = '', evidence = '') {
+  if (/predictable|seasonal|fallback|timing/i.test(String(type || ''))) return 'Predictable Timing';
+  const family = classifySignalFamily(`${type || ''} ${evidence || ''}`);
+  return displaySignalType(family);
 }
 
 function confidenceNumber(conf) {
@@ -490,7 +492,10 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const perAccount = await mapLimit(accounts, 4, async account => {
     const accountMode = clean(account.intelligenceMode).toLowerCase();
     const effectiveMode = (accountMode === 'warm' || accountMode === 'mixed') ? 'warm-account' : mode;
-    const allQueries = queryTemplates(account.name, account, effectiveMode);
+    const sharedPlan = buildQueryPlan(account.name, account);
+    const sharedQueries = sharedPlan.map(item => item.query);
+    const allQueries = [...sharedQueries, ...queryTemplates(account.name, account, effectiveMode)]
+      .filter((q, index, arr) => q && arr.indexOf(q) === index);
     // Prospect mode remains deepest, while existing-customer research now receives
     // enough coverage to find multiple distinct public buying moments per account.
     const deepResearch = effectiveMode === 'prospect-intelligence' || effectiveMode === 'warm-account';
@@ -500,16 +505,26 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     let raw = rawSearchResults.filter(r => r && (r.url || r.title));
     if (deepResearch) raw = raw.concat(priorityOwnedPages(account));
 
-    const scored = raw.map(r => ({
-      ...r,
-      accountName: account.name,
-      sourceType: classifySource(r.url, r.title),
-      score: scoreCandidate(r, account.name)
-    }));
+    const scored = raw.map(r => {
+      const queryPlanItem = sharedPlan.find(item => item.query === r.query);
+      const legacyScore = scoreCandidate(r, account.name);
+      const normalized = normalizeSharedCandidate({
+        ...r,
+        accountName: account.name,
+        intendedSignalFamily: queryPlanItem?.signalFamily || '',
+        sourceType: classifySource(r.url, r.title)
+      }, account, queryPlanItem?.signalFamily || '');
+      return {
+        ...normalized,
+        sourceType: classifySource(r.url, r.title),
+        score: Math.round((legacyScore * 0.45) + ((normalized.candidateScore || 0) * 0.55))
+      };
+    });
 
-    const ranked = dedupeCandidates(scored
+    const ranked = clusterCandidates(dedupeCandidates(scored
+      .filter(r => r.entityVerification?.level !== 'rejected')
       .filter(r => r.score >= (deepResearch ? 10 : 12))
-      .sort((a,b) => b.score - a.score))
+      .sort((a,b) => b.score - a.score)))
       .slice(0, deepResearch ? 30 : 24);
 
     const liveCandidateCount = ranked.filter(r => (r.provider || '') !== 'owned-site' && r.score >= 18).length;
@@ -1526,7 +1541,7 @@ Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets and clean page content:
-${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query})), null, 2)}`;
+${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query, intendedSignalFamily:c.intendedSignalFamily, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, entityVerification:c.entityVerification, sourceAuthorityScore:c.sourceAuthorityScore, freshnessScore:c.freshnessScore, candidateScore:c.candidateScore, eventFingerprint:c.eventFingerprint, sources:c.sources})), null, 2)}`;
       rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
       parsed = parseJsonLoose(rawText);
     } else {
@@ -1563,11 +1578,23 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const madeSignalsRaw = fixedSignals.map(s => {
       const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
       const accountMode = clean(account.intelligenceMode).toLowerCase();
-      return makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
+      const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
+      if (!mapped) return null;
+      const accountCandidate = candidates.find(c => c.accountName === account.name && (
+        (mapped.sourceUrl && c.url === mapped.sourceUrl) ||
+        (mapped.eventFingerprint && c.eventFingerprint === mapped.eventFingerprint)
+      )) || {};
+      const normalized = normalizeOpportunity(mapped, account, accountCandidate);
+      const validation = validateOpportunity(normalized);
+      if (!validation.valid) {
+        console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: validation.reasons, title: normalized.signalTitle });
+        return null;
+      }
+      return normalized;
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
-    const signals = dedupeSignals(validMappedSignals).slice(0, 80);
+    const signals = dedupeOpportunities(dedupeSignals(validMappedSignals)).slice(0, 80);
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
