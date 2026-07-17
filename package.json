@@ -2,5 +2,8 @@
   "name": "revenue-radar",
   "version": "0.6.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test:mvp": "node scripts/test-mvp-navigation.js"
+  }
 }

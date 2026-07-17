@@ -2,6 +2,26 @@
   const SESSION_KEY='haAuthSession';
   const USER_KEY='haAuthUser';
 
+  // Centralized MVP visibility configuration. Hidden features remain implemented
+  // and can be restored after MVP without deleting routes, code, or saved data.
+  const MVP_FEATURES=Object.freeze({
+    houseAccounts:true,
+    customerUpload:true,
+    settings:true,
+    help:true,
+    prospectIntelligence:false,
+    oneOffResearch:false,
+    managementDashboard:false,
+    revenueContext:false,
+    importGuidesNavigation:false,
+    customerSuccessNavigation:false,
+    comingSoonNavigation:false,
+    betaProgramNavigation:false,
+    integrations:false
+  });
+  window.HouseAccountsMvpFeatures=MVP_FEATURES;
+  document.documentElement.classList.add('ha-mvp');
+
   const publicLinks=[
     {label:'Pricing',href:'/pricing.html',match:['/pricing','/pricing.html']},
     {label:'Customer Success',href:'/success-stories.html',match:['/success-stories','/success-stories.html']},
@@ -12,14 +32,8 @@
   ];
 
   const appLinks=[
-    {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Prospects',href:'/prospects/',group:'workflow',match:['/prospects','/prospects/']},
-    {label:'Import Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
-    {label:'Customer Success',href:'/success-stories.html',group:'resource',match:['/success-stories','/success-stories.html']},
-    {label:'Coming Soon',href:'/coming-soon',group:'resource',match:['/coming-soon','/coming-soon.html']},
-    {label:'FAQ',href:'/faq.html',group:'resource',match:['/faq','/faq.html']},
-    {label:'Security',href:'/security.html',group:'resource',match:['/security','/security.html']},
-    {label:'Feedback',href:'/contact.html',group:'resource',match:['/feedback','/contact','/contact.html']}
+    {label:'House Accounts',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
+    {label:'Add Customer Data',href:'/dashboard/#add-customer-data',group:'workflow',match:[]}
   ];
 
   function read(key){
@@ -58,11 +72,27 @@
     ].join(',')).forEach(el=>el.remove());
   }
 
+  function redirectHiddenMvpRoute(authenticated){
+    if(!authenticated) return false;
+    const path=currentPath();
+    const hiddenRoutes=[
+      ['/prospects',MVP_FEATURES.prospectIntelligence],
+      ['/prospects/index.html',MVP_FEATURES.prospectIntelligence]
+    ];
+    const hidden=hiddenRoutes.some(([route,enabled])=>!enabled && (path===route || path.startsWith(route+'/')));
+    if(hidden){
+      location.replace('/dashboard/?mvp=feature-hidden');
+      return true;
+    }
+    return false;
+  }
+
   function render(){
     if(location.pathname.startsWith('/admin')) return;
 
-    removeLegacy();
     const authenticated=hasSession();
+    if(redirectHiddenMvpRoute(authenticated)) return;
+    removeLegacy();
     const links=authenticated?appLinks:publicLinks;
     const wrapper=document.createElement('div');
     wrapper.id='haSharedHeader';
@@ -81,7 +111,7 @@
             <nav class="ha-nav-links" aria-label="Main navigation">${links.map(navLink).join('')}</nav>
             <div class="ha-account-actions">
               ${authenticated
-                ? `<a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Log Out</button>`
+                ? `<a class="ha-action-link" href="/contact.html">Help</a><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`
                 : `<a class="ha-action-link ha-secondary" href="/login">Log In</a><a class="ha-action-link ha-primary" href="/signup">Start Free</a>`}
             </div>
           </div>
