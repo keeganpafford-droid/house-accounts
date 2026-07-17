@@ -1694,6 +1694,24 @@
 .locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 
 .monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
+
+/* Sprint 4.3A: focused authenticated MVP. Feature code remains intact. */
+.ha-mvp .workflow-switcher,
+.ha-mvp #customerMonitoringWorkspace,
+.ha-mvp #customerDashboard,
+.ha-mvp .sales-dashboard,
+.ha-mvp #dashboardViewSwitcher,
+.ha-mvp .opportunities-section.account-intelligence-section{display:none !important;}
+.mvp-dashboard-heading{max-width:1136px;margin:24px auto 18px;display:none;align-items:flex-end;justify-content:space-between;gap:22px;padding-bottom:16px;border-bottom:1px solid var(--line);}
+.ha-mvp .mvp-dashboard-heading{display:flex;}
+.mvp-dashboard-heading h2{font-family:var(--display);font-size:2rem;line-height:1.05;color:var(--ink);margin:0 0 7px;}
+.mvp-dashboard-heading p{margin:0;color:var(--muted);font-size:.95rem;}
+.mvp-dashboard-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--line);border-left:4px solid var(--signal);background:#fff8e8;color:var(--ink);font-weight:700;}
+.mvp-dashboard-notice.active{display:block;}
+.ha-mvp .opportunities-section{margin-top:18px;}
+.ha-mvp .opportunities-section .legend{margin-bottom:16px;}
+@media(max-width:760px){.mvp-dashboard-heading{align-items:stretch;flex-direction:column}.mvp-dashboard-heading .btn{width:100%}}
+
 </style>
 <script src="/auth-client.js"></script>
 <link rel="stylesheet" href="/site-header.css">
@@ -1712,6 +1730,15 @@
 </header>
 
 <main>
+
+  <section class="mvp-dashboard-heading" aria-labelledby="mvpDashboardTitle">
+    <div>
+      <h2 id="mvpDashboardTitle">House Accounts</h2>
+      <p>Who should I contact next, and why?</p>
+    </div>
+    <button class="btn" type="button" onclick="openLightweightCustomerUpload()">Add Customer Data</button>
+  </section>
+  <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
 
   <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
     <div class="beta-modal">
@@ -1811,7 +1838,7 @@
   </section>
 
   <section id="customerMonitoringWorkspace" class="monitoring-workspace">
-    <div class="workspace-toolbar"><div><div class="upload-eyebrow">Monitoring workspace</div><h2>Existing Customer Lists</h2></div><button class="btn" id="addCustomerListBtn" type="button">Add another list</button></div>
+    <div class="workspace-toolbar"><div><div class="upload-eyebrow">Monitoring workspace</div><h2>Existing Customer Lists</h2></div><button class="btn" id="addCustomerListBtn" type="button">Add Customer Data</button></div>
     <div class="workspace-summary">
       <div class="workspace-card"><strong id="wsActiveCustomers">0</strong><span>Active customers</span></div>
       <div class="workspace-card"><strong id="wsPausedCustomers">0</strong><span>Paused customers</span></div>
@@ -1927,7 +1954,7 @@
           <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your saved account list is being monitored for new reasons to reach out.</div>
         </div>
         <div class="customer-dashboard-actions">
-          <button class="btn btn-secondary" type="button" onclick="scrollToUploadForNewList()">Upload New Account List</button>
+          <button class="btn btn-secondary" type="button" onclick="scrollToUploadForNewList()">Add Customer Data</button>
           <button class="btn" type="button" onclick="manualDashboardRefresh()">Refresh Dashboard</button>
         </div>
       </div>
@@ -1995,7 +2022,7 @@
     </div>
 
     <!-- Detailed Account Cards -->
-    <div class="opportunities-section">
+    <div class="opportunities-section account-intelligence-section">
       <div class="section-header">Account Intelligence</div>
       <div id="accountList"></div>
     </div>
@@ -2454,6 +2481,21 @@ function openLightweightCustomerUpload(){
 function scrollToUploadForNewList(){
   openLightweightCustomerUpload();
 }
+
+function handleMvpDashboardRoute(){
+  const params = new URLSearchParams(window.location.search);
+  const notice = document.getElementById('mvpDashboardNotice');
+  if(notice && params.get('mvp') === 'feature-hidden'){
+    notice.textContent = 'That feature is not part of the current House Accounts MVP. Your saved data is still available, and you can continue from the House Accounts dashboard.';
+    notice.classList.add('active');
+  }
+  if(window.location.hash === '#add-customer-data' || window.location.hash === '#dropzone'){
+    window.setTimeout(openLightweightCustomerUpload, 0);
+  }
+}
+window.addEventListener('hashchange', handleMvpDashboardRoute);
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', handleMvpDashboardRoute);
+else handleMvpDashboardRoute();
 
 
 function currentDashboardRole(){
