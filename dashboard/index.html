@@ -1951,10 +1951,11 @@
         <div>
           <div class="customer-dashboard-eyebrow">Customer Dashboard</div>
           <h2 class="customer-dashboard-title">What’s New This Week</h2>
-          <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your saved account list is being monitored for new reasons to reach out.</div>
+          <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your customer accounts are checked for timely reasons to reconnect.</div>
         </div>
         <div class="customer-dashboard-actions">
           <button class="btn btn-secondary" type="button" onclick="scrollToUploadForNewList()">Add Customer Data</button>
+          <button class="btn btn-secondary" id="manageCustomerAccountsBtn" type="button">Manage Customer Accounts</button>
           <button class="btn" type="button" onclick="manualDashboardRefresh()">Refresh Dashboard</button>
         </div>
       </div>
@@ -2009,15 +2010,10 @@
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
-      <div class="legend">
-        <span><b>Goal</b> — who should I contact, when, and why?</span>
-        <span><b>Follow-Up Signals</b> — recent orders or completed projects</span>
-        <span><b>Repeat / Pattern Signals</b> — seasonal or similar historical buys</span>
-        <span><b>Business Activity Signals</b> — verified public signals from web research</span>
-      </div>
+      
 
       <div id="notice" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#fff8e8; border-left:3px solid var(--radar); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
-      <div id="researchDiagnosticsPanel" style="display:none; font-family:var(--mono); font-size:0.8rem; background:#eef8ff; border-left:3px solid var(--teal); padding:10px 14px; margin-bottom:16px; color:var(--ink);"></div>
+      <div id="researchDiagnosticsPanel" hidden aria-hidden="true"></div>
       <div class="opportunities-grid" id="opportunitiesGrid"></div>
     </div>
 
@@ -2029,6 +2025,13 @@
 
   </div>
 </main>
+<div id="accountManagerModal" role="dialog" aria-modal="true" aria-labelledby="accountManagerTitle" style="display:none;position:fixed;inset:0;background:rgba(10,25,45,.55);z-index:9999;padding:24px;overflow:auto;">
+  <div style="max-width:1050px;margin:4vh auto;background:#fff;border-radius:16px;padding:24px;box-shadow:0 24px 70px rgba(0,0,0,.25);">
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;"><div><h2 id="accountManagerTitle" style="margin:0 0 6px;">Manage Customer Accounts</h2><p style="margin:0;color:var(--muted);">Pause monitoring without deleting historical account data, or permanently delete an account or uploaded list.</p></div><button class="btn btn-secondary" type="button" id="closeAccountManagerBtn">Close</button></div>
+    <div id="accountManagerContent" style="margin-top:20px;"></div>
+  </div>
+</div>
+
 
 <footer><div>House Accounts — know which house accounts deserve a call this week, and why.</div><div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Contact</a></div></footer>
 
@@ -3515,51 +3518,7 @@ function getResearchDiagnostics(){
   return diagnostics;
 }
 
-function renderResearchDiagnostics(){
-  const el = document.getElementById('researchDiagnosticsPanel');
-  if(!el) return;
-  const diagnostics = getResearchDiagnostics();
-  if(!diagnostics.length){
-    el.style.display = 'none';
-    el.innerHTML = '';
-    return;
-  }
-  const researched = diagnostics.length;
-  const signals = diagnostics.reduce((sum, d) => sum + (d.signalsFound || 0), 0);
-  const results = diagnostics.reduce((sum, d) => sum + (d.searchResultsFound || 0), 0);
-  const rawResults = diagnostics.reduce((sum, d) => sum + (d.rawSearchResultsFound || 0), 0);
-  const acceptedSearch = diagnostics.reduce((sum, d) => sum + (d.acceptedSearchSignals || 0), 0);
-  const aiAccepted = diagnostics.reduce((sum, d) => sum + (d.aiAcceptedSignals || 0), 0);
-  const rejected = diagnostics.reduce((sum, d) => sum + (d.rejectedResults || 0), 0);
-  const elapsed = diagnostics.reduce((sum, d) => sum + (d.elapsedMs || 0), 0);
-  const zeroSignalAccounts = diagnostics.filter(d => !d.signalsFound).slice(0, 8).map(d => escapeHtml(d.accountName)).join(', ');
-  const samples = diagnostics.flatMap(d => (d.candidateSamples || []).map(c => ({...c, accountName:d.accountName}))).slice(0, 12);
-  const coverage = diagnostics.reduce((acc, d) => {
-    Object.entries(d.sourceCoverage || {}).forEach(([k,v]) => acc[k] = (acc[k] || 0) + Number(v || 0));
-    return acc;
-  }, {});
-  const coverageText = Object.entries(coverage).length
-    ? Object.entries(coverage).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `${escapeHtml(k)}: ${v}`).join(' · ')
-    : '';
-
-  const sampleRows = samples.length ? `
-    <details style="margin-top:8px;">
-      <summary style="cursor:pointer;"><strong>Candidate result samples</strong> — shows what research found and why it was accepted/rejected</summary>
-      <div style="display:grid; gap:6px; margin-top:8px;">
-        ${samples.map(c => `
-          <div style="background:white; border:1px solid #cfe0ef; padding:8px; border-radius:6px;">
-            <div><strong>${escapeHtml(c.accountName)}</strong> · ${escapeHtml(c.status || 'candidate')} · ${escapeHtml(c.reason || '')}</div>
-            <div>${escapeHtml(c.title || '')}</div>
-            <div style="color:var(--slate);">${escapeHtml(c.domain || '')}${c.sourceType ? ` · ${escapeHtml(c.sourceType)}` : ''}</div>
-          </div>
-        `).join('')}
-      </div>
-    </details>
-  ` : '';
-
-  el.style.display = 'block';
-  el.innerHTML = `<strong>Research diagnostics:</strong> ${researched} accounts researched · ${results} ranked candidates${rawResults ? ` from ${rawResults} raw search results` : ''} · ${signals} business activity signals accepted · ${aiAccepted} AI-qualified · ${acceptedSearch} keyword-qualified · ${rejected} rejected${elapsed ? ` · ${Math.round(elapsed/1000)}s total research time` : ''}${coverageText ? `<br><strong>Source coverage:</strong> ${coverageText}` : ''}${zeroSignalAccounts ? `<br><strong>No signal found for:</strong> ${zeroSignalAccounts}` : ''}${sampleRows}`;
-}
+function renderResearchDiagnostics(){ const el=document.getElementById('researchDiagnosticsPanel'); if(el){el.hidden=true;el.style.display='none';el.innerHTML='';} }
 
 async function researchAccountByName(accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
@@ -5594,10 +5553,15 @@ function escapeHtml(text){
 (function(){
  const fmt=d=>{if(!d)return '—';const x=new Date(d);return Number.isNaN(x.getTime())?'—':x.toLocaleDateString()};
  const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
- async function request(method,body){const r=await fetch('/api/monitoring-lists',{method,headers:{'Content-Type':'application/json',...(window.HouseAuth?.authHeaders?.()||{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Monitoring list request failed');return d}
- async function load(){try{const d=await request('GET');const lists=d.lists?.customer||[];if(!lists.length)return;document.getElementById('customerMonitoringWorkspace')?.classList.add('active');document.getElementById('dropzone')?.classList.add('upload-hidden');document.getElementById('exampleOpportunity')?.classList.add('upload-hidden');const sm=d.summary||{};document.getElementById('wsActiveCustomers').textContent=sm.activeCustomers||0;document.getElementById('wsPausedCustomers').textContent=sm.pausedCustomers||0;document.getElementById('wsActiveProspects').textContent=sm.activeProspects||0;document.getElementById('wsPausedProspects').textContent=sm.pausedProspects||0;document.getElementById('wsNextScan').textContent=sm.nextWeeklyScan||'Monday';document.getElementById('wsMonitoringStatus').textContent=sm.monitoringStatus||'Active';document.getElementById('customerListGrid').innerHTML=lists.map(x=>`<article class="monitor-list-card"><div class="monitor-list-head"><div><h3>${esc(x.name)}</h3><div class="monitor-meta">${x.companyCount} compan${x.companyCount===1?'y':'ies'} · Last upload ${fmt(x.lastUpload)} · Last scan ${fmt(x.lastScan)}</div></div><span class="monitor-badge ${x.status}">${x.status==='paused'?'Paused':'Active'}</span></div><div class="monitor-actions"><button data-list-act="rename" data-list-id="${esc(x.id)}">Rename</button><button data-list-act="${x.status==='paused'?'resume':'pause'}" data-list-id="${esc(x.id)}">${x.status==='paused'?'Resume Monitoring':'Pause Monitoring'}</button><button data-list-act="view" data-list-id="${esc(x.id)}">View Accounts</button><button class="danger" data-list-act="delete" data-list-id="${esc(x.id)}">Delete</button></div></article>`).join('')}catch(e){console.warn('Customer monitoring workspace load failed',e)}}
- document.addEventListener('click',async e=>{const b=e.target.closest('[data-list-act]');if(!b)return;const action=b.dataset.listAct,id=b.dataset.listId;if(action==='view'){document.getElementById('results')?.scrollIntoView({behavior:'smooth'});return}try{if(action==='rename'){const name=prompt('Rename this monitoring list:');if(!name)return;await request('PATCH',{type:'customer',id,action,name})}else if(action==='delete'){if(!confirm('Delete this monitoring list, its customer accounts, and associated signals? This cannot be undone.'))return;await request('DELETE',{type:'customer',id})}else await request('PATCH',{type:'customer',id,action});location.reload()}catch(err){alert(err.message)}});
- document.addEventListener('DOMContentLoaded',()=>{document.getElementById('addCustomerListBtn')?.addEventListener('click',openLightweightCustomerUpload);setTimeout(load,300)});
+ let cachedLists=[];
+ async function request(method,body){const r=await fetch('/api/monitoring-lists',{method,headers:{'Content-Type':'application/json',...(window.HouseAuth?.authHeaders?.()||{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Customer account request failed');return d}
+ function accountRows(list){return (list.accounts||[]).map(a=>`<tr><td><strong>${esc(a.name)}</strong><div style="font-size:.78rem;color:var(--muted);">${esc(a.industry||'')}</div></td><td>${esc(list.name)}</td><td>${a.monitoringStatus==='paused'?'Paused':'Active'}</td><td>${a.lastResearchedAt?fmt(a.lastResearchedAt):'Not researched yet'}</td><td>${a.hasActionableAlert?'Yes':'No'}</td><td>${a.domain?esc(a.domain):'Not provided'}</td><td>${fmt(a.dateAdded)}</td><td><button data-account-act="${a.monitoringStatus==='paused'?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}">${a.monitoringStatus==='paused'?'Resume':'Stop Monitoring'}</button> <button class="danger" data-account-act="delete-account" data-account-id="${esc(a.id)}">Delete Account Data</button></td></tr>`).join('')}
+ function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(list=>`<section style="margin:0 0 24px;"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">${esc(list.name)}</h3><div style="color:var(--muted);font-size:.85rem;">${list.companyCount} customer accounts · ${list.status==='paused'?'Monitoring paused':'Monitoring active'}</div></div><div><button data-list-act="${list.status==='paused'?'resume':'pause'}" data-list-id="${esc(list.id)}">${list.status==='paused'?'Resume List':'Pause List'}</button> <button class="danger" data-list-act="delete" data-list-id="${esc(list.id)}">Delete Uploaded List</button></div></div><div style="overflow:auto;margin-top:12px;"><table style="width:100%;border-collapse:collapse;font-size:.84rem;"><thead><tr><th>Customer</th><th>Source</th><th>Monitoring</th><th>Last researched</th><th>Alert</th><th>Domain</th><th>Added</th><th>Actions</th></tr></thead><tbody>${accountRows(list)||'<tr><td colspan="8">No customer accounts in this list.</td></tr>'}</tbody></table></div></section>`).join('')||'<p>No uploaded customer accounts found.</p>'}
+ async function load(){try{const d=await request('GET');cachedLists=d.lists?.customer||[];renderManager()}catch(e){console.warn('Customer account management load failed',e)}}
+ function open(){document.getElementById('accountManagerModal').style.display='block';load()}
+ function close(){document.getElementById('accountManagerModal').style.display='none'}
+ document.addEventListener('click',async e=>{if(e.target.id==='manageCustomerAccountsBtn')return open();if(e.target.id==='closeAccountManagerBtn'||e.target.id==='accountManagerModal')return close();const ab=e.target.closest('[data-account-act]');if(ab){const action=ab.dataset.accountAct,id=ab.dataset.accountId;const destructive=action==='delete-account';if(!confirm(destructive?'Delete this account data and its saved signals? This cannot be undone. Use Stop Monitoring instead to preserve history.':'Change monitoring status for this customer account?'))return;try{await request('PATCH',{type:'account',id,action});await load()}catch(err){alert(err.message)}return}const b=e.target.closest('[data-list-act]');if(!b)return;const action=b.dataset.listAct,id=b.dataset.listId;try{if(action==='delete'){if(!confirm('Delete this entire uploaded list, all customer account data, and associated signals? This cannot be undone.'))return;await request('DELETE',{type:'customer',id})}else await request('PATCH',{type:'customer',id,action});await load()}catch(err){alert(err.message)}});
+ document.addEventListener('DOMContentLoaded',()=>{document.getElementById('manageCustomerAccountsBtn')?.addEventListener('click',open)});
 })();
 </script>
 </body>
