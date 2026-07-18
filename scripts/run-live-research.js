@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const args = process.argv.slice(2);
+const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+const all = args.includes('--all');
+const fixture = JSON.parse(fs.readFileSync(new URL('../benchmarks/arthur-j-gallagher.json', import.meta.url), 'utf8'));
+const endpoint = all ? '/api/weekly-scan?dryRun=true&limit=100' : '/api/research-batch';
+const options = all ? {headers:{Authorization:`Bearer ${process.env.CRON_SECRET || ''}`}} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'weekly-monitoring',accounts:[{name:fixture.company,website:fixture.website,industry:fixture.industry,location:fixture.location}]})};
+const response = await fetch(`${baseUrl}${endpoint}`, options);
+const data = await response.json().catch(()=>({}));
+console.log(JSON.stringify({ok:response.ok,status:response.status,endpoint,result:data},null,2));
+if(!response.ok) process.exitCode=1;
