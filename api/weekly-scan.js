@@ -236,7 +236,7 @@ export default async function handler(req, res){
       const provided = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query?.secret;
       if(provided !== process.env.CRON_SECRET) return json(res, 401, {error:'Unauthorized'});
     }
-    const limit = Math.min(Number(req.query?.limit || 10), 25);
+    const limit = Math.min(Number(req.query?.limit || 25), 100);
     const dryRun = String(req.query?.dryRun || '').toLowerCase() === 'true';
     const uploads = await supabase(`ha_uploads?select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company)&order=updated_at.desc&limit=${limit}`);
     const baseUrl = getBaseUrl(req);
@@ -245,8 +245,8 @@ export default async function handler(req, res){
     for(const upload of uploads || []){
       const user = upload.ha_users;
       if(!user?.email) continue;
-      const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&limit=75`);
-      const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name).slice(0,50);
+      const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&limit=5000`);
+      const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name && !['paused','archived'].includes(clean(a.monitoringStatus || '').toLowerCase()));
       if(!accountPayloads.length) continue;
 
       const started = new Date().toISOString();
@@ -254,14 +254,46 @@ export default async function handler(req, res){
       const run = Array.isArray(runRows) ? runRows[0] : runRows;
       let newSignalRows = [];
       try{
-        const researchResp = await fetch(`${baseUrl}/api/research-batch`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({mode:'weekly-monitoring', accounts: accountPayloads})
-        });
-        const research = await researchResp.json();
-        if(!researchResp.ok) throw new Error(research.error || 'Research batch failed');
-        const signals = Array.isArray(research.signals) ? research.signals : [];
+        const researchChunks = [];
+        const batchSize = Math.max(1, Math.min(Number(process.env.WEEKLY_RESEARCH_BATCH_SIZE || 25), 50));
+        for(let offset=0; offset<accountPayloads.length; offset+=batchSize){
+          const batch = accountPayloads.slice(offset, offset + batchSize);
+          let lastError = null;
+          for(let attempt=1; attempt<=3; attempt++){
+            try{
+              const researchResp = await fetch(`${baseUrl}/api/research-batch`, {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({mode:'weekly-monitoring', accounts: batch})
+              });
+              const research = await researchResp.json();
+              if(!researchResp.ok) throw new Error(research.error || 'Research batch failed');
+              researchChunks.push(research);
+              lastError = null;
+              break;
+            }catch(error){
+              lastError = error;
+              if(attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 750));
+            }
+          }
+          if(lastError){
+            researchChunks.push({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:batch.length,queuedAccounts:batch.length,processedAccounts:0,failedAccounts:batch.length,failureReasons:batch.map(a=>({accountName:a.name,reason:lastError.message}))}}});
+          }
+        }
+        const research = {
+          signals: researchChunks.flatMap(chunk => Array.isArray(chunk.signals) ? chunk.signals : []),
+          diagnostics: {
+            chunks: researchChunks.map(chunk => chunk.diagnostics || {}),
+            structuredSummary: researchChunks.reduce((acc, chunk) => {
+              const d = chunk?.diagnostics?.structuredSummary || {};
+              for(const key of ['eligibleAccounts','queuedAccounts','processedAccounts','skippedAccounts','failedAccounts','queriesRun','rawResults','uniqueCandidates','enrichedPages','acceptedSignals','totalProcessingTimeMs']) acc[key] += Number(d[key] || 0);
+              acc.skipReasons.push(...(d.skipReasons || []));
+              acc.failureReasons.push(...(d.failureReasons || []));
+              return acc;
+            }, {eligibleAccounts:0,queuedAccounts:0,processedAccounts:0,skippedAccounts:0,failedAccounts:0,queriesRun:0,rawResults:0,uniqueCandidates:0,enrichedPages:0,acceptedSignals:0,totalProcessingTimeMs:0,skipReasons:[],failureReasons:[]})
+          }
+        };
+        const signals = research.signals;
         for(const s of signals){
           const h = signalHash(user.id, upload.id, s.accountName, s);
           const existing = await supabase(`ha_signals?select=id&signal_hash=eq.${encodeURIComponent(h)}&limit=1`);

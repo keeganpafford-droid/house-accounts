@@ -489,7 +489,8 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
   const allCandidates = [];
   const samples = [];
   const diagnostics = [];
-  const perAccount = await mapLimit(accounts, 4, async account => {
+  const perAccount = await mapLimit(accounts, Math.max(1, Math.min(Number(process.env.RESEARCH_ACCOUNT_CONCURRENCY || 4), 8)), async account => {
+    const accountStartedAt = Date.now();
     const accountMode = clean(account.intelligenceMode).toLowerCase();
     const effectiveMode = (accountMode === 'warm' || accountMode === 'mixed') ? 'warm-account' : mode;
     const sharedPlan = buildQueryPlan(account.name, account);
@@ -499,7 +500,8 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     // Prospect mode remains deepest, while existing-customer research now receives
     // enough coverage to find multiple distinct public buying moments per account.
     const deepResearch = effectiveMode === 'prospect-intelligence' || effectiveMode === 'warm-account';
-    const queries = allQueries.slice(0, deepResearch ? 18 : 16);
+    const queryLimit = Math.max(6, Math.min(Number(process.env.RESEARCH_QUERIES_PER_ACCOUNT || (deepResearch ? 12 : 10)), 18));
+    const queries = allQueries.slice(0, queryLimit);
     const resultSets = await Promise.all(queries.map(runSearch));
     const rawSearchResults = resultSets.flat();
     let raw = rawSearchResults.filter(r => r && (r.url || r.title));
@@ -559,7 +561,11 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
       })),
       liveSignalCandidateFound: liveCandidateCount > 0,
       highIntentCandidateFound: highIntentCandidateCount > 0,
-      fallbackEligibleAfterSearch: highIntentCandidateCount === 0
+      fallbackEligibleAfterSearch: highIntentCandidateCount === 0,
+      uniqueCandidateUrls: new Set(ranked.map(r => normalizedCandidateUrl(r.url)).filter(Boolean)).size,
+      enrichedPages: ranked.filter(r => r.pageContent).length,
+      status: 'processed',
+      elapsedMs: Date.now() - accountStartedAt
     });
 
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
@@ -1412,7 +1418,7 @@ export default async function handler(req, res) {
         seenAccountKeys.add(key);
         return true;
       })
-      .slice(0, 50);
+      .slice(0, Math.max(1, Math.min(Number(process.env.RESEARCH_BATCH_MAX_ACCOUNTS || 250), 500)));
     if (!safeAccounts.length) return res.status(400).json({ error: 'No accounts provided' });
 
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -1699,7 +1705,22 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         sourceCoverage,
         candidateSamples,
         searchDiagnostics,
-        outputPreview: String(rawText || '').slice(0, 500)
+        outputPreview: String(rawText || '').slice(0, 500),
+        structuredSummary: {
+          eligibleAccounts: safeAccounts.length,
+          queuedAccounts: safeAccounts.length,
+          processedAccounts: searchDiagnostics.filter(d => d.status === 'processed').length || safeAccounts.length,
+          skippedAccounts: Math.max(0, accounts.length - safeAccounts.length),
+          failedAccounts: searchDiagnostics.filter(d => d.status === 'failed').length,
+          skipReasons: accounts.length > safeAccounts.length ? [{ reason: 'duplicate_or_invalid_account_name', count: accounts.length - safeAccounts.length }] : [],
+          failureReasons: searchDiagnostics.filter(d => d.status === 'failed').map(d => ({ accountName: d.companyName, reason: d.error || 'unknown' })),
+          queriesRun: searchDiagnostics.reduce((n, d) => n + Number(d.targetedQueriesRun || 0), 0),
+          rawResults: searchDiagnostics.reduce((n, d) => n + Number(d.sourcesReturned || 0), 0),
+          uniqueCandidates: candidates.length,
+          enrichedPages: candidates.filter(c => c.pageContent).length,
+          acceptedSignals: finalSignals.length,
+          totalProcessingTimeMs: Date.now() - startedAt
+        }
       }
     });
   } catch (err) {
