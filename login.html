@@ -1,28 +1,31 @@
 <!doctype html>
-<html lang="en" data-auth-page="true"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Log in | House Accounts</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>
-:root{--navy:#17375E;--teal:#1FB7AE;--gold:#F5A623;--bg:#F7F8FA;--line:#D8DEE9;--muted:#5f6f86}*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--navy)}.wrap{min-height:100vh;display:grid;place-items:center;padding:32px}.card{width:min(520px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:30px;box-shadow:0 18px 50px rgba(23,55,94,.10)}.brand{font-size:28px;font-weight:900;margin-bottom:6px}p{color:var(--muted);line-height:1.5}label{display:block;margin-top:14px;font-size:13px;font-weight:800}input{width:100%;height:46px;border:1px solid var(--line);border-radius:12px;padding:0 14px;margin-top:7px;font-size:15px}.btn{width:100%;height:48px;border:0;border-radius:12px;background:var(--gold);font-weight:900;margin-top:18px;cursor:pointer}.tabs{display:flex;gap:8px;margin:22px 0}.tab{flex:1;height:40px;border:1px solid var(--line);background:#fff;border-radius:999px;font-weight:800;cursor:pointer}.tab.active{background:var(--navy);color:#fff}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:14px}.link{color:var(--teal);font-weight:800;text-decoration:none;cursor:pointer}.msg{display:none;margin-top:14px;border-radius:12px;padding:12px;border:1px solid var(--line);background:#F7F8FA}.err{background:#fdecea;border-color:#f6c6bd;color:#8a1f11}.ok{background:#edfdfb;border-color:#b8f0ea;color:#0f766e}.hidden{display:none}</style><link rel="stylesheet" href="/site-header.css">
+<html lang="en" data-auth-page="true">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log In | House Accounts</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site-header.css"><link rel="stylesheet" href="/auth-pages.css">
 <script src="/site-header.js" defer></script>
 </head>
-<body><div class="wrap"><main class="card"><div class="brand">House Accounts</div><p id="intro">Welcome back. Log in to monitor your companies and discover new reasons to reach out.</p><div class="tabs"><button class="tab active" id="loginTab">Log in</button><button class="tab" id="signupTab">Sign up</button></div>
-<form id="authForm"><div id="signupFields" class="hidden"><label>Name<input id="name" autocomplete="name"></label><label>Company / Organization<input id="organization" autocomplete="organization"></label></div><label>Email<input id="email" type="email" autocomplete="email" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="btn" id="submitBtn">Log in</button></form>
-<div class="row"><a class="link" href="/forgot-password.html">Forgot password?</a><a class="link" href="/pricing.html">Pricing</a></div><div class="msg" id="message"></div></main></div><script src="/auth-client.js"></script><script>
-let mode='login'; const qs=new URLSearchParams(location.search); const next=qs.get('next')||'/dashboard/';
-function setMode(m){mode=m; loginTab.classList.toggle('active',m==='login'); signupTab.classList.toggle('active',m==='signup'); signupFields.classList.toggle('hidden',m!=='signup'); submitBtn.textContent=m==='login'?'Log in':'Create account'; intro.textContent=m==='login'?'Welcome back. Log in to monitor your companies and discover new reasons to reach out.':'Create your beta account. Monitor up to 10 companies for free.';}
-function show(msg,ok=false){message.textContent=msg; message.className='msg '+(ok?'ok':'err'); message.style.display='block';}
-loginTab.onclick=()=>setMode('login'); signupTab.onclick=()=>setMode('signup');
-function fieldValue(id){ const el=document.getElementById(id); return (el && typeof el.value === 'string') ? el.value.trim() : ''; }
-authForm.onsubmit=async e=>{e.preventDefault(); message.style.display='none'; submitBtn.disabled=true; try{
-  const payload={
-    email:fieldValue('email').toLowerCase(),
-    password:fieldValue('password'),
-    name:fieldValue('name'),
-    organizationName:fieldValue('organization')
-  };
-  if(!payload.email || !payload.password || (mode==='signup' && (!payload.name || !payload.organizationName))){
-    show(mode==='signup'?'Please enter your name, organization, email, and password.':'Please enter your email and password.');
-    return;
-  }
-  await HouseAuth.api(mode==='login'?'login':'signup', payload); location.href=next;
-}catch(err){show(err.message||'Authentication failed.')} finally{submitBtn.disabled=false;}};
-if(qs.get('signup')) setMode('signup');
-</script></body></html>
+<body>
+<div class="auth-wrap"><main class="auth-card" style="max-width:520px">
+  <div class="auth-brand">House Accounts</div>
+  <p class="auth-copy">Welcome back. Log in to monitor your customers and discover new reasons to reach out.</p>
+  <form id="loginForm" novalidate>
+    <label class="auth-field">Work Email<input name="email" type="email" autocomplete="email" required><span class="auth-error"></span></label>
+    <label class="auth-field">Password<input name="password" type="password" autocomplete="current-password" required><span class="auth-error"></span></label>
+    <button class="auth-button" id="loginSubmit" type="submit">Log In</button>
+  </form>
+  <div class="auth-message" id="loginMessage" role="alert"></div>
+  <div class="auth-links"><a class="auth-link" href="/forgot-password.html">Forgot password?</a><span>New to House Accounts? <a class="auth-link" href="/signup">Start Free</a></span></div>
+</main></div>
+<script src="/auth-client.js"></script>
+<script>
+(function(){
+ const form=document.getElementById('loginForm'),submit=document.getElementById('loginSubmit'),message=document.getElementById('loginMessage');
+ const next=new URLSearchParams(location.search).get('next')||'/dashboard/';
+ const val=n=>{const f=form.elements.namedItem(n);return f&&typeof f.value==='string'?f.value.trim():''};
+ form.addEventListener('submit',async e=>{e.preventDefault();message.className='auth-message';message.textContent='';const email=val('email').toLowerCase(),password=val('password');if(!email||!password){message.textContent='Please enter your email and password.';message.className='auth-message error';return;}submit.disabled=true;submit.textContent='Logging in…';try{await HouseAuth.api('login',{email,password});location.href=next;}catch(err){message.textContent=err.message||'Login failed.';message.className='auth-message error';}finally{submit.disabled=false;submit.textContent='Log In';}});
+})();
+</script>
+</body></html>

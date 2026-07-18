@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:mvp": "node scripts/test-mvp-navigation.js"
+    "test:mvp": "node scripts/test-mvp-navigation.js",
+    "test:public-mvp": "node scripts/test-public-mvp.js"
   }
 }

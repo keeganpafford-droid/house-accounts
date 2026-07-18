@@ -24,8 +24,6 @@
 
   const publicLinks=[
     {label:'Pricing',href:'/pricing.html',match:['/pricing','/pricing.html']},
-    {label:'Customer Success',href:'/success-stories.html',match:['/success-stories','/success-stories.html']},
-    {label:'Coming Soon',href:'/coming-soon',match:['/coming-soon','/coming-soon.html']},
     {label:'FAQ',href:'/faq.html',match:['/faq','/faq.html']},
     {label:'Security',href:'/security.html',match:['/security','/security.html']},
     {label:'Feedback',href:'/contact.html',match:['/feedback','/contact','/contact.html']}
