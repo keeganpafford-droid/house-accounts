@@ -3,7 +3,17 @@
   if(!form) return;
   const submit=document.getElementById('signupSubmit');
   const message=document.getElementById('signupMessage');
-  const next=new URLSearchParams(location.search).get('next')||'/dashboard/';
+  const params=new URLSearchParams(location.search);
+  const next=params.get('next')||'/dashboard/';
+  const requestedPlan=['solo','team'].includes((params.get('plan')||'').toLowerCase())?(params.get('plan')||'').toLowerCase():'free';
+  const offer=document.getElementById('signupOffer');
+  const copy=document.getElementById('signupCopy');
+  if(requestedPlan!=='free'){
+    const planName=requestedPlan==='team'?'Team':'Solo';
+    if(offer) offer.textContent='30-Day Free Trial • No credit card required';
+    if(copy) copy.innerHTML=`<strong>Start your ${planName} plan free for 30 days.</strong><br>You can also choose the Free Forever plan for up to 10 customer accounts.`;
+    if(submit) submit.textContent='Start 30-Day Free Trial';
+  }
 
   function value(name){
     const field=form.elements.namedItem(name);
@@ -52,14 +62,14 @@
         crm_erp:value('crm_erp'),
         email:value('email').toLowerCase(),
         password:value('password'),
-        plan:'free'
+        plan:requestedPlan
       });
       location.href=next;
     }catch(error){
       show(error.message||'We could not create your account. Please try again.');
     }finally{
       submit.disabled=false;
-      submit.textContent='Start Free';
+      submit.textContent=requestedPlan==='free'?'Start Free':'Start 30-Day Free Trial';
     }
   });
 })();
