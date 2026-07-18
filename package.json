@@ -1,10 +1,13 @@
 {
   "name": "revenue-radar",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test:mvp": "node scripts/test-mvp-navigation.js",
-    "test:public-mvp": "node scripts/test-public-mvp.js"
+    "test:public-mvp": "node scripts/test-public-mvp.js",
+    "test:sprint-4.3c": "node scripts/test-sprint-4-3c.js",
+    "research:benchmark": "node scripts/run-live-research.js",
+    "research:all": "node scripts/run-live-research.js --all"
   }
 }
