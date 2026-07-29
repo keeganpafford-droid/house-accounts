@@ -721,20 +721,21 @@
   }
   .opp-card-footer .opp-section{margin-bottom:10px;}
   .opp-card-footer .opp-section:last-child{margin-bottom:0;}
+  .opp-card-footer .meta-section .opp-label{color:var(--muted);}
   .opportunity-card:hover{
     border-color:var(--radar);
     box-shadow:0 4px 12px rgba(47,111,94,0.1);
   }
   
   .opp-card-header{
-    margin-bottom:12px;
+    margin-bottom:10px;
   }
   .opp-card-title{
     font-family:var(--display);
     font-weight:800;
     font-size:1.45rem;
     line-height:1.15;
-    margin-bottom:8px;
+    margin-bottom:6px;
     color:var(--ink);
   }
   .opp-card-account{
@@ -798,7 +799,7 @@
   }
 
   .opp-section{
-    margin-bottom:12px;
+    margin-bottom:10px;
   }
   .opp-label{
     font-family:var(--mono);
@@ -842,7 +843,7 @@
     flex-wrap:wrap;
     gap:8px;
     margin-top:auto;
-    padding-top:16px;
+    padding-top:12px;
     border-top:1px solid var(--line);
   }
   .btn-generate-play{
@@ -864,7 +865,7 @@
   .daily-reason-card .recommendation-badge{margin-bottom:0;}
   .daily-reason-card .confidence-badge{margin-bottom:0; white-space:nowrap;}
   .opp-headline{font-size:0.96rem; line-height:1.35; font-weight:800; color:#17375E; background:#F7F8FA; border:1px solid #D8DEE9; border-left:4px solid #1FB7AE; border-radius:7px; padding:10px 12px; margin-top:10px;}
-  .why-matters-card,.opener-card,.evidence-card{background:#fff; border:1px solid #D8DEE9; border-radius:8px; padding:12px;}
+  .why-matters-card,.opener-card,.evidence-card{background:#fff; border:1px solid #D8DEE9; border-radius:8px; padding:10px 12px;}
   .opener-card{background:#F7F8FA; border-left:4px solid #F5A623;}
   .suggested-opener{font-weight:600; color:#17375E;}
   .evidence-list{display:grid; gap:7px;}
@@ -1288,16 +1289,17 @@
   .recommendation-badge{
     display:inline-flex;
     align-items:center;
-    gap:6px;
+    gap:5px;
     font-family:var(--mono);
-    font-size:0.64rem;
-    font-weight:800;
+    font-size:0.6rem;
+    font-weight:700;
     text-transform:uppercase;
-    letter-spacing:0.08em;
+    letter-spacing:0.06em;
     border-radius:999px;
-    padding:6px 10px;
-    margin-bottom:8px;
+    padding:3px 8px;
+    margin-bottom:6px;
     border:1px solid transparent;
+    opacity:0.82;
   }
   .recommendation-badge.reorder-due{background:#e6f7f5;color:#0f766e;border-color:#99f6e4;}
   .recommendation-badge.annual-buying-pattern{background:#fff8e8;color:#92400e;border-color:#fde68a;}
@@ -1959,7 +1961,7 @@
       <div class="customer-dashboard-top">
         <div>
           <div class="customer-dashboard-eyebrow">Customer Dashboard</div>
-          <h2 class="customer-dashboard-title">What’s New This Week</h2>
+          <h2 class="customer-dashboard-title">Your accounts</h2>
           <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your customer accounts are checked for timely reasons to reconnect.</div>
         </div>
         <div class="customer-dashboard-actions">
@@ -1974,7 +1976,6 @@
         <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashSavedSignals">0</div><div class="dashboard-mini-label">Saved Signals</div></div>
         <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashLastScan">—</div><div class="dashboard-mini-label">Last Weekly Scan</div></div>
       </div>
-      <div id="newThisWeekList" class="new-this-week-list"></div>
     </section>
 
     <!-- Accounts To Call This Week -->
@@ -2453,25 +2454,6 @@ function renderCustomerDashboard(data){
   set('dashSavedAccounts', accounts.length);
   set('dashSavedSignals', signals.length);
   set('dashLastScan', formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at));
-  const list = document.getElementById('newThisWeekList');
-  if(list){
-    if(!newThisWeek.length){
-      list.innerHTML = `<div class="dashboard-empty-state"><strong>Nothing brand-new this week.</strong><br>Your accounts are still below and ready to call — we'll email you the moment a fresh reason to reach out shows up.</div>`;
-    } else {
-      list.innerHTML = newThisWeek.slice(0,6).map(opp => {
-        const acct = opp.account || opp.accountName || 'Saved account';
-        const type = opp.signalType || opp.opportunityCategory || opp.opportunity || 'Business Signal';
-        const reason = opp.whyNow || opp.reasonToReachOut || opp.signalSummary || opp.signalTitle || 'New business activity creates a reason to check in.';
-        const src = opp.cleanSourceName || sourceDomain(opp.sourceUrl || '') || '';
-        return `<div class="new-this-week-card">
-          <div class="new-this-week-type">${escapeHtml(type)}</div>
-          <div class="new-this-week-account">${escapeHtml(acct)}</div>
-          <div class="new-this-week-reason">${escapeHtml(shortText(reason, 180))}</div>
-          ${src ? `<div class="new-this-week-source">Source: ${escapeHtml(src)}</div>` : ''}
-        </div>`;
-      }).join('');
-    }
-  }
 }
 
 function openLightweightCustomerUpload(){
@@ -3299,7 +3281,7 @@ function structuredEvidenceRows(opp){
   return rows.slice(0,5);
 }
 
-function renderSuggestedContactSection(opp){
+function renderSuggestedContactPrimary(opp){
   const raw=opp.suggestedContactDetails || opp.suggested_contact_details || {};
   const name=String(raw.name||'').trim();
   const title=String(raw.title||opp.suggestedContact||opp.contactTitle||'Relevant department lead').trim();
@@ -3309,11 +3291,18 @@ function renderSuggestedContactSection(opp){
   if(raw.directPhone) links.push(`<a href="tel:${escapeHtml(raw.directPhone)}">${escapeHtml(raw.directPhone)}</a>`);
   if(raw.companyPhone) links.push(`<a href="tel:${escapeHtml(raw.companyPhone)}">Company: ${escapeHtml(raw.companyPhone)}</a>`);
   if(raw.contactPage) links.push(`<a target="_blank" rel="noopener" href="${escapeHtml(raw.contactPage)}">Company Contact Page</a>`);
-  const sources=(raw.sourcesUsed||raw.sources_used||[]).filter(Boolean).slice(0,4);
-  const imported = raw.sourceType === 'uploaded' || sources.some(src=>/uploaded account list/i.test(src?.name||''));
+  const imported = raw.sourceType === 'uploaded' || (raw.sourcesUsed||raw.sources_used||[]).some(src=>/uploaded account list/i.test(src?.name||''));
   const infoLabel = imported ? 'Contact information from your upload' : 'Public contact information';
   const noInfo = imported ? 'No additional contact information was included in the upload.' : 'No public contact information found.';
-  return `<div class="opp-section"><div class="opp-label">Suggested contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this person:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>${infoLabel}:</strong> ${links.length?links.join(' · '):noInfo}</div><div style="margin-top:8px"><strong>${imported?'Contact Fit':'Research Confidence'}:</strong> ${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}</div>${sources.length?`<div style="margin-top:8px"><strong>Source:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
+  return `<div class="opp-section"><div class="opp-label">Suggested contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this person:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>${infoLabel}:</strong> ${links.length?links.join(' · '):noInfo}</div></div></div>`;
+}
+
+function renderSuggestedContactMeta(opp){
+  const raw=opp.suggestedContactDetails || opp.suggested_contact_details || {};
+  const name=String(raw.name||'').trim();
+  const sources=(raw.sourcesUsed||raw.sources_used||[]).filter(Boolean).slice(0,4);
+  const imported = raw.sourceType === 'uploaded' || sources.some(src=>/uploaded account list/i.test(src?.name||''));
+  return `<div class="opp-section meta-section"><div class="opp-label">${imported?'Contact Fit':'Research Confidence'}</div><div class="opp-content meta">${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}${sources.length?` · Source: ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}`:''}</div></div>`;
 }
 
 function accountOpportunityCluster(opp){
@@ -3380,7 +3369,7 @@ function renderRepOpportunityCard(opp){
         </div>
       </div>
 
-      ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactSection(opp) : ''}
+      ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
 
       <div class="opp-section opener-card">
         <div class="opp-label">Conversation starter</div>
@@ -3393,6 +3382,7 @@ function renderRepOpportunityCard(opp){
       </div>
 
       <div class="opp-card-footer">
+        ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactMeta(opp) : ''}
         ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
         ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
         ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
@@ -5194,10 +5184,7 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
     const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
-    const note = showAllWeeklyPriorities
-      ? 'All opportunities for this planning window are shown for review. The priority view stays shorter so reps know where to start.'
-      : `${config.header} shows the highest-scoring recommendations for this planning window and limits repeated accounts so the feed feels like a focused call list, not a report.`;
-    grid.innerHTML = `<div class="weekly-priority-actions"><div class="priority-note">${note}</div>${actionButton}</div>` + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+    grid.innerHTML = (actionButton ? `<div class="weekly-priority-actions">${actionButton}</div>` : '') + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
   }
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }
