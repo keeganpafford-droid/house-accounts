@@ -11,7 +11,8 @@ import {
   clusterCandidates,
   normalizeOpportunity,
   validateOpportunity,
-  dedupeOpportunities
+  dedupeOpportunities,
+  resolveEvents
 } from '../api/signal-intelligence.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -84,6 +85,122 @@ const smokeOpportunity = normalizeOpportunity({
 const validation = validateOpportunity(smokeOpportunity);
 const deduped = dedupeOpportunities([smokeOpportunity, { ...smokeOpportunity, confidenceScore: 80 }]);
 
+// ---------------------------------------------------------------------------
+// Sprint 4.5.1 Stage A — Business Event resolution fixtures.
+// resolveEvents() is compared against clusterCandidates() (the current
+// production path, unchanged) on every fixture. No production call site
+// uses resolveEvents() yet.
+// ---------------------------------------------------------------------------
+function evCand(overrides) {
+  return normalizeCandidate({ accountName: 'Acme Corp', url: `https://example.com/${Math.random().toString(36).slice(2)}`, ...overrides }, { name: 'Acme Corp' });
+}
+
+const eventResolutionFixtures = [
+  { name: 'Westborough — 4 independent sources', expectEvents: 1, expectEvidence: [4], candidates: [
+    evCand({ title: 'Acme Corp Announces New Westborough Branch', snippet: 'Acme Corp today announced the grand opening of its new Westborough branch, part of continued regional growth.', url: 'https://acmecorp.com/press/westborough', sourceName: 'acmecorp.com' }),
+    evCand({ title: 'Acme Corp Westborough Branch — Grand Opening', snippet: 'Join us for the ribbon cutting celebrating our brand new Westborough branch location.', url: 'https://eventbrite.com/e/acme-westborough', sourceName: 'Eventbrite' }),
+    evCand({ title: 'Chamber Welcomes Acme Corp Westborough Branch', snippet: 'The Westborough Chamber of Commerce congratulates Acme Corp on opening its new branch in Westborough.', url: 'https://westboroughchamber.org/news/acme', sourceName: 'Westborough Chamber' }),
+    evCand({ title: 'New Acme Corp Location Opens Doors in Westborough', snippet: 'Local business Acme Corp celebrated the opening of a new location in Westborough this week with a ribbon cutting ceremony.', url: 'https://localnewsdaily.com/acme-westborough', sourceName: 'Local News Daily' })
+  ]},
+  { name: 'Westborough — syndicated wire reposts', expectEvents: 1, expectEvidence: [4], candidates: [
+    evCand({ title: 'Acme Corp Announces New Westborough Branch', snippet: 'Acme Corp today announced the grand opening of its new Westborough branch as part of continued regional growth plans.', url: 'https://businesswire.com/acme-westborough', sourceName: 'BusinessWire' }),
+    evCand({ title: 'Acme Corp Announces New Westborough Branch', snippet: 'Acme Corp today announced the grand opening of its new Westborough branch as part of continued regional growth plans.', url: 'https://financeportal.com/wire/acme-westborough', sourceName: 'FinancePortal' }),
+    evCand({ title: 'Acme Corp Announces New Westborough Branch', snippet: 'Acme Corp today announced the grand opening of its new Westborough branch as part of continued regional growth plans.', url: 'https://marketwatchclone.com/acme-westborough', sourceName: 'MarketWatchClone' }),
+    evCand({ title: 'Westborough Welcomes New Acme Corp Branch', snippet: 'Local reporters visited the new Acme Corp branch in Westborough and spoke with staff about the opening celebration.', url: 'https://localnewsdaily.com/acme-westborough-visit', sourceName: 'Local News Daily' })
+  ]},
+  { name: 'Two genuinely different branch openings', expectEvents: 2, candidates: [
+    evCand({ title: 'Acme Corp Opens New Branch in Springfield', snippet: 'Acme Corp opens new branch in Springfield, MA this month.', url: 'https://acmecorp.com/press/springfield' }),
+    evCand({ title: 'Acme Corp Opens New Branch in Worcester', snippet: 'Acme Corp opens new branch in Worcester, MA this month.', url: 'https://acmecorp.com/press/worcester' })
+  ]},
+  { name: 'Recurring annual event — different years', expectEvents: 2, candidates: [
+    evCand({ title: 'Acme Corp Annual User Conference 2025', snippet: 'Acme Corp hosts its Annual User Conference 2025 for customers and partners.', url: 'https://acmecorp.com/conference-2025' }),
+    evCand({ title: 'Acme Corp Annual User Conference 2026', snippet: 'Acme Corp hosts its Annual User Conference 2026 for customers and partners.', url: 'https://acmecorp.com/conference-2026' })
+  ]},
+  { name: 'Ambiguous/incomplete mention does not force-merge', expectEvents: 2, candidates: [
+    evCand({ title: 'Acme Corp Expanding Branch Network', snippet: 'Acme Corp is expanding its branch network with a new location coming soon.', url: 'https://acmecorp.com/press/expansion-teaser' }),
+    evCand({ title: 'Acme Corp Announces New Westborough Branch', snippet: 'Acme Corp opens new branch in Westborough, MA.', url: 'https://acmecorp.com/press/westborough2' })
+  ]},
+  { name: 'Synonym set (ribbon cutting / grand opening / branch opening / new branch / new location)', expectEvents: 1, expectEvidence: [5], candidates: [
+    evCand({ title: 'Ribbon Cutting Held', snippet: 'Acme Corp holds ribbon cutting for its new Westborough branch.', url: 'https://source1.com/a' }),
+    evCand({ title: 'Grand Opening', snippet: 'Acme Corp celebrates grand opening of new Westborough location.', url: 'https://source2.com/b' }),
+    evCand({ title: 'Branch Opening', snippet: 'Acme Corp announces Westborough branch opening.', url: 'https://source3.com/c' }),
+    evCand({ title: 'New Branch', snippet: 'Acme Corp opens new branch in Westborough.', url: 'https://source4.com/d' }),
+    evCand({ title: 'New Location', snippet: 'Acme Corp expands to new location in Westborough.', url: 'https://source5.com/e' })
+  ]},
+  { name: 'Leadership appointment phrasing variants', expectEvents: 1, expectEvidence: [4], candidates: [
+    evCand({ title: 'Nelson Named EVP', snippet: 'Jonathan Nelson was appointed Executive Vice President and CFO.', url: 'https://s1.com/a' }),
+    evCand({ title: 'Nelson Appointment', snippet: 'Acme Corp names Jonathan Nelson as Executive Vice President and CFO.', url: 'https://s2.com/b' }),
+    evCand({ title: 'Nelson Promotion', snippet: 'Jonathan Nelson was promoted to Executive Vice President and CFO.', url: 'https://s3.com/c' }),
+    evCand({ title: 'Nelson Joins', snippet: 'Jonathan Nelson joins as Executive Vice President and CFO.', url: 'https://s4.com/d' })
+  ]},
+  { name: 'Acquisition phrasing variants', expectEvents: 1, expectEvidence: [4], candidates: [
+    evCand({ title: 'Acme Acquires ABC', snippet: 'Acme Corp acquired ABC Company in a deal announced today.', url: 'https://s1.com/a' }),
+    evCand({ title: 'ABC Acquisition', snippet: 'Acme Corp acquisition of ABC Company finalized.', url: 'https://s2.com/b' }),
+    evCand({ title: 'ABC Deal Closes', snippet: 'Acme Corp completes acquisition of ABC Company.', url: 'https://s3.com/c' }),
+    evCand({ title: 'ABC Purchase', snippet: 'Acme Corp finalizes purchase of ABC Company.', url: 'https://s4.com/d' })
+  ]},
+  { name: 'Facility expansion phrasing variants', expectEvents: 1, expectEvidence: [4], candidates: [
+    evCand({ title: 'Lebanon Facility', snippet: 'Acme Corp opens new facility in Lebanon.', url: 'https://s1.com/a' }),
+    evCand({ title: 'Lebanon Capacity', snippet: 'Acme Corp capacity expansion underway at its Lebanon plant.', url: 'https://s2.com/b' }),
+    evCand({ title: 'Lebanon Operations', snippet: 'Acme Corp expanding operations at its facility in Lebanon.', url: 'https://s3.com/c' }),
+    evCand({ title: 'Lebanon Plant', snippet: 'Acme Corp new plant in Lebanon nears completion.', url: 'https://s4.com/d' })
+  ]},
+  { name: 'Ribbon cutting (new) vs ribbon cutting (renovation)', expectEvents: 2, candidates: [
+    evCand({ title: 'Westborough Ribbon Cutting', snippet: 'Acme Corp holds ribbon cutting for its new Westborough branch.', url: 'https://s1.com/a' }),
+    evCand({ title: 'Westborough Renovation Ribbon Cutting', snippet: 'Acme Corp holds ribbon cutting after completing renovations at its Westborough branch.', url: 'https://s2.com/b' })
+  ]},
+  { name: 'New branch opening vs reopening of same branch', expectEvents: 2, candidates: [
+    evCand({ title: 'Nashua New Branch', snippet: 'Acme Corp announces new branch opening in Nashua, NH.', url: 'https://s1.com/a' }),
+    evCand({ title: 'Nashua Reopens', snippet: "Acme Corp's Nashua branch reopens after temporary closure.", url: 'https://s2.com/b' })
+  ]},
+  { name: 'Two branches, two cities, same month', expectEvents: 2, candidates: [
+    evCand({ title: 'Springfield Opening', snippet: 'Acme Corp opens new branch in Springfield, MA this month.', url: 'https://s1.com/a' }),
+    evCand({ title: 'Worcester Opening', snippet: 'Acme Corp opens new branch in Worcester, MA this month.', url: 'https://s2.com/b' })
+  ]},
+  { name: 'Branch announcement then later ribbon cutting, location aligns', expectEvents: 1, expectEvidence: [2], candidates: [
+    evCand({ title: 'Westborough Announcement', snippet: 'Acme Corp announces new branch opening in Westborough, MA.', url: 'https://s1.com/a', publishedAt: '2026-05-01' }),
+    evCand({ title: 'Westborough Ribbon Cutting', snippet: "Ribbon cutting held for Acme Corp's Westborough location.", url: 'https://s2.com/b', publishedAt: '2026-07-10' })
+  ]},
+  { name: 'Publication date must not become event date', expectEvents: 1, checkEventDate: '2026-03-03', candidates: [
+    evCand({ title: 'Nelson Appointment', snippet: 'Jonathan Nelson was appointed Executive Vice President and CFO effective March 3, 2026.', url: 'https://s1.com/a', publishedAt: '2026-06-15' })
+  ]},
+  { name: 'SEO-headline source must not become the canonical title', expectEvents: 1, checkTitleSource: 'generated', checkTitleExcludes: "You Won't Believe", candidates: [
+    evCand({ title: "You Won't Believe What Acme Corp Just Acquired | TechBlog Daily", snippet: 'Acme Corp completes acquisition of ABC Company in a surprising move.', url: 'https://businesswire.com/acme-abc', sourceName: 'BusinessWire' })
+  ]}
+];
+
+const eventResolutionResults = eventResolutionFixtures.map(fx => {
+  const resolved = resolveEvents(fx.candidates);
+  const clusteredForFixture = clusterCandidates(fx.candidates);
+  const checks = [['eventCount', resolved.length === fx.expectEvents]];
+  if (fx.expectEvidence) {
+    const counts = resolved.map(e => e.corroboratingCandidates).sort((a, b) => b - a);
+    checks.push(['evidenceCounts', JSON.stringify(counts) === JSON.stringify([...fx.expectEvidence].sort((a, b) => b - a))]);
+  }
+  if (fx.checkEventDate) checks.push(['eventDate', resolved[0]?.eventIdentity?.eventDate === fx.checkEventDate]);
+  if (fx.checkTitleSource) checks.push(['titleSource', resolved[0]?.eventIdentity?.titleSource === fx.checkTitleSource]);
+  if (fx.checkTitleExcludes) checks.push(['titleExcludesSeoJunk', !(resolved[0]?.canonicalTitle || '').includes(fx.checkTitleExcludes)]);
+  const pass = checks.every(([, ok]) => ok);
+  return {
+    fixture: fx.name,
+    pass,
+    failedChecks: checks.filter(([, ok]) => !ok).map(([label]) => label),
+    resolveEventsCount: resolved.length,
+    clusterCandidatesCount: clusteredForFixture.length,
+    events: resolved.map(e => ({
+      canonicalTitle: e.canonicalTitle,
+      eventType: e.eventIdentity.eventType,
+      location: e.eventIdentity.location,
+      eventDate: e.eventIdentity.eventDate,
+      dateConfidence: e.eventIdentity.dateConfidence,
+      titleSource: e.eventIdentity.titleSource,
+      evidenceCount: e.corroboratingCandidates,
+      corroboration: e.evidence.map(ev => ev.corroboration)
+    }))
+  };
+});
+const eventResolutionPassCount = eventResolutionResults.filter(r => r.pass).length;
+
 const deterministicReport = {
   benchmarkCompanies: fixture.length,
   legacyTypeOnlyClassificationAccuracy: Number((legacyCorrect / legacyDeclaredTypeSamples.length * 100).toFixed(1)),
@@ -92,7 +209,13 @@ const deterministicReport = {
   duplicateClusterCount: clustered.length,
   normalizedOpportunityValid: validation.valid,
   normalizedOpportunityRejectionReasons: validation.reasons,
-  opportunityDeduplicationCount: deduped.length
+  opportunityDeduplicationCount: deduped.length,
+  eventResolutionStageA: {
+    fixturesTotal: eventResolutionFixtures.length,
+    fixturesPassed: eventResolutionPassCount,
+    fixturesFailed: eventResolutionFixtures.length - eventResolutionPassCount,
+    results: eventResolutionResults
+  }
 };
 
 if (inputIndex >= 0 && args[inputIndex + 1]) {
@@ -119,4 +242,4 @@ if (inputIndex >= 0 && args[inputIndex + 1]) {
 }
 
 console.log(JSON.stringify(deterministicReport, null, 2));
-if (classification < 1 || clustered.length !== 1 || !validation.valid || deduped.length !== 1) process.exitCode = 1;
+if (classification < 1 || clustered.length !== 1 || !validation.valid || deduped.length !== 1 || eventResolutionPassCount !== eventResolutionFixtures.length) process.exitCode = 1;
