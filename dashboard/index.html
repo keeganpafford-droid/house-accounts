@@ -719,6 +719,15 @@
     padding-top:14px;
     border-top:1px solid var(--line);
   }
+  .opp-card-footer-label{
+    font-family:var(--mono);
+    font-size:0.62rem;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--muted);
+    margin-bottom:10px;
+  }
   .opp-card-footer .opp-section{margin-bottom:10px;}
   .opp-card-footer .opp-section:last-child{margin-bottom:0;}
   .opp-card-footer .meta-section .opp-label{color:var(--muted);}
@@ -1205,6 +1214,17 @@
     border-bottom:1px solid #D8DEE9;
   }
   .sales-play-grid{display:grid; grid-template-columns:1fr 1.08fr; gap:22px;}
+  .sales-play-group.supporting .sales-play-group-label{
+    color:#94A3B8;
+    font-size:0.66rem;
+    font-weight:700;
+  }
+  .sales-play-group.supporting .sales-play-card,
+  .sales-play-group.supporting .sales-play-detail-card{
+    border-color:#E5E9EF;
+    padding:15px;
+  }
+  .sales-play-group.supporting .sales-play-card h3{color:#64748B;}
   .sales-play-section{margin:0;}
   .sales-play-section.full{grid-column:1 / -1;}
   .sales-play-card{
@@ -1973,7 +1993,6 @@
     <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
       <div class="customer-dashboard-top">
         <div>
-          <div class="customer-dashboard-eyebrow">Customer Dashboard</div>
           <h2 class="customer-dashboard-title">Your accounts</h2>
           <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your customer accounts are checked for timely reasons to reconnect.</div>
         </div>
@@ -2029,7 +2048,6 @@
         <button class="timebox-tab" type="button" data-timebox="quarter" onclick="setActiveTimebox('quarter')">This Quarter</button>
         <button class="timebox-tab" type="button" data-timebox="annual" onclick="setActiveTimebox('annual')">This Year</button>
       </div>
-      <div class="timebox-helper" id="timeboxHelper">Who should I contact this week, and why?</div>
       <div class="results-head">
         <div class="count" id="resultCount"></div>
       </div>
@@ -3312,10 +3330,13 @@ function renderSuggestedContactPrimary(opp){
 
 function renderSuggestedContactMeta(opp){
   const raw=opp.suggestedContactDetails || opp.suggested_contact_details || {};
-  const name=String(raw.name||'').trim();
   const sources=(raw.sourcesUsed||raw.sources_used||[]).filter(Boolean).slice(0,4);
   const imported = raw.sourceType === 'uploaded' || sources.some(src=>/uploaded account list/i.test(src?.name||''));
-  return `<div class="opp-section meta-section"><div class="opp-label">${imported?'Contact Fit':'Research Confidence'}</div><div class="opp-content meta">${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}${sources.length?` · Source: ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}`:''}</div></div>`;
+  const sourceLinks = sources.length ? sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ') : '';
+  if(imported){
+    return `<div class="opp-section meta-section"><div class="opp-label">Contact Fit</div><div class="opp-content meta">${escapeHtml(raw.researchConfidence==='High'?'Strong fit':'Possible fit')}</div></div>`;
+  }
+  return `<div class="opp-section meta-section"><div class="opp-label">Verified From</div><div class="opp-content meta">${sourceLinks || 'No independent source found for this contact.'}</div></div>`;
 }
 
 function accountOpportunityCluster(opp){
@@ -3341,12 +3362,26 @@ function renderAccountContextNote(opp){
   return `<div class="sales-play-detail-card" style="margin-bottom:16px"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div>You already have ${escapeHtml(contactPhrase)} here. There's no order history yet, so this play leans on public signals and the contact info from your upload.</div></div>`;
 }
 
+function textsEffectivelyMatch(a, b){
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const na = norm(a), nb = norm(b);
+  if(!na || !nb) return false;
+  if(na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const wa = new Set(na.split(' ').filter(w=>w.length>3));
+  const wb = new Set(nb.split(' ').filter(w=>w.length>3));
+  if(!wa.size || !wb.size) return false;
+  let overlap = 0; wa.forEach(w=>{ if(wb.has(w)) overlap++; });
+  return overlap / Math.min(wa.size, wb.size) >= 0.8;
+}
+
 function renderCallPrepOpportunity(opp){
   if(!opp?.isVerifiedSignalOpportunity && signalLayerLabel(opp)!=='Business Activity Signal') return '';
-  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity</h3><div class="sales-play-detail-grid">
-    <div class="sales-play-detail-item"><strong>Opportunity</strong>${escapeHtml(opp.signalTitle||opportunityHeadline(opp))}</div>
-    <div class="sales-play-detail-item"><strong>Why now</strong>${escapeHtml(whyThisMattersText(opp))}</div>
-  </div></div>`;
+  const opportunityText = opp.signalTitle||opportunityHeadline(opp);
+  const whyNowText = whyThisMattersText(opp);
+  const fields = textsEffectivelyMatch(opportunityText, whyNowText)
+    ? `<div class="sales-play-detail-item"><strong>Why now</strong>${escapeHtml(whyNowText)}</div>`
+    : `<div class="sales-play-detail-item"><strong>Opportunity</strong>${escapeHtml(opportunityText)}</div><div class="sales-play-detail-item"><strong>Why now</strong>${escapeHtml(whyNowText)}</div>`;
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity</h3><div class="sales-play-detail-grid">${fields}</div></div>`;
 }
 
 function renderSupportingResearchDetails(opp){
@@ -3366,7 +3401,7 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
   return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
     const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Open</button></div>`;
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -3403,6 +3438,7 @@ function renderRepOpportunityCard(opp){
       </div>
 
       <div class="opp-card-footer">
+        <div class="opp-card-footer-label">Supporting research</div>
         ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactMeta(opp) : ''}
         ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
         ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
@@ -4551,7 +4587,7 @@ window.createSalesPlayPanel = function(opp, opts){
             </div>
           </div>
 
-          <div class="sales-play-group">
+          <div class="sales-play-group supporting">
             <div class="sales-play-group-label">Supporting research</div>
             ${renderAdditionalOpportunitiesForSalesPlay(opp)}
             ${renderSupportingResearchDetails(opp)}
@@ -5214,7 +5250,7 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
     resultCount.innerHTML = `<span>${showingLabel} · from ${accountCount} accounts you're watching · ${feedSummary(displayedOpportunities)}</span>`;
   }
   if(grid){
-    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">Nothing urgent on this list yet. Try <strong>Research Top Accounts</strong> to find fresh reasons to reach out.</div>`) : '';
+    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">Nothing urgent this week. Upload or refresh your account list to check for new reasons to reach out.</div>`) : '';
     const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
@@ -5524,7 +5560,7 @@ function processData(records){
 
   // Render the focused recommendation feed
   const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
-    emptyMessage: `<div class="no-signals-message">No order-history-based priorities found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`
+    emptyMessage: `<div class="no-signals-message">Nothing urgent this week. Upload or refresh your account list to check for new reasons to reach out.</div>`
   });
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
