@@ -330,9 +330,391 @@ function buildQueryPlan(company, context = {}) {
   }).map(([signalFamily, query], index) => ({ id: `${signalFamily}-${index}`, signalFamily, query, priority: index }));
 }
 
+// ---------------------------------------------------------------------------
+// Sprint 4.5.1 — Stage A: Business Event resolution (additive; clusterCandidates()
+// and eventFingerprint() above are UNCHANGED and remain the active production
+// path. Nothing below is wired into research-account.js or research-batch.js yet.
+// ---------------------------------------------------------------------------
+
+// Event types where the same real-world event legitimately recurs on a cadence
+// (an "instance" — e.g. a specific year's conference — is its own event).
+const RECURRING_EVENT_TYPES = new Set(['EVENT_TRADE_SHOW', 'EVENT_CONFERENCE', 'EVENT_AWARD', 'EVENT_COMMUNITY']);
+
+function normalizeForMatch(value = '') {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Resolves free text into a canonical Business Event type. Returns candidateTypes
+// (plural) because some phrasing — bare "ribbon cutting" being the classic case —
+// is genuinely ambiguous until matched against accompanying evidence or an
+// already-known event; see resolveEvents().
+function resolveEventType(text = '', family = '') {
+  const t = clean(text);
+
+  const hasNewQualifier = /\bnew\b[\s\S]{0,25}\b(branch|location|office)\b|\bbrand new\b|\bjust opened\b|\bnewest (branch|location|office)\b|\bfirst (branch|location)\b/i.test(t);
+  const hasReopenQualifier = /\breopen|re-open|reopened|back open|relaunch(ed)?\b/i.test(t);
+  const hasRenovationQualifier = /\brenovat|remodel|refresh(ed)?|upgraded (branch|location|facility)\b/i.test(t);
+  const mentionsBranchOpening = /\bbranch opening\b|\bopening (?:a |its |their )?new branch\b/i.test(t);
+  const mentionsRibbonOrGrandOpening = /\bribbon cutting|ribbon-cutting|grand opening\b/i.test(t);
+  const mentionsFacilityExpansion = /\bnew facility|new plant|capacity expansion|manufacturing expansion|plant expansion|expanding operations|distribution center\b/i.test(t);
+
+  if (/acquisition of|acquires?|acquired|completes acquisition|finalizes purchase|\bmerger\b|\bmerged\b/i.test(t)) {
+    return { primaryType: 'ACQUISITION', candidateTypes: ['ACQUISITION'], recurring: false };
+  }
+  if (/\bappoints?\b|\bappointed\b|\bnames?\b.*\bas\b|\bnamed\b.*\bas\b|\bpromotes?\b|\bpromoted\b|joins as|hired as|named (ceo|president|vice president|chief|director)/i.test(t)) {
+    return { primaryType: 'LEADERSHIP_APPOINTMENT', candidateTypes: ['LEADERSHIP_APPOINTMENT'], recurring: false };
+  }
+  if (/trade show|tradeshow|\bexpo\b|\bbooth\b|exhibitor/i.test(t)) {
+    return { primaryType: 'EVENT_TRADE_SHOW', candidateTypes: ['EVENT_TRADE_SHOW'], recurring: true };
+  }
+  if (/\bconference\b|\bsummit\b|\bwebinar\b/i.test(t)) {
+    return { primaryType: 'EVENT_CONFERENCE', candidateTypes: ['EVENT_CONFERENCE'], recurring: true };
+  }
+  if (/\baward\b|recognition|recognized|\bwinner\b|\bmilestone\b|\banniversary\b/i.test(t)) {
+    return { primaryType: 'EVENT_AWARD', candidateTypes: ['EVENT_AWARD'], recurring: true };
+  }
+  if (/community event|golf tournament|\b5k\b|fundraiser|\bcharity\b|\bsponsor/i.test(t)) {
+    return { primaryType: 'EVENT_COMMUNITY', candidateTypes: ['EVENT_COMMUNITY'], recurring: true };
+  }
+  if (/product launch|\blaunches\b|\blaunched\b|\bunveil|new product|new service/i.test(t)) {
+    return { primaryType: 'PRODUCT_LAUNCH', candidateTypes: ['PRODUCT_LAUNCH'], recurring: false };
+  }
+  if (/\bpartnership\b|distribution agreement|supplier agreement|\bcollaboration\b/i.test(t)) {
+    return { primaryType: 'PARTNERSHIP', candidateTypes: ['PARTNERSHIP'], recurring: false };
+  }
+  if (/\brebrand|brand identity|new logo/i.test(t)) {
+    return { primaryType: 'REBRAND', candidateTypes: ['REBRAND'], recurring: false };
+  }
+
+  // Location family: qualifiers disambiguate before falling back to "unspecified".
+  if (hasRenovationQualifier && !hasNewQualifier) {
+    return { primaryType: 'RENOVATION_COMPLETION', candidateTypes: ['RENOVATION_COMPLETION'], recurring: false };
+  }
+  if (hasReopenQualifier && !hasNewQualifier) {
+    return { primaryType: 'LOCATION_REOPENING', candidateTypes: ['LOCATION_REOPENING'], recurring: false };
+  }
+  if (hasNewQualifier || mentionsBranchOpening) {
+    return { primaryType: 'NEW_LOCATION_OPENING', candidateTypes: ['NEW_LOCATION_OPENING'], recurring: false };
+  }
+  if (mentionsFacilityExpansion) {
+    return { primaryType: 'FACILITY_EXPANSION', candidateTypes: ['FACILITY_EXPANSION'], recurring: false };
+  }
+  if (mentionsRibbonOrGrandOpening) {
+    // Ambiguous on its own — could be a new opening, a reopening, or a renovation
+    // reveal. Left unresolved here; resolveEvents() disambiguates via matching.
+    return { primaryType: 'LOCATION_EVENT_UNSPECIFIED', candidateTypes: ['NEW_LOCATION_OPENING', 'LOCATION_REOPENING', 'RENOVATION_COMPLETION'], recurring: false };
+  }
+  if (/\bhiring\b|\brecruit|workforce growth|onboarding initiative|\bjobs\b|open positions/i.test(t)) {
+    return { primaryType: 'HIRING_ACTIVITY', candidateTypes: ['HIRING_ACTIVITY'], recurring: false };
+  }
+
+  const fam = family || classifySignalFamily(text);
+  const generic = `BUSINESS_ACTIVITY_${String(fam || 'unknown').toUpperCase()}`;
+  return { primaryType: generic, candidateTypes: [generic], recurring: false };
+}
+
+function extractFromOneField(t = '') {
+  if (!t) return { subjectEntity: null, location: null, role: null };
+  let subjectEntity = null;
+  let location = null;
+  let role = null;
+
+  const NON_LOCATION_WORDS = new Set(['new', 'our', 'its', 'their', 'the', 'this', 'next', 'another', 'a', 'an', 'latest', 'newest', 'grand', 'corp', 'inc', 'llc', 'co', 'company', 'corporation', 'ltd']);
+  // Proper-noun sequence: 1-5 consecutive capitalized tokens. Used for any entity/place
+  // capture, since real place and company names are capitalized and this naturally stops
+  // at the first lowercase connector word ("and", "in", "finalized"...) rather than relying
+  // on a hand-maintained stop-word list that can silently fail when the actual sentence
+  // boundary is farther away than a fixed length cap.
+  const PN = "[A-Z][A-Za-z0-9&.'-]*(?:\\s+[A-Z][A-Za-z0-9&.'-]*){0,4}";
+  const acquisitionMatch = t.match(new RegExp(`(?:[Aa]cquires?|[Aa]cquired|[Aa]cquisition of|[Cc]ompletes acquisition of|[Ff]inalizes purchase of)\\s+(${PN})`));
+  const appointmentMatch =
+    t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
+    t.match(new RegExp(`(${PN})\\s+joins\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
+    t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
+  const facilityInAtMatch = t.match(new RegExp(`(?:facility|branch|office|location|plant)\\s+(?:in|at)\\s+(${PN})`, 'i'));
+  const openingLocationMatch = t.match(new RegExp(`(?:grand opening|ribbon cutting|opening|opens?)\\s+(?:of|for)?\\s*(?:its|their|a|the)?\\s*(?:new)?\\s*(?:branch|location|office)?\\s*(?:in|at)\\s+(${PN})`, 'i'));
+  const openingOfXLocationMatch = t.match(new RegExp(`(?:grand opening|opening)\\s+of\\s+(?:its|their|a|the)?\\s*(?:new\\s+)?(${PN})\\s+(?:location|branch|office)\\b`, 'i'));
+  const possessiveLocationMatch = t.match(new RegExp(`(?:'s|its)\\s+(?:new\\s+)?(${PN})\\s+(?:location|branch|office|plant|facility)\\b`, 'i'));
+  const branchNameMatchRaw = t.match(/\b([A-Z][a-zA-Z]{2,30})\s+[Bb]ranch\b/);
+  const branchNameMatch = branchNameMatchRaw && !NON_LOCATION_WORDS.has(branchNameMatchRaw[1].toLowerCase()) ? branchNameMatchRaw : null;
+  const cityStateMatch = t.match(/\b([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)?),\s*([A-Z]{2})\b/);
+
+  const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
+  if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
+  if (appointmentMatch) { subjectEntity = trimTrailingPunct(appointmentMatch[1].trim()); role = appointmentMatch[2].trim(); }
+
+  if (facilityInAtMatch) location = trimTrailingPunct(facilityInAtMatch[1].trim());
+  else if (openingOfXLocationMatch) location = trimTrailingPunct(openingOfXLocationMatch[1].trim());
+  else if (openingLocationMatch) location = trimTrailingPunct(openingLocationMatch[1].trim());
+  else if (possessiveLocationMatch) location = trimTrailingPunct(possessiveLocationMatch[1].trim());
+  else if (cityStateMatch) location = `${cityStateMatch[1]}, ${cityStateMatch[2]}`;
+  else if (branchNameMatch) location = trimTrailingPunct(branchNameMatch[1].trim());
+
+  return { subjectEntity, location, role };
+}
+
+// Runs extraction on each field SEPARATELY (never on a blind concatenation of
+// title+snippet+rawContent) and takes the first field that yields a value, per
+// sub-field. This avoids a permissive capture group in one field silently
+// extending across the boundary into an unrelated adjacent field's text.
+function extractEventEntities(title = '', snippet = '', rawContent = '') {
+  const fields = [clean(title), clean(snippet), clean(rawContent)].filter(Boolean);
+  let subjectEntity = null, location = null, role = null;
+  for (const f of fields) {
+    const r = extractFromOneField(f);
+    if (!subjectEntity && r.subjectEntity) subjectEntity = r.subjectEntity;
+    if (!location && r.location) location = r.location;
+    if (!role && r.role) role = r.role;
+    if (subjectEntity && location && role) break;
+  }
+  if (!subjectEntity && location) subjectEntity = location;
+  return {
+    subjectEntity: subjectEntity ? subjectEntity.slice(0, 60) : null,
+    location: location ? location.slice(0, 60) : null,
+    role: role ? role.slice(0, 70) : null
+  };
+}
+
+// eventDate is ONLY set when the text itself describes when the event happened
+// or will happen. Publication date never substitutes for it (see normalizeCandidate
+// / Evidence, where publishedAt stays a separate, per-source field).
+function extractEventDate(text = '') {
+  const t = clean(text);
+  const isoMatch = t.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  const monthDayYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/i);
+  const monthYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}\b/i);
+  const hasEventLanguage = /\b(on|opens?|opened|opening|effective|held|takes place|scheduled for|will open)\b/i.test(t);
+
+  let raw = null;
+  let confidence = 'unknown';
+  if (isoMatch) { raw = isoMatch[1]; confidence = 'exact'; }
+  else if (monthDayYear) { raw = monthDayYear[0]; confidence = 'exact'; }
+  else if (monthYear && hasEventLanguage) { raw = monthYear[0]; confidence = 'approximate'; }
+
+  const parsed = raw ? parseDate(raw) : null;
+  if (!parsed) return { eventDate: null, dateConfidence: 'unknown', year: null };
+  return { eventDate: parsed.toISOString().slice(0, 10), dateConfidence: confidence, year: parsed.getUTCFullYear() };
+}
+
+function extractYearFallback(text = '', publishedAt = '') {
+  const yearInText = clean(text).match(/\b(20\d{2})\b/);
+  if (yearInText) return Number(yearInText[1]);
+  const d = parseDate(publishedAt);
+  return d ? d.getUTCFullYear() : null;
+}
+
+// Coarse origin category — used only to judge whether two sources plausibly
+// originate separately, never to assert certainty either way.
+function originClass(url = '') {
+  const d = sourceDomain(url);
+  if (!d) return 'other';
+  if (/businesswire|prnewswire|globenewswire/.test(d)) return 'wire';
+  if (/eventbrite|meetup/.test(d)) return 'listing';
+  if (/chamber/.test(d) || d.endsWith('.org')) return 'community-org';
+  if (/linkedin\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/.test(d)) return 'social';
+  if (/news|press|tribune|gazette|herald|journal|times\b/.test(d)) return 'local-news';
+  return 'other';
+}
+
+// Deliberately conservative per Sprint 4.5.1 correction: near-identical wording
+// (or same domain republishing) is labeled likely_syndicated, not "duplicate."
+// Different wording from a source we can't confidently place is labeled unknown
+// — never asserted independent just because the wording differs.
+function classifyCorroboration(candidateEvidence = {}, existingEvidence = []) {
+  if (!existingEvidence.length) return 'independent';
+  const candDomain = sourceDomain(candidateEvidence.url);
+  const candClass = originClass(candidateEvidence.url);
+
+  const overlapsExisting = existingEvidence.some(e => materiallyRepeats(candidateEvidence.excerpt, e.excerpt));
+  if (overlapsExisting) return 'likely_syndicated';
+
+  const sameDomainAsExisting = existingEvidence.some(e => sourceDomain(e.url) === candDomain);
+  if (sameDomainAsExisting) return 'likely_syndicated';
+
+  const differentOriginClassSeen = existingEvidence.some(e => originClass(e.url) !== candClass);
+  return differentOriginClassSeen ? 'independent' : 'unknown';
+}
+
+function stripHeadlineNoise(title = '') {
+  return clean(title)
+    .replace(/\s*\|\s*[^|]{2,40}$/, '')
+    .replace(/^(BREAKING|EXCLUSIVE|UPDATE)\s*:\s*/i, '')
+    .replace(/\s*[-–]\s*[A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)?\s*(News|Times|Tribune|Gazette|Herald|Journal|Daily)$/i, '')
+    .trim();
+}
+
+// Identity-first title generation, per Sprint 4.5.1 correction: the source's own
+// headline is used only as a fallback when Event Identity can't fill a template
+// — never copied verbatim as the primary path, so SEO-heavy or awkward article
+// headlines never become the product's own language when a clean title can be
+// generated instead.
+function generateCanonicalTitle(eventType, identity = {}, evidence = []) {
+  const subject = identity.subjectEntity || identity.location;
+  const companyDisplay = identity.companyDisplay || identity.company || '';
+  const templates = {
+    NEW_LOCATION_OPENING: subject ? `${subject} Branch Opening` : null,
+    LOCATION_REOPENING: subject ? `${subject} Branch Reopening` : null,
+    RENOVATION_COMPLETION: subject ? `${subject} Renovation Completed` : null,
+    FACILITY_EXPANSION: identity.location ? `${identity.location} Facility Expansion` : null,
+    LEADERSHIP_APPOINTMENT: identity.subjectEntity ? `${identity.subjectEntity} Appointed${identity.role ? ` ${identity.role}` : ''}` : null,
+    ACQUISITION: identity.subjectEntity ? `Acquisition of ${identity.subjectEntity}` : null,
+    PRODUCT_LAUNCH: identity.subjectEntity ? `${identity.subjectEntity} Launch` : (companyDisplay ? `${companyDisplay} Product Launch` : null)
+  };
+  const generated = templates[eventType];
+  if (generated) return { title: clean(generated), titleSource: 'generated' };
+
+  const best = [...evidence].sort((a, b) => (b.authorityScore || 0) - (a.authorityScore || 0))[0];
+  const fallback = best?.sourceTitle ? stripHeadlineNoise(best.sourceTitle) : `${companyDisplay || 'Company'} Business Activity`;
+  return { title: clean(fallback), titleSource: 'fallback-source-title' };
+}
+
+function locationsAgree(a, b) {
+  if (!a || !b) return false;
+  const na = normalizeForMatch(a);
+  const nb = normalizeForMatch(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function dateWindowDays(eventType = '') {
+  if (eventType === 'LEADERSHIP_APPOINTMENT') return 14;
+  return 30;
+}
+
+function datesAgree(idA = {}, idB = {}, eventTypeForWindow = '') {
+  if (idA.dateConfidence === 'unknown' || idB.dateConfidence === 'unknown') return false;
+  if (!idA.eventDate || !idB.eventDate) return false;
+  const da = parseDate(idA.eventDate);
+  const db = parseDate(idB.eventDate);
+  if (!da || !db) return false;
+  const diffDays = Math.abs(da.getTime() - db.getTime()) / 86400000;
+  return diffDays <= dateWindowDays(eventTypeForWindow);
+}
+
+function typesCompatible(candTypes = [], eventTypes = []) {
+  return candTypes.some(t => eventTypes.includes(t));
+}
+
+// Resolves a batch of candidates (same shape clusterCandidates() consumes) into
+// Business Events with attached Evidence — a same-run resolution only; nothing
+// here persists or matches against prior runs. Returns a backward-compatible
+// shape (see Sprint 4.5.1 plan §6) so it can later be swapped in wherever
+// clusterCandidates() is called today without touching the callers' other logic.
+function resolveEvents(candidates = []) {
+  const events = [];
+
+  for (const c of candidates) {
+    if (!c) continue;
+    const text = `${c.title || c.headline || ''} ${c.snippet || ''} ${c.rawContent || c.pageContent || ''}`;
+    const family = c.signalFamily || classifySignalFamily(text, c.intendedSignalFamily);
+    const typeInfo = resolveEventType(text, family);
+    const { subjectEntity, location, role } = extractEventEntities(c.title || c.headline || '', c.snippet || '', c.rawContent || c.pageContent || '');
+    const { eventDate, dateConfidence, year: dateYear } = extractEventDate(text);
+    const companyDisplay = clean(c.companyName || c.accountName || '');
+    const company = normalizeCompany(companyDisplay);
+    const year = dateYear || extractYearFallback(text, c.publishedAt);
+
+    const candidateIdentity = {
+      company, companyDisplay,
+      candidateTypes: typeInfo.candidateTypes,
+      recurring: typeInfo.recurring,
+      subjectEntity, location, role,
+      eventDate, dateConfidence, year
+    };
+
+    const evidenceItem = {
+      sourceTitle: clean(c.title || c.headline || '') || null,
+      sourceName: clean(c.sourceName || sourceDomain(c.url) || 'Public source'),
+      url: clean(c.url || ''),
+      publishedDate: clean(c.publishedAt || c.publicationDate || '') || null,
+      discoveredDate: clean(c.discoveredAt || new Date().toISOString()),
+      excerpt: clean(text).slice(0, 220),
+      authorityScore: c.sourceAuthorityScore ?? sourceAuthority(c.url, c.title || c.headline),
+      corroboration: 'unknown'
+    };
+
+    let matched = null;
+    for (const ev of events) {
+      const id = ev.identity;
+      if (id.company !== company || !company) continue;
+      if (!typesCompatible(candidateIdentity.candidateTypes, id.candidateTypes)) continue;
+
+      if (RECURRING_EVENT_TYPES.has(id.candidateTypes[0]) || candidateIdentity.recurring) {
+        if (!id.year || !candidateIdentity.year || id.year !== candidateIdentity.year) continue;
+      }
+
+      const locAgree = locationsAgree(id.location || id.subjectEntity, candidateIdentity.location || candidateIdentity.subjectEntity);
+      const dateAgree = datesAgree(id, candidateIdentity, id.candidateTypes[0]);
+      if (!locAgree && !dateAgree) continue; // positive-agreement requirement — absence of conflict is not agreement
+
+      if (id.location && candidateIdentity.location && !locationsAgree(id.location, candidateIdentity.location) && !dateAgree) continue; // explicit-mismatch veto
+
+      matched = ev;
+      break;
+    }
+
+    if (matched) {
+      evidenceItem.corroboration = classifyCorroboration(evidenceItem, matched.evidence);
+      matched.evidence.push(evidenceItem);
+      matched.identity.candidateTypes = matched.identity.candidateTypes.filter(t => candidateIdentity.candidateTypes.includes(t));
+      if (!matched.identity.location && candidateIdentity.location) matched.identity.location = candidateIdentity.location;
+      if (!matched.identity.subjectEntity && candidateIdentity.subjectEntity) matched.identity.subjectEntity = candidateIdentity.subjectEntity;
+      if (!matched.identity.role && candidateIdentity.role) matched.identity.role = candidateIdentity.role;
+      if (matched.identity.dateConfidence === 'unknown' && candidateIdentity.dateConfidence !== 'unknown') {
+        matched.identity.eventDate = candidateIdentity.eventDate;
+        matched.identity.dateConfidence = candidateIdentity.dateConfidence;
+        matched.identity.year = candidateIdentity.year;
+      }
+      matched.candidates.push(c);
+    } else {
+      evidenceItem.corroboration = 'independent';
+      events.push({ identity: candidateIdentity, evidence: [evidenceItem], candidates: [c] });
+    }
+  }
+
+  return events.map(ev => {
+    const primaryType = ev.identity.candidateTypes[0] || 'BUSINESS_ACTIVITY_UNKNOWN';
+    const { title, titleSource } = generateCanonicalTitle(primaryType, ev.identity, ev.evidence);
+    const bestEvidence = [...ev.evidence].sort((a, b) => (b.authorityScore || 0) - (a.authorityScore || 0))[0];
+    const primaryCandidate = [...ev.candidates].sort((a, b) => (b.candidateScore || 0) - (a.candidateScore || 0))[0] || {};
+
+    const eventIdentity = {
+      company: ev.identity.companyDisplay || ev.identity.company,
+      eventType: primaryType,
+      candidateTypes: ev.identity.candidateTypes,
+      subjectEntity: ev.identity.subjectEntity,
+      location: ev.identity.location,
+      eventDate: ev.identity.eventDate,
+      dateConfidence: ev.identity.dateConfidence,
+      canonicalTitle: title,
+      titleSource
+    };
+
+    const flatSources = ev.evidence.map(e => ({ name: e.sourceName, url: e.url, publishedAt: e.publishedDate || '' }));
+    const fingerprint = `${ev.identity.company}|${primaryType}|${normalizeForMatch(ev.identity.location || ev.identity.subjectEntity || '')}|${ev.identity.year || 'unknown'}`;
+
+    return {
+      ...primaryCandidate,
+      title: primaryCandidate.title || primaryCandidate.headline || title,
+      headline: primaryCandidate.headline || primaryCandidate.title || title,
+      url: bestEvidence?.url || primaryCandidate.url,
+      sourceName: bestEvidence?.sourceName || primaryCandidate.sourceName,
+      publishedAt: bestEvidence?.publishedDate || primaryCandidate.publishedAt || '',
+      eventFingerprint: fingerprint,
+      corroboratingCandidates: ev.evidence.length,
+      sources: flatSources,
+      canonicalTitle: title,
+      eventIdentity,
+      evidence: ev.evidence
+    };
+  }).sort((a, b) => (b.corroboratingCandidates || 0) - (a.corroboratingCandidates || 0));
+}
+
 export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
-  normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats
+  normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
+  RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
+  classifyCorroboration, generateCanonicalTitle, resolveEvents
 };
