@@ -289,8 +289,8 @@
     background:#ffffff;
     border:2px solid var(--ink);
     border-radius:8px;
-    padding:26px 28px;
-    margin:0 0 28px;
+    padding:18px 20px;
+    margin:0 0 18px;
     box-shadow:0 10px 24px rgba(11,45,77,0.05);
   }
   .customer-dashboard-eyebrow{
@@ -300,7 +300,7 @@
     color:var(--signal);
     font-size:0.72rem;
     font-weight:800;
-    margin-bottom:8px;
+    margin-bottom:4px;
   }
   .customer-dashboard-top{
     display:flex;
@@ -308,21 +308,21 @@
     gap:24px;
     align-items:flex-start;
     border-bottom:1px solid var(--line);
-    padding-bottom:18px;
-    margin-bottom:20px;
+    padding-bottom:12px;
+    margin-bottom:14px;
   }
   .customer-dashboard-title{
     font-family:var(--display);
-    font-size:2rem;
-    line-height:1.05;
+    font-size:1.35rem;
+    line-height:1.1;
     color:var(--ink);
-    margin:0 0 8px;
+    margin:0 0 4px;
   }
   .customer-dashboard-subtitle{
     max-width:720px;
     color:var(--slate);
-    font-size:0.95rem;
-    line-height:1.45;
+    font-size:0.88rem;
+    line-height:1.4;
   }
   .customer-dashboard-actions{
     display:flex;
@@ -333,19 +333,19 @@
   .dashboard-mini-grid{
     display:grid;
     grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
-    gap:14px;
-    margin-bottom:22px;
+    gap:10px;
+    margin-bottom:12px;
   }
   .dashboard-mini-card{
     background:#fbfaf6;
     border:1px solid var(--line);
     border-radius:6px;
-    padding:16px;
+    padding:10px 12px;
   }
   .dashboard-mini-value{
     font-family:var(--display);
     color:var(--teal);
-    font-size:2rem;
+    font-size:1.5rem;
     line-height:1;
     font-weight:800;
   }
@@ -411,10 +411,10 @@
   .saved-dashboard-banner{
     background:#fff8e8;
     border-left:4px solid var(--signal);
-    padding:14px 16px;
-    margin:0 0 24px;
+    padding:10px 14px;
+    margin:0 0 14px;
     font-family:var(--mono);
-    font-size:0.85rem;
+    font-size:0.82rem;
     color:var(--ink);
     display:none;
   }
@@ -544,8 +544,8 @@
   .dashboard-view-switcher{
     display:none;
     max-width:960px;
-    margin:0 auto 18px;
-    padding:12px;
+    margin:0 auto 12px;
+    padding:10px 12px;
     border:1px solid var(--line);
     border-radius:10px;
     background:#fff;
@@ -702,18 +702,25 @@
   .opportunities-grid{
     display:grid;
     grid-template-columns:repeat(auto-fill, minmax(320px,1fr));
-    gap:16px;
+    gap:14px;
     margin-bottom:24px;
   }
   .opportunity-card{
     background:#fff;
     border:1px solid var(--line);
     border-radius:8px;
-    padding:20px;
+    padding:18px;
     transition: border-color 0.2s, box-shadow 0.2s;
     display:flex;
     flex-direction:column;
   }
+  .opp-card-footer{
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  .opp-card-footer .opp-section{margin-bottom:10px;}
+  .opp-card-footer .opp-section:last-child{margin-bottom:0;}
   .opportunity-card:hover{
     border-color:var(--radar);
     box-shadow:0 4px 12px rgba(47,111,94,0.1);
@@ -724,9 +731,10 @@
   }
   .opp-card-title{
     font-family:var(--display);
-    font-weight:700;
-    font-size:1.1rem;
-    margin-bottom:6px;
+    font-weight:800;
+    font-size:1.45rem;
+    line-height:1.15;
+    margin-bottom:8px;
     color:var(--ink);
   }
   .opp-card-account{
@@ -1696,11 +1704,12 @@
 .monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
 
 /* Sprint 4.3A: focused authenticated MVP. Feature code remains intact. */
+/* Sprint 4.4.2: narrowed per Sprint 4.4.1 findings. #customerDashboard (Manage Customer
+   Accounts) and #dashboardViewSwitcher (My/Team scope control) are confirmed MVP-required
+   and must stay visible; only the non-MVP panels below remain hidden. */
 .ha-mvp .workflow-switcher,
 .ha-mvp #customerMonitoringWorkspace,
-.ha-mvp #customerDashboard,
 .ha-mvp .sales-dashboard,
-.ha-mvp #dashboardViewSwitcher,
 .ha-mvp .opportunities-section.account-intelligence-section{display:none !important;}
 .mvp-dashboard-heading{max-width:1136px;margin:24px auto 18px;display:none;align-items:flex-end;justify-content:space-between;gap:22px;padding-bottom:16px;border-bottom:1px solid var(--line);}
 .ha-mvp .mvp-dashboard-heading{display:flex;}
@@ -2082,11 +2091,13 @@ function renderDashboardUsage(){
   if(!el){
     el=document.createElement('div');
     el.id='dashboardUsageNote';
-    el.style.cssText='max-width:960px;margin:0 auto 18px;padding:10px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.9rem;';
+    el.style.cssText='max-width:960px;margin:0 auto 12px;padding:8px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.85rem;';
     const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
   }
-  const split = ` (${info.customerCount} existing customer${info.customerCount===1?'':'s'} · ${info.prospectCount} prospect${info.prospectCount===1?'':'s'})`;
-  if(el) el.textContent=info.trialExpired?(info.trialUsed?`Your 30-day trial has already been used. Upgrade will be available soon.${split}`:`Your trial has expired. Upgrade to continue monitoring unlimited companies.${split}`):(info.isFree?`${info.used} / ${info.limit} companies monitored${split}`:(info.trialDaysRemaining?`You're on a ${info.plan} trial. ${info.trialDaysRemaining} days remaining.${split}`:`${info.used} companies monitored${split}`));
+  // Sprint 4.4.2: no longer appends a competing existing-customer/prospect count here.
+  // /api/usage remains the source for entitlement/plan-limit text only; the canonical
+  // customer account count is shown from /api/get-dashboard (see renderCustomerDashboard).
+  if(el) el.textContent=info.trialExpired?(info.trialUsed?`Your 30-day trial has already been used. Upgrade will be available soon.`:`Your trial has expired. Upgrade to continue monitoring unlimited companies.`):(info.isFree?`${info.used} / ${info.limit} companies monitored`:(info.trialDaysRemaining?`You're on a ${info.plan} trial. ${info.trialDaysRemaining} days remaining.`:`${info.used} companies monitored`));
 }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){
   const info=dashboardUsageInfo();
@@ -2445,7 +2456,7 @@ function renderCustomerDashboard(data){
   const list = document.getElementById('newThisWeekList');
   if(list){
     if(!newThisWeek.length){
-      list.innerHTML = `<div class="dashboard-empty-state"><strong>No brand-new signals this week.</strong><br>Your saved accounts are still available below, and the weekly scan will email you when new reasons to reach out appear.</div>`;
+      list.innerHTML = `<div class="dashboard-empty-state"><strong>Nothing brand-new this week.</strong><br>Your accounts are still below and ready to call — we'll email you the moment a fresh reason to reach out shows up.</div>`;
     } else {
       list.innerHTML = newThisWeek.slice(0,6).map(opp => {
         const acct = opp.account || opp.accountName || 'Saved account';
@@ -2529,13 +2540,16 @@ function renderDashboardViewSwitcher(){
   const title = document.getElementById('dashboardViewTitle');
   const snap = document.getElementById('dashboardTeamSnapshot');
   const buttons = document.getElementById('dashboardViewButtons');
-  const customerCount = Number(snapshot.customerCount ?? dashboardUsage?.usage?.existingCustomerCompanyCount ?? 0) || 0;
-  const prospectCount = Number(snapshot.prospectCount ?? dashboardUsage?.usage?.prospectCompanyCount ?? 0) || 0;
+  // Sprint 4.4.2: only the canonical /api/get-dashboard organizationSnapshot count is used
+  // here; the /api/usage fallback (a competing count source) has been removed.
+  const hasCanonicalSnapshot = snapshot.customerCount !== undefined && snapshot.customerCount !== null;
+  const customerCount = Number(snapshot.customerCount ?? 0) || 0;
+  const prospectCount = Number(snapshot.prospectCount ?? 0) || 0;
   if(title) title.textContent = canTeam ? (dashboardViewMode === 'team' ? 'Team View' : 'My View') : 'Organization Snapshot';
   if(snap){
     snap.textContent = canTeam
       ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
-      : `Your organization is monitoring ${customerCount} customers and ${prospectCount} prospects.`;
+      : (hasCanonicalSnapshot ? `Your organization is monitoring ${customerCount} customers and ${prospectCount} prospects.` : 'Your account view is loading.');
   }
   if(buttons){
     buttons.style.display = canTeam ? 'flex' : 'none';
@@ -2614,7 +2628,7 @@ async function loadSavedDashboard(email){
     const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     if(banner){
       const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
-      banner.innerHTML = `<strong>Saved dashboard loaded.</strong> ${escapeHtml(accounts.length)} accounts · ${escapeHtml((data.signals || []).length)} saved signal${(data.signals || []).length===1?'':'s'} · ${escapeHtml(newCount)} new this week.`;
+      banner.innerHTML = `<strong>You're all set.</strong> Watching ${escapeHtml(accounts.length)} account${accounts.length===1?'':'s'} · ${escapeHtml((data.signals || []).length)} reason${(data.signals || []).length===1?'':'s'} to reach out · ${escapeHtml(newCount)} new this week.`;
     }
     renderCustomerDashboard(data);
     refreshOpportunityViews();
@@ -3299,7 +3313,7 @@ function renderSuggestedContactSection(opp){
   const imported = raw.sourceType === 'uploaded' || sources.some(src=>/uploaded account list/i.test(src?.name||''));
   const infoLabel = imported ? 'Contact information from your upload' : 'Public contact information';
   const noInfo = imported ? 'No additional contact information was included in the upload.' : 'No public contact information found.';
-  return `<div class="opp-section"><div class="opp-label">Suggested Contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this contact:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>${infoLabel}:</strong> ${links.length?links.join(' · '):noInfo}</div><div style="margin-top:8px"><strong>${imported?'Contact Fit':'Research Confidence'}:</strong> ${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}</div>${sources.length?`<div style="margin-top:8px"><strong>Source:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
+  return `<div class="opp-section"><div class="opp-label">Suggested contact</div><div class="opp-content"><strong>${escapeHtml(name||'No verified individual identified')}</strong>${title?` — ${escapeHtml(title)}`:''}<div style="margin-top:8px"><strong>Why this person:</strong> ${escapeHtml(raw.whyThisContact||'This role aligns with the team most likely to own the detected initiative.')}</div><div style="margin-top:8px"><strong>${infoLabel}:</strong> ${links.length?links.join(' · '):noInfo}</div><div style="margin-top:8px"><strong>${imported?'Contact Fit':'Research Confidence'}:</strong> ${escapeHtml(imported?(raw.researchConfidence==='High'?'Strong fit':'Possible fit'):(raw.researchConfidence||raw.confidence||(name?'Medium':'Low')))}</div>${sources.length?`<div style="margin-top:8px"><strong>Source:</strong> ${sources.map(src=>src.url?`<a target="_blank" rel="noopener" href="${escapeHtml(src.url)}">${escapeHtml(src.name||sourceDomain(src.url)||'Public source')}</a>`:escapeHtml(src.name||'Public source')).join(' · ')}</div>`:''}</div></div>`;
 }
 
 function accountOpportunityCluster(opp){
@@ -3351,46 +3365,38 @@ function renderRepOpportunityCard(opp){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
     return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
   }
-  const badge = signalBadgeMeta(opp);
   const recBadge = recommendationBadgeMeta(opp);
-  const tier = getPriorityTier(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
   const evidenceRows = structuredEvidenceRows(opp);
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
   return `
     <div class="opportunity-card daily-reason-card">
       <div class="opp-card-header">
-        <div class="opp-card-topline">
-          <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
-          <div class="confidence-badge ${tier.cls}">${escapeHtml(confidenceWord(opp))} · Why Now ${Math.round(getOpportunityScore(opp))}</div>
-        </div>
+        <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
-        <div class="recommendation-subtype">${escapeHtml(badge.label)}</div>
-        <div class="opp-headline">${escapeHtml(opportunityHeadline(opp))}</div>
+        <div class="opp-section">
+          <div class="opp-label">Why now</div>
+          <div class="opp-content"><strong>${escapeHtml(opportunityHeadline(opp))}.</strong> ${escapeHtml(whyThisMattersText(opp))}</div>
+        </div>
       </div>
 
-      <div class="opp-section why-matters-card">
-        <div class="opp-label">Why this matters</div>
-        <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
-      </div>
-
-      ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
       ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactSection(opp) : ''}
 
       <div class="opp-section opener-card">
-        <div class="opp-label">Suggested opener</div>
+        <div class="opp-label">Conversation starter</div>
         <div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div>
       </div>
 
-      ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
-
-      ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
-
-      ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
-
       <div class="opp-card-actions">
+        ${opp._locked ? `<div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-        ${opp._locked ? `<div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Open Full Sales Play →</button>`}
+      </div>
+
+      <div class="opp-card-footer">
+        ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
+        ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
+        ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
+        ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
       </div>
     </div>`;
 }
@@ -5177,15 +5183,14 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
   const priorityOpportunities = prepareTimeboxReasons(opportunities || [], activeTimebox);
   const displayedOpportunities = showAllWeeklyPriorities ? allOpportunities : priorityOpportunities;
   const accountCount = (accounts || []).length;
-  const accountListOnlyCount = (accounts || []).filter(a => a.orderCount === 0 && a.activePipelineCount === 0).length;
   const showingLabel = showAllWeeklyPriorities
-    ? `Showing all ${displayedOpportunities.length} ${config.label.toLowerCase()} opportunities`
-    : `Showing top ${displayedOpportunities.length} of ${allOpportunities.length} ${config.label.toLowerCase()} recommendations`;
+    ? `All ${displayedOpportunities.length} ${config.label.toLowerCase()} accounts worth calling`
+    : `${displayedOpportunities.length} of ${allOpportunities.length} ${config.label.toLowerCase()} accounts worth calling first`;
   if(resultCount){
-    resultCount.innerHTML = `<span>${showingLabel} from ${accountCount} accounts · ${feedSummary(displayedOpportunities)}${accountListOnlyCount ? ` · ${accountListOnlyCount} account-list-only records` : ''}</span>`;
+    resultCount.innerHTML = `<span>${showingLabel} · from ${accountCount} accounts you're watching · ${feedSummary(displayedOpportunities)}</span>`;
   }
   if(grid){
-    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">No high-priority recommendations found yet. Use <strong>Research Top Accounts</strong> to scan public sources for verified signals.</div>`) : '';
+    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">Nothing urgent on this list yet. Try <strong>Research Top Accounts</strong> to find fresh reasons to reach out.</div>`) : '';
     const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
