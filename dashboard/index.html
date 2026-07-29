@@ -1191,6 +1191,19 @@
   }
   .sales-play-close:hover{color:#17375E;}
   .sales-play-output{padding:22px 28px 28px; background:#fff;}
+  .sales-play-group{margin-bottom:28px;}
+  .sales-play-group:last-child{margin-bottom:0;}
+  .sales-play-group-label{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:0.14em;
+    color:#1FB7AE;
+    margin:0 0 12px;
+    padding-bottom:8px;
+    border-bottom:1px solid #D8DEE9;
+  }
   .sales-play-grid{display:grid; grid-template-columns:1fr 1.08fr; gap:22px;}
   .sales-play-section{margin:0;}
   .sales-play-section.full{grid-column:1 / -1;}
@@ -3320,29 +3333,37 @@ function additionalOpportunitiesFor(opp){
   return accountOpportunityCluster(opp).filter(item=>!sameOpportunity(item,opp));
 }
 
-function renderOpportunityDetailForSalesPlay(opp){
+function renderAccountContextNote(opp){
+  const account = (window.accountRadarAccounts||[]).find(a=>String(a.name||'').toLowerCase()===String(opp.account||opp.accountName||'').toLowerCase());
+  if(!(account && isWarmAccount(account))) return '';
+  const contactCount = (account.contacts||[]).length;
+  const contactPhrase = contactCount ? `${contactCount} contact${contactCount===1?'':'s'} on file` : 'a relationship on file';
+  return `<div class="sales-play-detail-card" style="margin-bottom:16px"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div>You already have ${escapeHtml(contactPhrase)} here. There's no order history yet, so this play leans on public signals and the contact info from your upload.</div></div>`;
+}
+
+function renderCallPrepOpportunity(opp){
   if(!opp?.isVerifiedSignalOpportunity && signalLayerLabel(opp)!=='Business Activity Signal') return '';
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity</h3><div class="sales-play-detail-grid">
+    <div class="sales-play-detail-item"><strong>Opportunity</strong>${escapeHtml(opp.signalTitle||opportunityHeadline(opp))}</div>
+    <div class="sales-play-detail-item"><strong>Why now</strong>${escapeHtml(whyThisMattersText(opp))}</div>
+  </div></div>`;
+}
+
+function renderSupportingResearchDetails(opp){
   const teams=(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).filter(Boolean).slice(0,3);
   const cats=(opp.commonPromoCategories||opp.suggestedProducts||[]).filter(Boolean).slice(0,5);
   const source=opp.sourceUrl?`<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName||sourceDomain(opp.sourceUrl)||'View source')}</a>`:escapeHtml(evidenceSourceLabel(opp)||'Account history');
-  const account = (window.accountRadarAccounts||[]).find(a=>String(a.name||'').toLowerCase()===String(opp.account||opp.accountName||'').toLowerCase());
-  const accountContext = account && isWarmAccount(account) ? `<div class="sales-play-detail-card" style="margin-bottom:16px"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div><strong>Warm assigned account</strong> · ${(account.contacts||[]).length} imported contact${(account.contacts||[]).length===1?'':'s'} · No historical order data included</div></div>` : '';
-  return `${accountContext}<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Opportunity Detail</h3><div class="sales-play-detail-grid">
-    <div class="sales-play-detail-item"><strong>Business Trigger</strong>${escapeHtml(opp.signalTitle||opportunityHeadline(opp))}</div>
-    <div class="sales-play-detail-item"><strong>Business Context</strong>${escapeHtml(opp.businessContext||opp.signalSummary||opp.shortSummary||whyThisMattersText(opp))}</div>
-    <div class="sales-play-detail-item"><strong>Why This Matters</strong>${escapeHtml(whyThisMattersText(opp))}</div>
-    <div class="sales-play-detail-item"><strong>Recommended Buying Team</strong>${escapeHtml(teams.join(', ')||'Relevant department lead')}</div>
-    <div class="sales-play-detail-item"><strong>Suggested Contact</strong>${escapeHtml(opp.suggestedContactDetails?.name||opp.contact||'No verified individual identified')}${opp.suggestedContactDetails?.title?` — ${escapeHtml(opp.suggestedContactDetails.title)}`:''}</div>
-    <div class="sales-play-detail-item"><strong>Suggested Opener</strong>${escapeHtml(getSuggestedOpener(opp))}</div>
-    <div class="sales-play-detail-item"><strong>Evidence</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
-    <div class="sales-play-detail-item"><strong>Promo Categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')}</div>
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Evidence</h3><div class="sales-play-detail-grid">
+    <div class="sales-play-detail-item"><strong>Source</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
+    <div class="sales-play-detail-item"><strong>Recommended buying team</strong>${escapeHtml(teams.join(', ')||'Relevant department lead')}</div>
+    <div class="sales-play-detail-item"><strong>Promo categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')}</div>
   </div></div>`;
 }
 
 function renderAdditionalOpportunitiesForSalesPlay(opp){
   const items=additionalOpportunitiesFor(opp);
   if(!items.length) return '';
-  return `<div class="sales-play-card" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
+  return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
     const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
     return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Open</button></div>`;
@@ -3386,7 +3407,7 @@ function renderRepOpportunityCard(opp){
         ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
         ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
         ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
-        ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
+        ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")}, {focus:"additional"})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
       </div>
     </div>`;
 }
@@ -4443,7 +4464,8 @@ function trimToWords(text, maxWords){
 }
 
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
-window.createSalesPlayPanel = function(opp){
+window.createSalesPlayPanel = function(opp, opts){
+  opts = opts || {};
   const account = cleanSalesPlayText(opp.account || 'this account');
   const contactName = cleanSalesPlayText(opp.contactName || opp.contact || '');
   const firstName = contactName && !contactName.includes('/') ? contactName.split(' ')[0] : 'there';
@@ -4473,71 +4495,79 @@ window.createSalesPlayPanel = function(opp){
       <div class="sales-play-modal-content">
         <div class="sales-play-header">
           <div>
-            <h2>Sales Play</h2>
+            <h2>Prepare for Call</h2>
             <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(mode)} Play</span></div>
           </div>
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
         <div class="sales-play-output">
-          ${renderOpportunityDetailForSalesPlay(opp)}
-          ${renderAdditionalOpportunitiesForSalesPlay(opp)}
-          <div class="sales-play-grid">
-            <div class="sales-play-section">
-              <div class="sales-play-card">
-                <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
-                <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
-              </div>
+
+          <div class="sales-play-group">
+            <div class="sales-play-group-label">Call prep</div>
+            ${renderCallPrepOpportunity(opp)}
+            ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
+            <div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Conversation Starter</h3><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
+            <div class="sales-play-card emphasis">
+              <h3><span class="section-icon">☆</span> Best Next Move</h3>
+              <div class="section-content">${escapeHtml(play.bestNextMove)}</div>
             </div>
-            <div class="sales-play-section">
-              <div class="sales-play-card emphasis">
-                <h3><span class="section-icon">☆</span> Best Next Move</h3>
-                <div class="section-content">${escapeHtml(play.bestNextMove)}</div>
-              </div>
-            </div>
-            <div class="sales-play-section full">
-              <div class="sales-play-card subject-row">
-                <h3 style="margin:0;"><span class="section-icon">✉</span> Email Subject</h3>
-                <div class="subject-line">${escapeHtml(play.emailSubject)}</div>
-                <button class="copy-mini" data-copy-sales-play="subject">Copy Subject</button>
-              </div>
-            </div>
-            <div class="sales-play-section full">
-              <div class="sales-play-card">
-                <h3><span class="section-icon">✉</span> Copy & Paste Email</h3>
-                <div class="sales-play-email-layout">
-                  <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
-                  <div class="why-subject"><strong>Why this subject?</strong>${escapeHtml(play.subjectRationale)}</div>
+          </div>
+
+          <div class="sales-play-group">
+            <div class="sales-play-group-label">Outreach</div>
+            <div class="sales-play-grid">
+              <div class="sales-play-section full">
+                <div class="sales-play-card">
+                  <h3><span class="section-icon">✉</span> Email</h3>
+                  <div class="subject-row" style="margin-bottom:14px;">
+                    <div class="subject-line">${escapeHtml(play.emailSubject)}</div>
+                    <button class="copy-mini" data-copy-sales-play="subject">Copy Subject</button>
+                  </div>
+                  <div class="sales-play-email-layout">
+                    <div class="section-content sales-play-email-body">${escapeHtml(play.outreachEmail)}</div>
+                    <div class="why-subject"><strong>Why this subject?</strong>${escapeHtml(play.subjectRationale)}</div>
+                  </div>
+                  <div style="margin-top:14px; text-align:right;"><button class="copy-mini" data-copy-sales-play="email">Copy Email</button></div>
                 </div>
-                <div style="margin-top:14px; text-align:right;"><button class="copy-mini" data-copy-sales-play="email">Copy Email</button></div>
               </div>
-            </div>
-            <div class="sales-play-section">
-              <div class="sales-play-card">
-                <h3><span class="section-icon">☎</span> Call Script</h3>
-                <div class="section-content call-script-lines">${play.callScript.map(line=>`<div>${escapeHtml(line).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')}</div>`).join('')}</div>
+              <div class="sales-play-section">
+                <div class="sales-play-card">
+                  <h3><span class="section-icon">☎</span> Call Script</h3>
+                  <div class="section-content call-script-lines">${play.callScript.map(line=>`<div>${escapeHtml(line).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')}</div>`).join('')}</div>
+                </div>
               </div>
-            </div>
-            <div class="sales-play-section">
-              <div class="sales-play-card">
-                <h3><span class="section-icon">?</span> Questions to Ask</h3>
-                <div class="section-content"><ul class="sales-play-list check-list">${play.questionsToAsk.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
+              <div class="sales-play-section">
+                <div class="sales-play-card">
+                  <h3><span class="section-icon">?</span> Questions to Ask</h3>
+                  <div class="section-content"><ul class="sales-play-list check-list">${play.questionsToAsk.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
+                </div>
               </div>
-            </div>
-            <div class="sales-play-section full">
-              <div class="sales-play-card">
-                <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
-                <div class="section-content"><ul class="sales-play-list check-list success-list">${play.successLooksLike.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
-              </div>
-            </div>
-            <div class="sales-play-section full">
-              <div class="sales-play-card coaching-card">
-                <h3><span class="section-icon">♢</span> Coaching Note</h3>
-                <div class="coaching-content">
-                  <div class="section-content">${escapeHtml(play.coachingNote)}</div>
+              <div class="sales-play-section full">
+                <div class="sales-play-card">
+                  <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
+                  <div class="section-content"><ul class="sales-play-list check-list success-list">${play.successLooksLike.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
                 </div>
               </div>
             </div>
           </div>
+
+          <div class="sales-play-group">
+            <div class="sales-play-group-label">Supporting research</div>
+            ${renderAdditionalOpportunitiesForSalesPlay(opp)}
+            ${renderSupportingResearchDetails(opp)}
+            <div class="sales-play-card" style="margin-bottom:16px">
+              <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
+              <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+            </div>
+            <div class="sales-play-card coaching-card" style="margin-bottom:16px">
+              <h3><span class="section-icon">♢</span> Coaching Note</h3>
+              <div class="coaching-content">
+                <div class="section-content">${escapeHtml(play.coachingNote)}</div>
+              </div>
+            </div>
+            ${renderAccountContextNote(opp)}
+          </div>
+
         </div>
       </div>
     </div>`;
@@ -4550,6 +4580,10 @@ window.createSalesPlayPanel = function(opp){
       copySalesPlayField(btn, text);
     });
   });
+  if(opts.focus === 'additional'){
+    const target = modal.querySelector('#additionalOpportunitiesSection');
+    if(target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block:'start'});
+  }
 }
 
 function buildConciseSalesPlay(ctx){
