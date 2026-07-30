@@ -8,6 +8,7 @@
     "test:public-mvp": "node scripts/test-public-mvp.js",
     "test:sprint-4.3c": "node scripts/test-sprint-4-3c.js",
     "test:event-dedup": "node scripts/test-event-dedup-e2e.js",
+    "test:weekly-scan-reliability": "node scripts/test-weekly-scan-reliability.js",
     "test:signal-benchmark": "node scripts/run-signal-benchmark.js",
     "research:benchmark": "node scripts/run-live-research.js",
     "research:all": "node scripts/run-live-research.js --all"

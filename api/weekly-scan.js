@@ -3,6 +3,144 @@
 
 import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
 
+// ---------------------------------------------------------------------------
+// Priority 0 (reliability) — hung weekly-run repair.
+//
+// Confirmed production root cause: this file made an unbounded, no-timeout
+// fetch() to /api/research-batch inside a Vercel Serverless Function with no
+// maxDuration override anywhere in this repo (confirmed by grep). When the
+// platform's function-duration limit was hit mid-await, the host killed the
+// process — not a catchable JS exception — so neither the success-path nor
+// the failure-path PATCH to ha_weekly_runs ever ran, leaving
+// status='running' / finished_at=NULL / summary frozen at its creation value
+// indefinitely. A `finally` block cannot fix this: it cannot execute after a
+// platform hard-kill either, so the fix here does not rely on one as the
+// primary guard.
+// ---------------------------------------------------------------------------
+
+// No maxDuration override existed anywhere in this repo before this fix, and
+// the repo alone could not prove the actual platform ceiling — Fluid Compute
+// is a project-level setting (dashboard, or vercel.json's "fluid" key, which
+// this repo also does not set) that isn't inferable from code. VERIFIED
+// directly in the Vercel dashboard (Project Settings -> Functions) for this
+// project: Fluid Compute is Enabled, the plan is Pro, and the configured
+// Default Max Duration is 300 seconds. That is the real, confirmed ceiling
+// this budget is built against — not an assumed legacy-Hobby number.
+//
+// The actual maxDuration override lives in vercel.json's "functions" block
+// (this project is zero-config/framework-less, and current Vercel guidance
+// for that project type is to configure duration there), not as an in-file
+// `export const config`. Precedence between the two mechanisms when both are
+// present is not clearly documented, so this file intentionally does not
+// also export one — a single source of truth beats two that could drift.
+// The constant below must be kept in sync with vercel.json's value for
+// api/weekly-scan.js by hand; there is no way to import one into the other.
+const FUNCTION_MAX_DURATION_MS = 300000;
+// Reserved, unconditionally, for the last completion/failure PATCH plus
+// building the JSON response, after chunk processing stops for any reason.
+// Kept small in absolute terms even though the budget is now much larger —
+// a couple of small Supabase PATCH calls never need more than this.
+const FINALIZE_RESERVE_MS = 10000;
+// Bound on a single research-batch chunk request. Deliberately NOT paired
+// with a same-invocation retry: a retry on a genuine timeout spends the same
+// budget again with no reason to expect a different outcome, and a retry on
+// a slow-but-not-timed-out error risks stacking two near-timeout durations
+// back to back, which is exactly the unpredictable-budget failure mode this
+// fix removes. A failed/timed-out chunk is safely recoverable on a later,
+// separate invocation (see the event-fingerprint dedup work — point 7 below).
+// 60s gives real AI/web-search work in research-batch.js room to actually
+// complete, while still comfortably supporting multiple chunks per
+// invocation within the confirmed 300s budget (see maxChunksSafely below).
+const RESEARCH_FETCH_TIMEOUT_MS = 60000;
+// A run still 'running' this long after it started did not survive its own
+// invocation (300s max) by any legitimate path — it was killed by the
+// platform or crashed. 15 minutes stays comfortably longer (3x) than the
+// confirmed maximum legitimate run, while remaining short enough to settle a
+// stuck run the next time this upload is processed rather than leaving it
+// stuck until the next weekly cron cycle notices it "by accident."
+const STALE_RUN_THRESHOLD_MS = 15 * 60 * 1000;
+// How many chunks can safely be attempted in one invocation, given the
+// confirmed budget: (300s - 10s reserve) / 60s per chunk = 4, leaving
+// meaningful slack for progress-PATCH overhead and the stale-run sweep
+// rather than exactly exhausting the budget. Informational/diagnostic only —
+// the actual stop condition is the real deadline check in the handler below,
+// not this count, so a slow chunk still can't blow the budget even if fewer
+// than 4 chunks were expected to be needed.
+const MAX_CHUNKS_SAFELY_PER_INVOCATION = Math.floor((FUNCTION_MAX_DURATION_MS - FINALIZE_RESERVE_MS) / RESEARCH_FETCH_TIMEOUT_MS);
+
+function computeDeadline(invocationStartMs){
+  return invocationStartMs + FUNCTION_MAX_DURATION_MS - FINALIZE_RESERVE_MS;
+}
+
+// A run is stale only if it is still 'running' and started long enough ago
+// that no legitimate invocation of this function could still be executing it.
+function isStaleRun(run, { thresholdMs = STALE_RUN_THRESHOLD_MS, now = Date.now() } = {}){
+  if(!run || run.status !== 'running') return false;
+  const startedAt = new Date(run.started_at || 0).getTime();
+  if(!Number.isFinite(startedAt) || startedAt <= 0) return false;
+  return (now - startedAt) > thresholdMs;
+}
+
+// Bounds a single fetch with an AbortController. Normalizes the abort into a
+// distinguishable AbortError so callers can tell "our own timeout fired"
+// apart from any other network/HTTP failure.
+async function fetchWithTimeout(url, options = {}, timeoutMs = RESEARCH_FETCH_TIMEOUT_MS){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try{
+    return await fetch(url, { ...options, signal: controller.signal });
+  }catch(err){
+    if(err?.name === 'AbortError'){
+      const timeoutErr = new Error(`research-batch request exceeded ${timeoutMs}ms`);
+      timeoutErr.name = 'AbortError';
+      throw timeoutErr;
+    }
+    throw err;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+// Extracts one chunk's outcome from a research-batch response (or the
+// synthetic all-failed shape used when the chunk never got a response at all).
+function summarizeChunkResult(chunk, batchLength){
+  const s = chunk?.diagnostics?.structuredSummary || {};
+  const processed = Number(s.processedAccounts || 0);
+  const failed = Number(s.failedAccounts || 0);
+  const attempted = Number(s.eligibleAccounts || batchLength || (processed + failed));
+  return { accountsAttempted: attempted, accountsProcessed: processed, accountsFailed: failed };
+}
+
+// Folds one chunk's outcome into the run's cumulative, persistable progress
+// summary. Only ever adds to prior counts — never replaces them — so a kill
+// between chunks leaves the last successfully-persisted totals intact rather
+// than losing everything back to the creation-time summary.
+function accumulateProgress(prevSummary, { chunkIndex, totalChunks, chunkOutcome, chunkDiagnostics, totalAccounts }){
+  const prev = prevSummary || {};
+  return {
+    accounts: totalAccounts,
+    totalChunks,
+    chunksAttempted: Number(prev.chunksAttempted || 0) + 1,
+    chunksCompleted: Number(prev.chunksCompleted || 0) + (chunkOutcome.completed ? 1 : 0),
+    lastCompletedChunk: chunkOutcome.completed ? chunkIndex : (prev.lastCompletedChunk ?? 0),
+    accountsAttempted: Number(prev.accountsAttempted || 0) + chunkOutcome.accountsAttempted,
+    accountsProcessed: Number(prev.accountsProcessed || 0) + chunkOutcome.accountsProcessed,
+    accountsFailed: Number(prev.accountsFailed || 0) + chunkOutcome.accountsFailed,
+    diagnostics: [...(prev.diagnostics || []), chunkDiagnostics].filter(Boolean),
+    progressUpdatedAt: new Date().toISOString()
+  };
+}
+
+// Decides the final, explicit outcome state for a run. 'running' is never a
+// value this returns — it is the transient starting state only, settled
+// here at the end of a normal invocation, or by isStaleRun() on a later one
+// if this invocation never reaches this point at all.
+function decideFinalStatus({ accountsProcessed, accountsFailed, totalAccounts, sawTimeout }){
+  if(accountsProcessed <= 0) return sawTimeout ? 'timed_out' : 'failed';
+  if(accountsProcessed >= totalAccounts && accountsFailed === 0 && !sawTimeout) return 'complete';
+  return 'partial';
+}
+
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
 function hashString(input=''){
@@ -233,6 +371,8 @@ function reportHtml(user, upload, newSignals, baseUrl, summary={}){
 }
 
 export default async function handler(req, res){
+  const invocationStart = Date.now();
+  const deadline = computeDeadline(invocationStart);
   try{
     if(process.env.CRON_SECRET){
       const provided = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query?.secret;
@@ -251,49 +391,103 @@ export default async function handler(req, res){
       const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name && !['paused','archived'].includes(clean(a.monitoringStatus || '').toLowerCase()));
       if(!accountPayloads.length) continue;
 
+      // Settle any prior run for this upload that never reached a completion
+      // PATCH (killed by a platform timeout, crash, etc.) before starting a
+      // new one. Nothing can reach back into a killed invocation, so this is
+      // the only place a stuck run gets settled — the next time this upload
+      // is processed, whether by the weekly cron or a manual trigger.
+      try{
+        const priorRunning = await supabase(`ha_weekly_runs?upload_id=eq.${encodeURIComponent(upload.id)}&status=eq.running&select=id,started_at,summary&limit=20`);
+        for(const staleRun of priorRunning || []){
+          if(!isStaleRun(staleRun, { now: invocationStart })) continue;
+          await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(staleRun.id)}`, {method:'PATCH', body: JSON.stringify({
+            status:'timed_out',
+            finished_at:new Date().toISOString(),
+            summary:{ ...(staleRun.summary||{}), timeoutReason:`No completion PATCH was recorded within ${STALE_RUN_THRESHOLD_MS}ms of started_at; settled as stale by a later invocation.` }
+          })});
+        }
+      }catch(staleErr){
+        console.error('[Weekly Scan] failed to settle stale runs for upload', upload.id, staleErr);
+      }
+
+      if(Date.now() >= deadline){
+        // No time left in this invocation to even start this upload. It is
+        // simply not processed this cycle — no 'running' row is created, so
+        // there is nothing left stuck. It will be picked up on the next
+        // invocation that reaches it.
+        runSummary.push({uploadId:upload.id, email:user.email, skipped:true, reason:'invocation deadline reached before this upload could start'});
+        continue;
+      }
+
       const started = new Date().toISOString();
-      const runRows = await supabase('ha_weekly_runs', {method:'POST', body: JSON.stringify([{user_id:user.id, upload_id:upload.id, status:'running', started_at:started, summary:{accounts:accountPayloads.length}}])});
+      const totalAccounts = accountPayloads.length;
+      // Default kept at 5 (not restored to the confirmed-safe budget's
+      // theoretical max) so the confirmed 10-account production case still
+      // exercises 2 chunks — real progress-persistence granularity, not one
+      // giant chunk that only PATCHes once at the end. The env override is
+      // preserved. Its upper clamp is restored to the original 25: unlike
+      // before this fix, a large chunk is no longer catastrophic even if an
+      // operator overrides upward — RESEARCH_FETCH_TIMEOUT_MS bounds every
+      // chunk unconditionally now, regardless of size, so a too-large chunk
+      // just risks that one chunk being marked failed/timed-out rather than
+      // hanging the whole invocation.
+      const batchSize = Math.max(1, Math.min(Number(process.env.WEEKLY_RESEARCH_BATCH_SIZE || 5), 25));
+      const totalChunks = Math.ceil(totalAccounts / batchSize);
+      const runRows = await supabase('ha_weekly_runs', {method:'POST', body: JSON.stringify([{user_id:user.id, upload_id:upload.id, status:'running', started_at:started, summary:{
+        accounts:totalAccounts, totalChunks, chunksAttempted:0, chunksCompleted:0,
+        accountsAttempted:0, accountsProcessed:0, accountsFailed:0, diagnostics:[]
+      }}])});
       const run = Array.isArray(runRows) ? runRows[0] : runRows;
+
       let newSignalRows = [];
+      let progressSummary = { accounts:totalAccounts, totalChunks, chunksAttempted:0, chunksCompleted:0, accountsAttempted:0, accountsProcessed:0, accountsFailed:0, diagnostics:[] };
+      let sawTimeout = false;
+
       try{
         const researchChunks = [];
-        const batchSize = Math.max(1, Math.min(Number(process.env.WEEKLY_RESEARCH_BATCH_SIZE || 25), 50));
+        let chunkIndex = 0;
         for(let offset=0; offset<accountPayloads.length; offset+=batchSize){
+          chunkIndex += 1;
+          if(Date.now() >= deadline){
+            // Stop starting new chunks; whatever was persisted after the
+            // last completed chunk stands as this run's progress.
+            sawTimeout = true;
+            break;
+          }
           const batch = accountPayloads.slice(offset, offset + batchSize);
-          let lastError = null;
-          for(let attempt=1; attempt<=3; attempt++){
-            try{
-              const researchResp = await fetch(`${baseUrl}/api/research-batch`, {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({mode:'weekly-monitoring', accounts: batch})
-              });
-              const research = await researchResp.json();
-              if(!researchResp.ok) throw new Error(research.error || 'Research batch failed');
-              researchChunks.push(research);
-              lastError = null;
-              break;
-            }catch(error){
-              lastError = error;
-              if(attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 750));
-            }
+          let research = null;
+          let chunkSucceeded = false;
+          let chunkError = null;
+          try{
+            const researchResp = await fetchWithTimeout(`${baseUrl}/api/research-batch`, {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({mode:'weekly-monitoring', accounts: batch})
+            }, RESEARCH_FETCH_TIMEOUT_MS);
+            const parsed = await researchResp.json();
+            if(!researchResp.ok) throw new Error(parsed.error || 'Research batch failed');
+            research = parsed;
+            chunkSucceeded = true;
+          }catch(error){
+            chunkError = error;
+            if(error?.name === 'AbortError') sawTimeout = true;
           }
-          if(lastError){
-            researchChunks.push({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:batch.length,queuedAccounts:batch.length,processedAccounts:0,failedAccounts:batch.length,failureReasons:batch.map(a=>({accountName:a.name,reason:lastError.message}))}}});
+          if(!research){
+            research = {signals:[], diagnostics:{structuredSummary:{eligibleAccounts:batch.length,queuedAccounts:batch.length,processedAccounts:0,failedAccounts:batch.length,failureReasons:batch.map(a=>({accountName:a.name,reason:chunkError?.message || 'unknown'}))}}};
           }
+          researchChunks.push(research);
+          const chunkOutcome = { ...summarizeChunkResult(research, batch.length), completed: chunkSucceeded };
+          progressSummary = accumulateProgress(progressSummary, { chunkIndex, totalChunks, chunkOutcome, chunkDiagnostics: research.diagnostics || null, totalAccounts });
+          // Persist progress after every chunk — not just at the end — so a
+          // kill mid-flight leaves real evidence instead of only the
+          // creation-time summary.
+          await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run?.id)}`, {method:'PATCH', body: JSON.stringify({summary: progressSummary})})
+            .catch(progressErr => console.error('[Weekly Scan] failed to persist chunk progress', run?.id, progressErr));
         }
+
         const research = {
           signals: researchChunks.flatMap(chunk => Array.isArray(chunk.signals) ? chunk.signals : []),
-          diagnostics: {
-            chunks: researchChunks.map(chunk => chunk.diagnostics || {}),
-            structuredSummary: researchChunks.reduce((acc, chunk) => {
-              const d = chunk?.diagnostics?.structuredSummary || {};
-              for(const key of ['eligibleAccounts','queuedAccounts','processedAccounts','skippedAccounts','failedAccounts','queriesRun','rawResults','uniqueCandidates','enrichedPages','acceptedSignals','totalProcessingTimeMs']) acc[key] += Number(d[key] || 0);
-              acc.skipReasons.push(...(d.skipReasons || []));
-              acc.failureReasons.push(...(d.failureReasons || []));
-              return acc;
-            }, {eligibleAccounts:0,queuedAccounts:0,processedAccounts:0,skippedAccounts:0,failedAccounts:0,queriesRun:0,rawResults:0,uniqueCandidates:0,enrichedPages:0,acceptedSignals:0,totalProcessingTimeMs:0,skipReasons:[],failureReasons:[]})
-          }
+          diagnostics: { chunks: researchChunks.map(chunk => chunk.diagnostics || {}) }
         };
         // Global event-resolution boundary: merge across ALL chunks for this
         // upload before persisting, not per-HTTP-chunk. This is what stops the
@@ -325,7 +519,7 @@ export default async function handler(req, res){
         // so the same real-world event for the same company must resolve to
         // one row regardless of which upload/list/intake source produced it
         // (including a re-upload of the same list, which mints a new
-        // upload_id today).
+        // upload_id today, or a retried/timed-out run being re-run later).
         const rowsToInsert = dedupeByEventFingerprint(candidateRows, {
           keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
           scoreOf: row => Number(row.confidence || 0)
@@ -339,16 +533,34 @@ export default async function handler(req, res){
           // With ignore-duplicates, rows that collide with an already-stored
           // event for this account are silently skipped by Postgres and are
           // not returned here — so newSignalRows reflects genuinely new
-          // events, and a repeated run of the same event never re-emails it.
+          // events, and re-running a timed-out/partial run never re-emails
+          // or re-inserts an event it already persisted.
           newSignalRows = Array.isArray(inserted) ? inserted : [];
           if(!dryRun && newSignalRows.length){
             await sendEmail({to:user.email, subject:weeklyBriefSubject(newSignalRows), html:reportHtml(user, upload, newSignalRows, baseUrl, weeklySummaryFromSignals(newSignalRows, accountPayloads.length))});
           }
         }
-        await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run?.id)}`, {method:'PATCH', body: JSON.stringify({status:'complete', finished_at:new Date().toISOString(), summary:{accounts:accountPayloads.length, newSignals:newSignalRows.length, diagnostics:research.diagnostics || {}}})});
-        runSummary.push({uploadId:upload.id, email:user.email, accounts:accountPayloads.length, newSignals:newSignalRows.length});
+        const finalStatus = decideFinalStatus({
+          accountsProcessed: progressSummary.accountsProcessed,
+          accountsFailed: progressSummary.accountsFailed,
+          totalAccounts,
+          sawTimeout
+        });
+        const finalSummary = { ...progressSummary, newSignals:newSignalRows.length, diagnostics: research.diagnostics };
+        await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run?.id)}`, {method:'PATCH', body: JSON.stringify({status:finalStatus, finished_at:new Date().toISOString(), summary:finalSummary})});
+        runSummary.push({uploadId:upload.id, email:user.email, accounts:totalAccounts, newSignals:newSignalRows.length, status:finalStatus});
       }catch(err){
-        if(run?.id){ await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run.id)}`, {method:'PATCH', body: JSON.stringify({status:'failed', finished_at:new Date().toISOString(), summary:{error:err.message}})}).catch(()=>{}); }
+        // Point 5: never silently swallow finalization failure. Log the
+        // original processing error and, separately, any error finalizing
+        // the run, so Vercel logs expose both distinctly.
+        console.error('[Weekly Scan] processing error for upload', upload.id, err);
+        if(run?.id){
+          try{
+            await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(run.id)}`, {method:'PATCH', body: JSON.stringify({status:'failed', finished_at:new Date().toISOString(), summary:{...progressSummary, error:err.message}})});
+          }catch(finalizeErr){
+            console.error('[Weekly Scan] FAILED TO FINALIZE run after a processing error — run may be left recoverable only by the stale-run sweep on a later invocation', {uploadId:upload.id, runId:run.id, processingError:err.message, finalizeError:finalizeErr.message});
+          }
+        }
         runSummary.push({uploadId:upload.id, email:user.email, error:err.message});
       }
     }
@@ -357,3 +569,9 @@ export default async function handler(req, res){
     return json(res, 500, {error:err.message || 'Weekly scan failed'});
   }
 }
+
+export {
+  FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS, RESEARCH_FETCH_TIMEOUT_MS, STALE_RUN_THRESHOLD_MS,
+  MAX_CHUNKS_SAFELY_PER_INVOCATION,
+  computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult, accumulateProgress, decideFinalStatus
+};

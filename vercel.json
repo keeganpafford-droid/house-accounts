@@ -5,5 +5,13 @@
       "path": "/api/weekly-scan",
       "schedule": "0 12 * * 1"
     }
-  ]
+  ],
+  "functions": {
+    "api/weekly-scan.js": {
+      "maxDuration": 300
+    },
+    "api/research-batch.js": {
+      "maxDuration": 58
+    }
+  }
 }

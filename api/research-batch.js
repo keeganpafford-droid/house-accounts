@@ -14,6 +14,32 @@ import {
   dedupeOpportunities
 } from './signal-intelligence.js';
 
+// Priority 0 (reliability): no maxDuration override existed here before this
+// fix (confirmed by repo-wide grep). Verified in the Vercel dashboard: this
+// project runs Fluid Compute (Pro plan, 300s project default), so the real
+// risk this override addresses is not "might exceed a tiny Hobby ceiling" —
+// it's the nested-invocation cancellation gap: aborting the caller's
+// (api/weekly-scan.js) client-side fetch does not reliably cancel this
+// function's own already-dispatched invocation, which can keep running
+// server-side and keep spending external API calls (OpenAI, web search)
+// after nobody is listening for the result. This endpoint writes nothing to
+// the database itself (verified — no supabase()/ha_signals calls anywhere in
+// this file), so a response that arrives after the caller gave up is
+// discarded, not persisted; the exposure is wasted compute/API spend, not
+// data inconsistency. Capping this function's maxDuration to strictly below
+// the caller's per-chunk AbortController timeout (60s, api/weekly-scan.js)
+// means the platform itself ends a hung invocation before the caller would
+// even give up, rather than after — minimizing that orphaned-spend window
+// instead of leaving it open-ended.
+//
+// The actual override lives in vercel.json's "functions" block (this project
+// is zero-config/framework-less; current Vercel guidance for that project
+// type is to configure duration there), not as an in-file `export const
+// config` — precedence between the two mechanisms when both are present is
+// not clearly documented, so this file intentionally does not also export
+// one. vercel.json's value for this path must be kept at or below
+// api/weekly-scan.js's RESEARCH_FETCH_TIMEOUT_MS by hand.
+
 
 function clean(text = '') {
   return String(text || '')
