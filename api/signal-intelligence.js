@@ -710,11 +710,60 @@ function resolveEvents(candidates = []) {
   }).sort((a, b) => (b.corroboratingCandidates || 0) - (a.corroboratingCandidates || 0));
 }
 
+// ---------------------------------------------------------------------------
+// Priority 0 — global event-resolution boundary for persistence.
+// resolveEvents() above already matches the same real-world event across
+// different title phrasing (via eventType + location/date agreement, not
+// literal token overlap). resolveOpportunityEvents() is the same engine
+// adapted to the *normalized opportunity* shape (headline/whatChanged/
+// sourceUrl) that research-batch.js produces, so callers merging results
+// from multiple chunks/generators/persistence attempts can run ONE
+// resolution pass across the full combined set right before writing to the
+// database. This is intentionally the only place that changes the
+// persisted event_fingerprint; normalizeOpportunity()'s own eventFingerprint
+// (legacy, per-title-token) is left untouched for intra-request plumbing
+// (e.g. matching an opportunity back to its source candidate).
+// ---------------------------------------------------------------------------
+function resolveOpportunityEvents(opportunities = []) {
+  const candidates = (opportunities || []).filter(Boolean).map(o => ({
+    ...o,
+    title: o.headline || o.signalTitle || '',
+    snippet: o.whatChanged || o.businessContext || '',
+    url: o.sourceUrl || (Array.isArray(o.sources) && o.sources[0]?.url) || '',
+    candidateScore: Number(o.commercialScore || o.whyNowScore || o.why_now_score || o.confidenceScore || 0)
+  }));
+  return resolveEvents(candidates).map(ev => ({
+    ...ev,
+    headline: ev.headline || ev.title,
+    signalTitle: ev.signalTitle || ev.headline || ev.title,
+    sourceUrl: ev.sourceUrl || ev.url
+  }));
+}
+
+// Generic last-line-of-defense dedup for anything carrying an eventFingerprint
+// (or event_fingerprint, the persisted column name) — keeps the highest-scoring
+// item per key. Used to deduplicate in-memory immediately before a bulk insert,
+// so the database's uniqueness constraint is a safety net, not the only guard.
+function dedupeByEventFingerprint(items = [], options = {}) {
+  const keyOf = options.keyOf || ((x) => x.eventFingerprint || x.event_fingerprint || '');
+  const scoreOf = options.scoreOf || ((x) => Number(x.confidence ?? x.commercialScore ?? x.whyNowScore ?? x.confidenceScore ?? 0));
+  const best = new Map();
+  for (const item of items || []) {
+    if (!item) continue;
+    const key = keyOf(item);
+    if (!key) continue;
+    const existing = best.get(key);
+    if (!existing || scoreOf(item) > scoreOf(existing)) best.set(key, item);
+  }
+  return [...best.values()];
+}
+
 export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
-  classifyCorroboration, generateCanonicalTitle, resolveEvents
+  classifyCorroboration, generateCanonicalTitle, resolveEvents,
+  resolveOpportunityEvents, dedupeByEventFingerprint
 };

@@ -1,6 +1,8 @@
 // Vercel Serverless Function: Save House Accounts uploads to Supabase.
 // Endpoint: POST /api/save-upload
 
+import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+
 function json(res, status, body){ res.setHeader('Cache-Control','no-store, max-age=0'); return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
 function hashString(input=''){
@@ -203,33 +205,49 @@ export default async function handler(req, res){
       }
     }
 
-    const signalRows = [];
+    // Collect every account's raw signals first, then run ONE global
+    // event-resolution pass across the whole upload before persisting. This
+    // is the same fix applied in weekly-scan.js: the same real-world event
+    // described with different wording (or generated on a separate save)
+    // must resolve to a single event_fingerprint, not one row per phrasing.
+    const rawSignals = [];
     for(const account of unlockedAccounts){
       const signals = Array.isArray(account.signals) ? account.signals : [];
+      const accountName = clean(account.name || account.accountName);
       for(const s of signals){
-        const h = signalHash(user.id, uploadId, account.name || account.accountName, s);
-        signalRows.push({
-          user_id: user.id,
-          upload_id: uploadId,
-          account_name: clean(account.name || account.accountName),
-          signal_hash: h,
-          signal_type: clean(s.signalType || s.type || 'Business Activity'),
-          title: clean(s.signalTitle || s.title || s.whatChanged),
-          why_reach_out: clean(s.whyItMattersForPromo || s.whyReachOut || s.reasonToReachOut || s.whyNow),
-          confidence: Number(s.confidenceScore || s.confidence || 0) || null,
-          source_url: clean(s.sourceUrl || s.url),
-          source_domain: clean(s.cleanSourceName || s.sourceName || ''),
-          published_at: clean(s.publicationDate || s.publishedAt) || null,
-          payload: s,
-          first_seen_at: new Date().toISOString(),
-          last_seen_at: new Date().toISOString()
-        });
+        rawSignals.push({ ...s, accountName, companyName: s.companyName || accountName });
       }
     }
+    const resolvedSignals = resolveOpportunityEvents(rawSignals);
+    const candidateRows = resolvedSignals.map(s => ({
+      user_id: user.id,
+      upload_id: uploadId,
+      account_name: clean(s.accountName),
+      event_fingerprint: s.eventFingerprint,
+      signal_hash: signalHash(user.id, uploadId, s.accountName, s),
+      signal_type: clean(s.signalType || s.type || 'Business Activity'),
+      title: clean(s.signalTitle || s.title || s.whatChanged),
+      why_reach_out: clean(s.whyItMattersForPromo || s.whyReachOut || s.reasonToReachOut || s.whyNow),
+      confidence: Number(s.confidenceScore || s.confidence || 0) || null,
+      source_url: clean(s.sourceUrl || s.url),
+      source_domain: clean(s.cleanSourceName || s.sourceName || ''),
+      published_at: clean(s.publicationDate || s.publishedAt) || null,
+      payload: s,
+      first_seen_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString()
+    })).filter(row => row.event_fingerprint);
+    // Defensive in-memory dedup before the bulk write, same as weekly-scan.js —
+    // the database's composite unique constraint is the final safety net.
+    // Deliberately NOT scoped by upload_id: see weekly-scan.js for why —
+    // the product monitors companies, not uploads.
+    const signalRows = dedupeByEventFingerprint(candidateRows, {
+      keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
+      scoreOf: row => Number(row.confidence || 0)
+    });
     if(signalRows.length){
       const chunkSize = 200;
       for(let i=0;i<signalRows.length;i+=chunkSize){
-        await supabase('ha_signals?on_conflict=signal_hash', {
+        await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
           method:'POST',
           prefer:'resolution=ignore-duplicates,return=minimal',
           body: JSON.stringify(signalRows.slice(i, i+chunkSize))

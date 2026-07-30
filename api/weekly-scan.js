@@ -1,6 +1,8 @@
 // Vercel Serverless Function: weekly monitoring scan + email report.
 // Endpoint: GET /api/weekly-scan
 
+import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
 function hashString(input=''){
@@ -293,32 +295,53 @@ export default async function handler(req, res){
             }, {eligibleAccounts:0,queuedAccounts:0,processedAccounts:0,skippedAccounts:0,failedAccounts:0,queriesRun:0,rawResults:0,uniqueCandidates:0,enrichedPages:0,acceptedSignals:0,totalProcessingTimeMs:0,skipReasons:[],failureReasons:[]})
           }
         };
-        const signals = research.signals;
-        for(const s of signals){
-          const h = signalHash(user.id, upload.id, s.accountName, s);
-          const existing = await supabase(`ha_signals?select=id&signal_hash=eq.${encodeURIComponent(h)}&limit=1`);
-          if(existing && existing.length) continue;
-          newSignalRows.push({
-            user_id:user.id,
-            upload_id:upload.id,
-            weekly_run_id:run?.id || null,
-            account_name: clean(s.accountName),
-            signal_hash:h,
-            signal_type: clean(s.signalType || 'Business Activity'),
-            title: clean(s.signalTitle || s.whatChanged || ''),
-            why_reach_out: clean(s.whyItMattersForPromo || s.suggestedOpener || ''),
-            confidence: Number(s.confidenceScore || s.confidence || 0) || null,
-            source_url: clean(s.sourceUrl || ''),
-            source_domain: clean(s.cleanSourceName || s.sourceName || ''),
-            published_at: clean(s.publicationDate || '') || null,
-            payload:s,
-            first_seen_at:new Date().toISOString(),
-            last_seen_at:new Date().toISOString()
+        // Global event-resolution boundary: merge across ALL chunks for this
+        // upload before persisting, not per-HTTP-chunk. This is what stops the
+        // same real-world event — produced by two chunks, two sources, or two
+        // differently phrased AI generations — from being written as two rows.
+        const resolvedSignals = resolveOpportunityEvents(research.signals);
+        const candidateRows = resolvedSignals.map(s => ({
+          user_id:user.id,
+          upload_id:upload.id,
+          weekly_run_id:run?.id || null,
+          account_name: clean(s.accountName),
+          event_fingerprint: s.eventFingerprint,
+          signal_hash: signalHash(user.id, upload.id, s.accountName, s),
+          signal_type: clean(s.signalType || 'Business Activity'),
+          title: clean(s.signalTitle || s.whatChanged || ''),
+          why_reach_out: clean(s.whyItMattersForPromo || s.suggestedOpener || ''),
+          confidence: Number(s.confidenceScore || s.confidence || 0) || null,
+          source_url: clean(s.sourceUrl || ''),
+          source_domain: clean(s.cleanSourceName || s.sourceName || ''),
+          published_at: clean(s.publicationDate || '') || null,
+          payload:s,
+          first_seen_at:new Date().toISOString(),
+          last_seen_at:new Date().toISOString()
+        })).filter(row => row.event_fingerprint);
+        // Defensive in-memory dedup immediately before the bulk write. The
+        // database's composite unique constraint (user_id, event_fingerprint)
+        // is the final safety net here, not the only guard. Deliberately NOT
+        // scoped by upload_id: the product monitors companies, not uploads,
+        // so the same real-world event for the same company must resolve to
+        // one row regardless of which upload/list/intake source produced it
+        // (including a re-upload of the same list, which mints a new
+        // upload_id today).
+        const rowsToInsert = dedupeByEventFingerprint(candidateRows, {
+          keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
+          scoreOf: row => Number(row.confidence || 0)
+        });
+        if(rowsToInsert.length){
+          const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
+            method:'POST',
+            prefer:'resolution=ignore-duplicates,return=representation',
+            body: JSON.stringify(rowsToInsert)
           });
-        }
-        if(newSignalRows.length){
-          await supabase('ha_signals', {method:'POST', prefer:'return=minimal', body: JSON.stringify(newSignalRows)});
-          if(!dryRun){
+          // With ignore-duplicates, rows that collide with an already-stored
+          // event for this account are silently skipped by Postgres and are
+          // not returned here — so newSignalRows reflects genuinely new
+          // events, and a repeated run of the same event never re-emails it.
+          newSignalRows = Array.isArray(inserted) ? inserted : [];
+          if(!dryRun && newSignalRows.length){
             await sendEmail({to:user.email, subject:weeklyBriefSubject(newSignalRows), html:reportHtml(user, upload, newSignalRows, baseUrl, weeklySummaryFromSignals(newSignalRows, accountPayloads.length))});
           }
         }
