@@ -131,9 +131,9 @@ function classifySource(url = '', title = '') {
   const t = `${url} ${title}`.toLowerCase();
   if (/careers|career|jobs|greenhouse|lever|workable|indeed|ziprecruiter|glassdoor/.test(t)) return 'careers';
   if (/news|press|release|announcement|businesswire|prnewswire|globenewswire|mainebiz|inc\.com/.test(t)) return 'news/press';
+  if (/community|csr|sustainability|charity|fundraising|sponsor|festival|volunteer/.test(t)) return 'community/csr';
   if (/event|events|conference|expo|summit|webinar|booth|exhibitor/.test(t)) return 'events';
   if (/award|awards|recognition|best places|inc 5000|fastest growing/.test(t)) return 'awards';
-  if (/community|csr|sustainability|charity|fundraising|sponsor|volunteer/.test(t)) return 'community/csr';
   if (/leadership|team|executive|appointed|named|promoted/.test(t)) return 'leadership';
   if (/linkedin/.test(t)) return 'linkedin';
   return 'web';
@@ -386,7 +386,7 @@ function scoreCandidate(r, accountName) {
   if (/contract win|major contract|customer win|partnership|awarded|selected by|major deal/.test(t)) score += 27;
   if (/hiring hr|hiring marketing|event manager|field marketing|employee experience|talent acquisition|people operations|onboarding/.test(t)) score += 26;
   if (/safety milestone|anniversary|award|recognized|inc\.? 5000|fastest growing|best places to work|winner/.test(t)) score += 20;
-  if (/community event|charity|fundraiser|sponsorship|sponsor|volunteer|philanthropy/.test(t)) score += 18;
+  if (/community event|charity|fundraiser|sponsorship|sponsor|festival|volunteer|philanthropy/.test(t)) score += 18;
 
   // Generic versions still count, but less.
   if (/hiring|jobs|careers|now hiring|open positions|recruiting/.test(t)) score += 12;
@@ -773,24 +773,24 @@ function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
   const explicit = compact(raw.buying_moment || raw.buyingMoment || raw.opportunityCategory || '', 90);
   if (explicit) return explicit;
   const t = clean(`${type} ${trigger} ${context}`).toLowerCase();
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community / Sponsorship Event';
   if (/facility|new location|ribbon cutting|plant|warehouse|distribution center|headquarters/.test(t)) return 'Facility / Location Expansion';
   if (/trade show|exhibitor|booth|conference|expo|summit|open house|customer event|dealer meeting|webinar/.test(t)) return 'Event / Trade Show';
   if (/product launch|new product|rollout|unveil/.test(t)) return 'Product Launch';
   if (/rebrand|merger|acquisition|integrat/.test(t)) return 'Brand / Business Change';
   if (/contract|customer win|partnership|awarded|selected/.test(t)) return 'Contract / Partnership Win';
   if (/hiring|recruit|talent|employee experience|field marketing|event manager|onboarding/.test(t)) return 'Hiring / Team Growth';
-  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community / Sponsorship Event';
   if (/award|recognition|anniversary|milestone|safety/.test(t)) return 'Recognition / Milestone';
   return normalizeSignalType(type || trigger || 'Business Activity');
 }
 
 function promoCategoriesForMoment(moment = '', type = '', context = '') {
   const t = clean(`${moment} ${type} ${context}`).toLowerCase();
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer/.test(t)) return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
   if (/facility|location|plant|warehouse|operations|expansion|ribbon/.test(t)) return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
   if (/trade show|event|conference|expo|booth|summit|webinar|open house/.test(t)) return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
   if (/hiring|recruit|talent|onboarding|employee/.test(t)) return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
   if (/product launch|launch|rebrand/.test(t)) return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
-  if (/community|sponsor|fundraiser|philanthropy|volunteer/.test(t)) return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
   if (/award|recognition|anniversary|milestone|safety/.test(t)) return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
   if (/contract|partnership|customer win|sales/.test(t)) return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
   return ['Employee Apparel','Event Kits','Customer Appreciation','Recognition Gifts'];
@@ -798,11 +798,11 @@ function promoCategoriesForMoment(moment = '', type = '', context = '') {
 
 function salesReadyWhy(trigger = '', context = '', moment = '', type = '') {
   const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.';
   if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return 'Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.';
   if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return 'Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.';
   if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return 'Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.';
   if (/product launch|launch|rollout|unveil/.test(t)) return 'Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.';
-  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.';
   if (/award|recognition|anniversary|milestone|safety/.test(t)) return 'Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.';
   if (/contract|partnership|customer win/.test(t)) return 'Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.';
   return contextToPromoWhy(context, type);
@@ -811,11 +811,11 @@ function salesReadyWhy(trigger = '', context = '', moment = '', type = '') {
 function salesReadyOpener(trigger = '', context = '', moment = '', type = '') {
   const specific = compact(trigger || moment || 'the recent activity', 90);
   const t = clean(`${specific} ${context} ${moment} ${type}`).toLowerCase();
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Saw ${specific}. Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts. Want me to send over a few ideas that could fit?`;
   if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Saw ${specific}. For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts. I had a few practical ideas around apparel and launch kits — worth sending over?`;
   if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Saw ${specific}. Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items. Want me to send over a few ideas?`;
   if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Saw ${specific}. When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely. Is there someone I should ask about that?`;
   if (/product launch|launch|rollout|unveil/.test(t)) return `Saw ${specific}. Launches usually need internal hype, sales support, and customer-facing branded items. I had a few simple launch-kit ideas — worth sending over?`;
-  if (/community|sponsor|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Saw ${specific}. Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts. Want me to send over a few ideas that could fit?`;
   if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Saw ${specific}. Moments like that are a good chance to recognize employees or thank customers. Would a few branded celebration or recognition ideas be useful?`;
   if (/contract|partnership|customer win/.test(t)) return `Saw ${specific}. Wins like that often create internal and customer-facing communication needs. I had a few ideas around team apparel and thank-you kits — worth sending over?`;
   return contextToOpener(context, type);
