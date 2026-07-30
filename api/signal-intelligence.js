@@ -8,7 +8,7 @@ const SIGNAL_FAMILIES = {
   leadership: { label: 'Leadership / Relationship', halfLifeDays: 75, weight: 68 },
   product: { label: 'Product / Service', halfLifeDays: 120, weight: 82 },
   events: { label: 'Events / Marketing', halfLifeDays: 60, weight: 86 },
-  community: { label: 'Community / CSR', halfLifeDays: 75, weight: 64 },
+  community: { label: 'Community / CSR', halfLifeDays: 75, weight: 80 },
   award: { label: 'Award / Milestone', halfLifeDays: 120, weight: 70 },
   financial: { label: 'Acquisition / Financial', halfLifeDays: 270, weight: 92 },
   partnership: { label: 'Partnership / Contract', halfLifeDays: 180, weight: 84 },
@@ -56,7 +56,7 @@ function classifySignalFamily(input = '', intendedFamily = '') {
   if (/acquisition|acquired|merger|merged|funding|investment|capital raise|ipo|public market|earnings|major contract|contract win/.test(text)) return 'financial';
   if (/rebrand|new brand|brand identity|new logo|brand refresh/.test(text)) return 'rebrand';
   if (/new facility|new office|new branch|new location|relocat|renovat|reopen|ribbon cutting|grand opening|distribution center|manufacturing expansion|plant expansion|headquarters|capacity expansion/.test(text)) return 'growth';
-  if (/trade show|tradeshow|conference|expo|summit|webinar|open house|customer event|dealer meeting|sales meeting|booth|exhibitor|grand opening event/.test(text)) return 'events';
+  if (/trade show|tradeshow|conference|expo|summit|webinar|open house|customer event|dealer meeting|sales meeting|booth|exhibitor|grand opening event|festival/.test(text)) return 'events';
   if (/product launch|service launch|launches|launched|introduc|unveil|new offering|new program|campaign launch/.test(text)) return 'product';
   if (/strategic partnership|partnership|distribution agreement|supplier agreement|customer contract|award contract|selected by|collaboration/.test(text)) return 'partnership';
   if (/appoint|promot|joins as|named ceo|named president|named vice president|new director|new executive|leadership change|role change/.test(text)) return 'leadership';
@@ -76,7 +76,7 @@ function signalSubtype(text = '', family = classifySignalFamily(text)) {
     ['Webinar', /webinar/], ['Product Launch', /product launch|launches|launched|unveil/], ['Executive Appointment', /appoint|named ceo|named president|joins as/],
     ['Promotion', /promot/], ['Hiring Initiative', /hiring initiative|workforce growth|recruiting campaign|now hiring/],
     ['Company Anniversary', /anniversary/], ['Safety Milestone', /safety milestone|years without|lost-time/], ['Award / Recognition', /award|recognition|winner/],
-    ['Community Event', /community event|golf tournament|5k|fundraiser|charity event/], ['Sponsorship', /sponsor/], ['Rebrand', /rebrand|brand identity|new logo/]
+    ['Community Event', /community event|golf tournament|5k|fundraiser|charity event|festival/], ['Sponsorship', /sponsor/], ['Rebrand', /rebrand|brand identity|new logo/]
   ];
   return (tests.find(([,r]) => r.test(t)) || [SIGNAL_FAMILIES[family]?.label || 'Business Activity'])[0];
 }
@@ -311,12 +311,12 @@ function buildQueryPlan(company, context = {}) {
   const intents = [
     ['financial', `${q} (acquisition OR merger OR funding OR investment OR "major contract")`],
     ['growth', `${q} ("new facility" OR expansion OR relocation OR renovation OR reopening OR "ribbon cutting")`],
-    ['events', `${q} (conference OR "trade show" OR expo OR webinar OR summit OR "open house" OR "customer event")`],
+    ['events', `${q} (conference OR "trade show" OR expo OR webinar OR summit OR "open house" OR "customer event" OR festival)`],
     ['product', `${q} (launches OR launched OR "new product" OR "new service" OR campaign)`],
     ['hiring', `${q} (hiring OR recruiting OR workforce OR careers OR onboarding)`],
     ['leadership', `${q} (appointed OR promoted OR "joins as" OR "new vice president" OR "new director")`],
     ['award', `${q} (award OR recognition OR anniversary OR milestone OR "safety milestone")`],
-    ['community', `${q} (sponsor OR charity OR fundraiser OR volunteer OR "golf tournament" OR community)`],
+    ['community', `${q} (sponsor OR charity OR fundraiser OR volunteer OR "golf tournament" OR community OR festival)`],
     ['partnership', `${q} (partnership OR "distribution agreement" OR collaboration OR contract)`],
     ['rebrand', `${q} (rebrand OR "brand identity" OR "new logo")`]
   ];
