@@ -159,7 +159,7 @@ function makeRes(){
   return res;
 }
 
-async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, priorRunningRows = [] }){
+async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, priorRunningRows = [], query = {}, knownUploadIds }){
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
   delete process.env.CRON_SECRET;
@@ -172,16 +172,29 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, p
     id:`acct-${i+1}`, account_name:`Account ${i+1}`, industry:'', contact_name:'', contact_email:'',
     metrics:{}, raw_data:{}, created_at:new Date().toISOString(), updated_at:new Date().toISOString()
   }));
+  const uploadRow = { id: uploadId, user_id:userId, upload_name:'Test List', summary:{}, created_at:new Date().toISOString(), ha_users:{id:userId, email:'test@example.com', name:'Test User', company:''} };
+  const validUploadIds = knownUploadIds || [uploadId];
   let runIdCounter = 0;
   let staleRowsServed = false;
+  const uploadsQueryShapes = [];
 
   const realFetch = global.fetch;
   global.fetch = async (url, options = {}) => {
     const u = String(url);
     const method = options.method || 'GET';
 
+    if(u.includes('/rest/v1/ha_uploads') && method === 'GET' && u.includes('id=eq.')){
+      // Targeted lookup path (?uploadId=...): resolves a single upload by id,
+      // or an empty array if the id doesn't match a known upload — mirroring
+      // how a malformed/nonexistent uuid behaves against the real endpoint.
+      uploadsQueryShapes.push('targeted');
+      const requested = decodeURIComponent(u.match(/id=eq\.([^&]+)/)?.[1] || '');
+      return jsonResponse(validUploadIds.includes(requested) && requested === uploadId ? [uploadRow] : []);
+    }
     if(u.includes('/rest/v1/ha_uploads') && method === 'GET'){
-      return jsonResponse([{ id: uploadId, user_id:userId, upload_name:'Test List', summary:{}, created_at:new Date().toISOString(), ha_users:{id:userId, email:'test@example.com', name:'Test User', company:''} }]);
+      // Normal sweep path (order=updated_at.desc&limit=...).
+      uploadsQueryShapes.push('sweep');
+      return jsonResponse([uploadRow]);
     }
     if(u.includes('/rest/v1/ha_accounts')){
       return jsonResponse(accounts);
@@ -212,14 +225,14 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, p
     throw new Error(`Unhandled fetch in test mock: ${method} ${u}`);
   };
 
-  const req = { method:'GET', headers:{host:'example.test'}, query:{limit:'25'} };
+  const req = { method:'GET', headers:{host:'example.test'}, query:{limit:'25', ...query} };
   const res = makeRes();
   try{
     await handler(req, res);
   } finally {
     global.fetch = realFetch;
   }
-  return { res, patchCalls };
+  return { res, patchCalls, uploadsQueryShapes };
 }
 
 {
@@ -296,6 +309,104 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, p
     loggedCalls.some(m => m.includes('FAILED TO FINALIZE')),
     "a second, separate failure finalizing the run (the failure-marking PATCH itself failing) is also logged — not silently swallowed by an empty .catch(()=>{})"
   );
+}
+
+// ---------------------------------------------------------------------------
+// Operational admin-targeting tests: ?uploadId=<uuid>
+// ---------------------------------------------------------------------------
+
+function successfulResearch(){
+  return async (body) => jsonResponse({
+    signals: [],
+    diagnostics: { structuredSummary: { eligibleAccounts: body.accounts.length, processedAccounts: body.accounts.length, failedAccounts:0 } }
+  });
+}
+
+{
+  // uploadId found: processes that upload via the targeted lookup path, not
+  // the normal sweep.
+  const { res, uploadsQueryShapes } = await runHandlerScenario({
+    query: { uploadId: 'upload-1' },
+    researchBehavior: successfulResearch()
+  });
+  assert(res.statusCode === 200, 'a valid uploadId returns 200');
+  assert(res.body?.scopedUploadId === 'upload-1', 'the response echoes back the scoped uploadId for operational visibility');
+  assert(uploadsQueryShapes.length === 1 && uploadsQueryShapes[0] === 'targeted', 'a provided uploadId hits the targeted lookup query, not the normal limit-bounded sweep query');
+}
+
+{
+  // uploadId missing: existing behavior preserved exactly — the normal sweep
+  // query runs, not the targeted lookup.
+  const { res, uploadsQueryShapes } = await runHandlerScenario({
+    researchBehavior: successfulResearch()
+  });
+  assert(res.statusCode === 200, 'omitting uploadId still returns 200 (unchanged behavior)');
+  assert(res.body?.scopedUploadId === null, 'the response reports scopedUploadId as null when uploadId was not provided');
+  assert(uploadsQueryShapes.length === 1 && uploadsQueryShapes[0] === 'sweep', 'omitting uploadId hits the normal limit-bounded sweep query, not the targeted lookup — existing behavior is unchanged');
+}
+
+{
+  // uploadId invalid: does not exist (or is malformed and resolves to no
+  // match) -> 404, and the handler never reaches research-batch at all.
+  let researchBatchCalled = false;
+  const { res, patchCalls } = await runHandlerScenario({
+    query: { uploadId: 'does-not-exist' },
+    researchBehavior: async () => { researchBatchCalled = true; throw new Error('should never be called for an invalid uploadId'); }
+  });
+  assert(res.statusCode === 404, 'an unknown/invalid uploadId returns 404, not a 500 or a silent empty success');
+  assert(!researchBatchCalled, 'an invalid uploadId short-circuits before any research-batch call is made');
+  assert(patchCalls.length === 0, 'an invalid uploadId writes nothing to ha_weekly_runs — no run is created for a target that does not exist');
+}
+
+{
+  // uploadId + dryRun=true: the upload is processed for real (progress/final
+  // PATCHes still happen), but no email would be sent for any produced
+  // signals — mirroring the non-targeted dryRun behavior exactly.
+  const { res, patchCalls } = await runHandlerScenario({
+    query: { uploadId: 'upload-1', dryRun: 'true' },
+    researchBehavior: successfulResearch()
+  });
+  assert(res.body?.dryRun === true, 'dryRun is honored together with uploadId');
+  assert(res.body?.scopedUploadId === 'upload-1', 'uploadId scoping and dryRun are independent — both apply together');
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(!!finalPatch, 'the targeted run still reaches a final status PATCH under dryRun=true — dryRun only suppresses email, nothing else');
+}
+
+{
+  // uploadId processes exactly one upload: even though the mock's sweep path
+  // would return the same single upload, confirm this scenario only ever
+  // creates/finalizes exactly one run — no accidental double-processing.
+  const { patchCalls } = await runHandlerScenario({
+    query: { uploadId: 'upload-1' },
+    researchBehavior: successfulResearch()
+  });
+  const finalPatches = patchCalls.filter(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(finalPatches.length === 1, 'uploadId targeting processes exactly one upload — exactly one run reaches a final status');
+}
+
+{
+  // Existing behavior without uploadId remains unchanged: re-run the
+  // original "one chunk succeeds, one chunk times out -> partial" scenario
+  // with no uploadId, confirming identical outcome to before this feature
+  // was added.
+  let call = 0;
+  const { res, patchCalls } = await runHandlerScenario({
+    researchBehavior: async (body) => {
+      call += 1;
+      if(call === 1){
+        return jsonResponse({
+          signals: [],
+          diagnostics: { structuredSummary: { eligibleAccounts: body.accounts.length, processedAccounts: body.accounts.length, failedAccounts:0 } }
+        });
+      }
+      const err = new Error('simulated abort'); err.name = 'AbortError';
+      throw err;
+    }
+  });
+  const finalPatches = patchCalls.filter(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(res.statusCode === 200, 'no-uploadId behavior: still returns 200');
+  assert(finalPatches[0]?.body?.status === 'partial', 'no-uploadId behavior: chunk-timeout-produces-partial outcome is unchanged by adding the uploadId feature');
+  assert(res.body?.scopedUploadId === null, 'no-uploadId behavior: scopedUploadId is null, confirming this ran through the unscoped sweep path');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

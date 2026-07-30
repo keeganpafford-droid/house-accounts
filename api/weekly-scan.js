@@ -1,5 +1,26 @@
 // Vercel Serverless Function: weekly monitoring scan + email report.
 // Endpoint: GET /api/weekly-scan
+//
+// Query params:
+//   ?limit=<n>      Bounds how many uploads the normal sweep processes
+//                    (default 25, max 100). Ignored entirely when uploadId
+//                    is present.
+//   ?dryRun=true     Suppresses the outbound email only — every database
+//                    write (run creation, stale-run settlement, progress
+//                    PATCHes, signal persistence) still happens for real.
+//   ?uploadId=<uuid> Operational/admin capability: restricts this invocation
+//                    to exactly one upload instead of the normal
+//                    limit-bounded sweep, for a targeted rerun or production
+//                    debugging session (e.g. re-processing a single
+//                    customer's list after a fix, without touching every
+//                    other monitored upload). Returns 404 if the id doesn't
+//                    resolve to an existing upload. Adds no separate
+//                    authorization path — CRON_SECRET (below) still gates
+//                    the whole request exactly as it does without this
+//                    parameter; uploadId can only narrow what an
+//                    already-authorized request processes, never bypass
+//                    the check. When absent, behavior is unchanged from
+//                    before this parameter existed.
 
 import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
 
@@ -378,9 +399,36 @@ export default async function handler(req, res){
       const provided = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query?.secret;
       if(provided !== process.env.CRON_SECRET) return json(res, 401, {error:'Unauthorized'});
     }
-    const limit = Math.min(Number(req.query?.limit || 25), 100);
     const dryRun = String(req.query?.dryRun || '').toLowerCase() === 'true';
-    const uploads = await supabase(`ha_uploads?select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company)&order=updated_at.desc&limit=${limit}`);
+    // Operational/admin targeting: ?uploadId=<uuid> restricts this invocation
+    // to exactly one upload, for a manual rerun or production debugging
+    // session, instead of the normal limit-bounded sweep across every
+    // monitored upload. This is read only after the CRON_SECRET check above
+    // and adds no separate authorization path of its own — it cannot be used
+    // to bypass CRON_SECRET, only to narrow what an already-authorized
+    // request processes. When absent, behavior is byte-for-byte the same as
+    // before this parameter existed: the limit-bounded query below still
+    // decides what gets processed, and `limit` is otherwise unused/ignored.
+    const requestedUploadId = clean(req.query?.uploadId || '');
+    let uploads;
+    if(requestedUploadId){
+      let targetedUpload = null;
+      try{
+        const found = await supabase(`ha_uploads?id=eq.${encodeURIComponent(requestedUploadId)}&select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company)&limit=1`);
+        targetedUpload = Array.isArray(found) ? found[0] : null;
+      }catch{
+        // A malformed uploadId (not a valid uuid) surfaces as a PostgREST
+        // error here — treated the same as "not found" from the caller's
+        // perspective (a 404), not a 500, since this is a client input
+        // problem, not a system failure.
+        targetedUpload = null;
+      }
+      if(!targetedUpload) return json(res, 404, {error:`No upload found for uploadId=${requestedUploadId}`});
+      uploads = [targetedUpload];
+    } else {
+      const limit = Math.min(Number(req.query?.limit || 25), 100);
+      uploads = await supabase(`ha_uploads?select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company)&order=updated_at.desc&limit=${limit}`);
+    }
     const baseUrl = getBaseUrl(req);
     const runSummary = [];
 
@@ -564,7 +612,7 @@ export default async function handler(req, res){
         runSummary.push({uploadId:upload.id, email:user.email, error:err.message});
       }
     }
-    return json(res, 200, {ok:true, dryRun, processed:runSummary.length, runs:runSummary});
+    return json(res, 200, {ok:true, dryRun, scopedUploadId: requestedUploadId || null, processed:runSummary.length, runs:runSummary});
   }catch(err){
     return json(res, 500, {error:err.message || 'Weekly scan failed'});
   }
