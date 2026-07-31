@@ -14,7 +14,8 @@
 // Usage: node scripts/test-weekly-scan-reliability.js
 import handler, {
   computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult,
-  accumulateProgress, decideFinalStatus, FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS
+  accumulateProgress, decideFinalStatus, FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS,
+  RESEARCH_FETCH_TIMEOUT_MS
 } from '../api/weekly-scan.js';
 import { resolveOpportunityEvents, dedupeByEventFingerprint, normalizeOpportunity } from '../api/signal-intelligence.js';
 
@@ -49,9 +50,27 @@ function projectBySelect(row, url){
 
 function jsonResponse(data, ok = true, status = 200){
   // api/weekly-scan.js's supabase() helper reads the body via .text() (then
-  // JSON.parse()s it itself); the direct research-batch fetch reads .json()
-  // directly. Support both so this one mock response works for either caller.
-  return { ok, status, json: async () => data, text: async () => JSON.stringify(data) };
+  // JSON.parse()s it itself); the research-batch fetch also reads .text()
+  // first now. Support both, plus a no-op .headers.get() so any response
+  // used as a success case is safe even if future code reads headers on
+  // that path too.
+  return { ok, status, headers: { get: () => null }, json: async () => data, text: async () => JSON.stringify(data) };
+}
+
+// A response that is NOT valid JSON — models a platform-level failure page
+// (e.g. a Vercel function-invocation timeout/crash), which is plain
+// text/HTML, not JSON, and arrives with its own status/headers rather than
+// anything api/research-batch.js's own code produced (every return path in
+// that file returns JSON, including its own catch-all).
+function textResponse(text, { status = 200, headers = {} } = {}){
+  const lower = new Map(Object.entries(headers).map(([k, v]) => [String(k).toLowerCase(), v]));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name) => lower.get(String(name).toLowerCase()) ?? null },
+    json: async () => { throw new SyntaxError(`Unexpected token in non-JSON test response: ${text.slice(0, 20)}`); },
+    text: async () => text
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +722,113 @@ function successfulResearch(){
   const entry = res.body?.runs?.[0];
   assert(!!entry && entry.skipped !== true, 'a fresh run is created and processed normally after settlement — this upload is NOT starved by the partial unique index, because the blocking row was actually cleared first');
   assert(res.statusCode === 200, 'the invocation completes with 200');
+}
+
+// ---------------------------------------------------------------------------
+// research-batch non-JSON response diagnostic (follow-up investigation from
+// the July 31 production failure: "Unexpected token 'A', "An error o"... is
+// not valid JSON"). research-batch.js's own code always returns JSON (every
+// return path, including its catch-all, uses res.status(...).json(...)), so
+// a non-JSON body here is a platform-level failure page, not an application
+// error. These tests confirm the diagnostic preserves status/content-type/
+// x-vercel-id/body-preview instead of collapsing to an opaque JSON.parse
+// SyntaxError, without changing any timeout, retry, batching, or lifecycle
+// behavior.
+// ---------------------------------------------------------------------------
+
+function failureReasonFromFinalPatch(patchCalls){
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  return finalPatch?.body?.summary?.diagnostics?.chunks?.[0]?.structuredSummary?.failureReasons?.[0]?.reason;
+}
+
+{
+  // Non-JSON 504 / plain-text response — the shape a Vercel function-
+  // invocation timeout or crash actually returns.
+  const { patchCalls, res } = await runHandlerScenario({
+    researchBehavior: async () => textResponse('An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT', {
+      status: 504,
+      headers: { 'content-type': 'text/plain', 'x-vercel-id': 'iad1::abcde-1234567890' }
+    })
+  });
+  const reason = failureReasonFromFinalPatch(patchCalls);
+  assert(!!reason, 'a diagnostic failure reason is recorded for a non-JSON 504 response');
+  assert(reason.includes('HTTP 504'), 'the diagnostic includes the real HTTP status, not just an opaque JSON.parse error');
+  assert(reason.includes('content-type: text/plain'), 'the diagnostic includes the response content-type');
+  assert(reason.includes('x-vercel-id: iad1::abcde-1234567890'), 'the diagnostic includes the x-vercel-id header when present');
+  assert(reason.includes('An error occurred with your deployment') && reason.includes('FUNCTION_INVOCATION_TIMEOUT'), 'the diagnostic includes a readable body preview instead of a truncated JSON.parse SyntaxError message');
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(finalPatch?.body?.status === 'failed', 'zero accounts processed due to a non-JSON response still ends the run as failed — a normal, explicit terminal state, not stuck running');
+  assert(res.statusCode === 200, 'the weekly-scan invocation itself still returns 200 even though its one chunk failed');
+}
+
+{
+  // Non-JSON response with a 200 status — proves the diagnostic path is
+  // driven by "can this be parsed as JSON", not by the HTTP status code
+  // alone (a platform error page can arrive with any status).
+  const { patchCalls } = await runHandlerScenario({
+    researchBehavior: async () => textResponse('<html><body>Service Unavailable</body></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' }
+    })
+  });
+  const reason = failureReasonFromFinalPatch(patchCalls);
+  assert(!!reason && reason.includes('HTTP 200'), 'a non-JSON body with a 200 status is still caught and diagnosed — success is never inferred from status code alone');
+  assert(reason.includes('content-type: text/html'), 'the diagnostic reflects the actual content-type even when the status looked successful');
+  assert(reason.includes('Service Unavailable'), 'the diagnostic includes the actual body content for a 200-status non-JSON response');
+}
+
+{
+  // Body-prefix cap: a very long non-JSON body must be bounded to 300
+  // characters in the diagnostic message, and any internal whitespace/
+  // newlines collapsed to a single readable line.
+  const longBody = `Error line one.\n\n${'x'.repeat(500)}`;
+  const { patchCalls } = await runHandlerScenario({
+    researchBehavior: async () => textResponse(longBody, { status: 500, headers: { 'content-type': 'text/plain' } })
+  });
+  const reason = failureReasonFromFinalPatch(patchCalls);
+  assert(!!reason, 'a diagnostic reason is recorded for the long non-JSON body');
+  const previewPart = reason.split('): ').slice(1).join('): ');
+  assert(previewPart.length === 300, `the body preview embedded in the diagnostic is capped at exactly 300 characters (was ${previewPart.length})`);
+  assert(!previewPart.includes('\n'), 'the body preview is normalized to a single line with no embedded newlines');
+}
+
+{
+  // Valid JSON success is completely unchanged by the new .text()-then-parse
+  // path.
+  const { patchCalls, res } = await runHandlerScenario({ researchBehavior: successfulResearch() });
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(finalPatch?.body?.status === 'complete', 'a valid JSON success response still results in a complete run, unchanged by the diagnostic rework');
+  assert(res.statusCode === 200, 'the invocation still returns 200 for a valid JSON success response');
+}
+
+{
+  // Valid JSON non-2xx response (a real research-batch application error,
+  // e.g. its own res.status(500).json({error:...}) path) is unchanged: the
+  // JSON.parse succeeds, and the existing `if(!researchResp.ok)` branch
+  // still fires with the real error message — not the non-JSON diagnostic.
+  const { patchCalls } = await runHandlerScenario({
+    researchBehavior: async () => jsonResponse({ error: 'OPENAI_API_KEY not configured' }, false, 400)
+  });
+  const reason = failureReasonFromFinalPatch(patchCalls);
+  assert(reason === 'OPENAI_API_KEY not configured', 'a valid-JSON non-2xx response still surfaces research-batch\'s own real error message verbatim, not the non-JSON diagnostic wrapper');
+}
+
+{
+  // AbortError (a genuine caller-side timeout) must still short-circuit
+  // before ever reaching the new text()/JSON.parse code — no "non-JSON"
+  // diagnostic should ever be generated for a plain timeout.
+  const { patchCalls } = await runHandlerScenario({
+    researchBehavior: async () => { const err = new Error('simulated abort'); err.name = 'AbortError'; throw err; }
+  });
+  const reason = failureReasonFromFinalPatch(patchCalls);
+  // fetchWithTimeout (pre-existing, unchanged by this fix) normalizes any
+  // AbortError into this fixed message before it ever reaches the chunk's
+  // own catch — so this, not the researchBehavior's original message, is
+  // the correct unchanged behavior to assert against.
+  assert(reason === `research-batch request exceeded ${RESEARCH_FETCH_TIMEOUT_MS}ms`, 'a genuine AbortError still surfaces fetchWithTimeout\'s own normalized message unchanged — the new non-JSON diagnostic path never fires for a timeout');
+  assert(!reason.includes('non-JSON'), 'an AbortError is never mislabeled as a non-JSON response diagnostic');
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(finalPatch?.body?.status === 'timed_out', 'sawTimeout/decideFinalStatus behavior for a genuine AbortError is unchanged: timed_out, not failed');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

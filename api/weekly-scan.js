@@ -576,7 +576,28 @@ export default async function handler(req, res){
               headers:{'Content-Type':'application/json'},
               body: JSON.stringify({mode:'weekly-monitoring', accounts: batch})
             }, RESEARCH_FETCH_TIMEOUT_MS);
-            const parsed = await researchResp.json();
+            // Read the body once as text, then parse — a Response body can
+            // only be consumed once, so this replaces .json() rather than
+            // supplementing it. Every return path in research-batch.js
+            // returns JSON (confirmed by reading the whole file: one
+            // try/catch wraps its entire handler and every branch, including
+            // its own catch-all, calls res.status(...).json(...)), so a
+            // non-JSON body here is not a research-batch application error —
+            // most likely a platform-level failure (e.g. a Vercel
+            // function-invocation timeout or crash) whose error page is
+            // plain text/HTML. Preserve exactly what's needed to diagnose
+            // that, and nothing else: no request payload, no headers beyond
+            // content-type, no API keys/secrets.
+            const rawBody = await researchResp.text();
+            let parsed;
+            try{
+              parsed = JSON.parse(rawBody);
+            }catch{
+              const contentType = researchResp.headers.get('content-type') || 'unknown';
+              const vercelId = researchResp.headers.get('x-vercel-id');
+              const bodyPreview = rawBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+              throw new Error(`research-batch returned non-JSON (HTTP ${researchResp.status}, content-type: ${contentType}${vercelId ? `, x-vercel-id: ${vercelId}` : ''}): ${bodyPreview}`);
+            }
             if(!researchResp.ok) throw new Error(parsed.error || 'Research batch failed');
             research = parsed;
             chunkSucceeded = true;
