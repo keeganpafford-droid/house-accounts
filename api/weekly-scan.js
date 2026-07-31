@@ -452,7 +452,16 @@ export default async function handler(req, res){
       // never be revisited by any future invocation. Settlement must not
       // depend on this upload still having eligible accounts today.
       try{
-        const priorRunning = await supabase(`ha_weekly_runs?upload_id=eq.${encodeURIComponent(upload.id)}&status=eq.running&select=id,started_at,summary&limit=20`);
+        // select= must include `status`: isStaleRun()'s guard reads
+        // run.status directly, and PostgREST's select= is a column
+        // projection — status=eq.running above is a server-side filter, it
+        // does not add `status` to the returned row on its own. Omitting it
+        // here previously made isStaleRun() see `undefined` for every row,
+        // never settling anything regardless of age (confirmed against the
+        // July 27 production row: it survived a full successful reprocessing
+        // of its own upload because this exact query never actually
+        // observed it as running).
+        const priorRunning = await supabase(`ha_weekly_runs?upload_id=eq.${encodeURIComponent(upload.id)}&status=eq.running&select=id,status,started_at,summary&limit=20`);
         for(const staleRun of priorRunning || []){
           if(!isStaleRun(staleRun, { now: invocationStart })) continue;
           await supabase(`ha_weekly_runs?id=eq.${encodeURIComponent(staleRun.id)}`, {method:'PATCH', body: JSON.stringify({

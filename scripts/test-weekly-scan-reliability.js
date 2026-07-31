@@ -24,6 +24,29 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
+// Mimics PostgREST's actual column-projection behavior: a `select=` query
+// parameter returns ONLY the listed columns, never the full row — a filter
+// like `status=eq.running` elsewhere in the same URL does not add `status`
+// to what comes back. A hand-authored fixture that happens to include every
+// field the application code wants can silently mask a real select= bug
+// (exactly what let the production July 27 stale-run row go undetected:
+// weekly-scan.js's stale-run query omitted `status` from its select= list,
+// so isStaleRun() never actually saw it). Applied to ha_weekly_runs GET
+// responses below so a regression of that select= list fails a test here,
+// not just in production.
+function projectBySelect(row, url){
+  if(!row) return row;
+  const match = String(url).match(/[?&]select=([^&]+)/);
+  if(!match) return row; // no select= param present -> PostgREST returns every column
+  const columns = decodeURIComponent(match[1]).split(',').map(c => c.trim()).filter(Boolean);
+  const projected = {};
+  for(const col of columns){
+    if(col.includes('(')) continue; // embedded-resource syntax (e.g. ha_users(...)) — not used by any ha_weekly_runs query in this file
+    if(Object.prototype.hasOwnProperty.call(row, col)) projected[col] = row[col];
+  }
+  return projected;
+}
+
 function jsonResponse(data, ok = true, status = 200){
   // api/weekly-scan.js's supabase() helper reads the body via .text() (then
   // JSON.parse()s it itself); the direct research-batch fetch reads .json()
@@ -50,6 +73,21 @@ function jsonResponse(data, ok = true, status = 200){
   assert(isStaleRun({status:'running', started_at:new Date(now - 5*60*1000).toISOString()}, {now}) === false, 'a running run started 5 minutes ago is not yet stale');
   assert(isStaleRun({status:'complete', started_at:new Date(now - 20*60*1000).toISOString()}, {now}) === false, 'a completed run is never considered stale regardless of age');
   assert(isStaleRun(null, {now}) === false, 'a missing run is not stale');
+}
+
+// Regression guard for the exact production defect: a row shaped exactly
+// like what a select= list OMITTING `status` produces from PostgREST (the
+// key is absent entirely, not status:null — that is the real shape of the
+// bug that let the July 27 production run survive a full, successful
+// reprocessing of its own upload without ever being settled). isStaleRun's
+// own guard must never treat a missing status as a match, no matter how old
+// the row is; the actual fix is the select= list in weekly-scan.js itself
+// (proven by the integration test further below), but this proves the
+// function does not silently paper over that class of bug either.
+{
+  const now = Date.now();
+  const rowMissingStatus = { id:'row-without-status', started_at: new Date(now - 60 * 60 * 1000).toISOString(), summary:{accounts:10} };
+  assert(isStaleRun(rowMissingStatus, {now}) === false, 'a row shaped like a select= projection that omits `status` is never settled, no matter how old — proves isStaleRun cannot silently treat a missing field as a match');
 }
 
 // 4/6. explicit outcome states — decision table
@@ -177,6 +215,7 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, w
   let runIdCounter = 0;
   let staleRowsServed = false;
   const uploadsQueryShapes = [];
+  const getCalls = [];
 
   const realFetch = global.fetch;
   global.fetch = async (url, options = {}) => {
@@ -203,12 +242,14 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, w
       // The "detect another active run" lookup performed only after a
       // run-creation 409 conflict — distinct from the stale-check query
       // below (which uses limit=20).
-      return jsonResponse(activeRunLookupRows);
+      getCalls.push(u);
+      return jsonResponse(activeRunLookupRows.map(row => projectBySelect(row, u)));
     }
     if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET'){
       // Serve the stale-run rows exactly once (the stale-check query), then
       // an empty list, so we don't loop forever finding the same rows.
-      if(!staleRowsServed){ staleRowsServed = true; return jsonResponse(priorRunningRows); }
+      getCalls.push(u);
+      if(!staleRowsServed){ staleRowsServed = true; return jsonResponse(priorRunningRows.map(row => projectBySelect(row, u))); }
       return jsonResponse([]);
     }
     if(u.includes('/rest/v1/ha_weekly_runs') && method === 'POST'){
@@ -242,7 +283,7 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, w
   } finally {
     global.fetch = realFetch;
   }
-  return { res, patchCalls, uploadsQueryShapes };
+  return { res, patchCalls, uploadsQueryShapes, getCalls };
 }
 
 {
@@ -579,6 +620,89 @@ function successfulResearch(){
   assert(skipped.length === 1, 'the other concurrent invocation is cleanly skipped, not failed, not double-processed');
   assert(!!skipped[0]?.reason && skipped[0].reason.includes('already in progress'), 'the losing invocation reports a clear, operator-facing reason');
   assert(researchBatchCalls === 1, 'only the winning invocation calls research-batch — the loser makes no downstream calls at all for an upload it does not own');
+}
+
+{
+  // Integration proof for the select= column-projection fix, end to end.
+  // Uses a mock that enforces real PostgREST column-projection via
+  // projectBySelect (not a hand-authored fixture that already happens to
+  // include every field the code wants) so that if weekly-scan.js's
+  // stale-run query ever regresses to omit `status` again, THIS SAME mock
+  // would silently strip it exactly like production does — settlement would
+  // never fire, the stuck row would never clear, and the run-creation POST
+  // would hit the partial unique index's conflict on every invocation,
+  // permanently starving this upload. That is exactly the risk requirement
+  // 6 flagged: deploying the index without this fix turns a merely-stuck
+  // row into a permanently-unrecoverable one.
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  delete process.env.CRON_SECRET;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const uploadId = 'upload-select-fix';
+  const accounts = Array.from({length:2}, (_, i) => ({
+    id:`acct-${i+1}`, account_name:`Account ${i+1}`, industry:'', contact_name:'', contact_email:'',
+    metrics:{}, raw_data:{}, created_at:new Date().toISOString(), updated_at:new Date().toISOString()
+  }));
+  const uploadRow = { id: uploadId, user_id:'user-select-fix', upload_name:'Select Fix List', summary:{}, created_at:new Date().toISOString(), ha_users:{id:'user-select-fix', email:'selectfix@example.com', name:'Select Fix User', company:''} };
+  const staleStartedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+  // The full, real-shaped stuck row exactly as it exists in production —
+  // deliberately includes every column the table actually has. Which fields
+  // the application code actually sees is decided by the mock's URL-based
+  // projection below, not by this fixture, matching real PostgREST behavior.
+  let stuckRow = { id:'stuck-run-select-fix', upload_id: uploadId, status:'running', started_at: staleStartedAt, finished_at:null, summary:{accounts:10} };
+  const getCalls = [];
+  let runIdCounter = 0;
+
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if(u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadRow]);
+    if(u.includes('/rest/v1/ha_accounts')) return jsonResponse(accounts);
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET'){
+      getCalls.push(u);
+      const rows = stuckRow ? [projectBySelect(stuckRow, u)] : [];
+      return jsonResponse(rows);
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'POST'){
+      if(stuckRow){
+        // The real partial unique index would reject this — the stuck row
+        // is still status='running' in the shared mock state.
+        return jsonResponse({message:'duplicate key value violates unique constraint "idx_ha_weekly_runs_one_running_per_upload"'}, false, 409);
+      }
+      runIdCounter += 1;
+      const body = JSON.parse(options.body)[0];
+      return jsonResponse([{ id:`run-${runIdCounter}`, ...body }]);
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH'){
+      const body = JSON.parse(options.body);
+      if(body.status && stuckRow && u.includes(stuckRow.id)) stuckRow = null; // settlement clears the blocker, exactly like the real UPDATE would
+      return jsonResponse([{ id:'run-patched', ...body }]);
+    }
+    if(u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse([]);
+    if(u.includes('/api/research-batch')){
+      return jsonResponse({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:2, processedAccounts:2, failedAccounts:0}}});
+    }
+    throw new Error(`Unhandled fetch in select-projection regression test mock: ${method} ${u}`);
+  };
+
+  const req = { method:'GET', headers:{host:'example.test'}, query:{uploadId, dryRun:'true', limit:'25'} };
+  const res = makeRes();
+  try{
+    await handler(req, res);
+  } finally {
+    global.fetch = realFetch;
+  }
+
+  const staleCheckCall = getCalls.find(callUrl => !callUrl.includes('limit=1'));
+  assert(!!staleCheckCall && staleCheckCall.includes('select=id,status,started_at,summary'), "weekly-scan.js's stale-run query requests `status` in its select= list — the exact fix for the defect that let the July 27 row survive settlement");
+  assert(stuckRow === null, 'with the corrected projection, the stale row is actually settled — isStaleRun received a real status field this time and correctly identified it as stale, and the settlement PATCH fired');
+  const entry = res.body?.runs?.[0];
+  assert(!!entry && entry.skipped !== true, 'a fresh run is created and processed normally after settlement — this upload is NOT starved by the partial unique index, because the blocking row was actually cleared first');
+  assert(res.statusCode === 200, 'the invocation completes with 200');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
