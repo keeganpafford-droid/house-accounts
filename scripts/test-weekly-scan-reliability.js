@@ -159,7 +159,7 @@ function makeRes(){
   return res;
 }
 
-async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, priorRunningRows = [], query = {}, knownUploadIds }){
+async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, weeklyRunsPostBehavior, priorRunningRows = [], activeRunLookupRows = [], accountsOverride, query = {}, knownUploadIds }){
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
   delete process.env.CRON_SECRET;
@@ -197,7 +197,13 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, p
       return jsonResponse([uploadRow]);
     }
     if(u.includes('/rest/v1/ha_accounts')){
-      return jsonResponse(accounts);
+      return jsonResponse(accountsOverride !== undefined ? accountsOverride : accounts);
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET' && u.includes('limit=1')){
+      // The "detect another active run" lookup performed only after a
+      // run-creation 409 conflict — distinct from the stale-check query
+      // below (which uses limit=20).
+      return jsonResponse(activeRunLookupRows);
     }
     if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET'){
       // Serve the stale-run rows exactly once (the stale-check query), then
@@ -206,6 +212,10 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, p
       return jsonResponse([]);
     }
     if(u.includes('/rest/v1/ha_weekly_runs') && method === 'POST'){
+      if(weeklyRunsPostBehavior){
+        const overridden = weeklyRunsPostBehavior(JSON.parse(options.body)[0]);
+        if(overridden) return overridden;
+      }
       runIdCounter += 1;
       const body = JSON.parse(options.body)[0];
       return jsonResponse([{ id:`run-${runIdCounter}`, ...body }]);
@@ -407,6 +417,168 @@ function successfulResearch(){
   assert(res.statusCode === 200, 'no-uploadId behavior: still returns 200');
   assert(finalPatches[0]?.body?.status === 'partial', 'no-uploadId behavior: chunk-timeout-produces-partial outcome is unchanged by adding the uploadId feature');
   assert(res.body?.scopedUploadId === null, 'no-uploadId behavior: scopedUploadId is null, confirming this ran through the unscoped sweep path');
+}
+
+// ---------------------------------------------------------------------------
+// Monitoring lifecycle hardening tests: stale-sweep ordering, the partial
+// unique index's application-level conflict handling, and terminal-state
+// retries.
+// ---------------------------------------------------------------------------
+
+{
+  // Zero eligible accounts: the stale-run settlement sweep must still run
+  // and settle a genuinely stuck run even when this upload currently has no
+  // eligible accounts at all. Before the reordering fix, the sweep sat
+  // AFTER the `if(!accountPayloads.length) continue` gate, so an upload
+  // that got stuck while it still had eligible accounts, then later had
+  // every account removed/paused, would never be revisited by any future
+  // invocation — the early `continue` skipped straight past the sweep.
+  const staleStartedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  let researchBatchCalled = false;
+  const { patchCalls } = await runHandlerScenario({
+    accountsOverride: [],
+    priorRunningRows: [{ id:'stuck-run-zero-accounts', status:'running', started_at: staleStartedAt, summary:{accounts:10} }],
+    researchBehavior: async () => { researchBatchCalled = true; throw new Error('should never be called when there are zero eligible accounts'); }
+  });
+  const staleSettlePatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs?id=eq.stuck-run-zero-accounts'));
+  assert(!!staleSettlePatch, 'a stuck run is settled even for an upload with zero eligible accounts this invocation — the sweep no longer depends on eligible accounts existing');
+  assert(staleSettlePatch?.body?.status === 'timed_out', 'the stuck run is settled to timed_out even though this upload has no eligible accounts to process afterward');
+  assert(!researchBatchCalled, 'zero eligible accounts still short-circuits before any research-batch call — settlement is the only thing that happens for this upload');
+  const runCreationPatch = patchCalls.some(p => p.body?.summary && !p.body?.status && p.url !== staleSettlePatch.url);
+  assert(!runCreationPatch, 'no new run is created (and therefore no progress PATCH sent) for an upload with zero eligible accounts');
+}
+
+{
+  // Retry after timeout: a run previously settled as stale (timed_out) does
+  // not block a fresh run from being created and completing normally on a
+  // later invocation. timed_out is a terminal state, not 'running', so the
+  // partial unique index has nothing to conflict with once settlement runs.
+  const staleStartedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { res, patchCalls } = await runHandlerScenario({
+    priorRunningRows: [{ id:'stuck-run-retry', status:'running', started_at: staleStartedAt, summary:{accounts:10} }],
+    researchBehavior: successfulResearch()
+  });
+  const staleSettlePatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs?id=eq.stuck-run-retry'));
+  const finalPatches = patchCalls.filter(p => p.url.includes('/ha_weekly_runs') && p.body.status && p.url !== staleSettlePatch?.url);
+  assert(!!staleSettlePatch && staleSettlePatch.body.status === 'timed_out', 'the prior run is settled to timed_out before the retry proceeds');
+  assert(finalPatches.length === 1 && finalPatches[0]?.body?.status === 'complete', 'a fresh run for the same upload is created and reaches a normal completion on this retry invocation — settlement does not block it');
+  assert(res.statusCode === 200, 'the retry invocation returns 200');
+}
+
+{
+  // Retry after failure: a run previously settled as 'failed' (terminal,
+  // not 'running') is not seen by the stale-check query at all in
+  // production (it only ever selects status=eq.running) and must not block
+  // a fresh run either.
+  const { res, patchCalls } = await runHandlerScenario({
+    priorRunningRows: [],
+    researchBehavior: successfulResearch()
+  });
+  const finalPatches = patchCalls.filter(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(finalPatches.length === 1 && finalPatches[0]?.body?.status === 'complete', 'a fresh run for the same upload is created and completes normally when the only prior run for it already ended in a terminal failed state');
+  assert(res.statusCode === 200, 'the retry-after-failure invocation returns 200');
+}
+
+{
+  // Duplicate-running prevention: the run-creation INSERT collides with
+  // idx_ha_weekly_runs_one_running_per_upload (simulated as a 409 whose
+  // message names that index, exactly like PostgREST's real error shape).
+  // The handler must skip this upload cleanly — no 'failed' run, no
+  // research-batch call, a clear operator-facing reason — rather than
+  // treating the conflict as a processing error.
+  let researchBatchCalled = false;
+  const { res, patchCalls } = await runHandlerScenario({
+    weeklyRunsPostBehavior: () => jsonResponse({message:'duplicate key value violates unique constraint "idx_ha_weekly_runs_one_running_per_upload"'}, false, 409),
+    activeRunLookupRows: [{ id:'run-already-active', started_at: new Date().toISOString() }],
+    researchBehavior: async () => { researchBatchCalled = true; throw new Error('should never be called when run creation hits the duplicate-running conflict'); }
+  });
+  assert(res.statusCode === 200, 'a duplicate-running conflict on one upload still returns an overall 200 — it is not a request-level failure');
+  const entry = res.body?.runs?.[0];
+  assert(entry?.skipped === true, 'the conflicting upload is reported as skipped, not as a processed run and not as an error');
+  assert(!entry?.error, 'no error field is set for a duplicate-running skip — this is expected, benign behavior, not a failure');
+  assert(typeof entry?.reason === 'string' && entry.reason.includes('already in progress'), 'the skip carries a clear, operator-facing reason');
+  assert(entry.reason.includes('run-already-active'), 'the reason includes the id of the run that is already active, when that lookup succeeds');
+  assert(!researchBatchCalled, 'no research-batch call is made for an upload that lost the run-creation race');
+  const failedPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body?.status === 'failed');
+  assert(!failedPatch, 'no run is ever marked failed as a result of the duplicate-running conflict');
+}
+
+{
+  // Concurrent invocation: two full handler() invocations processing the
+  // SAME upload at the same time, backed by a single shared in-memory
+  // "database" state object that enforces the partial unique index's
+  // real behavior (reject a second concurrent INSERT of a 'running' row for
+  // the same upload_id). This models exactly what the index guards against
+  // in production: an overlapping cron tick and a manual ?uploadId=
+  // trigger, or two overlapping cron ticks.
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  delete process.env.CRON_SECRET;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const uploadId = 'upload-race';
+  const accounts = Array.from({length:2}, (_, i) => ({
+    id:`acct-${i+1}`, account_name:`Account ${i+1}`, industry:'', contact_name:'', contact_email:'',
+    metrics:{}, raw_data:{}, created_at:new Date().toISOString(), updated_at:new Date().toISOString()
+  }));
+  const uploadRow = { id: uploadId, user_id:'user-race', upload_name:'Race List', summary:{}, created_at:new Date().toISOString(), ha_users:{id:'user-race', email:'race@example.com', name:'Race User', company:''} };
+
+  let runningRow = null; // shared "database" state: at most one running row for this upload, ever
+  let runIdCounter = 0;
+  let researchBatchCalls = 0;
+
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if(u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadRow]);
+    if(u.includes('/rest/v1/ha_accounts')) return jsonResponse(accounts);
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET' && u.includes('limit=1')){
+      return jsonResponse(runningRow ? [runningRow] : []);
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'GET'){
+      return jsonResponse([]); // nothing stale to settle in this scenario
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'POST'){
+      if(runningRow){
+        return jsonResponse({message:'duplicate key value violates unique constraint "idx_ha_weekly_runs_one_running_per_upload"'}, false, 409);
+      }
+      runIdCounter += 1;
+      const body = JSON.parse(options.body)[0];
+      runningRow = { id:`run-${runIdCounter}`, started_at: body.started_at };
+      return jsonResponse([{ id: runningRow.id, ...body }]);
+    }
+    if(u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH'){
+      const body = JSON.parse(options.body);
+      if(body.status) runningRow = null; // reaching a terminal state frees the upload for a future run
+      return jsonResponse([{ id: 'run-patched', ...body }]);
+    }
+    if(u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse([]);
+    if(u.includes('/api/research-batch')){
+      researchBatchCalls += 1;
+      return jsonResponse({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:2, processedAccounts:2, failedAccounts:0}}});
+    }
+    throw new Error(`Unhandled fetch in concurrent-invocation test mock: ${method} ${u}`);
+  };
+
+  const makeReq = () => ({ method:'GET', headers:{host:'example.test'}, query:{uploadId, limit:'25'} });
+  const res1 = makeRes();
+  const res2 = makeRes();
+  try{
+    await Promise.all([handler(makeReq(), res1), handler(makeReq(), res2)]);
+  } finally {
+    global.fetch = realFetch;
+  }
+
+  const outcomes = [res1.body?.runs?.[0], res2.body?.runs?.[0]];
+  const processed = outcomes.filter(r => r && !r.skipped && !r.error);
+  const skipped = outcomes.filter(r => r?.skipped);
+  assert(res1.statusCode === 200 && res2.statusCode === 200, 'both concurrent invocations return 200 — losing the race is not an HTTP error');
+  assert(processed.length === 1, 'exactly one of two concurrent invocations for the same upload actually processes it');
+  assert(skipped.length === 1, 'the other concurrent invocation is cleanly skipped, not failed, not double-processed');
+  assert(!!skipped[0]?.reason && skipped[0].reason.includes('already in progress'), 'the losing invocation reports a clear, operator-facing reason');
+  assert(researchBatchCalls === 1, 'only the winning invocation calls research-batch — the loser makes no downstream calls at all for an upload it does not own');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

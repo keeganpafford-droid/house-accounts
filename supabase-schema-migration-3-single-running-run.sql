@@ -1,0 +1,82 @@
+-- Migration 3: Monitoring Lifecycle Hardening — one 'running' row per upload.
+--
+-- Run this against the EXISTING production database. For a brand-new
+-- database, supabase-schema.sql already includes the end state and this
+-- file is not needed.
+--
+-- =============================================================================
+-- 1. WHAT THIS CLOSES
+-- =============================================================================
+-- api/weekly-scan.js settles stale 'running' rows (isStaleRun) and then, in a
+-- separate later statement, INSERTs a new 'running' row for this upload. Those
+-- two statements are not atomic: two invocations covering the same upload
+-- (an overlapping cron tick and a manual ?uploadId= trigger, or two
+-- overlapping cron ticks) could both observe "no running row for this
+-- upload" and both proceed to INSERT their own 'running' row. Nothing in the
+-- application enforced "at most one running row per upload" as a real
+-- guarantee before this migration — only as an assumption that held as long
+-- as invocations never overlapped. This migration makes it a database
+-- invariant instead.
+--
+-- =============================================================================
+-- 2. WHY A PARTIAL INDEX, NOT A PLAIN UNIQUE CONSTRAINT
+-- =============================================================================
+-- A plain `unique(upload_id)` constraint would allow at most one
+-- ha_weekly_runs row EVER per upload, which is wrong — every upload
+-- legitimately accumulates many historical runs (complete, partial, failed,
+-- timed_out) over its lifetime; only the transient 'running' state should
+-- ever be singular at a given moment. A partial unique index
+-- (`where status = 'running'`) expresses exactly that: at most one row with
+-- status='running' per upload_id, with zero restriction on how many
+-- terminal-state rows accumulate for that same upload_id over time.
+--
+-- =============================================================================
+-- 3. WHY CONCURRENTLY
+-- =============================================================================
+-- CONCURRENTLY builds the index without holding a lock that would block
+-- ordinary reads/writes on ha_weekly_runs while it builds — this table is
+-- actively read and written by the weekly cron and by manual/admin
+-- ?uploadId= triggers. It takes longer and cannot run inside a transaction
+-- block (this statement must be run on its own, not wrapped in BEGIN/COMMIT).
+--
+-- =============================================================================
+-- 4. DEPLOYMENT ORDER
+-- =============================================================================
+-- Order between this migration and the application code change in this same
+-- commit does not matter for correctness, in either direction:
+--   - Index added BEFORE the code deploys: the OLD code (no try/catch around
+--     the run-creation INSERT) would surface a rare genuine race as an
+--     uncaught 500 for that one request — a pre-existing gap this migration
+--     does not introduce, and strictly better than the OLD code's actual
+--     pre-migration behavior (silently creating two concurrent 'running'
+--     rows for the same upload with no error at all).
+--   - Index added AFTER the code deploys: the NEW code's try/catch around
+--     the INSERT has nothing to catch yet (no conflicts are possible without
+--     the index) — an inert, safe state, not a bug.
+-- Recommended anyway, to exercise the new skip-path exactly as designed
+-- rather than relying on the old code's fallback behavior even briefly:
+--   A. Run this migration (statement below) against production.
+--   B. Deploy the application code from this same change
+--      (api/weekly-scan.js: stale-run sweep now runs before the
+--      eligible-accounts check; run-creation INSERT is now wrapped to detect
+--      this index's conflict and skip cleanly instead of failing).
+--   C. No backfill, no data migration, no verification write required — this
+--      migration only adds an index; it changes no existing row.
+--
+-- =============================================================================
+-- 5. ROLLBACK
+-- =============================================================================
+-- Removing the index only removes the guard; it does not delete or alter any
+-- row, and no other constraint or foreign key depends on it:
+--   drop index concurrently if exists idx_ha_weekly_runs_one_running_per_upload;
+-- If the application code from this change needs to be rolled back
+-- separately: the OLD code never reads or reacts to this index's presence
+-- (it has no try/catch expecting a 409 here), so the index can safely be
+-- left in place during an app-only rollback — a rare genuine race would then
+-- surface as an uncaught 500 for that one request rather than a silent
+-- double-insert, which is strictly safer than the pre-migration status quo,
+-- not a regression.
+
+create unique index concurrently if not exists idx_ha_weekly_runs_one_running_per_upload
+  on public.ha_weekly_runs(upload_id)
+  where status = 'running';

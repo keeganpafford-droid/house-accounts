@@ -49,6 +49,14 @@ create table if not exists public.ha_weekly_runs (
   finished_at timestamptz
 );
 
+-- At most one 'running' row per upload at any moment (see
+-- supabase-schema-migration-3-single-running-run.sql for the full rationale
+-- and the production migration for existing databases). Terminal states
+-- (complete/partial/failed/timed_out) are unrestricted and accumulate freely.
+create unique index if not exists idx_ha_weekly_runs_one_running_per_upload
+  on public.ha_weekly_runs(upload_id)
+  where status = 'running';
+
 create table if not exists public.ha_signals (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.ha_users(id) on delete cascade,

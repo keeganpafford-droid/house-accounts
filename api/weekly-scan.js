@@ -201,7 +201,12 @@ async function supabase(path, options={}){
   if(text){ try{ data = JSON.parse(text); } catch { data = text; } }
   if(!resp.ok){
     const msg = typeof data === 'string' ? data : (data?.message || data?.hint || JSON.stringify(data));
-    throw new Error(`Supabase ${resp.status}: ${msg}`);
+    const httpErr = new Error(`Supabase ${resp.status}: ${msg}`);
+    // Attached so callers can distinguish specific failure modes (e.g. a
+    // 409 unique-violation) without re-parsing the message string for a
+    // status code that is already known here.
+    httpErr.status = resp.status;
+    throw httpErr;
   }
   return data;
 }
@@ -435,15 +440,17 @@ export default async function handler(req, res){
     for(const upload of uploads || []){
       const user = upload.ha_users;
       if(!user?.email) continue;
-      const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&limit=5000`);
-      const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name && !['paused','archived'].includes(clean(a.monitoringStatus || '').toLowerCase()));
-      if(!accountPayloads.length) continue;
 
       // Settle any prior run for this upload that never reached a completion
-      // PATCH (killed by a platform timeout, crash, etc.) before starting a
-      // new one. Nothing can reach back into a killed invocation, so this is
-      // the only place a stuck run gets settled — the next time this upload
-      // is processed, whether by the weekly cron or a manual trigger.
+      // PATCH (killed by a platform timeout, crash, etc.) before doing
+      // anything else for this upload — deliberately BEFORE the
+      // eligible-accounts check below, not after. A run can get stuck while
+      // its accounts were still eligible, then have every one of them later
+      // marked paused/archived (or removed); if settlement only ran after
+      // the eligible-accounts gate, the early `continue` on zero eligible
+      // accounts would skip settlement entirely and that stuck run would
+      // never be revisited by any future invocation. Settlement must not
+      // depend on this upload still having eligible accounts today.
       try{
         const priorRunning = await supabase(`ha_weekly_runs?upload_id=eq.${encodeURIComponent(upload.id)}&status=eq.running&select=id,started_at,summary&limit=20`);
         for(const staleRun of priorRunning || []){
@@ -457,6 +464,10 @@ export default async function handler(req, res){
       }catch(staleErr){
         console.error('[Weekly Scan] failed to settle stale runs for upload', upload.id, staleErr);
       }
+
+      const accounts = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(upload.id)}&limit=5000`);
+      const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name && !['paused','archived'].includes(clean(a.monitoringStatus || '').toLowerCase()));
+      if(!accountPayloads.length) continue;
 
       if(Date.now() >= deadline){
         // No time left in this invocation to even start this upload. It is
@@ -481,11 +492,55 @@ export default async function handler(req, res){
       // hanging the whole invocation.
       const batchSize = Math.max(1, Math.min(Number(process.env.WEEKLY_RESEARCH_BATCH_SIZE || 5), 25));
       const totalChunks = Math.ceil(totalAccounts / batchSize);
-      const runRows = await supabase('ha_weekly_runs', {method:'POST', body: JSON.stringify([{user_id:user.id, upload_id:upload.id, status:'running', started_at:started, summary:{
-        accounts:totalAccounts, totalChunks, chunksAttempted:0, chunksCompleted:0,
-        accountsAttempted:0, accountsProcessed:0, accountsFailed:0, diagnostics:[]
-      }}])});
-      const run = Array.isArray(runRows) ? runRows[0] : runRows;
+
+      let run;
+      try{
+        const runRows = await supabase('ha_weekly_runs', {method:'POST', body: JSON.stringify([{user_id:user.id, upload_id:upload.id, status:'running', started_at:started, summary:{
+          accounts:totalAccounts, totalChunks, chunksAttempted:0, chunksCompleted:0,
+          accountsAttempted:0, accountsProcessed:0, accountsFailed:0, diagnostics:[]
+        }}])});
+        run = Array.isArray(runRows) ? runRows[0] : runRows;
+      }catch(createErr){
+        // idx_ha_weekly_runs_one_running_per_upload (partial unique index on
+        // upload_id where status='running') rejects this insert with a 409
+        // if another invocation already holds a running row for this same
+        // upload — e.g. an overlapping cron tick and a manual ?uploadId=
+        // trigger, or two overlapping cron ticks. The stale-run sweep above
+        // already settled anything actually stuck, so a conflict here means
+        // a genuinely concurrent, still-live run owns this upload right now.
+        // That is not a processing failure for THIS invocation: do not
+        // create/mark a 'failed' run (there is nothing wrong — the other run
+        // is doing the work), make no further calls for this upload
+        // (no research-batch, no ha_signals writes), and report a clear,
+        // operator-facing reason instead of a generic error.
+        if(createErr?.status === 409 && /idx_ha_weekly_runs_one_running_per_upload/.test(createErr.message || '')){
+          let activeRun = null;
+          try{
+            const activeRows = await supabase(`ha_weekly_runs?upload_id=eq.${encodeURIComponent(upload.id)}&status=eq.running&select=id,started_at&limit=1`);
+            activeRun = Array.isArray(activeRows) ? activeRows[0] : null;
+          }catch{
+            // Best-effort diagnostic only — the skip below does not depend
+            // on this lookup succeeding.
+          }
+          runSummary.push({
+            uploadId:upload.id,
+            email:user.email,
+            skipped:true,
+            reason: activeRun
+              ? `another run (id=${activeRun.id}, started_at=${activeRun.started_at}) is already in progress for this upload`
+              : 'another run is already in progress for this upload'
+          });
+          continue;
+        }
+        // Any other run-creation failure (network error, malformed
+        // response, etc.) is a genuine problem, but it is isolated to this
+        // upload — the same per-upload isolation the rest of this loop
+        // already relies on — rather than aborting every remaining upload
+        // in this invocation.
+        console.error('[Weekly Scan] failed to create run for upload', upload.id, createErr);
+        runSummary.push({uploadId:upload.id, email:user.email, error:createErr.message});
+        continue;
+      }
 
       let newSignalRows = [];
       let progressSummary = { accounts:totalAccounts, totalChunks, chunksAttempted:0, chunksCompleted:0, accountsAttempted:0, accountsProcessed:0, accountsFailed:0, diagnostics:[] };
