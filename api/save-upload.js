@@ -128,18 +128,31 @@ function applyFreeLimitToAccounts(accounts, usage){
 
 // Phase 2A implementation-review ROUND 4, item 1 — saves whose stage
 // represents research OUTPUT now REQUIRE attempt metadata; this is no
-// longer an opt-in check. dashboard/index.html's refreshOpportunityViews()
-// is called from several UI contexts that have nothing to do with an
-// active research pass (manual account edits, filter changes) -- those
-// callers now use the distinct stage 'view_updated' (see dashboard's
-// refreshOpportunityViews()), which is deliberately NOT in this set, so
-// they remain untracked exactly as before. The standalone single-account
-// "Research Account" button now claims its own manual research run before
-// calling providers (see dashboard/index.html's researchAccountByName()),
-// so it always has real attempt metadata to send when it saves. There is
-// no longer any code path that legitimately reaches a RESEARCH_OUTPUT_STAGES
-// save without one.
+// longer an opt-in check. The standalone single-account "Research Account"
+// button now claims its own manual research run before calling providers
+// (see dashboard/index.html's researchAccountByName()), so it always has
+// real attempt metadata to send when it saves. There is no longer any code
+// path that legitimately reaches a RESEARCH_OUTPUT_STAGES save without one.
 const RESEARCH_OUTPUT_STAGES = new Set(['researched', 'research_updated']);
+
+// Phase 2A implementation-review ROUND 5, item 2 — the complete, explicit
+// server-side stage state machine. "The only untracked save stage may be
+// the initial upload/account-persistence operation" -- ALLOWED_STAGES is
+// the full universe of legal stage values; anything else is rejected (400)
+// rather than silently accepted and passed through to ha_uploads.stage.
+// dashboard/index.html's refreshOpportunityViews() previously used a
+// separate 'view_updated' stage for non-research resaves (manual account
+// edits, filter changes); that is now folded into 'uploaded' -- both are,
+// from this server's perspective, the SAME operation class (accounts-only,
+// no research fields), so there is exactly one untracked stage string, not
+// two, matching the requirement literally.
+const ALLOWED_STAGES = new Set(['uploaded', 'researched', 'research_updated']);
+// Fields that only make sense as the OUTPUT of a completed research pass.
+// A stage='uploaded' request carrying any of these (non-zero) is rejected
+// -- "research summaries/results must be absent" is enforced here, not
+// merely documented, so a client cannot smuggle research-shaped content
+// through the one stage that is exempt from attempt-metadata validation.
+const RESEARCH_RESULT_SUMMARY_FIELDS = ['reasonsToReachOut', 'highConfidenceAccounts', 'businessSignals', 'followUpSignals', 'repeatPatternSignals'];
 
 async function getUserFromAuth(req){
   const authUser = await authFetchUser(req);
@@ -185,14 +198,19 @@ export default async function handler(req, res){
 
     let uploadId = clean(body.uploadId);
     const stage = clean(body.stage || 'uploaded');
+
+    // Phase 2A implementation-review ROUND 5, item 2 — reject unknown/invalid
+    // stage strings outright, before any other processing. Do not rely on
+    // the client to send a value from a fixed set; enforce it here.
+    if(!ALLOWED_STAGES.has(stage)){
+      return json(res, 400, {error:`Unknown stage "${stage}".`});
+    }
     const isResearchOutputStage = RESEARCH_OUTPUT_STAGES.has(stage);
+    const summary = body.summary || {};
+    const rawAccountsForValidation = Array.isArray(body.accounts) ? body.accounts : [];
 
     // Phase 2A implementation-review ROUND 4, item 1 — attempt metadata is
-    // now MANDATORY for research-output stages, full stop. There is no
-    // longer a "researchRunId alone, untracked" allowance for THESE
-    // specific stages (that allowance still exists implicitly for any other
-    // stage, e.g. 'uploaded' or the new 'view_updated' -- see
-    // RESEARCH_OUTPUT_STAGES above).
+    // now MANDATORY for research-output stages, full stop.
     const rawResearchRunId = clean(body.researchRunId);
     const rawAttemptId = clean(body.attemptId);
     if(isResearchOutputStage){
@@ -202,20 +220,48 @@ export default async function handler(req, res){
       if(!uploadId){
         return json(res, 400, {error:'uploadId is required for a research-output-stage save.'});
       }
-    } else if(rawAttemptId && !rawResearchRunId){
-      return json(res, 400, {error:'attemptId requires researchRunId to also be provided.'});
+    } else {
+      // stage === 'uploaded' -- the ONLY untracked stage. Phase 2A
+      // implementation-review ROUND 5, item 2's full state machine:
+      if(rawResearchRunId || rawAttemptId){
+        return json(res, 400, {error:'stage="uploaded" cannot carry research run/attempt metadata.'});
+      }
+      const hasAnySignals = rawAccountsForValidation.some(a => Array.isArray(a.signals) && a.signals.length > 0);
+      if(hasAnySignals){
+        return json(res, 400, {error:'stage="uploaded" cannot carry signals; signals are research output.'});
+      }
+      const hasResearchResultSummary = RESEARCH_RESULT_SUMMARY_FIELDS.some(field => Number(summary?.[field] || 0) > 0);
+      if(hasResearchResultSummary){
+        return json(res, 400, {error:'stage="uploaded" cannot carry a research-result summary.'});
+      }
+      // "Must not be usable to overwrite or append research output to an
+      // upload that already has an ACTIVE research run" -- an untracked
+      // save against an upload with a currently-running, unexpired attempt
+      // is rejected, since its client-held account list could be stale
+      // relative to what that active run is about to persist. A upload
+      // whose most recent run is merely COMPLETED (the normal, permanent
+      // state after research finishes) is unaffected -- plain account edits
+      // must keep working after research completes; they carry no research
+      // output (already guaranteed by the two checks above), so they cannot
+      // violate the invariant regardless of run state.
+      if(uploadId){
+        const activeRuns = await supabase(`ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id&limit=1`, {method:'GET'}).catch(() => []);
+        if(Array.isArray(activeRuns) && activeRuns.length){
+          return json(res, 409, {error:'A research run is currently active for this upload; cannot save an untracked update while research is in progress.'});
+        }
+      }
     }
     const trackedAttempt = isResearchOutputStage;
 
-    const summary = body.summary || {};
-
     // ===========================================================================
-    // UNTRACKED PATH: stage='uploaded' (initial pre-research save, which "may
-    // remain separate and does not require a research attempt" per the
-    // review) or any other non-research-output stage (e.g. 'view_updated').
-    // Unchanged from before round 4: a plain ha_uploads PATCH/INSERT, then
-    // replace_ha_accounts_snapshot() with no attempt parameters, then a
-    // plain ha_signals insert.
+    // UNTRACKED PATH: stage='uploaded' is the ONLY untracked stage (Phase 2A
+    // implementation-review ROUND 5, item 2) -- the state machine above has
+    // already rejected any request that tries to carry research output,
+    // attempt metadata, or target an upload with an active run. A plain
+    // ha_uploads PATCH/INSERT, then replace_ha_accounts_snapshot() with no
+    // attempt parameters, then a signals insert that will always process
+    // zero rows now (signals are rejected above for this stage) but is left
+    // in place structurally rather than special-cased further.
     // ===========================================================================
     if(!trackedAttempt){
       const uploadRow = {
@@ -482,7 +528,7 @@ export default async function handler(req, res){
       persistedAccountCount
     }));
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId:rawResearchRunId, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:signalsPersisted, signalsAttempted, signalsConflictIgnored:conflictIgnoredCount});
+    return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId:rawResearchRunId, attemptId:rawAttemptId, runStatus:rpcResult?.status || 'completed', completedAt:rpcResult?.completedAt, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:signalsPersisted, signalsAttempted, signalsConflictIgnored:conflictIgnoredCount});
   } catch(err){
     return json(res, 500, {error: err.message || 'Save failed'});
   }

@@ -701,6 +701,55 @@ async function run(){
       'research-output-stage persistence goes through persist_ha_research_output exclusively -- the standalone replace_ha_accounts_snapshot call path no longer accepts attempt parameters at all (see api/save-upload.js\'s untracked branch, which never sets them)');
   }
 
+  // =========================================================================
+  // ROUND 5, item 1: atomic finalization -- structural verification that
+  // dashboard/index.html no longer double-reports completion (the
+  // persist_ha_research_output() call itself now finalizes atomically; see
+  // scripts/test-save-upload-persistence.js for the functional proof
+  // against the mocked RPC). Also restates item 1 test 5 ("process dies
+  // before final persistence; lease expiry permits a valid reclaim")
+  // explicitly under the round-5 framing.
+  // =========================================================================
+  {
+    const dashSource = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
+    const topAccountsStart = dashSource.indexOf('async function researchTopAccounts(options = {}){');
+    const topAccountsEnd = dashSource.indexOf('\nfunction autoResearchTopAccountsOnce', topAccountsStart);
+    const topAccountsBody = dashSource.slice(topAccountsStart, topAccountsEnd > -1 ? topAccountsEnd : topAccountsStart + 6000);
+    assert(!/await reportResearchRunOutcome\('complete'/.test(topAccountsBody),
+      'researchTopAccounts() no longer CALLS reportResearchRunOutcome(\'complete\', ...) on its success path -- persist_ha_research_output() finalizes the run atomically as part of the save itself, making the separate call unnecessary');
+    assert(/await reportResearchRunOutcome\('fail'/.test(topAccountsBody),
+      'researchTopAccounts() STILL reports failure separately -- failure handling remains a distinct path, since a research/network error may never reach persist_ha_research_output() at all');
+
+    const byNameStart = dashSource.indexOf('async function researchAccountByName(accountName, options = {}){');
+    const byNameEnd = dashSource.indexOf('\nlet researchInProgress', byNameStart);
+    const byNameBody = dashSource.slice(byNameStart, byNameEnd > -1 ? byNameEnd : byNameStart + 6000);
+    assert(!/await reportResearchRunOutcome\('complete'/.test(byNameBody),
+      'researchAccountByName() (the standalone button) also no longer CALLS reportResearchRunOutcome(\'complete\', ...) on success, for the same reason');
+    assert(/await reportResearchRunOutcome\('fail'/.test(byNameBody),
+      'researchAccountByName() still reports failure separately on its catch path');
+  }
+
+  // "Process dies before calling final persistence; lease expiry permits a
+  // valid reclaim" (item 1 test 5), restated explicitly: a run that was
+  // successfully CLAIMED but never reached a successful
+  // persist_ha_research_output() call at all (the process died somewhere
+  // in between -- e.g. during the provider call) is indistinguishable, from
+  // claim_ha_research_run()'s perspective, from any other abandoned
+  // 'running' row with an expired lease -- already proven generically by
+  // the "process dies without marking failed" test above; this restates it
+  // under the round-5 framing for the required test list.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const claimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(claimed.ok && claimed.outcome === 'claimed-new', 'a run is claimed successfully');
+    // Simulate the process dying before EVER reaching persist_ha_research_output --
+    // no heartbeat, no completion, no failure report, nothing.
+    table.expireLease(FIXTURES.uploadId, 'auto');
+    const reclaimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(reclaimed.ok && reclaimed.outcome === 'reclaimed-after-expired-lease', 'ROUND 5 ITEM 1 TEST 5: a run whose process died before ever calling final persistence becomes reclaimable once its lease expires, with no explicit failure marking required');
+  }
+
   global.fetch = originalFetch;
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
   process.exitCode = failures === 0 ? 0 : 1;

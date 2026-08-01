@@ -3796,12 +3796,16 @@ async function researchAccountByName(accountName, options = {}){
     // containing it after the fact. The standalone "Research Account" button
     // (no options.skipSave) still saves immediately after its own single
     // account finishes, now carrying its own claimed attemptContext.
+    // Phase 2A implementation-review ROUND 5, item 1: the save below now
+    // atomically finalizes the run as part of the SAME transaction that
+    // persists its output (see persist_ha_research_output() -- migration 6
+    // §6), so there is no longer a separate reportResearchRunOutcome('complete', ...)
+    // call needed here on success. Failure handling remains separate (see
+    // the catch block) since a research/network failure may never reach
+    // persist_ha_research_output() at all.
     if(!options.skipSave){
       refreshOpportunityViews(attemptContext);
       await saveCurrentUpload('researched', attemptContext);
-    }
-    if(ownClaim){
-      await reportResearchRunOutcome('complete', { signalsReturned: (account.signals || []).length, accountsResearched: 1 }, attemptContext);
     }
   }catch(err){
     console.error('[Account Research] Research or account update failed.', {
@@ -4110,8 +4114,12 @@ async function researchTopAccounts(options = {}){
       refreshOpportunityViews();
     }
 
-    const totalSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
-    await reportResearchRunOutcome('complete', { signalsReturned: totalSignals, accountsResearched: accounts.length });
+    // Phase 2A implementation-review ROUND 5, item 1: the save triggered by
+    // refreshOpportunityViews() above (or by researchAccountsBatch()'s own
+    // success path) now atomically finalizes the run as part of the SAME
+    // transaction that persists its output -- no separate
+    // reportResearchRunOutcome('complete', ...) call needed here. Failure
+    // handling remains separate (see the catch block below).
   }catch(err){
     await reportResearchRunOutcome('fail', err);
   }finally{
@@ -4208,13 +4216,16 @@ function getValueLabel(opp){
 // (the standalone single-account "Research Account" button -- see
 // researchAccountByName() below). Without an explicit context, falls back
 // to the shared currentResearchRunId/currentResearchAttemptId globals the
-// top-accounts flow owns, exactly as before. When NEITHER is available
-// (no tracked attempt at all -- a manual account edit, a filter change),
-// the trailing save uses stage 'view_updated' rather than
-// 'research_updated' -- api/save-upload.js now REQUIRES attempt metadata
-// for 'research_updated'/'researched' (Phase 2A implementation-review
-// ROUND 4, item 1), so an untracked caller must use a stage outside that
-// set to remain a legitimate, unblocked save.
+// top-accounts flow owns, exactly as before. When NEITHER is available (no
+// tracked attempt at all -- a manual account edit, a filter change), the
+// trailing save uses stage 'uploaded' -- Phase 2A implementation-review
+// ROUND 5, item 2 established 'uploaded' as the ONE AND ONLY untracked
+// stage (folding the round-4 'view_updated' stage into it, since both are
+// the same operation class server-side: accounts-only, no research
+// fields). api/save-upload.js's server-side state machine independently
+// rejects a stage='uploaded' request that carries signals or a
+// research-result summary, so this is not merely a client-side naming
+// convention.
 function refreshOpportunityViews(attemptContext){
   const accounts = window.accountRadarAccounts || [];
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
@@ -4242,10 +4253,10 @@ function refreshOpportunityViews(attemptContext){
       heartbeatCurrentResearchRun(ctx).finally(() => saveCurrentUpload('research_updated', ctx));
     } else {
       // No tracked attempt available -- e.g. a manual account edit, a
-      // filter change. Stage 'view_updated' is deliberately NOT a
-      // research-output stage, so this save proceeds untracked, unblocked
-      // by the mandatory attempt-metadata requirement.
-      saveCurrentUpload('view_updated');
+      // filter change. Stage 'uploaded' is the one untracked stage; this
+      // save proceeds unblocked by the mandatory attempt-metadata
+      // requirement (which only applies to 'researched'/'research_updated').
+      saveCurrentUpload('uploaded');
     }
   }
 }
@@ -5601,8 +5612,16 @@ function renderDetailedAccountViews(accounts){
 }
 
 
-function serializeAccountForStorage(account){
-  const signals = Array.isArray(account.signals) ? account.signals.filter(s => s && s.isReal !== false) : [];
+// Phase 2A implementation-review ROUND 5, item 2 -- includeSignals defaults
+// to true for backward compatibility, but performSaveCurrentUpload() below
+// explicitly passes false for the untracked stage='uploaded' path.
+// Signals ARE research output; the server's stage state machine
+// independently rejects a stage='uploaded' request that carries any, so
+// this client-side omission is a courtesy (avoids sending a payload that
+// would just be rejected), not the enforcement mechanism itself.
+function serializeAccountForStorage(account, options = {}){
+  const includeSignals = options.includeSignals !== false;
+  const signals = includeSignals && Array.isArray(account.signals) ? account.signals.filter(s => s && s.isReal !== false) : [];
   const opportunities = Array.isArray(account.futureOpportunities) ? account.futureOpportunities.slice(0, 40) : [];
   return {
     name: account.name,
@@ -5648,14 +5667,28 @@ async function performSaveCurrentUpload(stage, attemptContext){
   const lead = currentLead || getSavedLead();
   const accounts = window.accountRadarAccounts || [];
   if(!lead || !lead.email || !accounts.length) return;
+
+  // Phase 2A implementation-review ROUND 5, item 2 -- stage='uploaded' is
+  // the ONE untracked stage, and api/save-upload.js's state machine
+  // rejects it outright if it carries research run/attempt metadata,
+  // signals, or a non-zero research-result summary. This function must
+  // therefore build a genuinely different, minimal payload for that stage
+  // -- not merely omit fields opportunistically -- so a save triggered
+  // long after research has completed (a manual account edit, where
+  // futureOpportunities/currentResearchRunId may still be populated from
+  // that earlier research) cannot accidentally trip the server's rejection.
+  const isResearchOutputStage = stage === 'researched' || stage === 'research_updated';
   const futureOpportunities = accounts.flatMap(account => account.futureOpportunities || []);
-  const summary = {
+  const summary = isResearchOutputStage ? {
     accountCount: accounts.length,
     reasonsToReachOut: futureOpportunities.length,
     highConfidenceAccounts: new Set(futureOpportunities.filter(o => Number(o.confidence || 0) >= 70).map(o => o.account)).size,
     businessSignals: futureOpportunities.filter(o => o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity).length,
     followUpSignals: futureOpportunities.filter(o => o.signalLayerType === 'Follow-Up Signal').length,
     repeatPatternSignals: futureOpportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').length,
+    savedAt: new Date().toISOString()
+  } : {
+    accountCount: accounts.length,
     savedAt: new Date().toISOString()
   };
   try{
@@ -5670,17 +5703,15 @@ async function performSaveCurrentUpload(stage, attemptContext){
         stage,
         page: window.location.href,
         summary,
-        // Phase 2A implementation-review ROUND 4: for research-output
-        // stages ('researched'/'research_updated'), api/save-upload.js now
-        // REQUIRES both of these. attemptContext lets a caller with its own
-        // independently-claimed attempt (the standalone button) supply them
-        // explicitly; otherwise falls back to the shared
-        // currentResearchRunId/currentResearchAttemptId globals the
-        // top-accounts flow owns. Both are simply absent/null for any
-        // non-research-output stage (e.g. 'uploaded', 'view_updated').
-        researchRunId: (attemptContext && attemptContext.researchRunId) || currentResearchRunId,
-        attemptId: (attemptContext && attemptContext.attemptId) || currentResearchAttemptId,
-        accounts: accounts.map(serializeAccountForStorage)
+        // researchRunId/attemptId are sent ONLY for research-output stages
+        // -- api/save-upload.js now rejects stage='uploaded' outright if
+        // either is present, so these must never leak through from stale
+        // module-level globals on an untracked save.
+        ...(isResearchOutputStage ? {
+          researchRunId: (attemptContext && attemptContext.researchRunId) || currentResearchRunId,
+          attemptId: (attemptContext && attemptContext.attemptId) || currentResearchAttemptId
+        } : {}),
+        accounts: accounts.map(a => serializeAccountForStorage(a, { includeSignals: isResearchOutputStage }))
       })
     });
     const data = await res.json();

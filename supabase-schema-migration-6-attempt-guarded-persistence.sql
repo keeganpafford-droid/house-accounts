@@ -202,12 +202,54 @@ begin
     where id = p_upload_id;
   end if;
 
+  -- Round 5: finalize the run as part of THIS SAME transaction. Every
+  -- current caller of persist_ha_research_output() treats a successful
+  -- call as the terminal save for that attempt (there is exactly one
+  -- research-output save per logical run in the current architecture —
+  -- see §6 below) — so a successful persistence transaction IS the
+  -- completion event, not a separate one reported afterward. The WHERE
+  -- clause re-requires attempt_id = p_attempt_id even though nothing else
+  -- could have changed it since the check above (same transaction, same
+  -- advisory lock held continuously) — defense in depth per item 1's
+  -- explicit requirement that "the finalization update must require the
+  -- same current attempt_id", not merely inherit it implicitly. If this
+  -- somehow does not match (would indicate the locking invariant itself
+  -- was violated), HA002 is raised and the ENTIRE transaction — including
+  -- the accounts/signals/upload-state writes above — rolls back together;
+  -- there is no partial-success state.
+  update public.ha_research_runs
+  set status = 'completed',
+      completed_at = now(),
+      result_summary = jsonb_build_object(
+        'accountsPersisted', v_accounts_count,
+        'signalsAttempted', v_signals_attempted,
+        'signalsPersisted', v_signals_persisted,
+        'signalsConflictIgnored', greatest(0, v_signals_attempted - v_signals_persisted)
+      ),
+      heartbeat_at = now(),
+      -- "Cleared or closed appropriately": status is no longer 'running',
+      -- so lease_expires_at is no longer consulted by any claim decision
+      -- (claim_ha_research_run()'s "other active run" check and its own
+      -- found-row branches both key off status, not lease time, once
+      -- status != 'running') — set to now() as an unambiguous "closed"
+      -- marker rather than left far in the future.
+      lease_expires_at = now()
+  where id = v_run.id
+    and attempt_id = p_attempt_id
+  returning * into v_run;
+
+  if not found then
+    raise exception 'persist_ha_research_output: finalization update for attempt % / run % matched no row -- the locking invariant this function depends on was violated', p_attempt_id, p_research_run_id
+      using errcode = 'HA002';
+  end if;
+
   return jsonb_build_object(
     'accountsPersisted', v_accounts_count,
     'signalsAttempted', v_signals_attempted,
     'signalsPersisted', v_signals_persisted,
     'signalsConflictIgnored', greatest(0, v_signals_attempted - v_signals_persisted),
-    'leaseExpiresAt', v_run.lease_expires_at,
+    'status', v_run.status,
+    'completedAt', v_run.completed_at,
     'attemptId', v_run.attempt_id
   );
 end;
@@ -239,6 +281,73 @@ grant execute on function public.persist_ha_research_output(uuid, uuid, text, uu
 --      continue past a raised, uncaught exception.
 --
 -- =============================================================================
+-- 6. ROUND 5: ATOMIC FINALIZATION
+-- =============================================================================
+-- Previously, a successful call to this function left the run's status at
+-- 'running' (only its lease was renewed) — completion was a SEPARATE,
+-- later operation: api/research-batch.js's researchRunAction:'complete'
+-- action, calling completeResearchRunAttempt() (a plain attempt_id-guarded
+-- PATCH), issued by dashboard/index.html AFTER the save's HTTP response
+-- came back. That is two round trips, two transactions, with a real gap
+-- between them: if the process died, or the response was lost, after the
+-- save committed but before the complete call fired, the run stayed
+-- 'running' forever (until its lease expired and something else reclaimed
+-- it) despite having already, successfully, persisted everything.
+--
+-- This is safe to fold into ONE transaction here because, by construction
+-- of the current dashboard/index.html architecture, every call to
+-- persist_ha_research_output() already IS the terminal action for its
+-- attempt: researchTopAccounts() claims a run once, does its research
+-- (batch call and/or fallback loop — pure research, no persistence), and
+-- calls refreshOpportunityViews() -> saveCurrentUpload() exactly ONCE at
+-- the end of that pass, regardless of which path (batch success or
+-- fallback loop) produced the result. researchAccountByName()'s standalone
+-- path is the same shape at a smaller scale: one claim, one research call,
+-- one save. There is no current caller that persists research output
+-- MID-run and expects the run to stay 'running' afterward — every
+-- successful persistence call is, in the current design, the last thing
+-- that happens for that attempt. dashboard/index.html no longer calls
+-- researchRunAction:'complete' from either success path as of this round
+-- (see api/research-batch.js's completeResearchRunAttempt(), which remains
+-- available as infrastructure but is no longer called by any success
+-- path); it remains the failure path's mechanism (see §7).
+--
+-- After successful finalization:
+--   - the SAME attempt cannot write more research output: any further call
+--     to persist_ha_research_output() (or replace_ha_accounts_snapshot()
+--     with attempt parameters) with this attempt_id fails its own attempt
+--     check, because the row's status is now 'completed', not 'running' —
+--     the exact same WHERE clause (status = 'running') that gates every
+--     other write in this schema.
+--   - an automatic claim ('auto') returns the cached completed result (see
+--     claim_ha_research_run(), unchanged — it already reads whatever is in
+--     status/result_summary/completed_at regardless of which code path set
+--     them).
+--   - another automatic run cannot start (claim_ha_research_run()'s
+--     "manual-before-auto" check, migration 5 §—, already covers this: an
+--     automatic claim finds ANY completed run for the upload and attaches
+--     rather than starting new).
+--   - only an explicit manual-rerun claim (a genuinely different
+--     research_run_id, minted server-side only for runIntent:'manual-rerun'
+--     — see api/research-batch.js) can start another run after this.
+--
+-- =============================================================================
+-- 7. FAILURE HANDLING REMAINS SEPARATE
+-- =============================================================================
+-- When NO successful persist_ha_research_output() transaction ever commits
+-- (the research call itself failed, or the save request errored before
+-- reaching this function, or this function raised HA001/HA002 and rolled
+-- back), there is nothing to finalize — failResearchRunAttempt() (a plain
+-- attempt_id-guarded PATCH to status='failed', unchanged from round 2)
+-- remains the mechanism for marking that attempt failed, called from
+-- dashboard/index.html's catch blocks exactly as before. This is
+-- intentionally NOT folded into persist_ha_research_output(): a failure can
+-- happen at many points that never reach this function at all (a network
+-- error calling OpenAI, a thrown exception in signal resolution), so there
+-- is no single transaction to attach failure-marking to the way there is
+-- for success.
+--
+-- =============================================================================
 -- 5. ROLLBACK
 -- =============================================================================
 -- drop function if exists public.persist_ha_research_output(uuid, uuid, text, uuid, jsonb, jsonb, text, jsonb, integer);
@@ -246,3 +355,9 @@ grant execute on function public.persist_ha_research_output(uuid, uuid, text, uu
 -- persist_ha_research_output for research-output-stage saves in the same
 -- change (it would otherwise fail every such save once this function is
 -- gone). Rolling this back alone does not affect migrations 4 or 5.
+-- Rolling back ONLY the round-5 finalization addition (keeping the rest of
+-- this function): revert the trailing "update ... set status = 'completed'
+-- ..." block and its errcode-HA002 check, and the return jsonb's
+-- 'status'/'completedAt' fields, to the round-4 version; dashboard/index.html
+-- would then need its explicit researchRunAction:'complete' calls restored
+-- to the success paths of researchTopAccounts()/researchAccountByName().

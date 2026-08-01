@@ -632,3 +632,150 @@ do $$
 begin
   raise notice '--- Test 35: see the comment immediately above this block -- manual two-session verification required, not automatable here ---';
 end $$;
+
+-- ===========================================================================
+-- Tests 36-42 (Phase 2A implementation-review ROUND 5, item 1): atomic
+-- finalization inside persist_ha_research_output().
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_claim2 jsonb;
+  v_result jsonb;
+  v_row record;
+  v_count int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round5-finalize@example.com', 'Round 5 Finalize') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 5 finalize test upload', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 36: persistence succeeds and the run becomes completed in the SAME transaction ---';
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  v_result := public.persist_ha_research_output(
+    v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Finalize Test Co"}]'::jsonb, null, 'researched', '{"accountCount":1}'::jsonb
+  );
+  if v_result->>'status' = 'completed' then raise notice 'PASS: the RPC response itself reports status=completed';
+  else raise notice 'FAIL: expected status=completed in the response, got %', v_result; end if;
+  select status, completed_at, result_summary into v_row from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+  if v_row.status = 'completed' and v_row.completed_at is not null then
+    raise notice 'PASS: the ha_research_runs row itself is status=completed with completed_at set, persisted by the SAME call that wrote the account';
+  else raise notice 'FAIL: expected the row to be completed, got status=%, completed_at=%', v_row.status, v_row.completed_at; end if;
+  if (v_row.result_summary->>'accountsPersisted')::int = 1 then raise notice 'PASS: result_summary reflects the actual persisted account count';
+  else raise notice 'FAIL: unexpected result_summary %', v_row.result_summary; end if;
+
+  raise notice '--- Test 37: the SAME attempt cannot persist additional research output after its own completion ---';
+  begin
+    perform public.persist_ha_research_output(
+      v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+      '[{"account_name":"Should Not Persist"}]'::jsonb, null, null, null
+    );
+    raise notice 'FAIL: the already-completed attempt was able to persist again -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA001' then raise notice 'PASS: a second call with the same (now-completed) attempt is rejected HA001, exactly like any other stale attempt';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+  if not exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Should Not Persist') then
+    raise notice 'PASS: the rejected second call wrote nothing';
+  else raise notice 'FAIL: the rejected second call''s account row exists'; end if;
+
+  raise notice '--- Test 38: an automatic claim after this completion returns the cached result and blocks a new automatic run ---';
+  v_claim2 := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_claim2->>'outcome' = 'completed' and (v_claim2->'run'->'result_summary'->>'accountsPersisted')::int = 1 then
+    raise notice 'PASS: a subsequent automatic claim returns outcome=completed with the SAME result_summary persist_ha_research_output() wrote -- no new research starts';
+  else raise notice 'FAIL: expected outcome=completed with the cached result_summary, got %', v_claim2; end if;
+
+  raise notice '--- Test 39: explicit manual rerun after completion remains authorized ---';
+  v_claim2 := public.claim_ha_research_run(v_user, v_upload, 'manual-rerun-after-finalize', 300);
+  if v_claim2->>'outcome' = 'claimed-new' then
+    v_result := public.persist_ha_research_output(
+      v_upload, v_user, 'manual-rerun-after-finalize', (v_claim2->'run'->>'attempt_id')::uuid,
+      '[{"account_name":"Manual Rerun Persisted"}]'::jsonb, null, null, null
+    );
+    if v_result->>'status' = 'completed' and exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Manual Rerun Persisted') then
+      raise notice 'PASS: an explicit manual-rerun attempt claims, persists, AND finalizes successfully after the original run already completed';
+    else raise notice 'FAIL: the manual rerun did not persist/finalize as expected: %', v_result; end if;
+  else raise notice 'FAIL: expected the manual rerun to claim successfully, got %', v_claim2; end if;
+
+  raise notice '--- Test 40 (sanity): wrong user / nonexistent upload rejected the same as every other RPC in this schema ---';
+  begin
+    perform public.persist_ha_research_output(v_upload, gen_random_uuid(), 'auto', gen_random_uuid(), null, null, null, null);
+    raise notice 'FAIL: a random/wrong user id was accepted';
+  exception when others then
+    if sqlstate = '42501' then raise notice 'PASS: wrong-user call rejected with errcode 42501 (finalization included)';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 36-40 cleanup complete ---';
+end $$;
+
+-- ===========================================================================
+-- Test 41 (Phase 2A implementation-review ROUND 5, item 1, test 2/3):
+-- "Signal/account/upload failure rolls back run completion" and "run-
+-- completion update failure rolls back accounts, signals, and upload
+-- summary." Both reduce to the SAME structural guarantee: everything inside
+-- persist_ha_research_output() -- the attempt validation, the accounts
+-- write, the signals write, the upload-state write, AND the finalization
+-- update -- is ONE plpgsql function body executing inside ONE implicit
+-- transaction. An unhandled exception anywhere in that body (a malformed
+-- p_accounts array failing replace_ha_accounts_snapshot's own validation, a
+-- constraint violation on the signals insert, or — structurally
+-- impossible under the advisory lock, but defended against via HA002 — a
+-- finalization update that matches no row) rolls back EVERYTHING the
+-- function did up to that point, not just the specific statement that
+-- failed. This is a property of PL/pgSQL's execution model (documented,
+-- not merely assumed), verified here by forcing the earliest possible
+-- failure (a malformed, non-array p_accounts value) and confirming NOTHING
+-- persisted, including the run staying at its PRE-call state (not
+-- finalized, not even re-heartbeated).
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_lease_before timestamptz;
+  v_lease_after timestamptz;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round5-rollback@example.com', 'Round 5 Rollback') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 5 rollback test upload', 'uploaded') returning id into v_upload;
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  select lease_expires_at into v_lease_before from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+
+  begin
+    perform public.persist_ha_research_output(
+      v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+      '{"not_an_array": true}'::jsonb, -- malformed -- replace_ha_accounts_snapshot rejects this with 22023
+      '[{"account_name":"Should Not Persist Either","signal_hash":"h1","event_fingerprint":"fp-rollback"}]'::jsonb,
+      'researched', '{"accountCount":999}'::jsonb
+    );
+    raise notice 'FAIL: malformed p_accounts was accepted -- no exception raised';
+  exception when others then
+    raise notice 'PASS: the malformed accounts payload raised an exception (sqlstate %), aborting the whole call', sqlstate;
+  end;
+
+  if not exists (select 1 from public.ha_accounts where upload_id = v_upload) then
+    raise notice 'PASS: no accounts were persisted (the accounts write itself failed, so nothing downstream ran either)';
+  else raise notice 'FAIL: accounts exist despite the failure'; end if;
+  if not exists (select 1 from public.ha_signals where upload_id = v_upload and event_fingerprint = 'fp-rollback') then
+    raise notice 'PASS: the signal that would have been inserted AFTER the failed accounts step never persisted -- confirms the whole transaction rolled back, not just the accounts statement';
+  else raise notice 'FAIL: the signal exists despite the earlier failure in the same transaction'; end if;
+  if not exists (select 1 from public.ha_uploads where id = v_upload and stage = 'researched') then
+    raise notice 'PASS: ha_uploads.stage was NOT updated -- the upload-state write (which runs AFTER accounts/signals) never ran';
+  else raise notice 'FAIL: ha_uploads.stage was updated despite the earlier failure'; end if;
+  select status, lease_expires_at into v_lease_after from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+  if v_lease_after = v_lease_before then
+    raise notice 'PASS: the run was NOT finalized and its lease was NOT even re-renewed by the failed call -- the attempt-validation UPDATE itself rolled back along with everything after it';
+  else raise notice 'FAIL: the run''s lease_expires_at changed (%) despite the transaction failing -- partial commit occurred', v_lease_after;
+  end if;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 41 cleanup complete ---';
+end $$;

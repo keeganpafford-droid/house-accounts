@@ -498,12 +498,35 @@ begin
     where id = p_upload_id;
   end if;
 
+  -- Round 5: finalize the run atomically in this same transaction — see
+  -- migration 6 §6 for the full rationale.
+  update public.ha_research_runs
+  set status = 'completed',
+      completed_at = now(),
+      result_summary = jsonb_build_object(
+        'accountsPersisted', v_accounts_count,
+        'signalsAttempted', v_signals_attempted,
+        'signalsPersisted', v_signals_persisted,
+        'signalsConflictIgnored', greatest(0, v_signals_attempted - v_signals_persisted)
+      ),
+      heartbeat_at = now(),
+      lease_expires_at = now()
+  where id = v_run.id
+    and attempt_id = p_attempt_id
+  returning * into v_run;
+
+  if not found then
+    raise exception 'persist_ha_research_output: finalization update for attempt % / run % matched no row -- the locking invariant this function depends on was violated', p_attempt_id, p_research_run_id
+      using errcode = 'HA002';
+  end if;
+
   return jsonb_build_object(
     'accountsPersisted', v_accounts_count,
     'signalsAttempted', v_signals_attempted,
     'signalsPersisted', v_signals_persisted,
     'signalsConflictIgnored', greatest(0, v_signals_attempted - v_signals_persisted),
-    'leaseExpiresAt', v_run.lease_expires_at,
+    'status', v_run.status,
+    'completedAt', v_run.completed_at,
     'attemptId', v_run.attempt_id
   );
 end;
