@@ -1,7 +1,7 @@
 // Vercel Serverless Function: Save House Accounts uploads to Supabase.
 // Endpoint: POST /api/save-upload
 
-import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType } from './signal-intelligence.js';
 
 function json(res, status, body){ res.setHeader('Cache-Control','no-store, max-age=0'); return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
@@ -131,6 +131,14 @@ export default async function handler(req, res){
   try{
     const body = req.body || {};
     const lead = body.lead || {};
+    // Phase 2A / A2 correlation identifier: passed through unchanged from
+    // whatever the caller attached to the logical research run this save
+    // belongs to (dashboard/index.html generates one per researchTopAccounts()
+    // invocation). Callers that don't send one (weekly-scan.js, older client
+    // builds) simply get 'unattributed' — instrumentation still records
+    // every other field, just without a research-batch.js line to correlate
+    // against for that request.
+    const researchRunId = clean(body.researchRunId) || 'unattributed';
     let user = await getUserFromAuth(req);
     if(!user){
       const email = clean(lead.email).toLowerCase();
@@ -183,25 +191,33 @@ export default async function handler(req, res){
     const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
     const accounts = limitResult.accounts;
     const unlockedAccounts = accounts.filter(a => !a._locked);
+    // Phase 2A / A2: full-snapshot replacement now goes through one atomic,
+    // per-upload-serialized RPC call (see
+    // supabase-schema-migration-4-atomic-account-snapshot.sql) instead of two
+    // separate, non-transactional DELETE and INSERT calls. This is the
+    // database-side half of the fix for the confirmed duplicate-ha_accounts
+    // race; the application-side half (dashboard/index.html) stops issuing a
+    // save per research-fallback-worker so this RPC is no longer called
+    // concurrently for the same upload_id under normal operation — the
+    // advisory lock inside the RPC is defense in depth for any caller that
+    // still does.
+    let persistedAccountCount = 0;
     if(accounts.length){
-      await supabase(`ha_accounts?upload_id=eq.${encodeURIComponent(uploadId)}`, { method:'DELETE', prefer:'return=minimal' });
-      const accountRows = unlockedAccounts.slice(0, 2500).map(a => ({
-        user_id: user.id,
-        upload_id: uploadId,
+      const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
         account_name: clean(a.name || a.accountName),
         industry: clean(a.industry),
         contact_name: clean(a.contactName),
         contact_email: clean(a.contactEmail).toLowerCase(),
         metrics: a.metrics || {},
-        raw_data: a.rawData || {},
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        raw_data: a.rawData || {}
       })).filter(a => a.account_name);
-      if(accountRows.length){
-        const chunkSize = 250;
-        for(let i=0;i<accountRows.length;i+=chunkSize){
-          await supabase('ha_accounts', { method:'POST', prefer:'return=minimal', body: JSON.stringify(accountRows.slice(i, i+chunkSize)) });
-        }
+      if(accountPayload.length){
+        const snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
+          method:'POST',
+          prefer:'return=representation',
+          body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload })
+        });
+        persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
       }
     }
 
@@ -219,6 +235,27 @@ export default async function handler(req, res){
       }
     }
     const resolvedSignals = resolveOpportunityEvents(rawSignals);
+    // Phase 2A / B3 defense in depth: contradictory fields cannot persist.
+    // By construction (see api/research-batch.js makeSignal() and
+    // resolveEvents()'s reuse of canonicalEventType) signal_type and
+    // eventIdentity.eventType should already agree for every signal produced
+    // by the current pipeline. This guard catches and corrects the rare case
+    // where they don't — e.g. a signal from an older client build, or any
+    // future caller that hasn't adopted canonicalEventType — by preferring
+    // the canonical eventType's mapped label and logging the correction,
+    // rather than silently persisting two disagreeing classification fields.
+    let classificationCorrections = 0;
+    for(const s of resolvedSignals){
+      const canonicalLabel = s.eventIdentity?.eventType ? displayLabelForEventType(s.eventIdentity.eventType) : null;
+      const declaredLabel = clean(s.signalType || s.type || '');
+      if(canonicalLabel && declaredLabel && canonicalLabel !== declaredLabel){
+        console.warn('[save-upload] classification mismatch corrected before persistence', {
+          accountName: s.accountName, declaredLabel, canonicalLabel, eventType: s.eventIdentity.eventType
+        });
+        s.signalType = canonicalLabel; s.signal_type = canonicalLabel; s.type = canonicalLabel;
+        classificationCorrections += 1;
+      }
+    }
     const candidateRows = resolvedSignals.map(s => ({
       user_id: user.id,
       upload_id: uploadId,
@@ -244,18 +281,45 @@ export default async function handler(req, res){
       keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
       scoreOf: row => Number(row.confidence || 0)
     });
+    // Phase 2A / Correction 1 instrumentation: return=representation (instead
+    // of return=minimal) so the response body lists exactly which rows were
+    // actually inserted under ignore-duplicates conflict resolution — the
+    // difference between attempted and inserted is the conflict-ignored
+    // count, not an assumption. This is what lets a future accepted-vs-
+    // persisted gap (like the Ben Wheeler case) be classified as either
+    // intentional canonical dedup (its fingerprint appears in
+    // insertedFingerprints or already existed before this call) or actual
+    // loss, rather than inferred after the fact from log timing alone.
+    let insertedFingerprints = [];
     if(signalRows.length){
       const chunkSize = 200;
       for(let i=0;i<signalRows.length;i+=chunkSize){
-        await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
+        const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
           method:'POST',
-          prefer:'resolution=ignore-duplicates,return=minimal',
+          prefer:'resolution=ignore-duplicates,return=representation',
           body: JSON.stringify(signalRows.slice(i, i+chunkSize))
         });
+        if(Array.isArray(inserted)) insertedFingerprints.push(...inserted.map(r => r.event_fingerprint));
       }
     }
+    const conflictIgnoredCount = Math.max(0, signalRows.length - insertedFingerprints.length);
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId, accountsAnalyzed:accounts.length, accountsSaved:unlockedAccounts.length, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:signalRows.length});
+    console.log('[save-upload.instrumentation]', JSON.stringify({
+      ts: new Date().toISOString(),
+      researchRunId,
+      uploadId,
+      userId: user.id,
+      signalsReceivedFromClient: rawSignals.length,
+      canonicalEventsAfterResolution: resolvedSignals.length,
+      uniqueEventFingerprints: new Set(resolvedSignals.map(s => s.eventFingerprint)).size,
+      classificationCorrections,
+      attemptedSignalInserts: signalRows.length,
+      persistedSignalRows: insertedFingerprints.length,
+      conflictIgnoredRows: conflictIgnoredCount,
+      persistedAccountCount
+    }));
+
+    return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:insertedFingerprints.length, signalsAttempted:signalRows.length, signalsConflictIgnored:conflictIgnoredCount});
   } catch(err){
     return json(res, 500, {error: err.message || 'Save failed'});
   }

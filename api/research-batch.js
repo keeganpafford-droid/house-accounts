@@ -11,7 +11,9 @@ import {
   displaySignalType,
   normalizeOpportunity,
   validateOpportunity,
-  dedupeOpportunities
+  dedupeOpportunities,
+  resolveEventType,
+  displayLabelForEventType
 } from './signal-intelligence.js';
 
 // Priority 0 (reliability): no maxDuration override existed here before this
@@ -1191,29 +1193,26 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
   return Math.round(Math.max(0, Math.min(100, score)));
 }
 
-function normalizeSignalTypeFromEvidence(raw = {}, declaredType = '') {
-  const declared = normalizeSignalType(declaredType);
-  const text = clean(`${raw.concrete_trigger || raw.concreteTrigger || ''} ${raw.buying_moment || raw.buyingMoment || ''} ${raw.signalTitle || raw.title || ''} ${raw.whatChanged || raw.summary || raw.signalDetail || ''} ${raw.business_context || raw.businessContext || ''}`).toLowerCase();
-  const rules = [
-    ['Acquisition / Funding', /acquir|acquisition|merger|merged|funding|investment|capital raise|private equity/],
-    ['Award / Recognition', /award|recognition|recognized|winner|milestone|anniversary|top \d+|best place|honor/],
-    ['Expansion', /new facility|facility expansion|new location|new office|headquarters|distribution center|manufacturing plant|ribbon cutting|expansion/],
-    ['Trade Show / Event', /trade show|conference|expo|summit|webinar|open house|customer event|booth|exhibitor/],
-    ['Leadership Change', /appointed|promoted|named .*?(president|director|chief|ceo|vp)|joins as|new executive|leadership change/],
-    ['Product Launch', /product launch|service launch|new product|new service|unveil|rollout|release/],
-    ['Partnership / Contract', /contract win|awarded contract|partnership|strategic partner|customer win/],
-    ['Community / CSR', /community event|charity|fundraiser|sponsorship|volunteer|donation|csr/],
-    ['Rebrand', /rebrand|new brand|brand identity|new logo/],
-    ['Hiring', /hiring|now hiring|open positions|recruiting|jobs|careers|new hires/]
-  ];
-  for (const [type, pattern] of rules) {
-    if (pattern.test(text)) {
-      if (declared === 'Hiring' && type !== 'Hiring' && !/hiring|recruit|jobs|careers|open positions/.test(text)) return type;
-      if (declared === 'Business Activity' || declared === 'Hiring') return type;
-      if (declared === type) return declared;
-    }
-  }
-  return declared;
+// Phase 2A / B3 — replaces the old normalizeSignalTypeFromEvidence(), which
+// computed a content-derived classification via its own regex rules but only
+// applied the correction when the AI's declared type was one of two generic
+// fallback labels ('Business Activity' or a mismatched 'Hiring') — for any
+// other specific-but-wrong declared label (the exact shape of the frozen
+// Phase 1B mismatches on ranks 5, 8, 11, 14, 17) it silently discarded its
+// own correctly-computed answer and returned the AI's original label
+// unchanged. resolveCanonicalEventType() never consults the AI's declared
+// type at all: it computes signal-intelligence.js's resolveEventType()
+// (the same canonical, ALL_CAPS taxonomy that drives event_fingerprint) on
+// the same evidence text, and that is the only classification used from
+// here on for this signal, both for the display label and — carried via
+// canonicalEventType on the returned object — for event resolution/
+// fingerprinting downstream, so both are guaranteed to agree by
+// construction rather than by coincidence.
+function resolveCanonicalEventType(raw = {}) {
+  const text = clean(`${raw.concrete_trigger || raw.concreteTrigger || ''} ${raw.buying_moment || raw.buyingMoment || ''} ${raw.signalTitle || raw.title || ''} ${raw.whatChanged || raw.summary || raw.signalDetail || ''} ${raw.business_context || raw.businessContext || ''}`);
+  const family = classifySignalFamily(text);
+  const { primaryType } = resolveEventType(text, family);
+  return { eventType: primaryType, label: displayLabelForEventType(primaryType) };
 }
 
 function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '') {
@@ -1228,7 +1227,12 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   if (!accountName) return null;
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
-  const type = normalizeSignalTypeFromEvidence(raw, raw.signal_type || raw.signalType || raw.opportunityType || raw.type);
+  // Phase 2A / B3: the canonical classification is computed once, here, from
+  // the evidence text alone. raw.signal_type/raw.signalType/raw.opportunityType
+  // (whatever the AI itself declared) are never consulted for this — an
+  // independent AI-declared classification can no longer override it.
+  const canonicalType = resolveCanonicalEventType(raw);
+  const type = canonicalType.label;
   const concreteTrigger = buildConcreteTrigger(raw, type, accountName);
   const buyingMoment = inferBuyingMoment(raw, type, concreteTrigger, raw.business_context || raw.businessContext || '');
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
@@ -1260,6 +1264,14 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     type,
     signalType: type,
     signal_type: type,
+    // Phase 2A / B3: canonicalEventType is the single source of truth carried
+    // through to resolveOpportunityEvents()/resolveEvents() at persistence
+    // time (api/signal-intelligence.js), which reuses it rather than
+    // recomputing its own classification — this is what makes event_fingerprint
+    // and signal_type/opportunityType guaranteed-consistent rather than
+    // independently-derived. opportunityType is now a direct alias of the
+    // canonical enum value, not a mechanical uppercasing of a display label.
+    canonicalEventType: canonicalType.eventType,
     concreteTrigger,
     concrete_trigger: concreteTrigger,
     buyingMoment,
@@ -1267,7 +1279,7 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     eventDate: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
     event_date: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
     location: clean(raw.location || raw.eventLocation || raw.cityState || ''),
-    opportunityType: type.toUpperCase().replace(/[^A-Z0-9]+/g, '_'),
+    opportunityType: canonicalType.eventType,
     title,
     signalDetail: summary,
     shortSummary: summary,
@@ -1414,7 +1426,8 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
 
   try {
-    const { accounts = [], mode = 'ranked' } = req.body || {};
+    const { accounts = [], mode = 'ranked', researchRunId = '' } = req.body || {};
+    const runId = clean(researchRunId) || `unattributed-${startedAt}`;
     const seenAccountKeys = new Set();
     const safeAccounts = (Array.isArray(accounts) ? accounts : [])
       .filter(a => a && a.name)
@@ -1627,6 +1640,27 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
     const signals = dedupeOpportunities(dedupeSignals(validMappedSignals)).slice(0, 80);
+    // Phase 2A / Correction 1 instrumentation — records the pipeline stage
+    // counts requested for forensic classification of any future
+    // accepted-vs-persisted discrepancy: raw model signals (what the AI
+    // returned before any of this endpoint's own filtering), signals that
+    // survived makeSignal()'s per-signal validation, signals confirmed
+    // against a real requested account name, and the final accepted/deduped
+    // count returned to the caller. Correlated by researchRunId so a single
+    // logical research pass can be traced end-to-end alongside the
+    // save-upload.instrumentation line this endpoint's caller is expected to
+    // log against the same runId.
+    console.log('[research-batch.instrumentation]', JSON.stringify({
+      ts: new Date().toISOString(),
+      runId,
+      mode,
+      accountsRequested: safeAccounts.length,
+      rawModelSignals: rawSignals.length,
+      mappedSignals: mappedSignals.length,
+      validMappedSignals: validMappedSignals.length,
+      acceptedSignals: signals.length,
+      acceptedEventFingerprints: signals.map(s => s.eventFingerprint).filter(Boolean)
+    }));
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
@@ -1707,6 +1741,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     return res.status(200).json({
       signals: finalSignals,
       byAccount,
+      researchRunId: runId,
       diagnostics: {
         elapsedMs: Date.now() - startedAt,
         model,
@@ -1753,3 +1788,6 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     return res.status(500).json({ error: err.message || 'Batch research failed', diagnostics: { elapsedMs: Date.now() - startedAt } });
   }
 }
+
+// Named exports for testability (Phase 2A / B3 classification tests).
+export { makeSignal, resolveCanonicalEventType };

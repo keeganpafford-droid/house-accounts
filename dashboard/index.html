@@ -2087,6 +2087,22 @@ let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
+// Phase 2A / A2: single-flight save queue. Every saveCurrentUpload() call
+// (regardless of caller — research completion, dashboard reload, a manual
+// per-account re-research) chains onto this promise instead of firing
+// concurrently, so two overlapping saves for the same upload can never race
+// each other's DELETE/INSERT (now RPC) calls client-side. Defense in depth
+// alongside the server-side advisory lock in replace_ha_accounts_snapshot().
+let saveQueue = Promise.resolve();
+// Correlation identifier for the current logical research run, generated
+// once per researchTopAccounts() invocation and threaded through every
+// /api/research-batch and /api/save-upload call it triggers, so Vercel logs
+// for the whole pass can be joined on one id.
+let currentResearchRunId = null;
+function newResearchRunId(){
+  try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch{}
+  return `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 let dashboardViewMode = 'team';
 let dashboardCanViewTeam = false;
 let showAllWeeklyPriorities = false;
@@ -3573,7 +3589,7 @@ function getResearchDiagnostics(){
 
 function renderResearchDiagnostics(){ const el=document.getElementById('researchDiagnosticsPanel'); if(el){el.hidden=true;el.style.display='none';el.innerHTML='';} }
 
-async function researchAccountByName(accountName){
+async function researchAccountByName(accountName, options = {}){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
   const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
@@ -3583,6 +3599,7 @@ async function researchAccountByName(accountName){
     const endpoint = enhancedPublicMode ? '/api/research-batch' : '/api/research-account';
     const payload = enhancedPublicMode ? {
       mode:'warm-account',
+      researchRunId: currentResearchRunId,
       accounts: batchPayloadForAccounts([account])
     } : {
       accountName: account.name,
@@ -3644,9 +3661,20 @@ async function researchAccountByName(accountName){
     else diagnostics.push(nextDiag);
     addSignalDerivedOpportunities(account, account.signals);
     if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
-    refreshOpportunityViews();
     renderResearchDiagnostics();
-    await saveCurrentUpload('researched');
+    // Phase 2A / A2: when called from the concurrent research-fallback loop
+    // (researchTopAccounts()), skipSave is true — that loop now does exactly
+    // one consolidated refreshOpportunityViews()/save after ALL workers
+    // finish, instead of each of up to 4 concurrent workers independently
+    // triggering its own full-snapshot save. This is what actually stops the
+    // confirmed duplicate-ha_accounts race at the source, rather than only
+    // containing it after the fact. The standalone "Research Account" button
+    // (no options passed) is unaffected — it still saves immediately after
+    // its own single account finishes, exactly as before.
+    if(!options.skipSave){
+      refreshOpportunityViews();
+      await saveCurrentUpload('researched');
+    }
   }catch(err){
     console.error('[Account Research] Research or account update failed.', {
       accountName: account.name,
@@ -3742,6 +3770,7 @@ async function researchAccountsBatch(accounts, options = {}){
       headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
       body: JSON.stringify({
         mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
+        researchRunId: currentResearchRunId,
         accounts: batchPayloadForAccounts(accounts)
       })
     });
@@ -3843,6 +3872,11 @@ function dedupeSignalsClient(signals){
 async function researchTopAccounts(options = {}){
   if(researchInProgress) return;
   researchInProgress = true;
+  // Phase 2A / A2: one correlation id for this entire logical research pass,
+  // threaded through every research-batch/research-account call it makes
+  // below (including inside researchAccountByName when called from the
+  // fallback loop) and the single save at the end.
+  currentResearchRunId = newResearchRunId();
   const btn = document.getElementById('researchTopBtn');
   const auto = options && options.auto;
   if(btn){ btn.disabled = true; btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
@@ -3856,16 +3890,26 @@ async function researchTopAccounts(options = {}){
   // Fallback: only use slower per-account pipeline if the batch endpoint fails or returns no signals.
   const batchSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
   if(!batchWorked || batchSignals === 0){
+    // Phase 2A / A2: workers collect results independently (skipSave:true —
+    // researchAccountByName still renders each account's panel immediately
+    // as it finishes, it just no longer triggers its own save/refresh).
+    // Account-snapshot persistence happens exactly once, via
+    // refreshOpportunityViews() below, after every worker has finished —
+    // this is the actual fix for the confirmed duplicate-ha_accounts race,
+    // which was caused by up to 4 concurrent workers each independently
+    // saving the full current account list as soon as its own account
+    // finished.
     const concurrency = 4;
     let index = 0;
     async function worker(){
       while(index < accounts.length){
         const account = accounts[index++];
         if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
-        await researchAccountByName(account.name);
+        await researchAccountByName(account.name, {skipSave:true});
       }
     }
     await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
+    refreshOpportunityViews();
   }
 
   if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
@@ -5370,7 +5414,7 @@ function serializeAccountForStorage(account){
   };
 }
 
-async function saveCurrentUpload(stage = 'uploaded'){
+async function performSaveCurrentUpload(stage){
   const lead = currentLead || getSavedLead();
   const accounts = window.accountRadarAccounts || [];
   if(!lead || !lead.email || !accounts.length) return;
@@ -5396,6 +5440,7 @@ async function saveCurrentUpload(stage = 'uploaded'){
         stage,
         page: window.location.href,
         summary,
+        researchRunId: currentResearchRunId,
         accounts: accounts.map(serializeAccountForStorage)
       })
     });
@@ -5418,6 +5463,19 @@ async function saveCurrentUpload(stage = 'uploaded'){
   }finally{
     saveInProgress = false;
   }
+}
+// Phase 2A / A2: public entry point. Every call — regardless of caller —
+// chains onto the module-level saveQueue so concurrent invocations never
+// race each other's requests; each waits for the previous one to fully
+// settle (success or failure) before its own request is sent. This is what
+// makes "any other saveCurrentUpload calls for the same upload are
+// single-flight or queued rather than concurrent" an actual guarantee for
+// every caller of this function, not just the research-fallback loop this
+// change specifically stops calling it from per-account.
+function saveCurrentUpload(stage = 'uploaded'){
+  const run = () => performSaveCurrentUpload(stage);
+  saveQueue = saveQueue.then(run, run);
+  return saveQueue;
 }
 
 function hasMeaningfulHistoricalOrder(accountOrRecords){

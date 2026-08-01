@@ -249,6 +249,17 @@ function normalizeOpportunity(raw = {}, account = {}, candidate = {}) {
   const evidenceText = `${raw.whatChanged || raw.concrete_trigger || raw.concreteTrigger || raw.signalTitle || raw.headline || ''} ${raw.businessContext || raw.business_context || ''} ${candidate.headline || ''} ${candidate.snippet || ''}`;
   const family = classifySignalFamily(evidenceText, raw.signalFamily || raw.signal_family || candidate.signalFamily || '');
   const subtype = signalSubtype(evidenceText, family);
+  // Phase 2A / B3: when the caller already attached a canonical classification
+  // (research-batch.js's makeSignal() does this via canonicalEventType), reuse
+  // its display label for signalType instead of recomputing an independent one
+  // here. Before this change, this function silently overwrote makeSignal()'s
+  // already-correct signal_type/signalType agreement — signal_type (snake_case)
+  // survived the {...raw} spread below untouched, but signalType (camelCase,
+  // which api/save-upload.js actually persists as the signal_type DB column)
+  // did not, reintroducing exactly the disagreement this whole workstream
+  // exists to remove. Falls back to the family/subtype classifier unchanged
+  // for any caller that has no canonical type to reuse.
+  const canonicalSignalType = raw.canonicalEventType ? displayLabelForEventType(raw.canonicalEventType) : null;
   const headline = clean(raw.signalTitle || raw.headline || raw.concreteTrigger || raw.concrete_trigger || candidate.headline || subtype);
   const whatChanged = clean(raw.whatChanged || raw.summary || raw.shortSummary || raw.businessContext || candidate.snippet || headline);
   let whyThisMatters = clean(raw.whyThisMatters || raw.why_this_matters || raw.whyItMattersForPromo || raw.opportunityExplanation || '');
@@ -262,7 +273,8 @@ function normalizeOpportunity(raw = {}, account = {}, candidate = {}) {
     accountName: clean(account.name || raw.accountName || raw.companyName || ''),
     signalFamily: family,
     signalSubtype: subtype,
-    signalType: displaySignalType(family, subtype),
+    signalType: canonicalSignalType || displaySignalType(family, subtype),
+    signal_type: raw.canonicalEventType ? (canonicalSignalType || displaySignalType(family, subtype)) : (raw.signal_type ?? raw.signalType),
     headline,
     signalTitle: headline,
     whatChanged,
@@ -339,6 +351,54 @@ function buildQueryPlan(company, context = {}) {
 // Event types where the same real-world event legitimately recurs on a cadence
 // (an "instance" — e.g. a specific year's conference — is its own event).
 const RECURRING_EVENT_TYPES = new Set(['EVENT_TRADE_SHOW', 'EVENT_CONFERENCE', 'EVENT_AWARD', 'EVENT_COMMUNITY']);
+
+// ---------------------------------------------------------------------------
+// Phase 2A / B3 — single source of truth for event classification.
+//
+// Before this change, three independent classifiers could each assign a
+// label to the same signal (normalizeSignalTypeFromEvidence() in
+// research-batch.js trusting the AI's own free-text declaration in most
+// cases; classifySignalFamily()/signalSubtype() above; resolveEventType()
+// below, computed separately and only at persistence time), with nothing
+// reconciling them. That is the confirmed root cause of every observed
+// signal_type/eventType/opportunityType disagreement in the frozen Phase 1B
+// baseline (ranks 5, 8, 11, 14, 17).
+//
+// The fix: resolveEventType()'s ALL_CAPS taxonomy becomes the one canonical
+// value, computed once (in research-batch.js's makeSignal(), before any
+// AI-declared type is consulted) and carried through unchanged. This table
+// is the ONLY place a canonical eventType is mapped to a rep-facing display
+// label — callers must go through displayLabelForEventType(), never invent
+// their own label for a canonical type. The invariant is semantic mapping
+// consistency (NEW_LOCATION_OPENING -> "New Location"), not literal string
+// equality between the enum and the label.
+// ---------------------------------------------------------------------------
+const EVENT_TYPE_DISPLAY_LABELS = {
+  ACQUISITION: 'Acquisition',
+  LEADERSHIP_APPOINTMENT: 'Leadership Change',
+  EVENT_TRADE_SHOW: 'Trade Show Participation',
+  EVENT_CONFERENCE: 'Conference / Summit',
+  EVENT_AWARD: 'Award / Recognition',
+  EVENT_COMMUNITY: 'Community Event',
+  PRODUCT_LAUNCH: 'Product Launch',
+  PARTNERSHIP: 'Partnership / Contract',
+  REBRAND: 'Rebrand',
+  RENOVATION_COMPLETION: 'Renovation Completed',
+  LOCATION_REOPENING: 'Location Reopening',
+  NEW_LOCATION_OPENING: 'New Location',
+  FACILITY_EXPANSION: 'Facility Expansion',
+  LOCATION_EVENT_UNSPECIFIED: 'Location Event',
+  HIRING_ACTIVITY: 'Hiring Activity'
+};
+function displayLabelForEventType(eventType = '') {
+  const t = String(eventType || '');
+  if (EVENT_TYPE_DISPLAY_LABELS[t]) return EVENT_TYPE_DISPLAY_LABELS[t];
+  if (t.startsWith('BUSINESS_ACTIVITY_')) {
+    const family = t.slice('BUSINESS_ACTIVITY_'.length).toLowerCase();
+    return SIGNAL_FAMILIES[family]?.label || 'Business Activity';
+  }
+  return 'Business Activity';
+}
 
 function normalizeForMatch(value = '') {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -607,7 +667,17 @@ function resolveEvents(candidates = []) {
     if (!c) continue;
     const text = `${c.title || c.headline || ''} ${c.snippet || ''} ${c.rawContent || c.pageContent || ''}`;
     const family = c.signalFamily || classifySignalFamily(text, c.intendedSignalFamily);
-    const typeInfo = resolveEventType(text, family);
+    // Reuse an already-computed canonical type when the caller attached one
+    // (research-batch.js's makeSignal() does this — see Phase 2A / B3 note
+    // above RECURRING_EVENT_TYPES) instead of recomputing it here. This is
+    // what makes "compute canonical event type once" an actual guarantee
+    // rather than an assumption that two separate regex passes over
+    // similar-but-not-identical text happen to agree. Any other caller
+    // (e.g. api/weekly-scan.js, which does not set canonicalEventType) keeps
+    // today's behavior unchanged: resolveEventType() computed fresh here.
+    const typeInfo = c.canonicalEventType
+      ? { primaryType: c.canonicalEventType, candidateTypes: [c.canonicalEventType], recurring: RECURRING_EVENT_TYPES.has(c.canonicalEventType) }
+      : resolveEventType(text, family);
     const { subjectEntity, location, role } = extractEventEntities(c.title || c.headline || '', c.snippet || '', c.rawContent || c.pageContent || '');
     const { eventDate, dateConfidence, year: dateYear } = extractEventDate(text);
     const companyDisplay = clean(c.companyName || c.accountName || '');
@@ -765,5 +835,6 @@ export {
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
-  resolveOpportunityEvents, dedupeByEventFingerprint
+  resolveOpportunityEvents, dedupeByEventFingerprint,
+  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType
 };

@@ -36,8 +36,50 @@ create table if not exists public.ha_accounts (
   metrics jsonb default '{}'::jsonb,
   raw_data jsonb default '{}'::jsonb,
   created_at timestamptz default now(),
-  updated_at timestamptz default now()
+  updated_at timestamptz default now(),
+  -- At most one row per (upload_id, account_name) — see
+  -- supabase-schema-migration-4-atomic-account-snapshot.sql for the full
+  -- rationale (confirmed root cause of a duplicate-row production defect)
+  -- and the production migration for existing databases.
+  constraint ha_accounts_upload_account_name_key unique (upload_id, account_name)
 );
+
+-- Atomic, serialized full-snapshot replace for an upload's account list.
+-- See supabase-schema-migration-4-atomic-account-snapshot.sql §4 for why the
+-- advisory lock is required in addition to the unique constraint above.
+create or replace function public.replace_ha_accounts_snapshot(
+  p_upload_id uuid,
+  p_user_id uuid,
+  p_accounts jsonb
+) returns setof public.ha_accounts
+language plpgsql
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
+  delete from public.ha_accounts where upload_id = p_upload_id;
+  return query
+  insert into public.ha_accounts (
+    user_id, upload_id, account_name, industry, contact_name, contact_email,
+    metrics, raw_data, created_at, updated_at
+  )
+  select
+    p_user_id, p_upload_id,
+    nullif(btrim(a->>'account_name'), ''),
+    nullif(btrim(a->>'industry'), ''),
+    nullif(btrim(a->>'contact_name'), ''),
+    lower(nullif(btrim(a->>'contact_email'), '')),
+    coalesce(a->'metrics', '{}'::jsonb),
+    coalesce(a->'raw_data', '{}'::jsonb),
+    now(), now()
+  from jsonb_array_elements(p_accounts) as a
+  where nullif(btrim(a->>'account_name'), '') is not null
+  on conflict (upload_id, account_name) do update set
+    industry = excluded.industry, contact_name = excluded.contact_name,
+    contact_email = excluded.contact_email, metrics = excluded.metrics,
+    raw_data = excluded.raw_data, updated_at = now()
+  returning *;
+end;
+$$;
 
 create table if not exists public.ha_weekly_runs (
   id uuid primary key default gen_random_uuid(),
