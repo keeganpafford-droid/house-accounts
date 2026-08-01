@@ -59,17 +59,16 @@
 --                      marking first — this is what actually recovers from a
 --                      process that died mid-flight (see §5).
 --   - heartbeat_at:   last time this attempt confirmed liveness. Set at
---                      claim/reclaim time. This endpoint does not currently
---                      implement an active mid-flight heartbeat refresh (a
---                      setInterval-style keepalive inside a serverless
---                      function is fragile and does not survive a hard kill
---                      anyway, so it would not add real protection); instead,
---                      lease_seconds is sized comfortably above this
---                      project's real maximum single-invocation duration
---                      (see the maxDuration commentary in
---                      api/research-batch.js — Fluid Compute, 300s project
---                      default), so the lease itself is the actual liveness
---                      bound.
+--                      claim/reclaim time, and actively refreshed mid-flight
+--                      by heartbeat_ha_research_run() (§7a below), which
+--                      api/research-batch.js calls on a periodic renewal loop
+--                      for the duration of a long-running research pass. This
+--                      is the real mechanism that keeps lease_expires_at from
+--                      passing out from under a still-live attempt; the fixed
+--                      per-claim lease_seconds (server-clamped to [60, 900],
+--                      see §7/§7a) is only the fallback abandonment bound for
+--                      an attempt that stops heartbeating (crash, hard kill,
+--                      timeout) — not the sole liveness signal.
 --
 -- =============================================================================
 -- 3. WHY A SECURITY-INVOKER RPC INSTEAD OF PLAIN INSERT/UPSERT VIA POSTGREST
@@ -228,7 +227,13 @@ declare
   v_existing public.ha_research_runs;
   v_other_active public.ha_research_runs;
   v_result public.ha_research_runs;
+  v_clamped_lease_seconds integer;
 begin
+  -- Same server-side clamp as heartbeat_ha_research_run() (§7a) — a client
+  -- must not be able to obtain an arbitrarily long (or zero/negative) lease
+  -- by passing an out-of-range or missing p_lease_seconds.
+  v_clamped_lease_seconds := greatest(60, least(coalesce(p_lease_seconds, 300), 900));
+
   -- Serializes ALL claim attempts for this upload_id (regardless of which
   -- research_run_id they target) into one at a time. This is what makes the
   -- read-then-branch-then-write logic below atomic without needing a
@@ -261,7 +266,7 @@ begin
     set status = 'running',
         attempt_id = gen_random_uuid(),
         attempt_count = v_existing.attempt_count + 1,
-        lease_expires_at = now() + make_interval(secs => p_lease_seconds),
+        lease_expires_at = now() + make_interval(secs => v_clamped_lease_seconds),
         heartbeat_at = now(),
         started_at = now(),
         completed_at = null,
@@ -318,7 +323,7 @@ begin
     lease_expires_at, heartbeat_at, started_at
   ) values (
     p_research_run_id, p_user_id, p_upload_id, 'running', gen_random_uuid(), 1,
-    now() + make_interval(secs => p_lease_seconds), now(), now()
+    now() + make_interval(secs => v_clamped_lease_seconds), now(), now()
   )
   returning * into v_result;
 
