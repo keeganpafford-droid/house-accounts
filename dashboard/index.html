@@ -2125,6 +2125,29 @@ async function claimAutomaticResearchRun(runIntent){
   return { ok: res.ok, status: res.status, data };
 }
 
+// Phase 2A implementation-review ROUND 3, item 1 — renews the current
+// attempt's lease. Called from refreshOpportunityViews() immediately before
+// its trailing save (item 1's "heartbeat immediately before final
+// persistence"). This is a reliability improvement, not the actual safety
+// mechanism: it reduces the CHANCE that a takeover happens before the save
+// begins, but a stale/replaced attempt is rejected by the server
+// regardless of whether this call ran or succeeded (see
+// api/save-upload.js's own pre-flight heartbeat gate and
+// replace_ha_accounts_snapshot's embedded, same-transaction attempt check).
+// Best-effort and silent on failure for exactly that reason.
+async function heartbeatCurrentResearchRun(){
+  if(!currentUploadId || !currentResearchRunId || !currentResearchAttemptId) return;
+  try{
+    await fetch('/api/research-batch', {
+      method:'POST',
+      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      body: JSON.stringify({ researchRunAction:'heartbeat', uploadId: currentUploadId, researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId })
+    });
+  }catch(err){
+    console.warn('[Research] pre-save heartbeat failed (best-effort; the save\'s own server-side attempt check is the actual safety mechanism)', { message: err && err.message });
+  }
+}
+
 // Reports that the current claimed attempt finished (successfully or not).
 // Best-effort: if this fails (e.g. the tab is closing), the server-side
 // lease will simply expire on its own and become reclaimable -- see
@@ -4144,7 +4167,20 @@ function refreshOpportunityViews(){
   if(highConfEl) highConfEl.textContent = revenueContext.newBusinessOpps;
   if(avgConfEl) avgConfEl.textContent = revenueContext.totalReasons;
   renderResearchDiagnostics();
-  if(currentUploadId) saveCurrentUpload('research_updated');
+  if(currentUploadId){
+    // Phase 2A implementation-review ROUND 3, item 1: heartbeat immediately
+    // before final persistence when this save is part of a tracked run
+    // (currentResearchAttemptId set). No-ops instantly (heartbeatCurrentResearchRun
+    // returns immediately) for every other caller of refreshOpportunityViews()
+    // that isn't part of a tracked run, so this does not add latency or a
+    // network call to untracked saves (manual edits, filters, the
+    // standalone single-account button).
+    if(currentResearchAttemptId){
+      heartbeatCurrentResearchRun().finally(() => saveCurrentUpload('research_updated'));
+    } else {
+      saveCurrentUpload('research_updated');
+    }
+  }
 }
 
 function estimateFutureValue(account, opportunityType){
@@ -5567,12 +5603,29 @@ async function performSaveCurrentUpload(stage){
         stage,
         page: window.location.href,
         summary,
+        // Phase 2A implementation-review ROUND 3, item 3: only sent
+        // (non-null) when this save is part of the tracked top-accounts
+        // run -- currentResearchAttemptId is null for every other save
+        // context (manual edits, the standalone single-account button),
+        // which the server treats as an ordinary untracked save, unchanged.
         researchRunId: currentResearchRunId,
+        attemptId: currentResearchAttemptId,
         accounts: accounts.map(serializeAccountForStorage)
       })
     });
     const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Save failed');
+    if(!res.ok){
+      if(res.status === 409 && data && data.staleAttempt){
+        // Expected, not an error: this attempt was reclaimed/superseded
+        // between claiming and saving (see the race analysis in
+        // supabase-schema-migration-4-atomic-account-snapshot.sql §9).
+        // Nothing was written -- the replacement attempt owns persistence
+        // now. No user-facing "storage failed" panic for this case.
+        console.warn('[Save] a stale/superseded research attempt tried to save; correctly rejected, nothing written.', { stage, reason: data.reason });
+        return;
+      }
+      throw new Error(data.error || 'Save failed');
+    }
     currentUploadId = data.uploadId || currentUploadId;
     await loadDashboardUsage();
     const notice = document.getElementById('notice');

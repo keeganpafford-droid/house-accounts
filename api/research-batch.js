@@ -1581,6 +1581,73 @@ async function failResearchRunAttempt({ uploadId, researchRunId, attemptId, erro
   return { applied: Array.isArray(updated) && updated.length > 0 };
 }
 
+// Phase 2A implementation-review ROUND 3, items 1/2 — atomic lease renewal
+// AND attempt-ownership verification via heartbeat_ha_research_run() (see
+// supabase-schema-migration-5-research-run-idempotency.sql §7a). This one
+// function serves two purposes used at different points below:
+//   - as a GATE, called once at the very top of the actual research work,
+//     BEFORE any OpenAI/Serper/Firecrawl call -- a stale/replaced attempt
+//     fails here and the request is rejected with 409 before any provider
+//     cost is incurred (item 2).
+//   - as a periodic RENEWAL, called on an interval for the duration of a
+//     single long-running batch request (item 1 -- the real Phase 1B
+//     fallback execution ran ~12 minutes, well past a 300s lease).
+// leaseSeconds is clamped here in JS (defense in depth) in addition to the
+// RPC's own authoritative clamp -- a client cannot obtain an oversized
+// lease by requesting one; MAX/MIN below match the RPC's [60, 900] bounds
+// exactly so a legitimate request is never silently truncated below what it
+// asked for within that range.
+const HEARTBEAT_MIN_LEASE_SECONDS = 60;
+const HEARTBEAT_MAX_LEASE_SECONDS = 900;
+const HEARTBEAT_DEFAULT_LEASE_SECONDS = 300;
+function clampLeaseSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return HEARTBEAT_DEFAULT_LEASE_SECONDS;
+  return Math.max(HEARTBEAT_MIN_LEASE_SECONDS, Math.min(n, HEARTBEAT_MAX_LEASE_SECONDS));
+}
+async function heartbeatResearchRunAtomic({ userId, uploadId, researchRunId, attemptId, leaseSeconds }) {
+  const result = await rbSupabase('rpc/heartbeat_ha_research_run', {
+    method: 'POST',
+    body: JSON.stringify({ p_user_id: userId, p_upload_id: uploadId, p_research_run_id: researchRunId, p_attempt_id: attemptId, p_lease_seconds: clampLeaseSeconds(leaseSeconds) })
+  });
+  return result || { ok: false, reason: 'unknown' };
+}
+
+// Starts a self-rescheduling (not overlapping) heartbeat loop for the
+// duration of one long-running provider-work request, so a legitimate
+// 12-20 minute fallback execution keeps renewing its own lease instead of
+// losing ownership purely because of elapsed time. Uses setTimeout chaining
+// rather than setInterval so a slow heartbeat call can never overlap with
+// the next tick. Returns a stop() function that MUST be called from a
+// finally block once the request's real work is done (success or error) --
+// callers never leave a dangling timer past the response.
+function startHeartbeatRenewalLoop({ userId, uploadId, researchRunId, attemptId }, intervalMs = 45000) {
+  let stopped = false;
+  let timer = null;
+  async function tick() {
+    if (stopped) return;
+    try {
+      const result = await heartbeatResearchRunAtomic({ userId, uploadId, researchRunId, attemptId, leaseSeconds: HEARTBEAT_DEFAULT_LEASE_SECONDS });
+      if (!result.ok) {
+        // This attempt has been superseded (reclaimed after an earlier
+        // heartbeat/renewal gap, or the run was otherwise terminated).
+        // Nothing further to do here -- the eventual complete/fail report
+        // for THIS attempt will itself no-op (attempt_id-guarded), and the
+        // in-flight provider work is allowed to finish naturally rather
+        // than being forcibly aborted mid-call.
+        console.warn('[research-batch] heartbeat renewal found this attempt is no longer current; will not retry', { uploadId, researchRunId });
+        stopped = true;
+        return;
+      }
+    } catch (err) {
+      console.warn('[research-batch] heartbeat renewal tick failed (will retry on the next interval)', { message: err.message });
+    }
+    if (!stopped) timer = setTimeout(tick, intervalMs);
+  }
+  timer = setTimeout(tick, intervalMs);
+  return { stop() { stopped = true; if (timer) clearTimeout(timer); } };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
@@ -1649,6 +1716,14 @@ export default async function handler(req, res) {
         // claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease.
         return res.status(200).json({ ok: true, outcome, researchRunId: run.research_run_id, attemptId: run.attempt_id, leaseExpiresAt: run.lease_expires_at });
       }
+      if (researchRunAction === 'heartbeat') {
+        const researchRunId = clean(body.researchRunId || '');
+        const attemptId = clean(body.attemptId || '');
+        if (!researchRunId || !attemptId) return res.status(400).json({ error: 'researchRunId and attemptId are required.' });
+        const result = await heartbeatResearchRunAtomic({ userId: uploadOwner.id, uploadId: targetUploadId, researchRunId, attemptId, leaseSeconds: body.leaseSeconds });
+        if (!result.ok) return res.status(409).json({ error: 'This attempt is no longer the active attempt for this research run.', reason: result.reason || 'not-current-attempt' });
+        return res.status(200).json({ ok: true, leaseExpiresAt: result.run?.lease_expires_at });
+      }
       if (researchRunAction === 'complete' || researchRunAction === 'fail') {
         const researchRunId = clean(body.researchRunId || '');
         const attemptId = clean(body.attemptId || '');
@@ -1671,9 +1746,40 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
 
+  // Declared outside the try block so the finally clause below can always
+  // stop it, regardless of which return path is taken inside try (there are
+  // several -- the no-accounts 400, the success 200, and the catch's 500).
+  let heartbeatLoop = null;
+
   try {
     const { accounts = [], mode = 'ranked', researchRunId = '' } = body;
     const runId = clean(researchRunId) || `unattributed-${startedAt}`;
+
+    // Phase 2A implementation-review ROUND 3, item 2: verify attempt
+    // ownership BEFORE any provider call (OpenAI/Serper/Firecrawl), using
+    // the same heartbeat_ha_research_run() RPC as the periodic renewal
+    // below. Only applies when the caller supplies attemptId alongside
+    // uploadId (the tracked top-accounts flow, both batch and per-account
+    // fallback requests -- dashboard/index.html sends the same
+    // server-issued attemptId on both). The standalone single-account
+    // "Research Account" button and the pre-existing anonymous prospecting
+    // flow never send attemptId and are unaffected -- matching the same
+    // tracked/untracked scoping used in api/save-upload.js.
+    const attemptId = clean(body.attemptId || '');
+    if (targetUploadId && attemptId) {
+      const gate = await heartbeatResearchRunAtomic({ userId: uploadOwner.id, uploadId: targetUploadId, researchRunId: runId, attemptId });
+      if (!gate.ok) {
+        // A stale/replaced attempt is rejected HERE -- before
+        // discoverCandidatesForAccounts/callOpenAIJson/callOpenAIWebSearch
+        // are ever reached below -- so no provider cost is incurred.
+        return res.status(409).json({ error: 'This attempt is no longer the active research run; no provider request was made.', reason: gate.reason || 'not-current-attempt' });
+      }
+      // Item 1: renew the lease periodically for the duration of THIS
+      // request's provider work, so a legitimate long-running batch call
+      // (the real Phase 1B fallback ran ~12 minutes) does not lose
+      // ownership purely because a fixed lease elapsed.
+      heartbeatLoop = startHeartbeatRenewalLoop({ userId: uploadOwner.id, uploadId: targetUploadId, researchRunId: runId, attemptId });
+    }
 
     const seenAccountKeys = new Set();
     const safeAccounts = (Array.isArray(accounts) ? accounts : [])
@@ -2050,9 +2156,11 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Batch research failed', diagnostics: { elapsedMs: Date.now() - startedAt } });
+  } finally {
+    heartbeatLoop?.stop();
   }
 }
 
 // Named exports for testability (Phase 2A / B3 classification tests, and
 // Phase 2A implementation-review round 2's run-claim/lease tests).
-export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt };
+export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds };

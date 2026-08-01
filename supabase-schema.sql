@@ -134,10 +134,10 @@ begin
   -- tested behavior, not an oversight.
 end;
 $$;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from public;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from anon;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from authenticated;
-grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) to service_role;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from public;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from anon;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from authenticated;
+grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) to service_role;
 
 create table if not exists public.ha_weekly_runs (
   id uuid primary key default gen_random_uuid(),
@@ -245,6 +245,20 @@ begin
     );
   end if;
 
+  -- Round 3: an automatic claim ('auto') must not start again if ANY run
+  -- for this upload already completed (auto or manual) — see migration 5's
+  -- "close manual-before-auto duplication" section for the full rationale.
+  if p_research_run_id = 'auto' then
+    select * into v_other_active
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'completed'
+    order by completed_at desc
+    limit 1;
+    if found then
+      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_active));
+    end if;
+  end if;
+
   select * into v_other_active
   from public.ha_research_runs
   where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()
@@ -271,6 +285,55 @@ revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) f
 revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from anon;
 revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from authenticated;
 grant execute on function public.claim_ha_research_run(uuid, uuid, text, integer) to service_role;
+
+-- Atomic lease renewal / attempt verification (one compare-and-swap UPDATE
+-- — see migration 5 §7a for the full rationale, including why this does
+-- NOT take the advisory lock claim_ha_research_run() uses).
+create or replace function public.heartbeat_ha_research_run(
+  p_user_id uuid,
+  p_upload_id uuid,
+  p_research_run_id text,
+  p_attempt_id uuid,
+  p_lease_seconds integer default 300
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_clamped_lease_seconds integer;
+  v_row public.ha_research_runs;
+begin
+  v_clamped_lease_seconds := greatest(60, least(coalesce(p_lease_seconds, 300), 900));
+
+  if not exists (
+    select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
+  ) then
+    raise exception 'heartbeat_ha_research_run: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
+      using errcode = '42501';
+  end if;
+
+  update public.ha_research_runs
+  set heartbeat_at = now(),
+      lease_expires_at = now() + make_interval(secs => v_clamped_lease_seconds)
+  where user_id = p_user_id
+    and upload_id = p_upload_id
+    and research_run_id = p_research_run_id
+    and attempt_id = p_attempt_id
+    and status = 'running'
+  returning * into v_row;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'not-current-attempt');
+  end if;
+
+  return jsonb_build_object('ok', true, 'run', to_jsonb(v_row));
+end;
+$$;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from public;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from anon;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from authenticated;
+grant execute on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) to service_role;
 
 -- RLS enabled, no policies: denies all anon/authenticated access by default;
 -- service_role (used exclusively by api/research-batch.js) bypasses RLS.

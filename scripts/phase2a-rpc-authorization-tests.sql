@@ -313,3 +313,152 @@ begin
   delete from public.ha_users where id in (v_user_a, v_user_b);
   raise notice '--- Tests 13-20 cleanup complete ---';
 end $$;
+
+-- ===========================================================================
+-- Tests 21-27 (Phase 2A implementation-review ROUND 3): heartbeat_ha_research_run()
+-- and the "close manual-before-auto duplication" fix in claim_ha_research_run().
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_heartbeat jsonb;
+  v_attempt_id uuid;
+  v_lease_1 timestamptz;
+  v_lease_2 timestamptz;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round3-heartbeat@example.com', 'Round 3 Heartbeat') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 3 heartbeat test upload', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 21: heartbeat succeeds for the current owning attempt and extends the lease ---';
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
+  v_lease_1 := (v_claim->'run'->>'lease_expires_at')::timestamptz;
+  perform pg_sleep(1);
+  v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 300);
+  v_lease_2 := (v_heartbeat->'run'->>'lease_expires_at')::timestamptz;
+  if (v_heartbeat->>'ok')::boolean = true then raise notice 'PASS: heartbeat succeeds for the current owning attempt (ok=true)';
+  else raise notice 'FAIL: expected ok=true, got %', v_heartbeat->>'ok'; end if;
+  if v_lease_2 > v_lease_1 then raise notice 'PASS: heartbeat extends lease_expires_at forward (% -> %)', v_lease_1, v_lease_2;
+  else raise notice 'FAIL: lease_expires_at did not advance after heartbeat'; end if;
+
+  raise notice '--- Test 22: heartbeat with a WRONG (stale/replaced) attempt_id fails without raising, and does not extend the lease ---';
+  v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', gen_random_uuid(), 300);
+  if (v_heartbeat->>'ok')::boolean = false and v_heartbeat->>'reason' = 'not-current-attempt' then
+    raise notice 'PASS: a heartbeat with a non-matching attempt_id returns ok=false, reason=not-current-attempt -- not an exception';
+  else raise notice 'FAIL: expected ok=false/not-current-attempt, got %', v_heartbeat; end if;
+
+  raise notice '--- Test 23: an excessive client-requested lease duration is clamped server-side, not honored verbatim ---';
+  v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 999999999);
+  if (v_heartbeat->'run'->>'lease_expires_at')::timestamptz <= now() + interval '901 seconds' then
+    raise notice 'PASS: an excessive p_lease_seconds request is clamped to the server-side maximum (900s), not honored verbatim';
+  else raise notice 'FAIL: lease_expires_at reflects an unclamped, excessive lease duration'; end if;
+
+  raise notice '--- Test 24: anon/authenticated cannot call heartbeat_ha_research_run at all ---';
+  set role anon;
+  begin
+    perform public.heartbeat_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), 300);
+    raise notice 'FAIL: anon role was able to call heartbeat_ha_research_run -- EXECUTE grant is not properly revoked';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon role is rejected at the privilege level before the function body runs';
+  end;
+  reset role;
+  set role authenticated;
+  begin
+    perform public.heartbeat_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), 300);
+    raise notice 'FAIL: authenticated role was able to call heartbeat_ha_research_run directly -- EXECUTE grant is not properly revoked';
+  exception when insufficient_privilege then
+    raise notice 'PASS: authenticated role is rejected at the privilege level, matching the intended service_role-only design';
+  end;
+  reset role;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 21-24 cleanup complete ---';
+end $$;
+
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_manual jsonb;
+  v_auto jsonb;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round3-manual-before-auto@example.com', 'Round 3 Manual Before Auto') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 3 manual-before-auto test upload', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 25: a manual run completes, THEN the automatic path claims for the first time -- must attach to the completed manual run, not start new ---';
+  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-before-auto-1', 300);
+  update public.ha_research_runs set status = 'completed', completed_at = now(), result_summary = '{"signalsReturned": 3}'::jsonb
+    where id = (v_manual->'run'->>'id')::uuid;
+  v_auto := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_auto->>'outcome' = 'completed' and (v_auto->'run'->>'research_run_id') = 'manual-before-auto-1' then
+    raise notice 'PASS: the automatic claim attaches to the already-completed MANUAL run instead of starting new research -- regardless of run id label';
+  else raise notice 'FAIL: expected outcome=completed attached to the manual run, got %', v_auto; end if;
+  if not exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto') then
+    raise notice 'PASS: no new "auto" row was created -- the automatic path did not start a new run';
+  else raise notice 'FAIL: an "auto" row was created despite an existing completed manual run'; end if;
+
+  raise notice '--- Test 26: an explicit manual rerun is still allowed after that same completed run ---';
+  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-before-auto-2', 300);
+  if v_manual->>'outcome' = 'claimed-new' then raise notice 'PASS: an explicit manual-rerun request succeeds after a completed run (auto or manual) -- the separate, authorized pathway is unaffected by the automatic-path block';
+  else raise notice 'FAIL: expected outcome=claimed-new for the explicit manual rerun, got %', v_manual; end if;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 25-26 cleanup complete ---';
+end $$;
+
+-- ===========================================================================
+-- Test 27 (Phase 2A implementation-review ROUND 3, item 3): replace_ha_accounts_snapshot()
+-- rejects a stale/replaced attempt when p_research_run_id/p_attempt_id are
+-- supplied, and writes nothing.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim_a jsonb;
+  v_claim_b jsonb;
+  v_count int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round3-persistence@example.com', 'Round 3 Persistence') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 3 persistence test upload', 'uploaded') returning id into v_upload;
+
+  v_claim_a := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  -- Simulate attempt A's lease expiring, then attempt B reclaiming (exactly
+  -- the 5-step race from migration 4 §9).
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload and research_run_id = 'auto';
+  v_claim_b := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload, v_user, '[{"account_name":"Stale Attempt Write"}]'::jsonb,
+      'auto', (v_claim_a->'run'->>'attempt_id')::uuid
+    );
+    raise notice 'FAIL: the STALE attempt A was able to write accounts after being superseded by attempt B -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA001' then raise notice 'PASS: attempt A (superseded by B''s reclaim) is rejected with errcode HA001 when it tries to save';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Stale Attempt Write';
+  if v_count = 0 then raise notice 'PASS: the stale attempt''s rejected call wrote nothing to ha_accounts';
+  else raise notice 'FAIL: % row(s) were written despite the rejection', v_count; end if;
+
+  perform public.replace_ha_accounts_snapshot(
+    v_upload, v_user, '[{"account_name":"Current Attempt Write"}]'::jsonb,
+    'auto', (v_claim_b->'run'->>'attempt_id')::uuid
+  );
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Current Attempt Write';
+  if v_count = 1 then raise notice 'PASS: the CURRENT attempt B successfully writes accounts using the same (research_run_id, attempt_id) guard';
+  else raise notice 'FAIL: expected 1 row from the current attempt''s write, got %', v_count; end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 27 cleanup complete ---';
+end $$;

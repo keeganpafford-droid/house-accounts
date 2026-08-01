@@ -147,9 +147,66 @@
 --     belonging to any other upload or user. See test 12.
 --
 -- =============================================================================
+-- 9. ROUND 3 REVISIONS: ATTEMPT VALIDATION AT PERSISTENCE, AND THE EXACT RACE
+--    THIS CLOSES
+-- =============================================================================
+-- p_research_run_id/p_attempt_id (both nullable, both optional, both-or-
+-- neither enforced) let a research-derived save (api/save-upload.js, stage
+-- 'researched'/'research_updated') prove it is still being called by the
+-- CURRENT active attempt for that run, atomically, in the SAME transaction
+-- as the account replacement itself — not as a separate prior check that
+-- could go stale before the write happens.
+--
+-- The exact race this closes, as specified in review:
+--   1. Attempt A's lease expires (its Vercel invocation is still running —
+--      just slow, or already dead — either way nobody renewed the lease in
+--      time).
+--   2. Attempt B calls claim_ha_research_run() and reclaims the run — this
+--      call takes pg_advisory_xact_lock(hashtext(upload_id)), updates the
+--      row's attempt_id to a NEW value, and commits.
+--   3. Attempt A, unaware, finishes its (now-orphaned) research late.
+--   4. Attempt A calls api/save-upload.js, which calls
+--      replace_ha_accounts_snapshot(..., p_research_run_id, p_attempt_id)
+--      with its OWN (stale) attempt_id.
+--   5. This call ALSO takes pg_advisory_xact_lock(hashtext(upload_id)) — the
+--      SAME lock key attempt B's reclaim used. If B's transaction is still
+--      in flight, A's call blocks until B commits; either way, by the time
+--      A's transaction actually evaluates the `exists (select 1 from
+--      ha_research_runs where ... attempt_id = p_attempt_id and status =
+--      'running')` check, it is reading the POST-reclaim state, where the
+--      row's attempt_id is B's, not A's. The check fails, A's call raises
+--      HA001, and — because this happens before the DELETE/INSERT below —
+--      NOTHING is written. A is rejected and writes nothing, exactly as
+--      required.
+--
+-- This is what "atomic run-check/persistence" means here specifically: it
+-- is not merely that the check and the write are in the same function body
+-- (that alone would still be vulnerable to a reclaim landing in the gap
+-- between two DIFFERENT advisory-locked transactions) — it is that the
+-- check and the write share the SAME advisory lock key as
+-- claim_ha_research_run()'s reclaim path, so a concurrent reclaim and a
+-- concurrent save-with-attempt-check for the same upload_id are fully
+-- serialized against each other, in either order, with no gap for a stale
+-- attempt to slip through.
+--
+-- api/save-upload.js ALSO calls heartbeat_ha_research_run() as a pre-flight
+-- check before this RPC (before even the ha_uploads PATCH, which this RPC
+-- does not cover) — see api/save-upload.js and migration 5 §7a. That
+-- pre-flight check and this RPC's embedded check are deliberately
+-- redundant: the pre-flight check protects the ha_uploads row and the later
+-- ha_signals insert (neither of which goes through this RPC, so neither can
+-- get the same same-transaction guarantee), while renewing the lease
+-- (reducing the CHANCE of a takeover happening at all in the small window
+-- before this RPC runs); this RPC's embedded check is what actually
+-- GUARANTEES the account write itself cannot be stale, regardless of
+-- whether that earlier pre-flight check remains valid for the whole
+-- duration of the request. Lease renewal narrows the window; the shared
+-- advisory lock is what closes it.
+--
+-- =============================================================================
 -- 6. ROLLBACK
 -- =============================================================================
--- drop function if exists public.replace_ha_accounts_snapshot(uuid, uuid, jsonb);
+-- drop function if exists public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid);
 -- alter table public.ha_accounts drop constraint if exists ha_accounts_upload_account_name_key;
 -- drop table if exists public.ha_accounts_dedup_audit;
 -- Rolling back does not restore rows removed by §3 to ha_accounts itself, but
@@ -204,7 +261,9 @@ alter table public.ha_accounts
 create or replace function public.replace_ha_accounts_snapshot(
   p_upload_id uuid,
   p_user_id uuid,
-  p_accounts jsonb
+  p_accounts jsonb,
+  p_research_run_id text default null,
+  p_attempt_id uuid default null
 ) returns setof public.ha_accounts
 language plpgsql
 security invoker
@@ -213,7 +272,10 @@ as $$
 begin
   -- Serializes concurrent calls for the SAME upload_id only; different
   -- upload_ids never block each other. Released automatically when this
-  -- transaction commits or rolls back.
+  -- transaction commits or rolls back. This is the SAME advisory lock key
+  -- claim_ha_research_run() uses (hashtext(upload_id)) — see §9 for why that
+  -- sharing is what makes the attempt check below race-free against a
+  -- concurrent reclaim, not merely "same transaction."
   perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
 
   -- Ownership check: p_user_id is never trusted on its own. See §5.
@@ -223,6 +285,32 @@ begin
   ) then
     raise exception 'replace_ha_accounts_snapshot: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
       using errcode = '42501';
+  end if;
+
+  -- Round 3 (implementation-review): when this save represents
+  -- research-derived output, both p_research_run_id and p_attempt_id are
+  -- supplied and this call, still inside the advisory lock acquired above,
+  -- verifies the caller is still the CURRENT, active attempt for that run
+  -- before touching a single row. See §9 for the full race analysis. The
+  -- initial pre-research upload save (stage='uploaded') passes both
+  -- parameters as null and skips this check entirely, exactly like
+  -- api/save-upload.js's own current behavior before this round.
+  if p_research_run_id is not null or p_attempt_id is not null then
+    if p_research_run_id is null or p_attempt_id is null then
+      raise exception 'replace_ha_accounts_snapshot: p_research_run_id and p_attempt_id must both be provided together, or both omitted'
+        using errcode = '22023';
+    end if;
+    if not exists (
+      select 1 from public.ha_research_runs
+      where user_id = p_user_id
+        and upload_id = p_upload_id
+        and research_run_id = p_research_run_id
+        and attempt_id = p_attempt_id
+        and status = 'running'
+    ) then
+      raise exception 'replace_ha_accounts_snapshot: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+        using errcode = 'HA001';
+    end if;
   end if;
 
   -- Round 2: p_accounts must be a JSON array. See §6a. This check runs
@@ -288,7 +376,7 @@ $$;
 -- Step 5: lock down execution to service_role only (see §5). Supabase's
 -- default grant to PUBLIC on new functions is revoked explicitly rather than
 -- relied upon to already be absent.
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from public;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from anon;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from authenticated;
-grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) to service_role;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from public;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from anon;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from authenticated;
+grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) to service_role;

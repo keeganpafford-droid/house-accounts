@@ -141,11 +141,15 @@
 -- =============================================================================
 -- 6. ROLLBACK
 -- =============================================================================
+-- drop function if exists public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer);
 -- drop function if exists public.claim_ha_research_run(uuid, uuid, text, integer);
 -- drop table if exists public.ha_research_runs;
 -- api/research-batch.js must be rolled back to a version without run
--- claiming in the same change, since it will otherwise fail every
--- uploadId-bound request once this table/function are gone.
+-- claiming/heartbeating in the same change, since it will otherwise fail
+-- every uploadId-bound request once this table/function are gone.
+-- api/save-upload.js must also be rolled back to a version that does not
+-- call heartbeat_ha_research_run or pass p_research_run_id/p_attempt_id to
+-- replace_ha_accounts_snapshot (see migration 4 §6a/§9).
 
 create table if not exists public.ha_research_runs (
   id uuid primary key default gen_random_uuid(),
@@ -271,9 +275,34 @@ begin
     );
   end if;
 
-  -- No row for this exact (user, upload, research_run_id) triple. Before
-  -- creating one, make sure no DIFFERENT research_run_id is actively
-  -- (non-expired) running for this upload.
+  -- No row for this exact (user, upload, research_run_id) triple.
+  --
+  -- Round 3 (implementation-review, "close manual-before-auto
+  -- duplication"): the AUTOMATIC path (p_research_run_id = 'auto' -- a
+  -- reserved literal only the automatic path ever uses, see
+  -- api/research-batch.js's claim branch, which never lets a client choose
+  -- this value) must not start again if ANY run for this upload has already
+  -- completed successfully, regardless of whether that completed run's id
+  -- was 'auto' (a previous automatic pass) or a server-minted 'manual-*' id
+  -- (an explicit rerun). Only an explicit manual-rerun request
+  -- (p_research_run_id <> 'auto') is exempt from this check -- that IS the
+  -- separate, explicitly authorized pathway the review requires. Without
+  -- this check, an automatic claim after a completed MANUAL run would find
+  -- no exact-triple row for 'auto' (since only a 'manual-*' row exists) and
+  -- incorrectly proceed as if this were the very first run for the upload.
+  if p_research_run_id = 'auto' then
+    select * into v_other_active
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'completed'
+    order by completed_at desc
+    limit 1;
+    if found then
+      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_active));
+    end if;
+  end if;
+
+  -- Make sure no DIFFERENT research_run_id is actively (non-expired) running
+  -- for this upload before creating a new one.
   select * into v_other_active
   from public.ha_research_runs
   where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()
@@ -302,6 +331,102 @@ revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) f
 revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from authenticated;
 grant execute on function public.claim_ha_research_run(uuid, uuid, text, integer) to service_role;
 
+-- =============================================================================
+-- 7a. heartbeat_ha_research_run() — atomic lease renewal / attempt
+--     verification (Phase 2A implementation-review ROUND 3)
+-- =============================================================================
+-- The real Phase 1B fallback execution ran ~12 minutes; a fixed 300s lease
+-- (§7) would expire mid-run without renewal. This RPC does ONE atomic
+-- compare-and-swap UPDATE: it succeeds only when the row's status is still
+-- 'running' AND its attempt_id still matches the caller's -- exactly the
+-- ownership check a stale/replaced attempt must fail. It is deliberately
+-- NOT a "read current state, then decide, then write" sequence (the review
+-- explicitly asked this NOT be implemented that way): the single UPDATE's
+-- WHERE clause IS the check, and Postgres's row-level locking makes it
+-- correct under any interleaving with a concurrent reclaim inside
+-- claim_ha_research_run() -- see §7b for why this does not need the same
+-- advisory lock claim_ha_research_run() uses.
+--
+-- Lease duration is ALWAYS clamped server-side to [60, 900] seconds,
+-- regardless of what p_lease_seconds the caller requests -- a client cannot
+-- obtain an arbitrarily long (effectively permanent) lease by requesting an
+-- excessive value. api/research-batch.js additionally clamps in JS before
+-- ever constructing this call, but this function is the authoritative,
+-- final clamp (defense in depth, same pattern as every other value this
+-- schema treats as untrusted client input).
+--
+-- Returns jsonb: {"ok": true, "run": {...}} on success, or
+-- {"ok": false, "reason": "not-current-attempt"} (NOT an exception) when the
+-- row does not match -- a stale attempt's heartbeat is an expected,
+-- ordinary outcome, not an error condition. Still raises 42501 for a
+-- genuine ownership mismatch on p_upload_id/p_user_id, matching every other
+-- RPC in this schema.
+create or replace function public.heartbeat_ha_research_run(
+  p_user_id uuid,
+  p_upload_id uuid,
+  p_research_run_id text,
+  p_attempt_id uuid,
+  p_lease_seconds integer default 300
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_clamped_lease_seconds integer;
+  v_row public.ha_research_runs;
+begin
+  v_clamped_lease_seconds := greatest(60, least(coalesce(p_lease_seconds, 300), 900));
+
+  if not exists (
+    select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
+  ) then
+    raise exception 'heartbeat_ha_research_run: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
+      using errcode = '42501';
+  end if;
+
+  update public.ha_research_runs
+  set heartbeat_at = now(),
+      lease_expires_at = now() + make_interval(secs => v_clamped_lease_seconds)
+  where user_id = p_user_id
+    and upload_id = p_upload_id
+    and research_run_id = p_research_run_id
+    and attempt_id = p_attempt_id
+    and status = 'running'
+  returning * into v_row;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'not-current-attempt');
+  end if;
+
+  return jsonb_build_object('ok', true, 'run', to_jsonb(v_row));
+end;
+$$;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from public;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from anon;
+revoke all on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) from authenticated;
+grant execute on function public.heartbeat_ha_research_run(uuid, uuid, text, uuid, integer) to service_role;
+
+-- =============================================================================
+-- 7b. WHY heartbeat_ha_research_run() DOES NOT TAKE THE ADVISORY LOCK
+-- =============================================================================
+-- claim_ha_research_run() takes pg_advisory_xact_lock(hashtext(upload_id))
+-- because its decision spans MULTIPLE rows and branches (the exact-triple
+-- row, plus a scan for any OTHER actively-running or completed row for the
+-- same upload) that must be evaluated as one consistent snapshot. Taking
+-- that same lock on every heartbeat call (expected every 30-60s per active
+-- run, per api/research-batch.js) would serialize heartbeats against
+-- reclaims/claims for no benefit: heartbeat's UPDATE touches exactly ONE
+-- row, identified by a fully-specified WHERE clause (attempt_id AND
+-- status='running'), so Postgres's ordinary row-level locking already makes
+-- it correct under any interleaving -- if a reclaim (inside
+-- claim_ha_research_run(), holding the advisory lock) is concurrently
+-- updating the SAME row, this UPDATE blocks on the row lock until that
+-- transaction commits, then re-evaluates its WHERE clause against the
+-- POST-reclaim state (a new attempt_id) and correctly finds zero matching
+-- rows. Skipping the advisory lock here is a deliberate performance choice
+-- for a frequently-called operation, not a correctness gap.
+--
 -- =============================================================================
 -- 8. TABLE-LEVEL PROTECTION FOR THE REMAINING WRITE PATH (attempt-id-guarded
 --    completion/failure PATCH — see §5)

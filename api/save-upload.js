@@ -54,7 +54,13 @@ async function supabase(path, options={}){
   if(text){ try{ data = JSON.parse(text); } catch { data = text; } }
   if(!resp.ok){
     const msg = typeof data === 'string' ? data : (data?.message || data?.hint || JSON.stringify(data));
-    throw new Error(`Supabase ${resp.status}: ${msg}`);
+    const err = new Error(`Supabase ${resp.status}: ${msg}`);
+    err.status = resp.status;
+    // Postgres sqlstate (e.g. '42501', 'HA001'), when the response body is a
+    // PostgREST-shaped RPC error -- lets callers branch on the actual
+    // database error code (Phase 2A implementation-review ROUND 3).
+    err.code = (data && typeof data === 'object') ? data.code : undefined;
+    throw err;
   }
   return data;
 }
@@ -120,6 +126,34 @@ function applyFreeLimitToAccounts(accounts, usage){
   return {accounts: limited, lockedCount, totalMonitoredAfter: monitored.size};
 }
 
+// Phase 2A implementation-review ROUND 3, item 3 — saves whose stage
+// represents research OUTPUT (as opposed to the initial pre-research save,
+// stage='uploaded', which "may remain separate and does not require a
+// research attempt") are eligible for attempt validation when the caller
+// supplies one. Not every call that uses these stage labels is part of a
+// tracked run -- dashboard/index.html's refreshOpportunityViews() also
+// triggers a 'research_updated' save from several UI contexts that have
+// nothing to do with an active research pass (manual account edits, filter
+// changes), and the standalone single-account "Research Account" button
+// triggers a 'researched' save without ever having claimed a run at all
+// (that button was deliberately scoped OUT of the tracked-run system --
+// see the "manual-before-auto" and provider-gate scoping notes in
+// api/research-batch.js). Those untracked saves are unaffected: attempt
+// validation only activates when the request ITSELF supplies both
+// researchRunId and attemptId (both-or-neither enforced below,
+// independent of stage) -- there is no way for an omitted attemptId to
+// escalate privilege, since ownership of uploadId is independently
+// enforced by getUserFromAuth()/the ha_uploads PATCH filter regardless of
+// whether this save is tracked.
+const RESEARCH_OUTPUT_STAGES = new Set(['researched', 'research_updated']);
+
+async function heartbeatResearchRun({ userId, uploadId, researchRunId, attemptId }){
+  return supabase('rpc/heartbeat_ha_research_run', {
+    method: 'POST',
+    body: JSON.stringify({ p_user_id: userId, p_upload_id: uploadId, p_research_run_id: researchRunId, p_attempt_id: attemptId, p_lease_seconds: 300 })
+  });
+}
+
 async function getUserFromAuth(req){
   const authUser = await authFetchUser(req);
   if(!authUser?.id) return null;
@@ -171,6 +205,46 @@ export default async function handler(req, res){
     if(!user?.id) throw new Error('User lookup did not return an id.');
 
     let uploadId = clean(body.uploadId);
+
+    // Phase 2A implementation-review ROUND 3, item 3 — attempt validation
+    // BEFORE any write, including the ha_uploads PATCH below (which
+    // replace_ha_accounts_snapshot's own embedded attempt check, further
+    // down, does NOT cover -- that RPC only touches ha_accounts).
+    //
+    // researchRunId ALONE (no attemptId) remains valid and untracked --
+    // this is the pre-existing, backward-compatible log-correlation-only
+    // usage (weekly-scan.js and any older client build never send
+    // attemptId at all, and dashboard/index.html itself sends researchRunId
+    // with no attemptId for every save that isn't part of the tracked
+    // top-accounts run -- see RESEARCH_OUTPUT_STAGES above). attemptId
+    // WITHOUT researchRunId is rejected as malformed: an attempt is only
+    // ever meaningful scoped to the run it belongs to, so this combination
+    // cannot represent a legitimate request from any current caller.
+    const rawResearchRunId = clean(body.researchRunId);
+    const rawAttemptId = clean(body.attemptId);
+    if(rawAttemptId && !rawResearchRunId){
+      return json(res, 400, {error:'attemptId requires researchRunId to also be provided.'});
+    }
+    const trackedAttempt = !!(rawResearchRunId && rawAttemptId);
+    if(trackedAttempt){
+      if(!uploadId) return json(res, 400, {error:'uploadId is required when researchRunId/attemptId are provided.'});
+      try {
+        const heartbeatResult = await heartbeatResearchRun({ userId: user.id, uploadId, researchRunId: rawResearchRunId, attemptId: rawAttemptId });
+        if(!heartbeatResult?.ok){
+          // This attempt has been reclaimed, completed, or failed since it
+          // was issued -- reject the WHOLE request (nothing below this
+          // point runs: not the ha_uploads PATCH, not the accounts RPC, not
+          // the ha_signals insert). This is the "Attempt A finishes late"
+          // case from the review's 5-step race: A's own heartbeat/verify
+          // call fails here because attempt B already reclaimed the row.
+          return json(res, 409, {error:'This research attempt is no longer active; nothing was saved.', staleAttempt:true, reason: heartbeatResult?.reason || 'not-current-attempt'});
+        }
+      } catch(err) {
+        if(err.code === '42501') return json(res, 403, {error:'You do not have access to this upload.'});
+        throw err;
+      }
+    }
+
     const summary = body.summary || {};
     const uploadRow = {
       user_id: user.id,
@@ -221,11 +295,35 @@ export default async function handler(req, res){
         raw_data: a.rawData || {}
       })).filter(a => a.account_name);
       if(accountPayload.length){
-        const snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
-          method:'POST',
-          prefer:'return=representation',
-          body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload })
-        });
+        // Phase 2A implementation-review ROUND 3, item 3: when this is a
+        // tracked research-output save, p_research_run_id/p_attempt_id are
+        // passed through so the RPC re-verifies attempt ownership ATOMICALLY,
+        // in the SAME transaction as the account write (same advisory lock
+        // as claim_ha_research_run() -- see
+        // supabase-schema-migration-4-atomic-account-snapshot.sql §9 for the
+        // full race analysis). The pre-flight heartbeat above already
+        // rejected an already-stale attempt before the ha_uploads PATCH;
+        // this is the second, atomic guard for the highest-blast-radius
+        // write (a full account-list replace) against a takeover landing in
+        // the gap between the two.
+        const snapshotBody = { p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload };
+        if(trackedAttempt){
+          snapshotBody.p_research_run_id = rawResearchRunId;
+          snapshotBody.p_attempt_id = rawAttemptId;
+        }
+        let snapshotResult;
+        try {
+          snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
+            method:'POST',
+            prefer:'return=representation',
+            body: JSON.stringify(snapshotBody)
+          });
+        } catch(err) {
+          if(err.code === 'HA001'){
+            return json(res, 409, {error:'This research attempt is no longer active; its account changes were not saved.', staleAttempt:true});
+          }
+          throw err;
+        }
         persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
       }
     }
