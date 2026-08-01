@@ -58,29 +58,117 @@ create table if not exists public.ha_accounts_dedup_audit (
   removed_at timestamptz not null default now()
 );
 
--- Atomic, serialized, ownership-checked full-snapshot replace for an
--- upload's account list. SECURITY INVOKER, not DEFINER, and EXECUTE is
--- revoked from anon/authenticated below — see
--- supabase-schema-migration-4-atomic-account-snapshot.sql §5 for the full
--- security rationale (service_role-only trust model, no RLS policies exist
--- on these tables, ownership of p_upload_id is verified against p_user_id
--- before any row is touched).
+-- Atomic, serialized, ownership-checked, MODE-SCOPED full-snapshot replace
+-- for an upload's account list. SECURITY INVOKER, not DEFINER, and EXECUTE
+-- is revoked from anon/authenticated below — see
+-- supabase-schema-migration-4-atomic-account-snapshot.sql §5 for the base
+-- security rationale and
+-- supabase-schema-migration-7-mode-scoped-account-writes.sql for p_mode
+-- (initial_upload / accounts_maintenance / tracked_research), the
+-- fail-closed active-run/research-history checks now performed INSIDE this
+-- same advisory-locked transaction, and the accounts_maintenance
+-- account-identity lock (no add/remove/rename once research history
+-- exists — round 7, item 4).
 create or replace function public.replace_ha_accounts_snapshot(
   p_upload_id uuid,
   p_user_id uuid,
-  p_accounts jsonb
+  p_accounts jsonb,
+  p_mode text,
+  p_research_run_id text default null,
+  p_attempt_id uuid default null
 ) returns setof public.ha_accounts
 language plpgsql
 security invoker
 set search_path = public
 as $$
+declare
+  v_has_history boolean;
+  v_active_running boolean;
+  v_existing_names text[];
+  v_incoming_names text[];
 begin
+  if p_mode is null or p_mode not in ('initial_upload', 'accounts_maintenance', 'tracked_research') then
+    raise exception 'replace_ha_accounts_snapshot: p_mode must be one of initial_upload, accounts_maintenance, tracked_research (got %)', coalesce(p_mode, 'null')
+      using errcode = '22023';
+  end if;
+
   perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
   if not exists (
     select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
   ) then
     raise exception 'replace_ha_accounts_snapshot: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
       using errcode = '42501';
+  end if;
+
+  if p_mode = 'tracked_research' then
+    if p_research_run_id is null or p_attempt_id is null then
+      raise exception 'replace_ha_accounts_snapshot: p_research_run_id and p_attempt_id must both be provided together for p_mode=tracked_research'
+        using errcode = '22023';
+    end if;
+    if not exists (
+      select 1 from public.ha_research_runs
+      where user_id = p_user_id
+        and upload_id = p_upload_id
+        and research_run_id = p_research_run_id
+        and attempt_id = p_attempt_id
+        and status = 'running'
+    ) then
+      raise exception 'replace_ha_accounts_snapshot: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+        using errcode = 'HA001';
+    end if;
+  else
+    if p_research_run_id is not null or p_attempt_id is not null then
+      raise exception 'replace_ha_accounts_snapshot: p_research_run_id/p_attempt_id may only be supplied for p_mode=tracked_research'
+        using errcode = '22023';
+    end if;
+
+    select exists(
+      select 1 from public.ha_research_runs where upload_id = p_upload_id
+    ) into v_has_history;
+
+    if p_mode = 'initial_upload' then
+      if v_has_history then
+        raise exception 'replace_ha_accounts_snapshot: upload % already has research history; use p_mode=accounts_maintenance for a post-research account edit', p_upload_id
+          using errcode = 'HA003';
+      end if;
+    else -- accounts_maintenance
+      select exists(
+        select 1 from public.ha_research_runs
+        where upload_id = p_upload_id
+          and status = 'running'
+          and lease_expires_at > now()
+      ) into v_active_running;
+
+      if v_active_running then
+        raise exception 'replace_ha_accounts_snapshot: a research run is currently active for upload %; cannot perform account maintenance while research is in progress', p_upload_id
+          using errcode = '55P03';
+      end if;
+
+      if v_has_history then
+        if jsonb_typeof(p_accounts) is distinct from 'array' then
+          raise exception 'replace_ha_accounts_snapshot: p_accounts must be a JSON array (got %)', coalesce(jsonb_typeof(p_accounts), 'null')
+            using errcode = '22023';
+        end if;
+
+        select coalesce(array_agg(distinct account_name order by account_name), array[]::text[])
+          into v_existing_names
+          from public.ha_accounts
+          where upload_id = p_upload_id;
+
+        select coalesce(array_agg(distinct name order by name), array[]::text[])
+          into v_incoming_names
+          from (
+            select nullif(btrim(elem->>'account_name'), '') as name
+            from jsonb_array_elements(p_accounts) as elem
+          ) t
+          where name is not null;
+
+        if v_existing_names is distinct from v_incoming_names then
+          raise exception 'replace_ha_accounts_snapshot: accounts_maintenance cannot add, remove, or rename accounts once research history exists for upload % (existing names %, incoming names %)', p_upload_id, v_existing_names, v_incoming_names
+            using errcode = 'HA004';
+        end if;
+      end if;
+    end if;
   end if;
 
   -- p_accounts must be a JSON array (explicit, atomic failure otherwise —
@@ -134,10 +222,10 @@ begin
   -- tested behavior, not an oversight.
 end;
 $$;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from public;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from anon;
-revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) from authenticated;
-grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, uuid) to service_role;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, text, uuid) from public;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, text, uuid) from anon;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, text, uuid) from authenticated;
+grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb, text, text, uuid) to service_role;
 
 create table if not exists public.ha_weekly_runs (
   id uuid primary key default gen_random_uuid(),
@@ -402,7 +490,10 @@ create index if not exists idx_ha_signals_event_fingerprint on public.ha_signals
 -- rationale (why this closes the gap round 3 left open for ha_signals/
 -- ha_uploads, why accounts are persisted by delegating to
 -- replace_ha_accounts_snapshot() rather than duplicating its logic, and the
--- re-verified race analysis for the three-table case).
+-- re-verified race analysis for the three-table case). ROUND 7: the
+-- replace_ha_accounts_snapshot() call below passes p_mode='tracked_research'
+-- explicitly (that parameter is now required) — see
+-- supabase-schema-migration-7-mode-scoped-account-writes.sql.
 create or replace function public.persist_ha_research_output(
   p_upload_id uuid,
   p_user_id uuid,
@@ -451,7 +542,7 @@ begin
 
   if p_accounts is not null then
     select array_agg(a) into v_accounts_result
-    from public.replace_ha_accounts_snapshot(p_upload_id, p_user_id, p_accounts) a;
+    from public.replace_ha_accounts_snapshot(p_upload_id, p_user_id, p_accounts, 'tracked_research', p_research_run_id, p_attempt_id) a;
     v_accounts_count := coalesce(array_length(v_accounts_result, 1), 0);
   end if;
 

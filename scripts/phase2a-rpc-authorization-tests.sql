@@ -11,6 +11,17 @@
 -- the whole file in the Supabase SQL editor (as a role that can execute
 -- `set role`, i.e. the postgres/service_role connection, NOT through
 -- PostgREST) and read the output.
+--
+-- Phase 2A implementation-review ROUND 7: replace_ha_accounts_snapshot()'s
+-- signature gained a required 4th parameter, p_mode (see
+-- supabase-schema-migration-7-mode-scoped-account-writes.sql). ALL existing
+-- calls below (tests 1-12, 27) were updated in place to pass
+-- 'initial_upload' (tests 1-12 -- fresh uploads with no research history,
+-- matching what stage="uploaded" always meant) or 'tracked_research' (test
+-- 27 -- already carried p_research_run_id/p_attempt_id). New tests 42-49,
+-- appended at the end of this file, cover p_mode validation and the two
+-- NEW modes (accounts_maintenance's active-run rejection and account-
+-- identity lock).
 
 -- ===========================================================================
 -- Setup: two fake users and two uploads, one per user, plus a stray
@@ -35,7 +46,7 @@ begin
 
   raise notice '--- Test 1: correct owner and upload ---';
   begin
-    perform public.replace_ha_accounts_snapshot(v_upload_a, v_user_a, '[{"account_name":"Test Co"}]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(v_upload_a, v_user_a, '[{"account_name":"Test Co"}]'::jsonb, 'initial_upload');
     select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a and account_name = 'Test Co';
     if v_count = 1 then raise notice 'PASS: correct owner successfully replaces their own upload''s accounts';
     else raise notice 'FAIL: expected 1 row for the correct owner, got %', v_count; end if;
@@ -45,7 +56,7 @@ begin
 
   raise notice '--- Test 2: wrong user against another user''s upload ---';
   begin
-    perform public.replace_ha_accounts_snapshot(v_upload_a, v_user_b, '[{"account_name":"Hijacked"}]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(v_upload_a, v_user_b, '[{"account_name":"Hijacked"}]'::jsonb, 'initial_upload');
     raise notice 'FAIL: user B was able to replace user A''s upload accounts -- no exception raised';
   exception when others then
     if sqlstate = '42501' then raise notice 'PASS: wrong-user call against another user''s upload is rejected with the expected ownership exception (42501)';
@@ -57,7 +68,7 @@ begin
 
   raise notice '--- Test 3: nonexistent upload ---';
   begin
-    perform public.replace_ha_accounts_snapshot(v_nonexistent_upload, v_user_a, '[{"account_name":"Ghost"}]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(v_nonexistent_upload, v_user_a, '[{"account_name":"Ghost"}]'::jsonb, 'initial_upload');
     raise notice 'FAIL: a nonexistent upload_id was accepted -- no exception raised';
   exception when others then
     if sqlstate = '42501' then raise notice 'PASS: a nonexistent upload_id is rejected with the same ownership exception (42501) as a real ownership mismatch -- does not leak whether the upload exists at all';
@@ -80,7 +91,7 @@ do $$
 begin
   set role anon;
   begin
-    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
     raise notice 'FAIL: anon role was able to call replace_ha_accounts_snapshot at all -- EXECUTE grant is not properly revoked';
   exception when insufficient_privilege then
     raise notice 'PASS: anon role is rejected at the privilege level (insufficient_privilege) before the function body runs';
@@ -99,7 +110,7 @@ do $$
 begin
   set role authenticated;
   begin
-    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
     raise notice 'FAIL: authenticated role was able to call replace_ha_accounts_snapshot directly -- EXECUTE grant is not properly revoked';
   exception when insufficient_privilege then
     raise notice 'PASS: authenticated role is rejected at the privilege level (insufficient_privilege), matching the intended service_role-only design';
@@ -118,7 +129,7 @@ do $$
 begin
   set role service_role;
   begin
-    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb);
+    perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
     raise notice 'FAIL: service_role call unexpectedly succeeded against a nonexistent upload/user (should hit the ownership check, sqlstate 42501)';
   exception when sqlstate '42501' then
     raise notice 'PASS: service_role CAN call the function (reaches the function body -- rejected here only because the test upload/user do not exist, which is the correct, expected outcome for this specific call)';
@@ -148,7 +159,7 @@ begin
 
   raise notice '--- Test 7: malformed JSON (a JSON object instead of an array) is rejected atomically ---';
   begin
-    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '{"account_name":"Not An Array"}'::jsonb);
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '{"account_name":"Not An Array"}'::jsonb, 'initial_upload');
     raise notice 'FAIL: a JSON object was accepted in place of an array -- no exception raised';
   exception when others then
     if sqlstate = '22023' then raise notice 'PASS: a non-array p_accounts value is rejected with the expected errcode 22023, and the exception is explicit rather than a generic internal error';
@@ -160,7 +171,7 @@ begin
 
   raise notice '--- Test 8: malformed JSON (a bare scalar) is also rejected ---';
   begin
-    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '"just a string"'::jsonb);
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '"just a string"'::jsonb, 'initial_upload');
     raise notice 'FAIL: a bare JSON scalar was accepted in place of an array -- no exception raised';
   exception when others then
     if sqlstate = '22023' then raise notice 'PASS: a scalar p_accounts value is rejected with errcode 22023';
@@ -170,7 +181,7 @@ begin
   raise notice '--- Test 9: duplicate account_name values within one p_accounts array are resolved deterministically (last occurrence wins), not an error ---';
   begin
     v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user,
-      '[{"account_name":"Acme Corp","industry":"first"},{"account_name":"Acme Corp","industry":"second-and-last"}]'::jsonb);
+      '[{"account_name":"Acme Corp","industry":"first"},{"account_name":"Acme Corp","industry":"second-and-last"}]'::jsonb, 'initial_upload');
   exception when others then
     raise notice 'FAIL: an in-array duplicate account_name raised an exception instead of being resolved deterministically: % (sqlstate %)', sqlerrm, sqlstate;
   end;
@@ -184,19 +195,19 @@ begin
 
   raise notice '--- Test 10: a spoofed per-row "user_id" field inside an account object is ignored -- ownership always comes from the verified p_user_id parameter ---';
   perform public.replace_ha_accounts_snapshot(v_upload, v_user,
-    ('[{"account_name":"Spoof Target","user_id":"' || gen_random_uuid()::text || '"}]')::jsonb);
+    ('[{"account_name":"Spoof Target","user_id":"' || gen_random_uuid()::text || '"}]')::jsonb, 'initial_upload');
   select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Spoof Target' and user_id = v_user;
   if v_count = 1 then raise notice 'PASS: the inserted row''s user_id is the verified p_user_id parameter, not the spoofed per-row value from the JSON payload';
   else raise notice 'FAIL: the spoofed per-row user_id was NOT correctly overridden by p_user_id -- expected 1 row owned by the real user, got %', v_count; end if;
 
   raise notice '--- Test 11: an empty p_accounts array explicitly clears the upload''s account list ---';
-  v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb);
+  v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'initial_upload');
   select count(*) into v_count from public.ha_accounts where upload_id = v_upload;
   if v_count = 0 then raise notice 'PASS: calling with an empty array clears all accounts for the upload (explicit full-snapshot-replace semantics), rather than being a no-op or an error';
   else raise notice 'FAIL: expected 0 accounts remaining after an empty-array call, got %', v_count; end if;
 
   raise notice '--- Test 12: returned rows belong ONLY to p_upload_id and p_user_id ---';
-  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Scoping Check A"},{"account_name":"Scoping Check B"}]'::jsonb);
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Scoping Check A"},{"account_name":"Scoping Check B"}]'::jsonb, 'initial_upload');
   select count(distinct (upload_id, user_id)) into v_distinct_owner_pairs
   from public.ha_accounts where upload_id = v_upload;
   if v_distinct_owner_pairs = 1 then raise notice 'PASS: every returned/persisted row for this call carries exactly one (upload_id, user_id) pair -- (%, %)', v_upload, v_user;
@@ -437,7 +448,7 @@ begin
   begin
     perform public.replace_ha_accounts_snapshot(
       v_upload, v_user, '[{"account_name":"Stale Attempt Write"}]'::jsonb,
-      'auto', (v_claim_a->'run'->>'attempt_id')::uuid
+      'tracked_research', 'auto', (v_claim_a->'run'->>'attempt_id')::uuid
     );
     raise notice 'FAIL: the STALE attempt A was able to write accounts after being superseded by attempt B -- no exception raised';
   exception when others then
@@ -450,7 +461,7 @@ begin
 
   perform public.replace_ha_accounts_snapshot(
     v_upload, v_user, '[{"account_name":"Current Attempt Write"}]'::jsonb,
-    'auto', (v_claim_b->'run'->>'attempt_id')::uuid
+    'tracked_research', 'auto', (v_claim_b->'run'->>'attempt_id')::uuid
   );
   select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Current Attempt Write';
   if v_count = 1 then raise notice 'PASS: the CURRENT attempt B successfully writes accounts using the same (research_run_id, attempt_id) guard';
@@ -778,4 +789,258 @@ begin
   delete from public.ha_uploads where id = v_upload;
   delete from public.ha_users where id = v_user;
   raise notice '--- Test 41 cleanup complete ---';
+end $$;
+
+-- ===========================================================================
+-- Tests 42-49 (Phase 2A implementation-review ROUND 7, items 3-4):
+-- replace_ha_accounts_snapshot()'s new p_mode parameter -- validation, the
+-- active-run/research-history checks now performed INSIDE the same
+-- advisory-locked transaction as the write (fail-closed, no separate
+-- `.catch(() => [])`-guarded pre-flight query to silently misinterpret a
+-- failure as "no active run"), and the accounts_maintenance account-
+-- identity lock (metadata-only once research history exists).
+-- ===========================================================================
+
+-- Test 42: p_mode validation -- null and an arbitrary/unrecognized string
+-- are both rejected with 22023, before the advisory lock or ownership check
+-- ever run (a malformed mode never gets far enough to touch any row).
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-mode-validation@example.com', 'Round 7 Mode Validation') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 mode validation upload', 'uploaded') returning id into v_upload;
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, null);
+    raise notice 'FAIL: p_mode=null was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = '22023' then raise notice 'PASS: p_mode=null is rejected with errcode 22023';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'some_made_up_mode');
+    raise notice 'FAIL: an unrecognized p_mode string was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = '22023' then raise notice 'PASS: an unrecognized p_mode string is rejected with errcode 22023 -- the RPC does not trust an arbitrary client-provided mode';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 42 cleanup complete ---';
+end $$;
+
+-- Test 43: p_mode=initial_upload is rejected once the upload has ANY
+-- research history (HA003), even though the caller supplied a perfectly
+-- valid accounts array and owns the upload. Also confirms the write did
+-- not happen (atomic -- the check and the write are the same transaction).
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-initial-reuse@example.com', 'Round 7 Initial Reuse') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 initial-upload reuse test', 'uploaded') returning id into v_upload;
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  perform public.persist_ha_research_output(
+    v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Original Account"}]'::jsonb, null, 'researched', '{"accountCount":1}'::jsonb
+  );
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Reused As Initial"}]'::jsonb, 'initial_upload');
+    raise notice 'FAIL: p_mode=initial_upload was accepted against an upload that already has research history -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA003' then raise notice 'PASS: p_mode=initial_upload against an upload with existing research history is rejected with errcode HA003';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+  if exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Reused As Initial') then
+    raise notice 'FAIL: the rejected initial_upload call still wrote a row';
+  else raise notice 'PASS: the rejected initial_upload call wrote nothing -- the original account snapshot is untouched';
+  end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 43 cleanup complete ---';
+end $$;
+
+-- Test 44: p_mode=accounts_maintenance is rejected (55P03) while a running,
+-- unexpired research attempt exists -- the SAME check api/save-upload.js
+-- used to perform as a separate `.catch(() => [])`-guarded GET request, now
+-- inside the same advisory-locked transaction as the write, so there is no
+-- window between "checked" and "wrote" for a claim to land in.
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-maintenance-active@example.com', 'Round 7 Maintenance Active') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 maintenance-while-active test', 'uploaded') returning id into v_upload;
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300); -- status='running', unexpired lease
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Edited While Active"}]'::jsonb, 'accounts_maintenance');
+    raise notice 'FAIL: p_mode=accounts_maintenance was accepted while a research run is actively running -- no exception raised';
+  exception when others then
+    if sqlstate = '55P03' then raise notice 'PASS: p_mode=accounts_maintenance while a run is actively running is rejected with errcode 55P03';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+  if exists (select 1 from public.ha_accounts where upload_id = v_upload) then
+    raise notice 'FAIL: the rejected accounts_maintenance call still wrote a row';
+  else raise notice 'PASS: the rejected accounts_maintenance call wrote nothing';
+  end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 44 cleanup complete ---';
+end $$;
+
+-- Test 45: p_mode=accounts_maintenance IS permitted after the run
+-- COMPLETES, and a metadata-only edit (same account_name set, changed
+-- industry/contact fields) succeeds normally.
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_industry text;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-maintenance-completed@example.com', 'Round 7 Maintenance Completed') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 maintenance-after-completion test', 'uploaded') returning id into v_upload;
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  perform public.persist_ha_research_output(
+    v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Stable Co","industry":"Old Industry","contact_email":"old@example.com"}]'::jsonb,
+    null, 'researched', '{"accountCount":1}'::jsonb
+  );
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
+      '[{"account_name":"Stable Co","industry":"New Industry","contact_email":"new@example.com"}]'::jsonb,
+      'accounts_maintenance');
+  exception when others then
+    raise notice 'FAIL: a metadata-only accounts_maintenance edit after completion raised an unexpected exception: % (sqlstate %)', sqlerrm, sqlstate;
+  end;
+  select industry into v_industry from public.ha_accounts where upload_id = v_upload and account_name = 'Stable Co';
+  if v_industry = 'New Industry' then raise notice 'PASS: accounts_maintenance after a completed run successfully updates industry/contact fields for the SAME account name';
+  else raise notice 'FAIL: expected industry=New Industry after the maintenance edit, got %', v_industry; end if;
+  if (select status from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto') = 'completed' then
+    raise notice 'PASS: the completed research run row itself is unaffected by the accounts_maintenance edit';
+  else raise notice 'FAIL: the completed research run''s status changed as a side effect of an accounts_maintenance edit'; end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 45 cleanup complete ---';
+end $$;
+
+-- Tests 46-48: the account-identity lock -- once research history exists,
+-- accounts_maintenance rejects (HA004) any incoming account_name set that
+-- is not IDENTICAL to the existing set: a rename, an addition, or a
+-- removal, tested separately. In every case, nothing is written (the
+-- rejection happens before the DELETE/INSERT).
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_count int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-identity-lock@example.com', 'Round 7 Identity Lock') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 identity lock test', 'uploaded') returning id into v_upload;
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  perform public.persist_ha_research_output(
+    v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Alpha Co"},{"account_name":"Beta Co"}]'::jsonb,
+    '[{"account_name":"Alpha Co","signal_hash":"h-alpha","event_fingerprint":"fp-alpha","signal_type":"Hiring"}]'::jsonb,
+    'researched', '{"accountCount":2}'::jsonb
+  );
+
+  raise notice '--- Test 46: rename rejected ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
+      '[{"account_name":"Alpha Co Renamed"},{"account_name":"Beta Co"}]'::jsonb, 'accounts_maintenance');
+    raise notice 'FAIL: renaming an account via accounts_maintenance was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA004' then raise notice 'PASS: renaming an account (Alpha Co -> Alpha Co Renamed) via accounts_maintenance is rejected with errcode HA004';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 47: addition rejected ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
+      '[{"account_name":"Alpha Co"},{"account_name":"Beta Co"},{"account_name":"Gamma Co"}]'::jsonb, 'accounts_maintenance');
+    raise notice 'FAIL: adding a new account via accounts_maintenance was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA004' then raise notice 'PASS: adding an account (Gamma Co) via accounts_maintenance is rejected with errcode HA004';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 48: removal rejected ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
+      '[{"account_name":"Alpha Co"}]'::jsonb, 'accounts_maintenance');
+    raise notice 'FAIL: removing an account via accounts_maintenance was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA004' then raise notice 'PASS: removing an account (Beta Co) via accounts_maintenance is rejected with errcode HA004';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload;
+  if v_count = 2 then raise notice 'PASS: after all three rejected identity-changing attempts, the original two accounts (Alpha Co, Beta Co) are exactly as they were -- nothing was added, removed, or renamed';
+  else raise notice 'FAIL: expected exactly 2 accounts to remain after the rejected calls, found %', v_count; end if;
+  if exists (select 1 from public.ha_signals where upload_id = v_upload and account_name = 'Alpha Co' and event_fingerprint = 'fp-alpha') then
+    raise notice 'PASS: the signal already associated with Alpha Co remains associated with that unchanged account name';
+  else raise notice 'FAIL: the Alpha Co signal is missing after the rejected identity-changing attempts'; end if;
+  if (select result_summary from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto') is not null then
+    raise notice 'PASS: the completed research run''s result_summary is unchanged by the rejected accounts_maintenance attempts';
+  end if;
+
+  delete from public.ha_signals where upload_id = v_upload;
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 46-48 cleanup complete ---';
+end $$;
+
+-- Test 49: accounts_maintenance with NO research history yet is NOT
+-- identity-locked -- add/remove/rename are all still permitted, since there
+-- is no signal history yet for anything to orphan. This confirms the lock
+-- is scoped to "after research history exists," not "whenever
+-- p_mode=accounts_maintenance is used."
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_count int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round7-maintenance-no-history@example.com', 'Round 7 Maintenance No History') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 maintenance-no-history test', 'uploaded') returning id into v_upload;
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Pre-Research Co"}]'::jsonb, 'initial_upload');
+
+  begin
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
+      '[{"account_name":"Renamed Before Any Research"}]'::jsonb, 'accounts_maintenance');
+  exception when others then
+    raise notice 'FAIL: accounts_maintenance with no research history yet rejected a rename: % (sqlstate %)', sqlerrm, sqlstate;
+  end;
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Renamed Before Any Research';
+  if v_count = 1 then raise notice 'PASS: accounts_maintenance freely renames an account when NO research history exists yet -- the identity lock only applies once research has actually happened';
+  else raise notice 'FAIL: expected the rename to succeed with no research history, got % matching rows', v_count; end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 49 cleanup complete ---';
 end $$;

@@ -5608,6 +5608,17 @@ function renderDetailedAccountViews(accounts){
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
         <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">${renderVerifiedSignals(a.signals)}</div>
         ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
+        <div class="account-metadata-edit">
+          <button class="btn btn-ghost btn-mini" type="button" onclick="toggleAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Edit Contact Info</button>
+          <div class="account-metadata-edit-form" id="acctEditForm-${accountDomId(a.name)}" style="display:none;margin-top:8px;">
+            <label style="display:block;margin-bottom:6px;">Industry<br><input type="text" id="acctEditIndustry-${accountDomId(a.name)}" value="${escapeHtml(a.industry || '')}"></label>
+            <label style="display:block;margin-bottom:6px;">Contact Name<br><input type="text" id="acctEditContactName-${accountDomId(a.name)}" value="${escapeHtml(a.contactName || '')}"></label>
+            <label style="display:block;margin-bottom:6px;">Contact Email<br><input type="email" id="acctEditContactEmail-${accountDomId(a.name)}" value="${escapeHtml(a.contactEmail || '')}"></label>
+            <button class="btn btn-secondary btn-mini" type="button" id="acctEditSaveBtn-${accountDomId(a.name)}" onclick="saveAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Save</button>
+            <button class="btn btn-ghost btn-mini" type="button" onclick="toggleAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Cancel</button>
+            <div class="account-metadata-edit-error" id="acctEditError-${accountDomId(a.name)}" style="display:none;color:#B3261E;margin-top:6px;"></div>
+          </div>
+        </div>
       </div>
     </div>
   `).join('');
@@ -5665,10 +5676,18 @@ function serializeAccountForStorage(account, options = {}){
   };
 }
 
+// Phase 2A implementation-review ROUND 7, item 1 -- this function now
+// RETURNS {ok:true, data} or {ok:false, error} instead of implicitly
+// returning undefined either way. Existing callers that never checked a
+// return value (the research flows) are unaffected -- they still just
+// `await saveCurrentUpload(...)`. This is what lets a NEW caller (see
+// saveAccountMetadataEdit() below) actually detect and surface a failed
+// save, which was not previously possible: every failure here was silently
+// swallowed (logged, but the returned promise always resolved).
 async function performSaveCurrentUpload(stage, attemptContext){
   const lead = currentLead || getSavedLead();
   const accounts = window.accountRadarAccounts || [];
-  if(!lead || !lead.email || !accounts.length) return;
+  if(!lead || !lead.email || !accounts.length) return {ok:false, error:'No account list to save.'};
 
   // Phase 2A implementation-review ROUND 5, item 2 -- stage='uploaded' is
   // the ONE untracked stage, and api/save-upload.js's state machine
@@ -5697,7 +5716,19 @@ async function performSaveCurrentUpload(stage, attemptContext){
     saveInProgress = true;
     const res = await fetch('/api/save-upload', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      // Phase 2A implementation-review ROUND 7, item 2 -- api/save-upload.js
+      // now requires a real, verified Bearer token for ANY save that
+      // targets an existing upload (uploadId present) or any stage other
+      // than "uploaded", and never trusts lead.email as identity for those.
+      // This call was the one remaining place in the dashboard that sent
+      // save-upload requests WITHOUT HouseAuth.authHeaders() -- every other
+      // fetch to /api/research-batch already did (see
+      // claimAutomaticResearchRun()/heartbeatCurrentResearchRun()/
+      // reportResearchRunOutcome() above). dashboard/index.html is a
+      // data-protected="true" page (see auth-client.js's requireAuth()), so
+      // a real session token is always available here by the time any of
+      // this code runs.
+      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
       body: JSON.stringify({
         lead,
         uploadId: currentUploadId,
@@ -5725,7 +5756,7 @@ async function performSaveCurrentUpload(stage, attemptContext){
         // Nothing was written -- the replacement attempt owns persistence
         // now. No user-facing "storage failed" panic for this case.
         console.warn('[Save] a stale/superseded research attempt tried to save; correctly rejected, nothing written.', { stage, reason: data.reason });
-        return;
+        return {ok:false, error: data.error || 'stale attempt', staleAttempt:true};
       }
       throw new Error(data.error || 'Save failed');
     }
@@ -5736,6 +5767,7 @@ async function performSaveCurrentUpload(stage, attemptContext){
       notice.style.display = 'block';
       notice.innerHTML = (notice.innerHTML ? notice.innerHTML + '<br>' : '') + `Saved account list for weekly monitoring.`;
     }
+    return {ok:true, data};
   }catch(err){
     console.warn('Supabase save failed:', err);
     const diag = document.getElementById('researchDiagnosticsPanel');
@@ -5743,6 +5775,7 @@ async function performSaveCurrentUpload(stage, attemptContext){
       diag.style.display = 'block';
       diag.innerHTML = `<strong>Storage note:</strong> Upload analyzed locally, but Supabase save failed: ${escapeHtml(err.message)}. Confirm v39 schema and env vars.`;
     }
+    return {ok:false, error: err && err.message ? err.message : 'Save failed'};
   }finally{
     saveInProgress = false;
   }
@@ -5759,6 +5792,72 @@ function saveCurrentUpload(stage = 'uploaded', attemptContext){
   const run = () => performSaveCurrentUpload(stage, attemptContext);
   saveQueue = saveQueue.then(run, run);
   return saveQueue;
+}
+
+// Phase 2A implementation-review ROUND 7, item 1 -- toggles the inline
+// account-metadata edit form open/closed. Pure UI state, exactly like
+// setActiveTimebox()/toggleWeeklyPrioritiesView() below -- never saves.
+function toggleAccountMetadataEdit(accountName){
+  const domId = accountDomId(accountName);
+  const form = document.getElementById(`acctEditForm-${domId}`);
+  if(!form) return;
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  const errorEl = document.getElementById(`acctEditError-${domId}`);
+  if(errorEl){ errorEl.style.display = 'none'; errorEl.textContent = ''; }
+}
+
+// Phase 2A implementation-review ROUND 7, item 1 -- THE real account-edit
+// handler. This is the ONLY dashboard call site that mutates permitted
+// account metadata (industry, contact name, contact email) and persists it.
+// It performs exactly one explicit, awaited terminal save
+// (stage="accounts_updated"), queued through the SAME single-flight
+// saveCurrentUpload() queue every other save in this file uses, so it can
+// never race a concurrent research save for the same upload -- one mutation
+// action, one saveCurrentUpload() call, full stop. It never sends
+// researchRunId/attemptId (saveCurrentUpload is called with no
+// attemptContext, and stage="accounts_updated" is not a research-output
+// stage, so performSaveCurrentUpload's own branching omits them). It only
+// ever changes the three permitted fields for an EXISTING account name --
+// it cannot add, remove, or rename an account (there is no UI affordance
+// here to do so), matching the server-side identity lock in
+// replace_ha_accounts_snapshot()'s accounts_maintenance mode (migration 7).
+async function saveAccountMetadataEdit(accountName){
+  const domId = accountDomId(accountName);
+  const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
+  const errorEl = document.getElementById(`acctEditError-${domId}`);
+  const saveBtn = document.getElementById(`acctEditSaveBtn-${domId}`);
+  if(errorEl){ errorEl.style.display = 'none'; errorEl.textContent = ''; }
+  if(!account) return;
+
+  const industryInput = document.getElementById(`acctEditIndustry-${domId}`);
+  const contactNameInput = document.getElementById(`acctEditContactName-${domId}`);
+  const contactEmailInput = document.getElementById(`acctEditContactEmail-${domId}`);
+
+  // Snapshot so a failed save can be reverted in-memory without a re-fetch.
+  const previous = { industry: account.industry, contactName: account.contactName, contactEmail: account.contactEmail };
+  if(industryInput) account.industry = industryInput.value.trim();
+  if(contactNameInput) account.contactName = contactNameInput.value.trim();
+  if(contactEmailInput) account.contactEmail = contactEmailInput.value.trim();
+
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  const result = await saveCurrentUpload('accounts_updated');
+  if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+
+  if(result && result.ok){
+    toggleAccountMetadataEdit(accountName);
+    refreshOpportunityViews();
+  } else {
+    // Surfaced ONCE, here -- revert the in-memory edit and show the error
+    // inline next to the form that produced it, rather than a background
+    // console warning the user never sees.
+    account.industry = previous.industry;
+    account.contactName = previous.contactName;
+    account.contactEmail = previous.contactEmail;
+    if(errorEl){
+      errorEl.style.display = 'block';
+      errorEl.textContent = `Could not save this change: ${(result && result.error) || 'unknown error'}. Please try again.`;
+    }
+  }
 }
 
 function hasMeaningfulHistoricalOrder(accountOrRecords){

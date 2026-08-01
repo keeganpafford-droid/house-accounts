@@ -74,10 +74,12 @@ const REAL_SOURCE = [
   extractFn('dedupeSignalsClient', 3999, 4012),
   extractFn('researchTopAccounts', 4014, 4144, {async: true}),
   extractFn('refreshOpportunityViews', 4245, 4264),
-  extractFn('serializeAccountForStorage', 5624, 5666),
-  extractFn('performSaveCurrentUpload', 5668, 5749, {async: true}),
-  extractFn('saveCurrentUpload', 5758, 5762),
-  extractFn('importedContactsFromRecords', 5775, 5791)
+  extractFn('serializeAccountForStorage', 5635, 5677),
+  extractFn('performSaveCurrentUpload', 5687, 5782, {async: true}),
+  extractFn('saveCurrentUpload', 5791, 5795),
+  extractFn('toggleAccountMetadataEdit', 5800, 5807),
+  extractFn('saveAccountMetadataEdit', 5824, 5861, {async: true}),
+  extractFn('importedContactsFromRecords', 5874, 5890)
 ].join('\n\n');
 
 // ===========================================================================
@@ -135,7 +137,7 @@ var autoResearchStarted = true;
 `;
 }
 
-function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl}){
+function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl, domElements = {}}){
   const consoleLog = { warn: [], error: [], log: [] };
   const houseAuth = { authHeaders: (h) => h || {} };
   const sandbox = {
@@ -146,7 +148,12 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
       location: { href: 'https://example.com/dashboard' }
     },
     HouseAuth: houseAuth,
-    document: { getElementById: () => null },
+    // domElements lets a test feed fake form-input/DOM-node objects
+    // (each just a plain {value}/{style}/{textContent}/{disabled} object)
+    // keyed by id, so saveAccountMetadataEdit()/toggleAccountMetadataEdit()
+    // -- which read real form values via document.getElementById -- can be
+    // exercised with real "typed" input, not bypassed.
+    document: { getElementById: (id) => (Object.prototype.hasOwnProperty.call(domElements, id) ? domElements[id] : null) },
     fetch: fetchImpl,
     console: {
       log: (...a) => consoleLog.log.push(a),
@@ -397,6 +404,84 @@ async function testTerminalSaveSucceedsNoLaterStale409(){
   // untriggered by luck.
 }
 
+// ===========================================================================
+// Scenario (g) (Phase 2A implementation-review ROUND 7, item 1): the REAL
+// account-edit handler (saveAccountMetadataEdit()), invoked exactly as a
+// click on "Save" in the inline edit form would -- not saveCurrentUpload()
+// called directly. Required: the mutation produces exactly one
+// accounts_updated request; a subsequent render/filter action produces zero
+// additional save requests; no research-output stage or attempt metadata is
+// ever sent.
+// ===========================================================================
+async function testAccountMetadataEditHandlerSuccess(){
+  const accounts = [fixtureAccount('Acme', {industry:'Old Industry', contactName:'Old Name', contactEmail:'old@example.com'})];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok:true, uploadId:'upload-1'});
+    }
+    throw new Error(`unexpected fetch in testAccountMetadataEditHandlerSuccess: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const domId = 'acme'; // accountDomId('Acme') per the STUB_SOURCE implementation
+  const domElements = {
+    [`acctEditForm-${domId}`]: {style:{display:'none'}},
+    [`acctEditError-${domId}`]: {style:{display:'none'}, textContent:''},
+    [`acctEditSaveBtn-${domId}`]: {disabled:false, textContent:'Save'},
+    [`acctEditIndustry-${domId}`]: {value:'New Industry'},
+    [`acctEditContactName-${domId}`]: {value:'New Name'},
+    [`acctEditContactEmail-${domId}`]: {value:'new@example.com'}
+  };
+  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements});
+
+  await sandbox.saveAccountMetadataEdit('Acme');
+
+  const calls = fetchImpl.calls;
+  const saves = saveUploadCalls(calls);
+  assert(saves.length === 1, 'g) account edit: the real handler produces exactly one accounts_updated request');
+  assert(saves[0].body.stage === 'accounts_updated', 'g) account edit: the save stage is "accounts_updated"');
+  assert(!saves[0].body.researchRunId && !saves[0].body.attemptId, 'g) account edit: no research-output stage or attempt metadata is ever sent');
+  const savedAccount = (saves[0].body.accounts || []).find(a => a.name === 'Acme');
+  assert(!!savedAccount && savedAccount.industry === 'New Industry' && savedAccount.contactName === 'New Name', 'g) account edit: the actual typed field values reach the save payload');
+
+  // Render/filter actions must never issue a save.
+  sandbox.refreshOpportunityViews();
+  sandbox.toggleAccountMetadataEdit('Acme');
+  assert(saveUploadCalls(fetchImpl.calls).length === 1, 'g) account edit: a subsequent render/filter action produces zero additional save requests');
+}
+
+// Scenario (g), failure path: "a failed account update is surfaced once."
+async function testAccountMetadataEditHandlerFailure(){
+  const accounts = [fixtureAccount('Acme', {industry:'Old Industry', contactName:'Old Name', contactEmail:'old@example.com'})];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({error:'Save failed'}, {ok:false, status:500});
+    }
+    throw new Error(`unexpected fetch in testAccountMetadataEditHandlerFailure: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const domId = 'acme';
+  const errorEl = {style:{display:'none'}, textContent:''};
+  const domElements = {
+    [`acctEditForm-${domId}`]: {style:{display:'none'}},
+    [`acctEditError-${domId}`]: errorEl,
+    [`acctEditSaveBtn-${domId}`]: {disabled:false, textContent:'Save'},
+    [`acctEditIndustry-${domId}`]: {value:'New Industry'},
+    [`acctEditContactName-${domId}`]: {value:'New Name'},
+    [`acctEditContactEmail-${domId}`]: {value:'new@example.com'}
+  };
+  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements});
+
+  await sandbox.saveAccountMetadataEdit('Acme');
+
+  const calls = fetchImpl.calls;
+  assert(saveUploadCalls(calls).length === 1, 'g) account edit failure: exactly one save attempt was made');
+  assert(errorEl.style.display === 'block' && errorEl.textContent.length > 0, 'g) account edit failure: the failure is surfaced once, inline, next to the form that produced it');
+  const account = sandbox.window.accountRadarAccounts.find(a => a.name === 'Acme');
+  assert(account.industry === 'Old Industry' && account.contactName === 'Old Name', 'g) account edit failure: the in-memory edit is reverted on failure, not left half-applied');
+
+  // No retry is scheduled automatically -- confirm no second save fires later.
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert(saveUploadCalls(fetchImpl.calls).length === 1, 'g) account edit failure: no second background save later fires unprompted');
+}
+
 async function main(){
   await testStandaloneSuccess();
   await testBatchSuccess();
@@ -404,6 +489,8 @@ async function main(){
   await testRefreshAfterCompletionNoSave();
   await testTerminalSaveFails();
   await testTerminalSaveSucceedsNoLaterStale409();
+  await testAccountMetadataEditHandlerSuccess();
+  await testAccountMetadataEditHandlerFailure();
 
   console.log(`\n${failures === 0 ? 'ALL DASHBOARD ORCHESTRATION TESTS PASSED' : `${failures} DASHBOARD ORCHESTRATION TEST(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);

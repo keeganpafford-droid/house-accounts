@@ -183,8 +183,48 @@ export default async function handler(req, res){
   try{
     const body = req.body || {};
     const lead = body.lead || {};
+
+    // Phase 2A implementation-review ROUND 7, item 2 — stage and uploadId
+    // are read BEFORE any identity is resolved, so identity resolution
+    // itself can be gated by them. Unknown stages are rejected immediately,
+    // before touching auth, the database, or anything else.
+    let uploadId = clean(body.uploadId);
+    const stage = clean(body.stage || 'uploaded');
+    if(!ALLOWED_STAGES.has(stage)){
+      return json(res, 400, {error:`Unknown stage "${stage}".`});
+    }
+
+    // ROUND 7, item 2 — identity rules:
+    //   - uploadId present, OR stage is anything other than "uploaded"
+    //     (i.e. accounts_updated / researched / research_updated, every one
+    //     of which either requires an existing upload or IS a write against
+    //     one): a real, verified Bearer token is mandatory, and the
+    //     resulting user must actually own p_upload_id. lead.email is NEVER
+    //     consulted for this branch, let alone trusted as identity — a
+    //     request-supplied email is not authentication, full stop.
+    //   - stage="uploaded" with NO uploadId: the one remaining legitimate
+    //     anonymous-creation case (a genuinely new, not-yet-owned-by-anyone
+    //     upload). A valid token is still preferred and used if present;
+    //     only in its absence does the legacy lead.email upsert apply, and
+    //     only here.
+    // Every one of these failures happens before ANY RPC call or mutation.
+    const requiresAuthenticatedOwner = !!uploadId || stage !== 'uploaded';
     let user = await getUserFromAuth(req);
-    if(!user){
+    if(requiresAuthenticatedOwner){
+      if(!user?.id){
+        return json(res, 401, {error:'A valid session is required to modify an existing upload.'});
+      }
+      if(uploadId){
+        const ownedRows = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id&limit=1`, {method:'GET'});
+        if(!Array.isArray(ownedRows) || !ownedRows.length){
+          return json(res, 403, {error:'You do not have access to this upload.'});
+        }
+      }
+    } else if(!user){
+      // Legacy anonymous-creation flow: stage="uploaded", no uploadId, no
+      // token. lead.email is used ONLY to create/attach a NEW upload's
+      // owner -- it can never target an upload that already exists, because
+      // requiresAuthenticatedOwner is true the moment uploadId is present.
       const email = clean(lead.email).toLowerCase();
       if(!email) return json(res, 401, {error:'Login required'});
       const users = await supabase('ha_users?on_conflict=email', {
@@ -205,15 +245,6 @@ export default async function handler(req, res){
     }
     if(!user?.id) throw new Error('User lookup did not return an id.');
 
-    let uploadId = clean(body.uploadId);
-    const stage = clean(body.stage || 'uploaded');
-
-    // Phase 2A implementation-review ROUND 5, item 2 — reject unknown/invalid
-    // stage strings outright, before any other processing. Do not rely on
-    // the client to send a value from a fixed set; enforce it here.
-    if(!ALLOWED_STAGES.has(stage)){
-      return json(res, 400, {error:`Unknown stage "${stage}".`});
-    }
     const isResearchOutputStage = RESEARCH_OUTPUT_STAGES.has(stage);
     const summary = body.summary || {};
     const rawAccountsForValidation = Array.isArray(body.accounts) ? body.accounts : [];
@@ -251,59 +282,48 @@ export default async function handler(req, res){
       if(stage === ACCOUNTS_MAINTENANCE_STAGE && !uploadId){
         return json(res, 400, {error:'uploadId is required for stage="accounts_updated" -- it is accounts-only maintenance for an upload that already exists, not a way to create one.'});
       }
-      if(uploadId){
-        // Both stages: "must not be usable to overwrite or append research
-        // output to an upload that already has an ACTIVE research run" --
-        // rejected while a currently-running, unexpired attempt exists,
-        // since the client's held account list could be stale relative to
-        // what that active run is about to persist. Checked BEFORE the
-        // uploaded-reuse check below so an in-progress run always surfaces
-        // as "try again shortly" (409), not "wrong stage" (400) -- both
-        // stages are equally blocked by an active run, so there is no
-        // ordering ambiguity to resolve there. A merely COMPLETED run does
-        // not block 'accounts_updated' -- that is precisely the legitimate
-        // case this stage exists for.
-        const activeRuns = await supabase(`ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id&limit=1`, {method:'GET'}).catch(() => []);
-        if(Array.isArray(activeRuns) && activeRuns.length){
-          return json(res, 409, {error:'A research run is currently active for this upload; cannot save an untracked update while research is in progress.'});
-        }
-        if(stage === 'uploaded'){
-          // "uploaded" is initial upload creation ONLY -- reject reuse
-          // against an upload that already has ANY research history
-          // (completed; an active one was already rejected 409 above). A
-          // caller editing accounts on an already-researched upload must
-          // use 'accounts_updated' instead.
-          const anyRuns = await supabase(`ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&select=id&limit=1`, {method:'GET'}).catch(() => []);
-          if(Array.isArray(anyRuns) && anyRuns.length){
-            return json(res, 400, {error:'stage="uploaded" cannot be reused for an upload that already has research history; use stage="accounts_updated" for a post-research account edit.'});
-          }
-        }
-      }
+      // Phase 2A implementation-review ROUND 7, item 3 — the active-run and
+      // research-history checks that used to live here as separate,
+      // `.catch(() => [])`-guarded GET requests are GONE. A failed lookup
+      // used to be silently treated as "no active run" / "no history" --
+      // fail OPEN, exactly backwards for a state gate. Both checks now run
+      // INSIDE replace_ha_accounts_snapshot()'s own advisory-locked
+      // transaction (see supabase-schema-migration-7-mode-scoped-account-writes.sql),
+      // in the SAME call that performs the write, so there is no gap
+      // between "checked" and "wrote," and any failure to establish state
+      // (a thrown RPC error, a network failure) fails the whole request
+      // rather than being interpreted as a green light.
     }
     const trackedAttempt = isResearchOutputStage;
 
     // ===========================================================================
     // UNTRACKED PATH: 'uploaded' or 'accounts_updated' (Phase 2A
-    // implementation-review ROUND 6, item 3) -- the state machine above has
-    // already rejected any request that tries to carry research output,
-    // attempt metadata, or target an upload with an active run. Then
-    // replace_ha_accounts_snapshot() with no attempt parameters, then a
-    // signals insert that will always process zero rows now (signals are
-    // rejected above for both these stages) but is left in place
-    // structurally rather than special-cased further.
+    // implementation-review ROUND 6, item 3; mode-scoped as of ROUND 7, item
+    // 3) -- the state machine above has already rejected any request that
+    // tries to carry research output or attempt metadata. Ownership was
+    // already verified above (ROUND 7, item 2) before this point for any
+    // request carrying uploadId. replace_ha_accounts_snapshot() now performs
+    // the active-run / research-history / account-identity checks itself,
+    // atomically, before writing a single row -- see migration 7. A signals
+    // insert that will always process zero rows now (signals are rejected
+    // above for both these stages) is left in place structurally rather
+    // than special-cased further.
     // ===========================================================================
     if(!trackedAttempt){
       const isAccountsMaintenance = stage === ACCOUNTS_MAINTENANCE_STAGE;
-      let upload;
-      if(isAccountsMaintenance){
-        // Deliberately does NOT touch ha_uploads.stage or .summary --
-        // "must preserve the existing research stage and research summary
-        // rather than overwrite/reset them." uploadId is already guaranteed
-        // present and required by the state machine above; ownership is
-        // independently re-verified by replace_ha_accounts_snapshot()'s own
-        // check below regardless of whether this PATCH runs.
-        upload = { id: uploadId };
-      } else {
+      const accountWriteMode = isAccountsMaintenance ? 'accounts_maintenance' : 'initial_upload';
+      const isNewUpload = !uploadId;
+
+      // A brand-new upload's ha_uploads row must exist before
+      // replace_ha_accounts_snapshot()'s ownership check can pass, so it is
+      // created first (there is nothing to reorder around here -- there is
+      // no prior state for a new row to accidentally overwrite). For an
+      // EXISTING upload, the accounts RPC below now runs BEFORE any
+      // ha_uploads PATCH (see after the RPC call), so a rejection (active
+      // run, reused "uploaded", or an accounts_maintenance identity-lock
+      // violation) leaves ha_uploads completely untouched -- no partial
+      // write on failure.
+      if(isNewUpload){
         const uploadRow = {
           user_id: user.id,
           upload_name: clean(body.uploadName || 'Uploaded account list'),
@@ -312,17 +332,9 @@ export default async function handler(req, res){
           source_page: clean(body.page || body.sourcePage),
           updated_at: new Date().toISOString()
         };
-        if(uploadId){
-          const updated = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
-            method:'PATCH',
-            body: JSON.stringify(uploadRow)
-          });
-          upload = Array.isArray(updated) && updated[0] ? updated[0] : {id: uploadId};
-        } else {
-          const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
-          upload = Array.isArray(inserted) ? inserted[0] : inserted;
-          uploadId = upload.id;
-        }
+        const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
+        const upload = Array.isArray(inserted) ? inserted[0] : inserted;
+        uploadId = upload?.id;
       }
       if(!uploadId) throw new Error('Upload save did not return an id. Confirm ha_uploads table exists.');
 
@@ -331,24 +343,69 @@ export default async function handler(req, res){
       const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
       const accounts = limitResult.accounts;
       const unlockedAccounts = accounts.filter(a => !a._locked);
+      const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
+        account_name: clean(a.name || a.accountName),
+        industry: clean(a.industry),
+        contact_name: clean(a.contactName),
+        contact_email: clean(a.contactEmail).toLowerCase(),
+        metrics: a.metrics || {},
+        raw_data: a.rawData || {}
+      })).filter(a => a.account_name);
+
+      // Phase 2A implementation-review ROUND 7, item 3 — the RPC is ALWAYS
+      // called for an untracked-stage save, even with an empty accounts
+      // array, so the atomic mode-check ALWAYS runs. Previously this call
+      // was skipped entirely when the client sent no accounts, which meant
+      // the (then application-side, now RPC-side) active-run/history checks
+      // never ran for that request either -- harmless in practice (nothing
+      // was written), but it left "the check always runs" not literally
+      // true. An empty p_accounts array is documented, tested RPC behavior
+      // (migration 4 §6a: clears the snapshot to empty) -- not a new risk
+      // introduced here.
       let persistedAccountCount = 0;
-      if(accounts.length){
-        const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
-          account_name: clean(a.name || a.accountName),
-          industry: clean(a.industry),
-          contact_name: clean(a.contactName),
-          contact_email: clean(a.contactEmail).toLowerCase(),
-          metrics: a.metrics || {},
-          raw_data: a.rawData || {}
-        })).filter(a => a.account_name);
-        if(accountPayload.length){
-          const snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
-            method:'POST',
-            prefer:'return=representation',
-            body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload })
-          });
-          persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
+      try{
+        const snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
+          method:'POST',
+          prefer:'return=representation',
+          body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload, p_mode: accountWriteMode })
+        });
+        persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
+      }catch(err){
+        if(err.code === 'HA003'){
+          return json(res, 400, {error:'stage="uploaded" cannot be reused for an upload that already has research history; use stage="accounts_updated" for a post-research account edit.'});
         }
+        if(err.code === 'HA004'){
+          return json(res, 400, {error:'stage="accounts_updated" cannot add, remove, or rename accounts once research history exists for this upload; only contact, industry, metrics, and raw-data edits are permitted for the existing account names.', identityLocked:true});
+        }
+        if(err.code === '55P03'){
+          return json(res, 409, {error:'A research run is currently active for this upload; cannot save an untracked update while research is in progress.'});
+        }
+        if(err.code === '42501'){
+          return json(res, 403, {error:'You do not have access to this upload.'});
+        }
+        throw err;
+      }
+
+      // Only stage="uploaded" ever touches ha_uploads.stage/summary, and
+      // only when the row already existed (a brand-new upload already got
+      // these fields via the INSERT above). accounts_updated NEVER touches
+      // them -- "must preserve the existing research stage and research
+      // summary rather than overwrite/reset them" -- and this now runs
+      // AFTER the accounts RPC has already succeeded, so a rejected RPC
+      // call never leaves a PATCHed ha_uploads row behind it.
+      if(!isAccountsMaintenance && !isNewUpload){
+        const uploadRow = {
+          user_id: user.id,
+          upload_name: clean(body.uploadName || 'Uploaded account list'),
+          stage,
+          summary,
+          source_page: clean(body.page || body.sourcePage),
+          updated_at: new Date().toISOString()
+        };
+        await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method:'PATCH',
+          body: JSON.stringify(uploadRow)
+        });
       }
 
       const rawSignals = [];

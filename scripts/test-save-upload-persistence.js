@@ -56,13 +56,24 @@ function fakeRes(){
 
 const UPLOAD_ID = 'upload-1';
 const USER_ID = 'user-1';
+const OTHER_USER_ID = 'user-2';
+// ROUND 7, item 2: ownership is now checked via a real ha_uploads lookup
+// (id + user_id) BEFORE any RPC/mutation. This map is the mock's source of
+// truth for that lookup; tests that need a "wrong owner" scenario point
+// uploadOwnerMap[UPLOAD_ID] at OTHER_USER_ID instead.
+let uploadOwnerMap = { [UPLOAD_ID]: USER_ID };
 let accountsRpcCalls = [];
 let persistRpcCalls = [];
 let signalsInsertCalls = [];
 let uploadPatchCalls = [];
-let activeRunLookupCalls = [];
-let anyRunLookupCalls = [];
+let uploadOwnershipLookupCalls = [];
 let simulateConflictOnSecondSignal = false;
+// ROUND 7, item 3: simulates a generic/unexpected failure reaching
+// replace_ha_accounts_snapshot (a network error, a dropped connection) --
+// deliberately NOT one of the known HA00x/55P03 error codes, to prove the
+// request fails CLOSED (500, nothing written) rather than being
+// misinterpreted as "no active run" / silently succeeding.
+let simulateAccountsRpcNetworkFailure = false;
 
 // In-memory ha_research_runs fixture. Round 5: persistHaResearchOutput()
 // below now mutates the matched row to status='completed' on success,
@@ -116,28 +127,81 @@ function persistHaResearchOutput(body){
   };
 }
 
+// Phase 2A implementation-review ROUND 7, items 3-4 -- reimplements
+// replace_ha_accounts_snapshot()'s p_mode logic (mode validation, the
+// active-run/research-history checks now performed INSIDE the RPC instead
+// of a separate `.catch(() => [])`-guarded pre-flight query, and the
+// accounts_maintenance account-identity lock), the SAME way
+// persistHaResearchOutput() above reimplements persist_ha_research_output()
+// -- mirroring the real PL/pgSQL function's branches/outcomes so this file
+// exercises the SAME decision logic api/save-upload.js actually depends on,
+// even though it cannot call the real RPC (no DB connection in this
+// session). See supabase-schema-migration-7-mode-scoped-account-writes.sql
+// and scripts/phase2a-rpc-authorization-tests.sql for direct RPC-level
+// coverage of this same logic.
+function replaceHaAccountsSnapshot(body){
+  const mode = body.p_mode;
+  if(!mode || !['initial_upload', 'accounts_maintenance', 'tracked_research'].includes(mode)){
+    return { ok: false, status: 400, body: { message: 'invalid p_mode', code: '22023' } };
+  }
+  const hasHistory = researchRuns.some(r => r.upload_id === body.p_upload_id);
+  if(mode === 'initial_upload' && hasHistory){
+    return { ok: false, status: 400, body: { message: 'upload already has research history', code: 'HA003' } };
+  }
+  if(mode === 'accounts_maintenance'){
+    const now = Date.now();
+    const activeRunning = researchRuns.some(r => r.upload_id === body.p_upload_id && r.status === 'running' && (r.lease_expires_at_ms === undefined || r.lease_expires_at_ms > now));
+    if(activeRunning){
+      return { ok: false, status: 400, body: { message: 'a research run is currently active', code: '55P03' } };
+    }
+    if(hasHistory){
+      const existingNames = new Set(fakeAccounts.filter(a => a.upload_id === body.p_upload_id).map(a => a.account_name));
+      const incomingNames = new Set((body.p_accounts || []).map(a => a.account_name).filter(Boolean));
+      const identical = existingNames.size === incomingNames.size && [...existingNames].every(n => incomingNames.has(n));
+      if(!identical){
+        return { ok: false, status: 400, body: { message: 'accounts_maintenance cannot add, remove, or rename accounts once research history exists', code: 'HA004' } };
+      }
+    }
+  }
+  fakeAccounts = fakeAccounts.filter(a => a.upload_id !== body.p_upload_id);
+  const inserted = [];
+  for(const a of (body.p_accounts || [])){
+    if(!a.account_name) continue;
+    const row = { upload_id: body.p_upload_id, account_name: a.account_name, industry: a.industry, contact_name: a.contact_name, contact_email: a.contact_email };
+    fakeAccounts.push(row);
+    inserted.push(row);
+  }
+  return { ok: true, status: 200, body: inserted };
+}
+
 function mockFetch(){
   return async (url, options = {}) => {
     const u = String(url);
     if(u.includes('/auth/v1/user')) return jsonResponse({ id: 'auth-1', email: 'qa@example.com' });
     if(u.includes('/rest/v1/ha_users?auth_user_id=eq.')) return jsonResponse([{ id: USER_ID, email: 'qa@example.com', organization_id: null }]);
+    if(u.includes('/rest/v1/ha_users?on_conflict=email') && options.method === 'POST'){
+      // The legacy anonymous lead.email upsert path (Auth 6) -- a genuinely
+      // NEW anonymous upload with no token. Returns a fresh user id derived
+      // from the submitted email so it's distinguishable from USER_ID.
+      const [row] = JSON.parse(options.body);
+      return jsonResponse([{ id: `anon-${row.email}`, email: row.email, organization_id: null }]);
+    }
+    // ROUND 7, item 2: the ownership pre-check, performed BEFORE any
+    // RPC/mutation whenever uploadId is present. Distinguished from the
+    // PATCH/POST handlers below by method (GET) and by carrying
+    // "user_id=eq." in the query string.
+    if(u.includes('/rest/v1/ha_uploads') && u.includes('user_id=eq.') && (!options.method || options.method === 'GET')){
+      uploadOwnershipLookupCalls.push(u);
+      const idMatch = u.match(/id=eq\.([^&]+)/);
+      const userMatch = u.match(/user_id=eq\.([^&]+)/);
+      const qUploadId = idMatch ? decodeURIComponent(idMatch[1]) : null;
+      const qUserId = userMatch ? decodeURIComponent(userMatch[1]) : null;
+      const owns = qUploadId && qUserId && uploadOwnerMap[qUploadId] === qUserId;
+      return jsonResponse(owns ? [{ id: qUploadId }] : []);
+    }
     if(u.includes('/rest/v1/ha_uploads') && options.method === 'PATCH'){ uploadPatchCalls.push(JSON.parse(options.body)); return jsonResponse([{ id: UPLOAD_ID }]); }
     if(u.includes('/rest/v1/ha_uploads') && options.method === 'POST') return jsonResponse([{ id: UPLOAD_ID }]);
     if(u.includes('/rest/v1/ha_organizations')) return jsonResponse([]);
-    if(u.includes('/rest/v1/ha_research_runs') && u.includes('status=eq.running') && (!options.method || options.method === 'GET')){
-      activeRunLookupCalls.push(u);
-      const now = Date.now();
-      const active = researchRuns.filter(r => r.upload_id === UPLOAD_ID && r.status === 'running' && (r.lease_expires_at_ms === undefined || r.lease_expires_at_ms > now));
-      return jsonResponse(active.map(r => ({ id: r.id || 'run-row' })));
-    }
-    if(u.includes('/rest/v1/ha_research_runs') && (!options.method || options.method === 'GET')){
-      // The "any runs at all" lookup for stage="uploaded" reuse-rejection
-      // (ROUND 6, item 3) -- deliberately unfiltered by status, unlike the
-      // active-run lookup above.
-      anyRunLookupCalls.push(u);
-      const any = researchRuns.filter(r => r.upload_id === UPLOAD_ID);
-      return jsonResponse(any.map(r => ({ id: r.id || 'run-row' })));
-    }
     if(u.includes('/rest/v1/rpc/persist_ha_research_output')){
       const body = JSON.parse(options.body);
       persistRpcCalls.push(body);
@@ -147,8 +211,13 @@ function mockFetch(){
     if(u.includes('/rest/v1/rpc/replace_ha_accounts_snapshot')){
       const body = JSON.parse(options.body);
       accountsRpcCalls.push(body);
-      const returned = (body.p_accounts || []).map((a, i) => ({ id: `acct-${i}`, upload_id: body.p_upload_id, account_name: a.account_name }));
-      return jsonResponse(returned);
+      if(simulateAccountsRpcNetworkFailure){
+        // A real network/connection failure -- fetch() itself rejects, no
+        // response object at all. NOT one of the known HA00x/55P03 codes.
+        throw new Error('simulated network failure reaching replace_ha_accounts_snapshot');
+      }
+      const result = replaceHaAccountsSnapshot(body);
+      return jsonResponse(result.body, result.ok, result.status);
     }
     if(u.includes('/rest/v1/ha_signals')){
       const body = JSON.parse(options.body);
@@ -166,11 +235,20 @@ function mockFetch(){
 function fakeReq(body){
   return { method: 'POST', headers: { authorization: 'Bearer valid-token' }, body };
 }
+// ROUND 7, item 2 -- no Authorization header at all, simulating a request
+// with no session token (authFetchUser() returns null immediately without
+// even reaching the mock's /auth/v1/user handler, exactly like the real
+// api/save-upload.js's authFetchUser() does when req.headers.authorization
+// is empty).
+function fakeReqNoAuth(body){
+  return { method: 'POST', headers: {}, body };
+}
 
 function resetAll(){
-  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; activeRunLookupCalls = []; anyRunLookupCalls = [];
+  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; uploadOwnershipLookupCalls = [];
+  uploadOwnerMap = { [UPLOAD_ID]: USER_ID };
   researchRuns = []; fakeAccounts = []; fakeSignals = []; fakeUploadState = { stage: 'uploaded', summary: {} };
-  simulateConflictOnSecondSignal = false; logLines = [];
+  simulateConflictOnSecondSignal = false; simulateAccountsRpcNetworkFailure = false; logLines = [];
   global.fetch = mockFetch();
 }
 
@@ -187,6 +265,159 @@ console.log = captureLog(originalConsoleLog);
 console.warn = captureLog(originalConsoleWarn);
 
 async function run(){
+  // =========================================================================
+  // Phase 2A implementation-review ROUND 7, item 2: identity/authentication
+  // rules. All seven required scenarios. "All existing-upload failures must
+  // occur before any RPC or mutation" is asserted directly via
+  // accountsRpcCalls/persistRpcCalls/uploadPatchCalls staying empty.
+  // =========================================================================
+
+  // Auth 1: no token + existing uploadId + correct owner email -- rejected.
+  // A request-supplied email is not authentication, full stop, the moment
+  // uploadId is present.
+  {
+    resetAll();
+    const req = fakeReqNoAuth({
+      lead: { email: 'qa@example.com' }, // the REAL owner's email
+      uploadId: UPLOAD_ID,
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 401, 'Auth 1: no token + existing uploadId + correct owner email is rejected 401 -- the email is never consulted as identity once uploadId is present');
+    assert(uploadOwnershipLookupCalls.length === 0 && accountsRpcCalls.length === 0 && uploadPatchCalls.length === 0, 'Auth 1: rejected before any ownership lookup, RPC, or mutation');
+  }
+
+  // Auth 2: no token + stage=accounts_updated -- rejected (authentication is
+  // mandatory for every stage other than "uploaded", independent of
+  // whether uploadId happens to be present too).
+  {
+    resetAll();
+    const req = fakeReqNoAuth({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 401, 'Auth 2: no token + stage="accounts_updated" is rejected 401');
+    assert(accountsRpcCalls.length === 0, 'Auth 2: rejected before any RPC call');
+  }
+
+  // Auth 3: spoofed owner email + another user's upload -- rejected the
+  // same way as Auth 1, regardless of what the supplied email claims to be.
+  // (There is no separate "spoofed" code path to test -- the point IS that
+  // email content is irrelevant here; this scenario is Auth 1 restated with
+  // an explicitly adversarial framing to make that explicit.)
+  {
+    resetAll();
+    const req = fakeReqNoAuth({
+      lead: { email: 'qa@example.com', name: 'Attacker pretending to be the owner' },
+      uploadId: UPLOAD_ID,
+      stage: 'uploaded',
+      accounts: [{ name: 'Hijacked Accounts', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 401, 'Auth 3: a spoofed/correct-looking owner email with no token is still rejected 401 against an existing upload');
+    assert(accountsRpcCalls.length === 0, 'Auth 3: nothing was written');
+  }
+
+  // Auth 4: valid token + wrong upload owner -- rejected 403. The token
+  // resolves to a real, authenticated user (USER_ID, per the mock's fixed
+  // /auth/v1/user + ha_users responses) but that user does not own
+  // UPLOAD_ID in this scenario (ownership transferred to OTHER_USER_ID).
+  {
+    resetAll();
+    uploadOwnerMap[UPLOAD_ID] = OTHER_USER_ID;
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 403, 'Auth 4: a valid token whose user does not own the target upload is rejected 403');
+    assert(uploadOwnershipLookupCalls.length === 1, 'Auth 4: the ownership lookup was actually performed');
+    assert(accountsRpcCalls.length === 0, 'Auth 4: rejected before any RPC call');
+  }
+
+  // Auth 5: valid owner token -- succeeds normally.
+  {
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      uploadName: 'Auth 5',
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 200, 'Auth 5: a valid token whose user DOES own the target upload succeeds');
+    assert(uploadOwnershipLookupCalls.length === 1 && accountsRpcCalls.length === 1, 'Auth 5: the ownership lookup ran, then the RPC ran');
+  }
+
+  // Auth 6: anonymous new-upload request with NO uploadId -- the one
+  // remaining legitimate case for the legacy lead.email fallback. Still
+  // succeeds, exactly as before this round.
+  {
+    resetAll();
+    const req = fakeReqNoAuth({
+      lead: { email: 'brand-new-anonymous@example.com', name: 'New Lead' },
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 200, 'Auth 6: an anonymous stage="uploaded" request with NO uploadId (genuinely new upload) still succeeds via the legacy lead.email fallback');
+  }
+
+  // Auth 7: anonymous request that ATTEMPTS to provide an uploadId -- this
+  // is the core fix. Before this round, this succeeded via the lead.email
+  // fallback (the exact gap item 2 closes): anyone who knew (or guessed) an
+  // upload's owner's email could fully overwrite that upload's accounts
+  // with no token at all. Now it is rejected 401 like any other
+  // uploadId-present request with no token.
+  {
+    resetAll();
+    const req = fakeReqNoAuth({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 401, 'Auth 7: an anonymous request that supplies uploadId is rejected 401 -- lead.email can never target an EXISTING upload, only create a new one');
+    assert(accountsRpcCalls.length === 0, 'Auth 7: nothing was written');
+  }
+
+  // =========================================================================
+  // Phase 2A implementation-review ROUND 7, item 3: fail-closed on a
+  // database/RPC failure. A generic, unrecognized failure reaching
+  // replace_ha_accounts_snapshot() (simulating a network error or dropped
+  // connection -- NOT one of the known HA00x/55P03 codes) must reject the
+  // whole request (500), never be interpreted as "no active run" / success.
+  // =========================================================================
+  {
+    resetAll();
+    simulateAccountsRpcNetworkFailure = true;
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'uploaded',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 500, 'Fail-closed: an unrecognized failure reaching replace_ha_accounts_snapshot() rejects the whole request (500), not 200');
+    assert(fakeAccounts.length === 0, 'Fail-closed: nothing was written when the state-check/write call itself failed');
+  }
+
   // =========================================================================
   // UNTRACKED PATH (stage='uploaded'): the ONLY untracked stage.
   // =========================================================================
@@ -276,6 +507,19 @@ async function run(){
   }
 
   // 5. stage=uploaded against an upload with an ACTIVE run is rejected.
+  // ROUND 7, item 3: p_mode=initial_upload's ONLY state check is "does this
+  // upload have ANY research history" (per the user's exact mode spec, it
+  // has no separate active-run check of its own) -- an active run counts as
+  // history, so this is rejected the same way as a completed one (HA003,
+  // 400), not a distinct 409. This is actually MORE correct than a
+  // dedicated 409 would be here: once ANY research has happened for this
+  // upload, stage="uploaded" is wrong regardless of whether that run is
+  // still active or has since completed -- retrying the SAME stage later
+  // would never succeed either way, so "try again" (409) would be
+  // misleading; "use a different stage" (400) is the accurate signal.
+  // stage="accounts_updated" (test 6e below) is the one that gets a
+  // dedicated 409 for an active run, because retrying accounts_updated
+  // later legitimately DOES succeed once the run completes.
   {
     resetAll();
     researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-active', lease_expires_at_ms: Date.now() + 300000 }];
@@ -287,9 +531,9 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 409, 'stage="uploaded" against an upload with a currently ACTIVE research run is rejected 409 -- it must not overwrite/append while research is in flight');
-    assert(accountsRpcCalls.length === 0, 'nothing was written for the active-run case');
-    assert(activeRunLookupCalls.length === 1, 'the active-run lookup was actually performed, not skipped');
+    assert(res.statusCode === 400, 'stage="uploaded" against an upload with a currently ACTIVE research run is rejected 400 (HA003, "already has research history") -- it must not overwrite/append while research is in flight or ever again for this stage');
+    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_mode === 'initial_upload', 'ROUND 7 item 3: the history check now runs INSIDE replace_ha_accounts_snapshot() (p_mode=initial_upload) -- the RPC IS called (and rejects with HA003), not skipped by a separate pre-flight check');
+    assert(fakeAccounts.length === 0, 'nothing was written for the active-run case');
   }
 
   // 6. Phase 2A implementation-review ROUND 6, item 3 — stage="uploaded" is
@@ -309,8 +553,8 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     assert(res.statusCode === 400, 'ROUND 6 item 3: stage="uploaded" cannot be reused for an upload that already has research history (even a merely completed run) -- it is initial-creation-only now');
-    assert(accountsRpcCalls.length === 0, 'nothing was written for the rejected reused-uploaded request');
-    assert(anyRunLookupCalls.length === 1, 'the any-research-history lookup was actually performed, not skipped');
+    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_mode === 'initial_upload', 'ROUND 7 item 3: the reuse-rejection now runs INSIDE replace_ha_accounts_snapshot() (p_mode=initial_upload) -- the RPC IS called (and rejects with HA003), not skipped by a separate pre-flight check');
+    assert(fakeAccounts.length === 0, 'nothing was written for the rejected reused-uploaded request');
   }
 
   // =========================================================================
@@ -393,29 +637,33 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     assert(res.statusCode === 409, 'stage="accounts_updated" against an upload with a currently ACTIVE research run is rejected 409');
-    assert(accountsRpcCalls.length === 0, 'nothing was written while a run is active');
+    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_mode === 'accounts_maintenance', 'ROUND 7 item 3: the active-run check now runs INSIDE replace_ha_accounts_snapshot() (p_mode=accounts_maintenance) -- the RPC IS called (and rejects with 55P03), not skipped by a separate pre-flight check');
+    assert(fakeAccounts.length === 0, 'nothing was written while a run is active');
   }
 
   // 6f-6h. accounts_updated after a COMPLETED run: succeeds, changes ONLY
-  // the account snapshot, does not touch ha_signals, does not change the
-  // completed research run, and does not replace/erase the prior research
-  // summary or reset the upload to an initial/unresearched state.
+  // the account snapshot (same account name, updated fields -- a rename
+  // would now be rejected by the ROUND 7 identity lock, see tests 50-52
+  // below), does not touch ha_signals, does not change the completed
+  // research run, and does not replace/erase the prior research summary or
+  // reset the upload to an initial/unresearched state.
   {
     resetAll();
     const priorSummary = { accountCount: 3, reasonsToReachOut: 7, highConfidenceAccounts: 2 };
     fakeUploadState = { stage: 'researched', summary: priorSummary };
     fakeSignals = [{ user_id: USER_ID, event_fingerprint: 'preexisting-fingerprint' }];
+    fakeAccounts = [{ upload_id: UPLOAD_ID, account_name: 'Stable Account', industry: 'Old Industry' }];
     researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'completed', attempt_id: 'attempt-done', completed_at: new Date().toISOString(), lease_expires_at_ms: Date.now() - 1000, result_summary: { accountsPersisted: 3, signalsPersisted: 1 } }];
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       stage: 'accounts_updated',
-      accounts: [{ name: 'Edited Account Name', signals: [] }]
+      accounts: [{ name: 'Stable Account', industry: 'New Industry', signals: [] }]
     });
     const res = fakeRes();
     await handler(req, res);
     assert(res.statusCode === 200, '6f) stage="accounts_updated" against an upload with a COMPLETED (not active) run succeeds');
-    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_accounts[0].account_name === 'Edited Account Name', '6f) the account snapshot was updated via replace_ha_accounts_snapshot');
+    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_accounts[0].account_name === 'Stable Account', '6f) the account snapshot was updated via replace_ha_accounts_snapshot');
     assert(uploadPatchCalls.length === 0, '6g) accounts_updated never issues a PATCH to ha_uploads -- it does not touch stage/summary at all, by construction');
     assert(fakeUploadState.stage === 'researched' && fakeUploadState.summary === priorSummary, '6g) the existing research stage and research summary are preserved exactly, not overwritten or reset to an initial/unresearched state');
     assert(signalsInsertCalls.length === 0 && fakeSignals.length === 1 && fakeSignals[0].event_fingerprint === 'preexisting-fingerprint', '6h) ha_signals is completely untouched by an accounts_updated save');
@@ -665,6 +913,134 @@ async function run(){
     assert(accountsRpcCalls.length === 0 && signalsInsertCalls.length === 0, 'the tracked path never calls replace_ha_accounts_snapshot or the plain ha_signals insert directly');
     assert(persistRpcCalls.length === 1, 'exactly one consolidated, self-finalizing call handles accounts + signals + upload-state + completion');
   }
+
+  // =========================================================================
+  // Phase 2A implementation-review ROUND 7, item 4: account-identity lock.
+  // accounts_updated after research history exists is metadata-only.
+  // =========================================================================
+  function seedResearchedUploadWithTwoAccounts(){
+    fakeAccounts = [
+      { upload_id: UPLOAD_ID, account_name: 'Alpha Co', industry: 'Old Industry', contact_email: 'old@example.com' },
+      { upload_id: UPLOAD_ID, account_name: 'Beta Co', industry: 'Other Industry' }
+    ];
+    fakeSignals = [{ user_id: USER_ID, event_fingerprint: 'fp-alpha' }];
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'completed', attempt_id: 'attempt-done', completed_at: new Date().toISOString(), lease_expires_at_ms: Date.now() - 1000, result_summary: { accountsPersisted: 2 } }];
+  }
+
+  // Identity 1: a contact-field update succeeds.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [
+        { name: 'Alpha Co', industry: 'Old Industry', contactEmail: 'new@example.com', signals: [] },
+        { name: 'Beta Co', industry: 'Other Industry', signals: [] }
+      ]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 200, 'Identity 1: a contact-email-only update (same account_name set) succeeds');
+    assert(fakeAccounts.find(a => a.account_name === 'Alpha Co').contact_email === 'new@example.com', 'Identity 1: the contact email was actually updated');
+  }
+
+  // Identity 2: an industry update succeeds.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [
+        { name: 'Alpha Co', industry: 'Brand New Industry', signals: [] },
+        { name: 'Beta Co', industry: 'Other Industry', signals: [] }
+      ]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 200, 'Identity 2: an industry-only update (same account_name set) succeeds');
+    assert(fakeAccounts.find(a => a.account_name === 'Alpha Co').industry === 'Brand New Industry', 'Identity 2: the industry was actually updated');
+  }
+
+  // Identity 3: a rename is rejected.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [
+        { name: 'Alpha Co Renamed', industry: 'Old Industry', signals: [] },
+        { name: 'Beta Co', industry: 'Other Industry', signals: [] }
+      ]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'Identity 3: renaming an account (Alpha Co -> Alpha Co Renamed) is rejected 400 (HA004)');
+    assert(fakeAccounts.some(a => a.account_name === 'Alpha Co') && !fakeAccounts.some(a => a.account_name === 'Alpha Co Renamed'), 'Identity 3: nothing was written -- the original account name is untouched');
+  }
+
+  // Identity 4: an addition is rejected.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [
+        { name: 'Alpha Co', industry: 'Old Industry', signals: [] },
+        { name: 'Beta Co', industry: 'Other Industry', signals: [] },
+        { name: 'Gamma Co', industry: 'New', signals: [] }
+      ]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'Identity 4: adding a new account (Gamma Co) is rejected 400 (HA004)');
+    assert(!fakeAccounts.some(a => a.account_name === 'Gamma Co'), 'Identity 4: the addition was not written');
+  }
+
+  // Identity 5: a removal is rejected.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [
+        { name: 'Alpha Co', industry: 'Old Industry', signals: [] }
+      ]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'Identity 5: removing an account (Beta Co) is rejected 400 (HA004)');
+    assert(fakeAccounts.some(a => a.account_name === 'Beta Co'), 'Identity 5: Beta Co was not removed');
+  }
+
+  // Identity 6: signals remain associated with the unchanged account names
+  // after all three rejected identity-changing attempts above.
+  {
+    resetAll();
+    seedResearchedUploadWithTwoAccounts();
+    await handler(fakeReq({ lead: { email: 'qa@example.com' }, uploadId: UPLOAD_ID, stage: 'accounts_updated', accounts: [{ name: 'Alpha Co Renamed', signals: [] }, { name: 'Beta Co', signals: [] }] }), fakeRes());
+    await handler(fakeReq({ lead: { email: 'qa@example.com' }, uploadId: UPLOAD_ID, stage: 'accounts_updated', accounts: [{ name: 'Alpha Co', signals: [] }, { name: 'Beta Co', signals: [] }, { name: 'Gamma Co', signals: [] }] }), fakeRes());
+    await handler(fakeReq({ lead: { email: 'qa@example.com' }, uploadId: UPLOAD_ID, stage: 'accounts_updated', accounts: [{ name: 'Alpha Co', signals: [] }] }), fakeRes());
+    assert(fakeSignals.some(s => s.event_fingerprint === 'fp-alpha'), 'Identity 6: the signal originally associated with Alpha Co is still present, unaffected by any of the rejected identity-changing attempts');
+    assert(fakeAccounts.length === 2 && fakeAccounts.some(a => a.account_name === 'Alpha Co') && fakeAccounts.some(a => a.account_name === 'Beta Co'), 'Identity 6: the account set is exactly as it was -- Alpha Co and Beta Co, nothing added/removed/renamed');
+  }
+
+  // Note: the only way to actually change which accounts exist for an
+  // already-researched upload is a genuinely new upload/version, or a
+  // rerun -- both explicitly out of scope for this phase (see migration 7
+  // §5, migration 4 §4). stage="uploaded" itself is rejected once history
+  // exists (test 6 above), and accounts_updated is identity-locked (tests
+  // Identity 3-5 above) -- there is no server-side pathway left that can
+  // change the account_name set once research history exists.
 
   global.fetch = originalFetch;
   console.log = originalConsoleLog;
