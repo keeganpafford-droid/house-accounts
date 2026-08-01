@@ -58,62 +58,205 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
   return slice;
 }
 
+// Same guarantee as extractFn(), for a non-function source block (the
+// delegated click listener is a bare `document.addEventListener(...)`
+// statement, not a named function declaration).
+function extractRaw(label, startLine, endLine, expectedPrefix){
+  const slice = LINES.slice(startLine - 1, endLine).join('\n');
+  if(!slice.startsWith(expectedPrefix)){
+    throw new Error(`extractRaw(${label}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-dashboard-orchestration.js.`);
+  }
+  const lastLine = slice.trimEnd();
+  if(!lastLine.endsWith('});')){
+    throw new Error(`extractRaw(${label}): dashboard/index.html line ${endLine} does not close the block as expected -- update the line range.`);
+  }
+  return slice;
+}
+
 // ===========================================================================
 // Real orchestration source, extracted verbatim from dashboard/index.html.
+// ROUND 8, item 1/2: also includes the account-card markup generator
+// (renderDetailedAccountViews), the collision-safe card/panel lookup
+// helpers (accountCardFor/accountSignalsPanel), the delegated click
+// listener that replaced the old inline onclick="..." handlers, and the
+// REAL escapeHtml() (previously a no-op stub here -- the security tests
+// below specifically need genuine HTML escaping, not a pass-through).
 // ===========================================================================
 const REAL_SOURCE = [
   extractFn('claimAutomaticResearchRun', 2118, 2126, {async: true}),
   extractFn('heartbeatCurrentResearchRun', 2146, 2158, {async: true}),
   extractFn('reportResearchRunOutcome', 2167, 2187, {async: true}),
-  extractFn('getAccountsForResearch', 3828, 3841),
-  extractFn('batchPayloadForAccounts', 3843, 3887),
-  extractFn('applyBusinessSignalAccountBoost', 3890, 3898),
-  extractFn('researchAccountByName', 3692, 3823, {async: true}),
-  extractFn('researchAccountsBatch', 3900, 3987, {async: true}),
-  extractFn('signalTopicKeyClient', 3989, 3997),
-  extractFn('dedupeSignalsClient', 3999, 4012),
-  extractFn('researchTopAccounts', 4014, 4144, {async: true}),
-  extractFn('refreshOpportunityViews', 4245, 4264),
-  extractFn('serializeAccountForStorage', 5635, 5677),
-  extractFn('performSaveCurrentUpload', 5687, 5782, {async: true}),
-  extractFn('saveCurrentUpload', 5791, 5795),
-  extractFn('toggleAccountMetadataEdit', 5800, 5807),
-  extractFn('saveAccountMetadataEdit', 5824, 5861, {async: true}),
-  extractFn('importedContactsFromRecords', 5874, 5890)
+  extractFn('normalizeSavedAccount', 2301, 2356),
+  extractFn('accountCardFor', 3137, 3139),
+  extractFn('accountSignalsPanel', 3140, 3143),
+  extractFn('researchAccountByName', 3711, 3842, {async: true}),
+  extractFn('getAccountsForResearch', 3847, 3860),
+  extractFn('batchPayloadForAccounts', 3862, 3906),
+  extractFn('applyBusinessSignalAccountBoost', 3909, 3917),
+  extractFn('researchAccountsBatch', 3919, 4006, {async: true}),
+  extractFn('signalTopicKeyClient', 4008, 4016),
+  extractFn('dedupeSignalsClient', 4018, 4031),
+  extractFn('researchTopAccounts', 4033, 4163, {async: true}),
+  extractFn('refreshOpportunityViews', 4264, 4283),
+  extractFn('renderDetailedAccountViews', 5576, 5644),
+  extractFn('serializeAccountForStorage', 5654, 5696),
+  extractFn('performSaveCurrentUpload', 5706, 5801, {async: true}),
+  extractFn('saveCurrentUpload', 5810, 5814),
+  extractFn('toggleAccountMetadataEdit', 5822, 5829),
+  extractFn('saveAccountMetadataEdit', 5851, 5888, {async: true}),
+  extractRaw('delegatedClickListener', 5905, 5927, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 5940, 5956),
+  extractFn('escapeHtml', 6120, 6123)
 ].join('\n\n');
 
 // ===========================================================================
 // Stubs: ONLY pure DOM-rendering or account-classification helpers that the
 // real functions above call into but which have no bearing on
-// save/heartbeat/claim invocation counts -- the thing under test.
+// save/heartbeat/claim invocation counts, OR on the account-name-escaping
+// safety the ROUND 8 security tests check -- the two things under test.
 // ===========================================================================
 const STUB_SOURCE = `
-// DOM string-rendering only; irrelevant to which/how-many network calls fire.
-function escapeHtml(text){ return String(text == null ? '' : text); }
-function accountDomId(name){ return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
 function renderVerifiedSignals(signals){ return ''; }
-function renderDetailedAccountViews(accounts){}
 function renderResearchDiagnostics(){}
 function renderWeeklyPrioritiesFeed(opportunities, accounts){ return {displayedOpportunities: opportunities}; }
 function calculateRevenueContext(accounts, opportunities){ return {historicalRevenue:0, historicalOpps:0, newBusinessOpps:0, totalReasons:0}; }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){ return accounts; }
-function assignOpportunityScore(opp, account){}
+function assignOpportunityScore(opp, account){ return opp; }
 function getOpportunityScore(opp){ return 0; }
 function sortDailyReasons(opps){ return opps; }
 function dedupeOpportunities(items){ return items; }
+function dedupeVerifiedSignals(signals){ return signals || []; }
+function recommendationBadgeMeta(o){ return {label:'Reach Out'}; }
+function buyingConversationLabel(o){ return ''; }
+function recommendationOneLine(o){ return ''; }
+function reasonListMeta(o){ return ''; }
+function suggestedIntroductionPath(o){ return ''; }
+function renderPipelineTable(pipeline){ return ''; }
 function fmtMoney(n){ return String(n); }
 function addSignalDerivedOpportunities(account, signals){}
 function getResearchDiagnostics(){ window.researchDiagnostics = window.researchDiagnostics || []; return window.researchDiagnostics; }
 // Account-classification heuristics -- deliberately fixed/deterministic so
 // every test account takes the SAME code path (enhancedPublicMode /
 // warm-account) regardless of fixture shape; which endpoint/mode string is
-// chosen is orthogonal to how many times save/heartbeat/claim fire.
+// chosen is orthogonal to how many times save/heartbeat/claim fire, and
+// orthogonal to the escaping-safety the ROUND 8 tests check.
 function deriveAccountIntelligenceMode(accountOrRecords){ return 'warm'; }
 function isWarmAccount(account){ return true; }
 function extractEmailDomain(email){ return String(email || '').split('@')[1] || ''; }
 async function loadDashboardUsage(){ return null; }
 function getSavedLead(){ return null; }
 `;
+
+// ===========================================================================
+// ROUND 8, item 1/2 -- a small, real (not faked) DOM sufficient for
+// accountCardFor()/accountSignalsPanel()/the delegated click listener
+// (all REAL extracted code, see REAL_SOURCE above) to run against.
+//
+// CSS.escape: the exact CSSOM spec algorithm (the same one every browser
+// implements), not a simplified approximation -- this is what
+// accountCardFor()'s real, extracted code calls directly
+// (`.account-card[data-account-name="${CSS.escape(accountName)}"]`), so if
+// this were wrong in a way that mattered, the security property under test
+// would not actually be verified.
+// ===========================================================================
+function cssEscape(value){
+  const string = String(value);
+  const length = string.length;
+  let result = '';
+  let index = 0;
+  const firstCodeUnit = string.charCodeAt(0);
+  while(index < length){
+    const codeUnit = string.charCodeAt(index);
+    if(codeUnit === 0x0000){ result += '�'; index++; continue; }
+    if(
+      (codeUnit >= 0x0001 && codeUnit <= 0x001F) || codeUnit === 0x007F ||
+      (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+      (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002D)
+    ){
+      result += '\\' + codeUnit.toString(16) + ' ';
+      index++; continue;
+    }
+    if(index === 0 && length === 1 && codeUnit === 0x002D){
+      result += '\\' + string.charAt(index);
+      index++; continue;
+    }
+    if(
+      codeUnit >= 0x0080 || codeUnit === 0x002D || codeUnit === 0x005F ||
+      (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+      (codeUnit >= 0x0041 && codeUnit <= 0x005A) ||
+      (codeUnit >= 0x0061 && codeUnit <= 0x007A)
+    ){
+      result += string.charAt(index);
+      index++; continue;
+    }
+    result += '\\' + string.charAt(index);
+    index++;
+  }
+  return result;
+}
+
+// A minimal element: attributes, a class list, a parent pointer, and
+// enough of querySelector/querySelectorAll/closest/dataset to run the real
+// accountCardFor()/accountSignalsPanel()/delegated-click-listener code
+// against a hand-built tree (built explicitly by each test, not by parsing
+// an HTML string -- see the Part A tests below for the separate, purely
+// string-based proof that the REAL renderDetailedAccountViews() output
+// contains no executable-JS-context injection).
+class FakeEl {
+  constructor(tag, attrs = {}, children = []){
+    this.tag = tag;
+    this.attrs = { ...attrs };
+    this.children = [];
+    this.parent = null;
+    children.forEach(c => this.appendChild(c));
+  }
+  appendChild(child){ child.parent = this; this.children.push(child); return child; }
+  get dataset(){
+    const ds = {};
+    for(const k of Object.keys(this.attrs)){
+      if(k.startsWith('data-')){
+        const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        ds[camel] = this.attrs[k];
+      }
+    }
+    return ds;
+  }
+  matches(selector){ return elementMatchesSelector(this, selector); }
+  closest(selector){
+    let el = this;
+    while(el){ if(el.matches(selector)) return el; el = el.parent; }
+    return null;
+  }
+  querySelectorAll(selector){
+    const out = [];
+    (function walk(el){ for(const c of el.children){ if(c.matches(selector)) out.push(c); walk(c); } })(this);
+    return out;
+  }
+  querySelector(selector){ return this.querySelectorAll(selector)[0] || null; }
+}
+// Selector grammar supported: one or more `.class` segments plus an
+// optional single `[attr="value"]` clause -- exactly what
+// accountCardFor()/accountSignalsPanel()/the delegated listener actually
+// use. The attribute clause is matched by re-escaping each candidate's
+// real attribute value with the SAME cssEscape() used above and comparing
+// it, byte for byte, against the raw text captured from the selector --
+// this is what proves a crafted account name cannot alter which element
+// the selector matches (it either produces the correct escaped
+// comparison, or it doesn't match at all; there is no way for it to be
+// interpreted as selector syntax).
+function elementMatchesSelector(el, selector){
+  const classes = [...selector.matchAll(/\.([a-zA-Z0-9_-]+)/g)].map(m => m[1]);
+  const elClasses = String(el.attrs.class || '').split(/\s+/).filter(Boolean);
+  for(const c of classes){ if(!elClasses.includes(c)) return false; }
+  const attrMatch = selector.match(/\[([a-zA-Z0-9_-]+)="((?:[^"\\]|\\.)*)"\]/);
+  if(attrMatch){
+    const [, attrName, rawSelectorValue] = attrMatch;
+    const actual = attrName.startsWith('data-') ? el.dataset[attrName.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] : el.attrs[attrName];
+    if(actual === undefined || actual === null) return false;
+    if(cssEscape(String(actual)) !== rawSelectorValue) return false;
+  }
+  return true;
+}
 
 // ===========================================================================
 // Sandbox factory: fresh vm context per test so no state leaks between
@@ -137,9 +280,15 @@ var autoResearchStarted = true;
 `;
 }
 
-function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl, domElements = {}}){
+function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl, domElements = {}, fakeDomRoot}){
   const consoleLog = { warn: [], error: [], log: [] };
   const houseAuth = { authHeaders: (h) => h || {} };
+  // A fake #accountList element that just captures whatever
+  // renderDetailedAccountViews() assigns to .innerHTML as a plain string --
+  // used by the Part A markup-safety tests below, which inspect that raw
+  // string directly rather than parsing it back into a DOM.
+  const accountListEl = { _html: '', get innerHTML(){ return this._html; }, set innerHTML(v){ this._html = v; } };
+  const root = fakeDomRoot || new FakeEl('body');
   const sandbox = {
     window: {
       accountRadarAccounts: accounts,
@@ -148,12 +297,22 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
       location: { href: 'https://example.com/dashboard' }
     },
     HouseAuth: houseAuth,
+    CSS: { escape: cssEscape },
     // domElements lets a test feed fake form-input/DOM-node objects
     // (each just a plain {value}/{style}/{textContent}/{disabled} object)
     // keyed by id, so saveAccountMetadataEdit()/toggleAccountMetadataEdit()
     // -- which read real form values via document.getElementById -- can be
-    // exercised with real "typed" input, not bypassed.
-    document: { getElementById: (id) => (Object.prototype.hasOwnProperty.call(domElements, id) ? domElements[id] : null) },
+    // exercised with real "typed" input, not bypassed. 'accountList' is
+    // special-cased to the innerHTML-capturing element above.
+    document: {
+      getElementById: (id) => {
+        if(id === 'accountList') return accountListEl;
+        return Object.prototype.hasOwnProperty.call(domElements, id) ? domElements[id] : null;
+      },
+      querySelector: (selector) => root.querySelector(selector),
+      querySelectorAll: (selector) => root.querySelectorAll(selector),
+      addEventListener: (type, handler) => { if(type === 'click') sandbox.__clickHandler = handler; }
+    },
     fetch: fetchImpl,
     console: {
       log: (...a) => consoleLog.log.push(a),
@@ -168,6 +327,8 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
   const fullSource = `${initSource}\n${STUB_SOURCE}\n${REAL_SOURCE}\n`;
   new vm.Script(fullSource, {filename: 'dashboard-orchestration-extract.js'}).runInContext(sandbox);
   sandbox.__consoleLog = consoleLog;
+  sandbox.__accountListEl = accountListEl;
+  sandbox.__fakeDomRoot = root;
   return sandbox;
 }
 
@@ -413,6 +574,17 @@ async function testTerminalSaveSucceedsNoLaterStale409(){
 // additional save requests; no research-output stage or attempt metadata is
 // ever sent.
 // ===========================================================================
+// Builds a fake account-card + Save button carrying the same class/
+// data-attribute shape renderDetailedAccountViews() actually emits, so the
+// click can be dispatched through the REAL delegated listener (not by
+// calling saveAccountMetadataEdit() directly) -- exactly matching what a
+// user clicking "Save" in the browser does.
+function fakeAccountEditCard(accountName, uiKey){
+  const saveBtn = new FakeEl('button', {class:'btn btn-secondary btn-mini save-account-edit-btn', 'data-ui-key': String(uiKey)});
+  const card = new FakeEl('div', {class:'account-card', 'data-account-name': accountName}, [saveBtn]);
+  return {card, saveBtn};
+}
+
 async function testAccountMetadataEditHandlerSuccess(){
   const accounts = [fixtureAccount('Acme', {industry:'Old Industry', contactName:'Old Name', contactEmail:'old@example.com'})];
   const fetchImpl = makeFetch((call) => {
@@ -421,22 +593,30 @@ async function testAccountMetadataEditHandlerSuccess(){
     }
     throw new Error(`unexpected fetch in testAccountMetadataEditHandlerSuccess: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const domId = 'acme'; // accountDomId('Acme') per the STUB_SOURCE implementation
+  const uiKey = '0';
   const domElements = {
-    [`acctEditForm-${domId}`]: {style:{display:'none'}},
-    [`acctEditError-${domId}`]: {style:{display:'none'}, textContent:''},
-    [`acctEditSaveBtn-${domId}`]: {disabled:false, textContent:'Save'},
-    [`acctEditIndustry-${domId}`]: {value:'New Industry'},
-    [`acctEditContactName-${domId}`]: {value:'New Name'},
-    [`acctEditContactEmail-${domId}`]: {value:'new@example.com'}
+    [`acctEditForm-${uiKey}`]: {style:{display:'none'}},
+    [`acctEditError-${uiKey}`]: {style:{display:'none'}, textContent:''},
+    [`acctEditSaveBtn-${uiKey}`]: {disabled:false, textContent:'Save'},
+    [`acctEditIndustry-${uiKey}`]: {value:'New Industry'},
+    [`acctEditContactName-${uiKey}`]: {value:'New Name'},
+    [`acctEditContactEmail-${uiKey}`]: {value:'new@example.com'}
   };
-  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements});
+  const {card, saveBtn} = fakeAccountEditCard('Acme', uiKey);
+  const root = new FakeEl('body', {}, [card]);
+  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements, fakeDomRoot: root});
 
-  await sandbox.saveAccountMetadataEdit('Acme');
+  // Dispatch through the REAL delegated click listener -- not a direct call
+  // to saveAccountMetadataEdit(). saveQueue is awaited afterward because the
+  // listener itself does not await the async handler it invokes (matching
+  // real browser event-handler semantics; saveQueue is the same mechanism
+  // every other caller in this file uses to observe completion).
+  sandbox.__clickHandler({target: saveBtn});
+  await sandbox.saveQueue;
 
   const calls = fetchImpl.calls;
   const saves = saveUploadCalls(calls);
-  assert(saves.length === 1, 'g) account edit: the real handler produces exactly one accounts_updated request');
+  assert(saves.length === 1, 'g) account edit: the real handler, invoked via the real delegated click listener, produces exactly one accounts_updated request');
   assert(saves[0].body.stage === 'accounts_updated', 'g) account edit: the save stage is "accounts_updated"');
   assert(!saves[0].body.researchRunId && !saves[0].body.attemptId, 'g) account edit: no research-output stage or attempt metadata is ever sent');
   const savedAccount = (saves[0].body.accounts || []).find(a => a.name === 'Acme');
@@ -444,7 +624,7 @@ async function testAccountMetadataEditHandlerSuccess(){
 
   // Render/filter actions must never issue a save.
   sandbox.refreshOpportunityViews();
-  sandbox.toggleAccountMetadataEdit('Acme');
+  sandbox.toggleAccountMetadataEdit(uiKey);
   assert(saveUploadCalls(fetchImpl.calls).length === 1, 'g) account edit: a subsequent render/filter action produces zero additional save requests');
 }
 
@@ -457,19 +637,33 @@ async function testAccountMetadataEditHandlerFailure(){
     }
     throw new Error(`unexpected fetch in testAccountMetadataEditHandlerFailure: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const domId = 'acme';
+  const uiKey = '0';
   const errorEl = {style:{display:'none'}, textContent:''};
   const domElements = {
-    [`acctEditForm-${domId}`]: {style:{display:'none'}},
-    [`acctEditError-${domId}`]: errorEl,
-    [`acctEditSaveBtn-${domId}`]: {disabled:false, textContent:'Save'},
-    [`acctEditIndustry-${domId}`]: {value:'New Industry'},
-    [`acctEditContactName-${domId}`]: {value:'New Name'},
-    [`acctEditContactEmail-${domId}`]: {value:'new@example.com'}
+    [`acctEditForm-${uiKey}`]: {style:{display:'none'}},
+    [`acctEditError-${uiKey}`]: errorEl,
+    [`acctEditSaveBtn-${uiKey}`]: {disabled:false, textContent:'Save'},
+    [`acctEditIndustry-${uiKey}`]: {value:'New Industry'},
+    [`acctEditContactName-${uiKey}`]: {value:'New Name'},
+    [`acctEditContactEmail-${uiKey}`]: {value:'new@example.com'}
   };
-  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements});
+  const {card, saveBtn} = fakeAccountEditCard('Acme', uiKey);
+  const root = new FakeEl('body', {}, [card]);
+  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl, domElements, fakeDomRoot: root});
 
-  await sandbox.saveAccountMetadataEdit('Acme');
+  sandbox.__clickHandler({target: saveBtn});
+  await sandbox.saveQueue;
+  // saveQueue resolving only guarantees performSaveCurrentUpload() itself
+  // has settled. saveAccountMetadataEdit()'s OWN post-await continuation
+  // (reverting the in-memory edit, showing the error) is a further
+  // continuation on a promise that lives in a different vm realm than this
+  // test -- cross-realm await does not collapse to the same microtask
+  // ordering same-realm chained .then() calls would give, so re-awaiting
+  // the same resolved promise here is not sufficient. A macrotask
+  // boundary (setTimeout) reliably flushes it; this is a property of
+  // exercising the code through Node's vm module for a fire-and-forget
+  // async call, not of the code under test.
+  await new Promise(resolve => setTimeout(resolve, 0));
 
   const calls = fetchImpl.calls;
   assert(saveUploadCalls(calls).length === 1, 'g) account edit failure: exactly one save attempt was made');
@@ -482,6 +676,192 @@ async function testAccountMetadataEditHandlerFailure(){
   assert(saveUploadCalls(fetchImpl.calls).length === 1, 'g) account edit failure: no second background save later fires unprompted');
 }
 
+// Polls until conditionFn() is truthy or timeoutMs elapses -- used instead
+// of a fixed setTimeout delay for chains with more than one cross-realm
+// async hop (claim -> research -> heartbeat -> save), where a single fixed
+// delay would be a guess rather than a guarantee.
+async function waitUntil(conditionFn, {timeoutMs = 1000, intervalMs = 5} = {}){
+  const start = Date.now();
+  while(!conditionFn()){
+    if(Date.now() - start > timeoutMs) throw new Error('waitUntil: timed out waiting for condition');
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
+// Renders the REAL renderDetailedAccountViews() (extracted verbatim from
+// dashboard/index.html) against the given accounts and returns the raw
+// HTML string it produced, for direct string-level inspection. No
+// onclick="..." handling, no account-name interpolation into anything
+// other than a plain HTML attribute -- see the tests below for what is
+// actually checked and why.
+function renderAccountsMarkup(accounts){
+  const fetchImpl = makeFetch((call) => { throw new Error(`renderDetailedAccountViews() must never call fetch; got ${call.url}`); });
+  const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl});
+  sandbox.renderDetailedAccountViews(accounts);
+  return sandbox.__accountListEl.innerHTML;
+}
+
+// ===========================================================================
+// Scenario (h) (Phase 2A implementation-review ROUND 8, item 1): the
+// generated account-card markup never carries an account name inside an
+// executable-JS context, for names containing quotes, JS-breakout
+// sequences, or HTML. Exercises the REAL renderDetailedAccountViews()
+// (extracted verbatim) with genuinely hostile fixture names -- not a
+// source-string check of dashboard/index.html, a check of what that
+// function actually produces.
+// ===========================================================================
+async function testMarkupNeverContainsExecutableAccountNames(){
+  const singleQuoteName = `O'Reilly`;
+  const jsBreakoutName = `');alert(1);//`;
+  const htmlQuoteName = `<img src=x onerror=alert(1)>Say "hi"`;
+  const accounts = [singleQuoteName, jsBreakoutName, htmlQuoteName].map(name => fixtureAccount(name, {industry: 'Test Industry'}));
+  const html = renderAccountsMarkup(accounts);
+
+  // The strongest, most direct proof: every onclick="..." attribute that
+  // exists anywhere in the output is EXACTLY the one known, static,
+  // account-data-free string (the card-header expand/collapse toggle) --
+  // never an account name, and never anything derived from one. Any other
+  // onclick value, or any onclick containing part of an account name,
+  // fails this.
+  const onclickValues = [...html.matchAll(/onclick="([^"]*)"/g)].map(m => m[1]);
+  assert(onclickValues.length > 0, 'h) markup safety: sanity check -- the render actually produced at least the expected static onclick (the header toggle), so the assertion below is not vacuous');
+  assert(onclickValues.every(v => v === "this.nextElementSibling.classList.toggle('open')"), `h) markup safety: the ONLY onclick="..." attribute anywhere in the output is the static, literal account-head toggle -- no account name is ever interpolated into any onclick attribute (found values: ${JSON.stringify(onclickValues)})`);
+
+  // Each hostile name's RAW, unescaped form never appears anywhere in the
+  // output (proving it was actually escaped, not merely "not placed in an
+  // onclick").
+  assert(!html.includes(jsBreakoutName), 'h) markup safety: the raw, unescaped JS-breakout sequence ' + JSON.stringify(jsBreakoutName) + ' never appears in the output');
+  assert(!html.includes('<img src=x onerror=alert(1)>'), 'h) markup safety: the raw, unescaped <img onerror=...> tag never appears in the output');
+
+  // Each hostile name DOES appear, correctly HTML-attribute-escaped
+  // (matching the real escapeHtml()'s exact output), inside
+  // data-account-name -- proving the name reaches the DOM as inert data,
+  // not that it was silently stripped or rejected.
+  assert(html.includes('data-account-name="O&#039;Reilly"'), "h) markup safety: O'Reilly's apostrophe is HTML-attribute-escaped (&#039;) inside data-account-name");
+  assert(html.includes('data-account-name="&#039;);alert(1);//"'), "h) markup safety: the JS-breakout name's leading quote is escaped the same way -- it can never terminate an attribute value early");
+  assert(html.includes('data-account-name="&lt;img src=x onerror=alert(1)&gt;Say &quot;hi&quot;"'), 'h) markup safety: the HTML- and quote-bearing name is fully HTML-escaped (tags and quotes both) inside data-account-name');
+}
+
+// ===========================================================================
+// Scenario (i): two DISTINCT account names that collide under the OLD
+// (removed) accountDomId() scheme -- "A&B Co" and "A B Co" both normalized
+// to "a-b-co" -- never produce a duplicate id in the generated markup, and
+// each retains its own exact, distinct name.
+// ===========================================================================
+async function testMarkupIdsNeverCollide(){
+  const accounts = [
+    fixtureAccount('A&B Co', {industry: 'First'}),
+    fixtureAccount('A B Co', {industry: 'Second'})
+  ];
+  const html = renderAccountsMarkup(accounts);
+
+  const ids = [...html.matchAll(/\sid="([^"]*)"/g)].map(m => m[1]);
+  const uniqueIds = new Set(ids);
+  assert(ids.length > 0, 'i) DOM-id collision: the render actually produced id attributes to check');
+  assert(uniqueIds.size === ids.length, `i) DOM-id collision: every generated id is unique across both colliding-name accounts (${ids.length} ids, ${uniqueIds.size} unique)`);
+  assert(html.includes('data-account-name="A&amp;B Co"'), "i) DOM-id collision: the first account's exact name (A&B Co) is preserved, distinctly, in its own data-account-name attribute");
+  assert(html.includes('data-account-name="A B Co"'), "i) DOM-id collision: the second account's exact, distinct name (A B Co) is preserved in its own data-account-name attribute");
+}
+
+// ===========================================================================
+// Scenario (j): clicking "Research Account" on one card researches THAT
+// account, not a different one, even when another rendered account's name
+// collides with it under the OLD (removed) accountDomId() scheme.
+// Exercises accountCardFor() and the REAL delegated click listener against
+// a hand-built DOM mirroring exactly what renderDetailedAccountViews()
+// emits (class names, data attributes) -- Part A above is the separate
+// proof that the real markup generator emits exactly this shape.
+// ===========================================================================
+async function testResearchButtonTargetsCorrectAccountUnderCollision(){
+  const accounts = [
+    fixtureAccount('A&B Co', {intelligenceMode: 'warm'}),
+    fixtureAccount('A B Co', {intelligenceMode: 'warm'})
+  ];
+  const researchedNames = [];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome: 'claimed-new', researchRunId: 'run-x', attemptId: 'attempt-x'});
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
+      return jsonResponse({ok: true});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      const name = call.body.accounts[0].name;
+      researchedNames.push(name);
+      return jsonResponse({byAccount: {[name]: []}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok: true, uploadId: 'upload-1'});
+    }
+    throw new Error(`unexpected fetch in testResearchButtonTargetsCorrectAccountUnderCollision: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+
+  function buildResearchCard(name, uiKey){
+    const researchBtn = new FakeEl('button', {class: 'btn btn-secondary research-account-btn'});
+    const panel = new FakeEl('div', {class: 'signal-research-panel', id: `signals-${uiKey}`});
+    const card = new FakeEl('div', {class: 'account-card', 'data-account-name': name}, [researchBtn, panel]);
+    return {card, researchBtn};
+  }
+  const first = buildResearchCard('A&B Co', 0);
+  const second = buildResearchCard('A B Co', 1);
+  const root = new FakeEl('body', {}, [first.card, second.card]);
+  const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl, fakeDomRoot: root});
+
+  // Click the SECOND card's Research button.
+  sandbox.__clickHandler({target: second.researchBtn});
+  await waitUntil(() => saveUploadCalls(fetchImpl.calls).length > 0);
+
+  assert(researchedNames.length === 1, 'j) collision-safe routing: exactly one account was researched');
+  assert(researchedNames[0] === 'A B Co', `j) collision-safe routing: clicking the SECOND card researched the SECOND account (A B Co), not a colliding one -- got "${researchedNames[0]}"`);
+}
+
+// ===========================================================================
+// Scenario (k): clicking "Save" on one account's edit form saves THAT
+// account's edited fields and leaves a colliding account untouched -- the
+// direct runtime proof (not just markup-level id-uniqueness, see scenario
+// i) that "no DOM-id collision causes one account's form to control
+// another account."
+// ===========================================================================
+async function testEditFormTargetsCorrectAccountUnderCollision(){
+  const accounts = [
+    fixtureAccount('A&B Co', {industry: 'First Industry'}),
+    fixtureAccount('A B Co', {industry: 'Second Industry'})
+  ];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url === '/api/save-upload') return jsonResponse({ok: true, uploadId: 'upload-1'});
+    throw new Error(`unexpected fetch in testEditFormTargetsCorrectAccountUnderCollision: ${call.url}`);
+  });
+  const domElements = {
+    'acctEditForm-0': {style: {display: 'none'}},
+    'acctEditError-0': {style: {display: 'none'}, textContent: ''},
+    'acctEditSaveBtn-0': {disabled: false, textContent: 'Save'},
+    'acctEditIndustry-0': {value: 'First Industry'},
+    'acctEditContactName-0': {value: ''},
+    'acctEditContactEmail-0': {value: ''},
+    'acctEditForm-1': {style: {display: 'none'}},
+    'acctEditError-1': {style: {display: 'none'}, textContent: ''},
+    'acctEditSaveBtn-1': {disabled: false, textContent: 'Save'},
+    'acctEditIndustry-1': {value: 'Second Industry -- EDITED'},
+    'acctEditContactName-1': {value: ''},
+    'acctEditContactEmail-1': {value: ''}
+  };
+  const firstCard = new FakeEl('div', {class: 'account-card', 'data-account-name': 'A&B Co'}, [new FakeEl('button', {class: 'save-account-edit-btn', 'data-ui-key': '0'})]);
+  const secondSaveBtn = new FakeEl('button', {class: 'save-account-edit-btn', 'data-ui-key': '1'});
+  const secondCard = new FakeEl('div', {class: 'account-card', 'data-account-name': 'A B Co'}, [secondSaveBtn]);
+  const root = new FakeEl('body', {}, [firstCard, secondCard]);
+  const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl, domElements, fakeDomRoot: root});
+
+  sandbox.__clickHandler({target: secondSaveBtn});
+  await waitUntil(() => saveUploadCalls(fetchImpl.calls).length > 0);
+
+  const saves = saveUploadCalls(fetchImpl.calls);
+  assert(saves.length === 1, 'k) collision-safe edit: exactly one save fired');
+  const savedFirst = saves[0].body.accounts.find(a => a.name === 'A&B Co');
+  const savedSecond = saves[0].body.accounts.find(a => a.name === 'A B Co');
+  assert(!!savedSecond && savedSecond.industry === 'Second Industry -- EDITED', "k) collision-safe edit: the SECOND account (the one actually clicked) received the edited value");
+  assert(!!savedFirst && savedFirst.industry === 'First Industry', "k) collision-safe edit: the FIRST, colliding account was NOT modified by clicking the second card's Save button");
+}
+
 async function main(){
   await testStandaloneSuccess();
   await testBatchSuccess();
@@ -491,6 +871,10 @@ async function main(){
   await testTerminalSaveSucceedsNoLaterStale409();
   await testAccountMetadataEditHandlerSuccess();
   await testAccountMetadataEditHandlerFailure();
+  await testMarkupNeverContainsExecutableAccountNames();
+  await testMarkupIdsNeverCollide();
+  await testResearchButtonTargetsCorrectAccountUnderCollision();
+  await testEditFormTargetsCorrectAccountUnderCollision();
 
   console.log(`\n${failures === 0 ? 'ALL DASHBOARD ORCHESTRATION TESTS PASSED' : `${failures} DASHBOARD ORCHESTRATION TEST(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);

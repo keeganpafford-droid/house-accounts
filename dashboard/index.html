@@ -3119,8 +3119,27 @@ function renderSignalCard(signal){
 
 
 
-function accountDomId(name){
-  return String(name || 'account').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'account';
+// Phase 2A implementation-review ROUND 8, item 1 -- a prior per-account
+// element-id scheme (accountDomId(), a lossy [a-z0-9-]-only normalization
+// of the account name) was removed: two DISTINCT uploaded account names
+// could collide on the same generated id (e.g. "A&B Co" and "A B Co" both
+// normalize to "a-b-co"), which would let one account's edit form or
+// signal panel silently control another's. renderDetailedAccountViews() no
+// longer keys any element off a normalized name at all -- account cards
+// carry the exact, un-normalized name in a data-account-name attribute,
+// and per-card elements (the edit form, its inputs) are keyed by the
+// account's render-index position instead, which cannot collide within one
+// render. This finds the correct card by an EXACT match against
+// data-account-name, using CSS.escape() (the browser's own API for safely
+// embedding an arbitrary string in a CSS selector) so an account name
+// containing quotes or other selector-special characters can never break
+// out of the attribute-value match or be interpreted as selector syntax.
+function accountCardFor(accountName){
+  return document.querySelector(`.account-card[data-account-name="${CSS.escape(String(accountName || ''))}"]`);
+}
+function accountSignalsPanel(accountName){
+  const card = accountCardFor(accountName);
+  return card ? card.querySelector('.signal-research-panel') : null;
 }
 
 function extractEmailDomain(email){
@@ -3692,7 +3711,7 @@ function renderResearchDiagnostics(){ const el=document.getElementById('research
 async function researchAccountByName(accountName, options = {}){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
-  const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
+  const panel = accountSignalsPanel(account.name);
 
   let runId = options.researchRunId || null;
   let attemptId = options.attemptId || null;
@@ -3951,7 +3970,7 @@ async function researchAccountsBatch(accounts, options = {}){
         account.signals = dedupeSignalsClient([...(account.signals || []), ...signals]);
         addSignalDerivedOpportunities(account, account.signals);
         applyBusinessSignalAccountBoost(account);
-        const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
+        const panel = accountSignalsPanel(account.name);
         if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
       }
     });
@@ -5563,7 +5582,7 @@ function renderDetailedAccountViews(accounts){
   });
   const detailedAccounts = safeAccounts.slice(0, 10);
   accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
-    <div class="account-card">
+    <div class="account-card" data-account-name="${escapeHtml(a.name)}">
       <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
         <div class="rank">#${idx + 1}</div>
         <div>
@@ -5604,19 +5623,19 @@ function renderDetailedAccountViews(accounts){
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : `<div class="no-signals-message">${isWarmAccount(a) ? 'No historical orders were included for this account. Public business signals and uploaded contact context will drive recommendations.' : 'No closed/converted historical orders found for this account.'}</div>`}
         ${renderPipelineTable(a.activePipeline || [])}
         <div class="section-title">📡 Verified Business Signals</div>
-        <button class="btn btn-secondary" type="button" onclick="researchAccountByName('${escapeHtml(a.name).replace(/'/g, "\'")}')">Research Account</button>
+        <button class="btn btn-secondary research-account-btn" type="button">Research Account</button>
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
-        <div class="signal-research-panel" id="signals-${accountDomId(a.name)}">${renderVerifiedSignals(a.signals)}</div>
+        <div class="signal-research-panel" id="signals-${idx}">${renderVerifiedSignals(a.signals)}</div>
         ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
         <div class="account-metadata-edit">
-          <button class="btn btn-ghost btn-mini" type="button" onclick="toggleAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Edit Contact Info</button>
-          <div class="account-metadata-edit-form" id="acctEditForm-${accountDomId(a.name)}" style="display:none;margin-top:8px;">
-            <label style="display:block;margin-bottom:6px;">Industry<br><input type="text" id="acctEditIndustry-${accountDomId(a.name)}" value="${escapeHtml(a.industry || '')}"></label>
-            <label style="display:block;margin-bottom:6px;">Contact Name<br><input type="text" id="acctEditContactName-${accountDomId(a.name)}" value="${escapeHtml(a.contactName || '')}"></label>
-            <label style="display:block;margin-bottom:6px;">Contact Email<br><input type="email" id="acctEditContactEmail-${accountDomId(a.name)}" value="${escapeHtml(a.contactEmail || '')}"></label>
-            <button class="btn btn-secondary btn-mini" type="button" id="acctEditSaveBtn-${accountDomId(a.name)}" onclick="saveAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Save</button>
-            <button class="btn btn-ghost btn-mini" type="button" onclick="toggleAccountMetadataEdit('${escapeHtml(a.name).replace(/'/g, "\\'")}')">Cancel</button>
-            <div class="account-metadata-edit-error" id="acctEditError-${accountDomId(a.name)}" style="display:none;color:#B3261E;margin-top:6px;"></div>
+          <button class="btn btn-ghost btn-mini toggle-account-edit-btn" type="button" data-ui-key="${idx}">Edit Contact Info</button>
+          <div class="account-metadata-edit-form" id="acctEditForm-${idx}" style="display:none;margin-top:8px;">
+            <label style="display:block;margin-bottom:6px;">Industry<br><input type="text" id="acctEditIndustry-${idx}" value="${escapeHtml(a.industry || '')}"></label>
+            <label style="display:block;margin-bottom:6px;">Contact Name<br><input type="text" id="acctEditContactName-${idx}" value="${escapeHtml(a.contactName || '')}"></label>
+            <label style="display:block;margin-bottom:6px;">Contact Email<br><input type="email" id="acctEditContactEmail-${idx}" value="${escapeHtml(a.contactEmail || '')}"></label>
+            <button class="btn btn-secondary btn-mini save-account-edit-btn" type="button" id="acctEditSaveBtn-${idx}" data-ui-key="${idx}">Save</button>
+            <button class="btn btn-ghost btn-mini toggle-account-edit-btn" type="button" data-ui-key="${idx}">Cancel</button>
+            <div class="account-metadata-edit-error" id="acctEditError-${idx}" style="display:none;color:#B3261E;margin-top:6px;"></div>
           </div>
         </div>
       </div>
@@ -5794,15 +5813,17 @@ function saveCurrentUpload(stage = 'uploaded', attemptContext){
   return saveQueue;
 }
 
-// Phase 2A implementation-review ROUND 7, item 1 -- toggles the inline
-// account-metadata edit form open/closed. Pure UI state, exactly like
+// Phase 2A implementation-review ROUND 7, item 1 (ROUND 8, item 1: takes a
+// collision-safe render-index uiKey instead of an account name -- see
+// accountCardFor()/accountSignalsPanel() above for why accountDomId() alone
+// is not safe to key DOM lookups off) -- toggles the inline account-
+// metadata edit form open/closed. Pure UI state, exactly like
 // setActiveTimebox()/toggleWeeklyPrioritiesView() below -- never saves.
-function toggleAccountMetadataEdit(accountName){
-  const domId = accountDomId(accountName);
-  const form = document.getElementById(`acctEditForm-${domId}`);
+function toggleAccountMetadataEdit(uiKey){
+  const form = document.getElementById(`acctEditForm-${uiKey}`);
   if(!form) return;
   form.style.display = form.style.display === 'none' ? 'block' : 'none';
-  const errorEl = document.getElementById(`acctEditError-${domId}`);
+  const errorEl = document.getElementById(`acctEditError-${uiKey}`);
   if(errorEl){ errorEl.style.display = 'none'; errorEl.textContent = ''; }
 }
 
@@ -5821,17 +5842,22 @@ function toggleAccountMetadataEdit(accountName){
 // it cannot add, remove, or rename an account (there is no UI affordance
 // here to do so), matching the server-side identity lock in
 // replace_ha_accounts_snapshot()'s accounts_maintenance mode (migration 7).
-async function saveAccountMetadataEdit(accountName){
-  const domId = accountDomId(accountName);
+//
+// ROUND 8, item 1: takes uiKey (the collision-safe render-index -- see
+// toggleAccountMetadataEdit() above) for locating the form's DOM elements,
+// and accountName (read from the account-card's data-account-name
+// attribute by the delegated click listener below, never interpolated
+// into markup) for locating the actual account object to mutate/save.
+async function saveAccountMetadataEdit(uiKey, accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
-  const errorEl = document.getElementById(`acctEditError-${domId}`);
-  const saveBtn = document.getElementById(`acctEditSaveBtn-${domId}`);
+  const errorEl = document.getElementById(`acctEditError-${uiKey}`);
+  const saveBtn = document.getElementById(`acctEditSaveBtn-${uiKey}`);
   if(errorEl){ errorEl.style.display = 'none'; errorEl.textContent = ''; }
   if(!account) return;
 
-  const industryInput = document.getElementById(`acctEditIndustry-${domId}`);
-  const contactNameInput = document.getElementById(`acctEditContactName-${domId}`);
-  const contactEmailInput = document.getElementById(`acctEditContactEmail-${domId}`);
+  const industryInput = document.getElementById(`acctEditIndustry-${uiKey}`);
+  const contactNameInput = document.getElementById(`acctEditContactName-${uiKey}`);
+  const contactEmailInput = document.getElementById(`acctEditContactEmail-${uiKey}`);
 
   // Snapshot so a failed save can be reverted in-memory without a re-fetch.
   const previous = { industry: account.industry, contactName: account.contactName, contactEmail: account.contactEmail };
@@ -5844,7 +5870,7 @@ async function saveAccountMetadataEdit(accountName){
   if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
 
   if(result && result.ok){
-    toggleAccountMetadataEdit(accountName);
+    toggleAccountMetadataEdit(uiKey);
     refreshOpportunityViews();
   } else {
     // Surfaced ONCE, here -- revert the in-memory edit and show the error
@@ -5859,6 +5885,46 @@ async function saveAccountMetadataEdit(accountName){
     }
   }
 }
+
+// Phase 2A implementation-review ROUND 8, item 1 -- delegated click
+// handling for account-card actions (Research Account / Edit Contact Info
+// / Save / Cancel). Uploaded account names can contain arbitrary
+// characters -- quotes, HTML, JS-breakout sequences like ');alert(1);// --
+// and escapeHtml() is HTML-CONTENT escaping only. It is NOT safe to
+// interpolate a name into an inline onclick="..." attribute: the browser
+// decodes HTML entities in attribute values BEFORE the resulting string is
+// parsed as JavaScript, so an escaped &#039; becomes a literal ' again
+// immediately before the JS engine sees it, which can break out of the
+// intended string literal. renderDetailedAccountViews() therefore no
+// longer writes account names into any onclick attribute at all -- the
+// buttons below carry no inline handlers and no interpolated name. The
+// name travels only as the account-card's data-account-name attribute
+// (still escapeHtml()'d, but that is now correct: HTML-attribute-VALUE
+// escaping is exactly the right context for a data-* attribute, which is
+// read back as a plain string via .dataset, never evaluated as code).
+document.addEventListener('click', (event) => {
+  const researchBtn = event.target.closest('.research-account-btn');
+  if(researchBtn){
+    const card = researchBtn.closest('.account-card');
+    const accountName = card ? card.dataset.accountName : null;
+    if(accountName) researchAccountByName(accountName);
+    return;
+  }
+  const toggleBtn = event.target.closest('.toggle-account-edit-btn');
+  if(toggleBtn){
+    const uiKey = toggleBtn.dataset.uiKey;
+    if(uiKey != null) toggleAccountMetadataEdit(uiKey);
+    return;
+  }
+  const saveBtn = event.target.closest('.save-account-edit-btn');
+  if(saveBtn){
+    const uiKey = saveBtn.dataset.uiKey;
+    const card = saveBtn.closest('.account-card');
+    const accountName = card ? card.dataset.accountName : null;
+    if(uiKey != null && accountName) saveAccountMetadataEdit(uiKey, accountName);
+    return;
+  }
+});
 
 function hasMeaningfulHistoricalOrder(accountOrRecords){
   const records = Array.isArray(accountOrRecords) ? accountOrRecords : (accountOrRecords?.allRecords || accountOrRecords?.purchases || []);

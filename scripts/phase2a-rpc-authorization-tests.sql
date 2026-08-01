@@ -752,6 +752,7 @@ declare
   v_claim jsonb;
   v_lease_before timestamptz;
   v_lease_after timestamptz;
+  v_status_after text;
 begin
   insert into public.ha_users (email, name) values ('phase2a-round5-rollback@example.com', 'Round 5 Rollback') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 5 rollback test upload', 'uploaded') returning id into v_upload;
@@ -779,10 +780,22 @@ begin
   if not exists (select 1 from public.ha_uploads where id = v_upload and stage = 'researched') then
     raise notice 'PASS: ha_uploads.stage was NOT updated -- the upload-state write (which runs AFTER accounts/signals) never ran';
   else raise notice 'FAIL: ha_uploads.stage was updated despite the earlier failure'; end if;
-  select status, lease_expires_at into v_lease_after from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
-  if v_lease_after = v_lease_before then
-    raise notice 'PASS: the run was NOT finalized and its lease was NOT even re-renewed by the failed call -- the attempt-validation UPDATE itself rolled back along with everything after it';
-  else raise notice 'FAIL: the run''s lease_expires_at changed (%) despite the transaction failing -- partial commit occurred', v_lease_after;
+  -- ROUND 8 item 2 fix: this used to be `select status, lease_expires_at
+  -- into v_lease_after` -- two columns selected into ONE timestamptz
+  -- variable, a SELECT...INTO arity mismatch. PL/pgSQL's behavior for this
+  -- specific shape (a plain scalar target on the left, more than one
+  -- expression on the right of a non-record select-into) is itself
+  -- ambiguous/version-dependent enough that letting it slide understates
+  -- the bug -- it should never have parsed as "check both status and
+  -- lease" in the first place. Fixed by giving each column its own
+  -- correctly typed variable, which also lets this test actually verify
+  -- the "not finalized" half of its own PASS message below (it previously
+  -- checked lease_expires_at only; the status='running' check was
+  -- claimed in prose but never executed).
+  select status, lease_expires_at into v_status_after, v_lease_after from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+  if v_lease_after = v_lease_before and v_status_after = 'running' then
+    raise notice 'PASS: the run was NOT finalized (status still ''running'') and its lease was NOT even re-renewed by the failed call -- the attempt-validation UPDATE itself rolled back along with everything after it';
+  else raise notice 'FAIL: the run''s state changed despite the transaction failing -- status=%, lease_expires_at=% (expected status=running, lease_expires_at=%)', v_status_after, v_lease_after, v_lease_before;
   end if;
 
   delete from public.ha_research_runs where upload_id = v_upload;
