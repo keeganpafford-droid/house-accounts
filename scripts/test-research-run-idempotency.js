@@ -139,14 +139,19 @@ function makeFakeResearchRunsTable(){
 
   // Reimplements heartbeat_ha_research_run(): one compare-and-swap update,
   // clamps p_lease_seconds to [60, 900] regardless of what was requested.
+  // Migration 5 correction: the row's OWN lease must still be unexpired at
+  // heartbeat time -- attempt_id ownership alone is not enough. An attempt
+  // whose lease already lapsed (even if nobody has reclaimed it yet) cannot
+  // renew itself; only claim_ha_research_run()'s reclaim path (which mints a
+  // NEW attempt_id) may resurrect it.
   function heartbeat(userId, uploadId, researchRunId, attemptId, leaseSeconds){
     const clamped = Math.max(60, Math.min(Number(leaseSeconds) || 300, 900));
     const key = keyFor(userId, uploadId, researchRunId);
     const row = rows.get(key);
-    if(!row || row.status !== 'running' || row.attempt_id !== attemptId){
+    const now = Date.now();
+    if(!row || row.status !== 'running' || row.attempt_id !== attemptId || row.lease_expires_at_ms <= now){
       return { ok: false, reason: 'not-current-attempt' };
     }
-    const now = Date.now();
     row.heartbeat_at = new Date(now).toISOString();
     row.lease_expires_at_ms = now + clamped * 1000;
     return { ok: true, run: { ...row } };
@@ -464,6 +469,49 @@ async function run(){
     assert(staleHeartbeat.ok === false && staleHeartbeat.reason === 'not-current-attempt', 'the STALE (superseded) attempt cannot renew its own lease after a takeover -- its heartbeat is rejected, not silently accepted');
     const currentHeartbeat = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto', attemptId: takeover.run.attempt_id, leaseSeconds: 300 });
     assert(currentHeartbeat.ok === true, 'the CURRENT (replacement) attempt heartbeats successfully');
+  }
+
+  // =========================================================================
+  // Migration 5 correction: an EXPIRED lease must not be renewable by
+  // heartbeat, even when the caller's attempt_id STILL matches -- i.e.
+  // BEFORE any reclaim has happened, not just after a takeover (the prior
+  // test above). Only claim_ha_research_run()'s reclaim path may resurrect
+  // an abandoned run, and reclaiming always mints a NEW attempt_id.
+  // =========================================================================
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const first = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    const originalAttemptId = first.run.attempt_id;
+
+    // 1. Expire the lease manually while retaining the same attempt_id (no
+    // reclaim has happened yet -- the row still shows the original attempt).
+    table.expireLease(FIXTURES.uploadId, 'auto');
+    const rowBeforeHeartbeat = [...table.rows.values()][0];
+    const leaseBefore = rowBeforeHeartbeat.lease_expires_at_ms;
+    const heartbeatAtBefore = rowBeforeHeartbeat.heartbeat_at;
+    assert(rowBeforeHeartbeat.attempt_id === originalAttemptId, 'the row still shows the original attempt_id immediately after the lease expires (nothing has reclaimed it yet)');
+
+    // 2. Heartbeat with that (still-current, but lease-expired) attempt_id fails.
+    const expiredHeartbeat = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto', attemptId: originalAttemptId, leaseSeconds: 300 });
+    assert(expiredHeartbeat.ok === false && expiredHeartbeat.reason === 'not-current-attempt', 'a heartbeat from the CURRENT attempt_id is still rejected once its own lease has already expired -- lease liveness is required, not just attempt_id ownership');
+
+    // 3. lease_expires_at and heartbeat_at remain unchanged -- the rejected
+    // heartbeat must have no side effects on the row.
+    const rowAfterHeartbeat = [...table.rows.values()][0];
+    assert(rowAfterHeartbeat.lease_expires_at_ms === leaseBefore, 'lease_expires_at is untouched by the rejected heartbeat');
+    assert(rowAfterHeartbeat.heartbeat_at === heartbeatAtBefore, 'heartbeat_at is untouched by the rejected heartbeat');
+
+    // 4. A subsequent claim returns reclaimed-after-expired-lease.
+    const reclaimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(reclaimed.ok && reclaimed.outcome === 'reclaimed-after-expired-lease', 'a subsequent claim correctly reclaims the abandoned run via the expired-lease path');
+
+    // 5. The reclaimed run has a new attempt_id.
+    assert(reclaimed.run.attempt_id !== originalAttemptId, 'reclaiming mints a NEW attempt_id, distinct from the original (now-expired) attempt');
+
+    // 6. The old attempt still cannot heartbeat afterward.
+    const staleAfterReclaim = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto', attemptId: originalAttemptId, leaseSeconds: 300 });
+    assert(staleAfterReclaim.ok === false && staleAfterReclaim.reason === 'not-current-attempt', 'the original attempt still cannot heartbeat after the reclaim -- rejected both by attempt_id mismatch and by never having held a valid lease at heartbeat time');
   }
 
   // "Client attempts to supply an excessive lease duration": clamped both

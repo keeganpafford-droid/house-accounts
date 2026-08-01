@@ -86,7 +86,14 @@ let fakeUploadState = { stage: 'uploaded', summary: {} };
 
 function persistHaResearchOutput(body){
   const run = researchRuns.find(r => r.user_id === body.p_user_id && r.upload_id === body.p_upload_id && r.research_run_id === body.p_research_run_id);
-  if(!run || run.status !== 'running' || run.attempt_id !== body.p_attempt_id){
+  // Migration 6 correction: the attempt-validation UPDATE also requires the
+  // row's OWN lease to still be unexpired, mirroring the same
+  // lease_expires_at > now() condition added to heartbeat_ha_research_run()
+  // (migration 5). An attempt whose lease already lapsed cannot finalize
+  // through this RPC even if nobody has reclaimed it yet -- attempt_id
+  // ownership alone is not sufficient.
+  const leaseExpired = run && run.lease_expires_at_ms !== undefined && run.lease_expires_at_ms <= Date.now();
+  if(!run || run.status !== 'running' || run.attempt_id !== body.p_attempt_id || leaseExpired){
     return { ok: false, status: 400, body: { message: 'stale attempt', code: 'HA001' } };
   }
   let accountsPersisted = 0;
@@ -846,6 +853,35 @@ async function run(){
     await handler(req, res);
     assert(res.statusCode === 409 && res.body.staleAttempt === true, 'ITEM 1 TEST 6: a stale attempt cannot finalize -- rejected before persistence, let alone finalization, is attempted');
     assert(researchRuns[0].status === 'running' && researchRuns[0].attempt_id === 'attempt-B-current', 'the CURRENT attempt (B) row is completely untouched by the stale attempt\'s rejected call');
+  }
+
+  // Migration 6 correction: an EXPIRED-but-not-yet-reclaimed attempt (same
+  // attempt_id still on the row, status still 'running', nobody has called
+  // claim_ha_research_run() to reclaim it yet) must not be able to renew
+  // itself and persist/finalize through persist_ha_research_output(). This
+  // is distinct from ITEM 1 TEST 6 above, which covers an attempt_id that no
+  // longer matches at all (already superseded) -- here the attempt_id still
+  // matches, but the lease itself has already lapsed.
+  {
+    resetAll();
+    researchRuns = [{
+      user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto',
+      status: 'running', attempt_id: 'attempt-expired-not-reclaimed',
+      lease_expires_at_ms: Date.now() - 1000
+    }];
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'researched',
+      researchRunId: 'auto',
+      attemptId: 'attempt-expired-not-reclaimed',
+      accounts: [{ name: 'Expired Lease Write', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 409 && res.body.staleAttempt === true, 'an attempt whose lease already expired is rejected even though its attempt_id still matches the row -- it cannot renew itself through persist_ha_research_output()');
+    assert(fakeAccounts.filter(a => a.upload_id === UPLOAD_ID).length === 0, 'nothing was written to accounts by the expired attempt');
+    assert(researchRuns[0].status === 'running' && researchRuns[0].attempt_id === 'attempt-expired-not-reclaimed' && !researchRuns[0].completed_at, 'the row is left exactly as it was -- still running, still unreclaimed, not finalized by the expired attempt');
   }
 
   // ITEM 1 TEST 7: the current attempt cannot persist additional research

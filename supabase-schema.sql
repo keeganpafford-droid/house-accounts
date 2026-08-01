@@ -291,7 +291,13 @@ declare
   v_existing public.ha_research_runs;
   v_other_active public.ha_research_runs;
   v_result public.ha_research_runs;
+  v_clamped_lease_seconds integer;
 begin
+  -- Same server-side clamp as heartbeat_ha_research_run() below — a client
+  -- must not be able to obtain an arbitrarily long (or zero/negative) lease
+  -- by passing an out-of-range or missing p_lease_seconds.
+  v_clamped_lease_seconds := greatest(60, least(coalesce(p_lease_seconds, 300), 900));
+
   perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
 
   if not exists (
@@ -319,7 +325,7 @@ begin
     set status = 'running',
         attempt_id = gen_random_uuid(),
         attempt_count = v_existing.attempt_count + 1,
-        lease_expires_at = now() + make_interval(secs => p_lease_seconds),
+        lease_expires_at = now() + make_interval(secs => v_clamped_lease_seconds),
         heartbeat_at = now(),
         started_at = now(),
         completed_at = null,
@@ -362,7 +368,7 @@ begin
     lease_expires_at, heartbeat_at, started_at
   ) values (
     p_research_run_id, p_user_id, p_upload_id, 'running', gen_random_uuid(), 1,
-    now() + make_interval(secs => p_lease_seconds), now(), now()
+    now() + make_interval(secs => v_clamped_lease_seconds), now(), now()
   )
   returning * into v_result;
 
@@ -376,7 +382,11 @@ grant execute on function public.claim_ha_research_run(uuid, uuid, text, integer
 
 -- Atomic lease renewal / attempt verification (one compare-and-swap UPDATE
 -- — see migration 5 §7a for the full rationale, including why this does
--- NOT take the advisory lock claim_ha_research_run() uses).
+-- NOT take the advisory lock claim_ha_research_run() uses). Requires the
+-- row's OWN lease to still be unexpired, not just a matching attempt_id and
+-- status='running' — an attempt whose lease already lapsed cannot renew
+-- itself; only claim_ha_research_run()'s reclaim path (new attempt_id) may
+-- resurrect it.
 create or replace function public.heartbeat_ha_research_run(
   p_user_id uuid,
   p_upload_id uuid,
@@ -409,6 +419,7 @@ begin
     and research_run_id = p_research_run_id
     and attempt_id = p_attempt_id
     and status = 'running'
+    and lease_expires_at > now()
   returning * into v_row;
 
   if not found then
@@ -525,6 +536,10 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Requires the row's OWN lease to still be unexpired, not just a matching
+  -- attempt_id and status='running' — mirrors heartbeat_ha_research_run()'s
+  -- same lease_expires_at > now() condition above; an expired-but-not-yet-
+  -- reclaimed attempt cannot renew itself and persist through this RPC.
   update public.ha_research_runs
   set heartbeat_at = now(),
       lease_expires_at = now() + make_interval(secs => greatest(60, least(coalesce(p_lease_seconds, 300), 900)))
@@ -533,10 +548,11 @@ begin
     and research_run_id = p_research_run_id
     and attempt_id = p_attempt_id
     and status = 'running'
+    and lease_expires_at > now()
   returning * into v_run;
 
   if not found then
-    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, failed, or its lease had already expired)', p_attempt_id, p_research_run_id, p_upload_id
       using errcode = 'HA001';
   end if;
 

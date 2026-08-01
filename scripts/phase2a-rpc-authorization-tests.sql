@@ -1057,3 +1057,108 @@ begin
   delete from public.ha_users where id = v_user;
   raise notice '--- Test 49 cleanup complete ---';
 end $$;
+
+-- ===========================================================================
+-- Tests 50-51 (Phase 2A implementation-review ROUND 9): an EXPIRED lease
+-- must not be renewable/usable by heartbeat_ha_research_run() or
+-- persist_ha_research_output() while attempt_id STILL matches the row --
+-- i.e. BEFORE any reclaim has happened, not just after a takeover (already
+-- covered by tests 22 and 32 above, both of which use an attempt_id that no
+-- longer matches at all post-reclaim). Both RPCs' attempt-validation UPDATE
+-- now additionally requires lease_expires_at > now(); only
+-- claim_ha_research_run()'s reclaim path (which mints a NEW attempt_id) may
+-- resurrect an expired-but-unreclaimed run.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_attempt_id uuid;
+  v_lease_before timestamptz;
+  v_heartbeat_at_before timestamptz;
+  v_heartbeat jsonb;
+  v_lease_after timestamptz;
+  v_heartbeat_at_after timestamptz;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round9-expired-lease@example.com', 'Round 9 Expired Lease') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 9 expired-lease test upload', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 50: heartbeat_ha_research_run() rejects a heartbeat once the row''s OWN lease has already expired, even though attempt_id still matches (no reclaim has happened yet) ---';
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
+
+  -- 1. Expire the lease manually while retaining the same attempt_id.
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'auto';
+  select lease_expires_at, heartbeat_at into v_lease_before, v_heartbeat_at_before
+    from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+  if exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto' and attempt_id = v_attempt_id) then
+    raise notice 'PASS: the row still shows the original attempt_id immediately after the lease expires (nothing has reclaimed it yet)';
+  else raise notice 'FAIL: attempt_id changed unexpectedly before any reclaim'; end if;
+
+  -- 2. Heartbeat with that (still-current, but lease-expired) attempt_id fails.
+  v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 300);
+  if (v_heartbeat->>'ok')::boolean = false and v_heartbeat->>'reason' = 'not-current-attempt' then
+    raise notice 'PASS: a heartbeat from the CURRENT attempt_id is rejected once its own lease has already expired -- lease liveness is required, not just attempt_id ownership';
+  else raise notice 'FAIL: expected ok=false/reason=not-current-attempt, got %', v_heartbeat; end if;
+
+  -- 3. lease_expires_at and heartbeat_at remain unchanged.
+  select lease_expires_at, heartbeat_at into v_lease_after, v_heartbeat_at_after
+    from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+  if v_lease_after = v_lease_before then raise notice 'PASS: lease_expires_at is untouched by the rejected heartbeat';
+  else raise notice 'FAIL: lease_expires_at changed from % to % despite the rejection', v_lease_before, v_lease_after; end if;
+  if v_heartbeat_at_after = v_heartbeat_at_before then raise notice 'PASS: heartbeat_at is untouched by the rejected heartbeat';
+  else raise notice 'FAIL: heartbeat_at changed from % to % despite the rejection', v_heartbeat_at_before, v_heartbeat_at_after; end if;
+
+  -- 4/5. A subsequent claim returns reclaimed-after-expired-lease with a NEW attempt_id.
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_claim->>'outcome' = 'reclaimed-after-expired-lease' then raise notice 'PASS: a subsequent claim correctly reclaims the abandoned run via the expired-lease path';
+  else raise notice 'FAIL: expected outcome=reclaimed-after-expired-lease, got %', v_claim->>'outcome'; end if;
+  if (v_claim->'run'->>'attempt_id')::uuid <> v_attempt_id then raise notice 'PASS: reclaiming mints a NEW attempt_id, distinct from the original (now-expired) attempt';
+  else raise notice 'FAIL: attempt_id was not changed by the reclaim'; end if;
+
+  -- 6. The old attempt still cannot heartbeat afterward.
+  v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 300);
+  if (v_heartbeat->>'ok')::boolean = false and v_heartbeat->>'reason' = 'not-current-attempt' then
+    raise notice 'PASS: the original attempt still cannot heartbeat after the reclaim';
+  else raise notice 'FAIL: expected ok=false/reason=not-current-attempt, got %', v_heartbeat; end if;
+
+  raise notice '--- Test 51: persist_ha_research_output() rejects an expired-but-not-yet-reclaimed attempt, writing nothing and not finalizing ---';
+  declare
+    v_attempt_current uuid := (v_claim->'run'->>'attempt_id')::uuid;
+    v_accounts_before int;
+    v_status_before text;
+  begin
+    update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+      where upload_id = v_upload and research_run_id = 'auto';
+    select count(*) into v_accounts_before from public.ha_accounts where upload_id = v_upload;
+    select status into v_status_before from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+    begin
+      perform public.persist_ha_research_output(
+        v_upload, v_user, 'auto', v_attempt_current,
+        '[{"account_name":"Expired Lease Write"}]'::jsonb, null, 'researched', '{"note":"should not persist"}'::jsonb
+      );
+      raise notice 'FAIL: an attempt whose lease already expired was able to call persist_ha_research_output -- no exception raised';
+    exception when others then
+      if sqlstate = 'HA001' then raise notice 'PASS: the expired-but-unreclaimed attempt is rejected with errcode HA001, same as an already-superseded attempt';
+      else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+    end;
+    if not exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Expired Lease Write') then
+      raise notice 'PASS: nothing was written to ha_accounts by the expired attempt';
+    else raise notice 'FAIL: the expired attempt''s account write persisted despite the rejection'; end if;
+    if (select count(*) from public.ha_accounts where upload_id = v_upload) = v_accounts_before then
+      raise notice 'PASS: ha_accounts row count is unchanged';
+    else raise notice 'FAIL: ha_accounts row count changed despite the rejection'; end if;
+    if exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto' and status = v_status_before and completed_at is null) then
+      raise notice 'PASS: the run row is left exactly as it was -- still running, still unreclaimed, not finalized by the expired attempt';
+    else raise notice 'FAIL: the run row was modified despite the rejection'; end if;
+  end;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_signals where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 50-51 cleanup complete ---';
+end $$;

@@ -343,14 +343,21 @@ grant execute on function public.claim_ha_research_run(uuid, uuid, text, integer
 -- The real Phase 1B fallback execution ran ~12 minutes; a fixed 300s lease
 -- (§7) would expire mid-run without renewal. This RPC does ONE atomic
 -- compare-and-swap UPDATE: it succeeds only when the row's status is still
--- 'running' AND its attempt_id still matches the caller's -- exactly the
--- ownership check a stale/replaced attempt must fail. It is deliberately
--- NOT a "read current state, then decide, then write" sequence (the review
--- explicitly asked this NOT be implemented that way): the single UPDATE's
--- WHERE clause IS the check, and Postgres's row-level locking makes it
--- correct under any interleaving with a concurrent reclaim inside
--- claim_ha_research_run() -- see §7b for why this does not need the same
--- advisory lock claim_ha_research_run() uses.
+-- 'running', its attempt_id still matches the caller's, AND its OWN lease
+-- has not already expired -- exactly the ownership-AND-liveness check a
+-- stale/replaced/abandoned attempt must fail. attempt_id matching alone is
+-- not sufficient: an attempt whose lease lapsed before ANYONE reclaimed it
+-- (nobody has called claim_ha_research_run() yet, so attempt_id on the row
+-- is still this caller's own) must not be able to resurrect itself by
+-- heartbeating past its own deadline -- only claim_ha_research_run()'s
+-- reclaim path may do that, and reclaiming always mints a NEW attempt_id
+-- (see §7's reclaim branch). It is deliberately NOT a "read current state,
+-- then decide, then write" sequence (the review explicitly asked this NOT
+-- be implemented that way): the single UPDATE's WHERE clause IS the check,
+-- and Postgres's row-level locking makes it correct under any interleaving
+-- with a concurrent reclaim inside claim_ha_research_run() -- see §7b for
+-- why this does not need the same advisory lock claim_ha_research_run()
+-- uses.
 --
 -- Lease duration is ALWAYS clamped server-side to [60, 900] seconds,
 -- regardless of what p_lease_seconds the caller requests -- a client cannot
@@ -398,6 +405,7 @@ begin
     and research_run_id = p_research_run_id
     and attempt_id = p_attempt_id
     and status = 'running'
+    and lease_expires_at > now()
   returning * into v_row;
 
   if not found then

@@ -137,7 +137,13 @@ begin
   end if;
 
   -- Attempt validation + atomic lease renewal in one statement. If this
-  -- attempt is stale/replaced, NOTHING below this point runs.
+  -- attempt is stale/replaced, OR its lease had already expired before this
+  -- call (even though attempt_id still matches -- nobody has reclaimed it
+  -- yet), NOTHING below this point runs. An expired-but-not-yet-reclaimed
+  -- attempt cannot resurrect itself by calling this function: it must lose
+  -- the race to a concurrent claim_ha_research_run() reclaim (which mints a
+  -- NEW attempt_id) exactly like it would lose the race to
+  -- heartbeat_ha_research_run() for the same reason (migration 5 §7a).
   update public.ha_research_runs
   set heartbeat_at = now(),
       lease_expires_at = now() + make_interval(secs => greatest(60, least(coalesce(p_lease_seconds, 300), 900)))
@@ -146,10 +152,11 @@ begin
     and research_run_id = p_research_run_id
     and attempt_id = p_attempt_id
     and status = 'running'
+    and lease_expires_at > now()
   returning * into v_run;
 
   if not found then
-    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, failed, or its lease had already expired)', p_attempt_id, p_research_run_id, p_upload_id
       using errcode = 'HA001';
   end if;
 
