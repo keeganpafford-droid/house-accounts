@@ -587,6 +587,120 @@ async function run(){
     assert(laterAutomatic.outcome === 'completed', 'a completed manual run blocks a later automatic execution from starting -- the automatic claim attaches to the existing completed state instead');
   }
 
+  // =========================================================================
+  // ROUND 4, item 2: remove upload-bound untracked research paths.
+  // =========================================================================
+
+  // "Standalone button against an upload without attempt ID": the actual
+  // HTTP contract change is that any uploadId-bound research request now
+  // REQUIRES researchRunId+attemptId (400 otherwise) -- verified directly
+  // against source, since exercising the full handler() would require
+  // mocking OpenAI/search-provider calls unrelated to this concern (the
+  // same precedent used for the round-2 "legacy anonymous flow" check
+  // above).
+  {
+    const source = readFileSync(new URL('../api/research-batch.js', import.meta.url), 'utf8');
+    const tryBlockStart = source.indexOf("const { accounts = [], mode = 'ranked', researchRunId = '' } = body;");
+    const mandatoryCheck = source.indexOf('researchRunId and attemptId are required for any research request bound to an existing upload', tryBlockStart);
+    assert(tryBlockStart > -1 && mandatoryCheck > -1 && mandatoryCheck - tryBlockStart < 1500,
+      'the actual research handler rejects (400) any uploadId-bound request missing researchRunId/attemptId -- there is no longer an untracked-but-uploadId-bound path for ANY caller, including a standalone single-account request');
+    // The gate must be unconditional on targetUploadId alone -- not
+    // additionally gated on attemptId already being present (which would
+    // silently re-allow the old opt-out).
+    const gateSite = source.indexOf('if (targetUploadId) {', mandatoryCheck - 400);
+    assert(gateSite > -1 && gateSite < mandatoryCheck, 'the mandatory researchRunId/attemptId check is unconditional on targetUploadId alone, not on attemptId already being present');
+  }
+
+  // dashboard/index.html: the standalone button must claim its own run
+  // rather than proceeding untracked -- verified against source (a browser
+  // DOM/fetch environment is not available in this Node test script).
+  {
+    const dashSource = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
+    const fnStart = dashSource.indexOf('async function researchAccountByName(accountName, options = {}){');
+    const fnEnd = dashSource.indexOf('\nasync function researchAccountsBatch', fnStart);
+    const fnBody = dashSource.slice(fnStart, fnEnd > -1 ? fnEnd : fnStart + 4000);
+    assert(fnStart > -1, 'researchAccountByName() is present in dashboard/index.html');
+    assert(/claimAutomaticResearchRun\('manual-rerun'\)/.test(fnBody), 'researchAccountByName() claims its own manual-rerun run when called standalone against an existing upload -- it no longer sends uploadId without a real attemptId');
+    assert(/if\(currentUploadId && !attemptId\)/.test(fnBody), 'the self-claim only activates when currentUploadId is set and no attemptId was already supplied by the caller (i.e. NOT when called from researchTopAccounts()\'s fallback loop, which already has one)');
+  }
+
+  // "Standalone button with stale attempt ID": functionally, this reduces
+  // to the SAME gate research-batch.js's actual research handler runs
+  // (heartbeatResearchRunAtomic as a verify-before-provider-work gate) --
+  // already proven generically in the "old attempt tries to call a
+  // provider after takeover" test above. Restated explicitly here for the
+  // standalone-button scenario specifically.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const claimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-1' });
+    assert(claimed.ok && claimed.outcome === 'claimed-new', 'the standalone button\'s own manual-rerun claim succeeds when nothing else is active');
+    table.expireLease(FIXTURES.uploadId, 'manual-standalone-1');
+    await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-1' }); // simulates a takeover
+    const staleGate = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-1', attemptId: claimed.run.attempt_id });
+    assert(staleGate.ok === false, 'a standalone-button request carrying a stale (superseded) attemptId fails the provider-call gate, exactly like the top-accounts flow');
+  }
+
+  // "Standalone button with valid manual-run attempt": succeeds end to end
+  // at the claim/gate/complete level.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const claimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-2' });
+    assert(claimed.ok && claimed.outcome === 'claimed-new', 'the standalone button claims a fresh manual run');
+    const gate = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-2', attemptId: claimed.run.attempt_id });
+    assert(gate.ok === true, 'the provider-call gate passes for the valid, currently-owning manual attempt');
+    const completion = await completeResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-standalone-2', attemptId: claimed.run.attempt_id, resultSummary: { signalsReturned: 2, accountsResearched: 1 } });
+    assert(completion.applied === true, 'the standalone run reports completion successfully, using its own independently-claimed attempt_id');
+  }
+
+  // "Anonymous prospecting without uploadId": already covered by the
+  // round-2 "legacy anonymous flow" test above (resolveAuthenticatedUploadOwner
+  // is never reached at all without uploadId) -- restated here for the
+  // round-4 required test list, plus an explicit confirmation that
+  // prospect_script.js's actual fetch call still sends no uploadId.
+  {
+    const prospectSource = readFileSync(new URL('../prospect_script.js', import.meta.url), 'utf8');
+    assert(/fetch\('\/api\/research-batch'/.test(prospectSource) && !/uploadId/.test(prospectSource.match(/fetch\('\/api\/research-batch'[\s\S]{0,400}?\}\)\}/)?.[0] || ''),
+      'prospect_script.js\'s research-batch call still sends no uploadId at all -- it remains outside every uploadId-bound check added across all four rounds');
+  }
+
+  // "Anonymous request spoofing uploadId": a request that supplies uploadId
+  // without a valid Bearer token is rejected before anything else --
+  // already proven by the "no token with a valid uploadId" test at the top
+  // of this file; restated explicitly for the round-4 required test list,
+  // including the case where the spoofed uploadId belongs to a real upload.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const spoofedNoToken = await resolveAuthenticatedUploadOwner({ headers: {} }, FIXTURES.uploadId);
+    assert(spoofedNoToken.user === null && spoofedNoToken.reason === 'no-token', 'a request spoofing a real uploadId with no Bearer token is rejected -- ownership can only ever be established via a verified auth token, never by merely naming an upload id');
+    const spoofedWrongToken = await resolveAuthenticatedUploadOwner({ headers: { authorization: 'Bearer valid-other-token' } }, FIXTURES.uploadId);
+    assert(spoofedWrongToken.user === null && spoofedWrongToken.reason === 'not-owner', 'a request spoofing a real uploadId with a DIFFERENT user\'s valid token is rejected -- authentication alone is not enough, ownership of that specific upload is independently verified');
+  }
+
+  // =========================================================================
+  // ROUND 4, item 3: the invariant, stated and checked structurally.
+  // "For any persisted customer upload, every provider call and every
+  // research-derived database write is attributable to exactly one current
+  // research run and attempt."
+  // =========================================================================
+  {
+    const rbSource = readFileSync(new URL('../api/research-batch.js', import.meta.url), 'utf8');
+    const suSource = readFileSync(new URL('../api/save-upload.js', import.meta.url), 'utf8');
+    // Provider calls: gated by heartbeatResearchRunAtomic() before any of
+    // discoverCandidatesForAccounts/callOpenAIJson/callOpenAIWebSearch, and
+    // that gate is unconditional whenever targetUploadId is present (proven
+    // above). Persistence: persist_ha_research_output() is the ONLY write
+    // path for research-output-stage saves (proven in
+    // scripts/test-save-upload-persistence.js), and it re-validates the
+    // SAME attempt inside its own transaction before writing anything.
+    assert(/heartbeatResearchRunAtomic\(\{ userId: uploadOwner\.id, uploadId: targetUploadId, researchRunId: runId, attemptId \}\)/.test(rbSource),
+      'every uploadId-bound research request verifies attemptId via heartbeatResearchRunAtomic() before any provider work -- no uploadId-bound code path skips this');
+    assert(/rpc\/persist_ha_research_output/.test(suSource) && !/rpc\/replace_ha_accounts_snapshot[\s\S]{0,200}p_research_run_id/.test(suSource),
+      'research-output-stage persistence goes through persist_ha_research_output exclusively -- the standalone replace_ha_accounts_snapshot call path no longer accepts attempt parameters at all (see api/save-upload.js\'s untracked branch, which never sets them)');
+  }
+
   global.fetch = originalFetch;
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
   process.exitCode = failures === 0 ? 0 : 1;

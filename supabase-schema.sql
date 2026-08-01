@@ -393,3 +393,122 @@ create index if not exists idx_ha_accounts_upload on public.ha_accounts(upload_i
 create index if not exists idx_ha_signals_upload on public.ha_signals(upload_id);
 create index if not exists idx_ha_signals_user_first_seen on public.ha_signals(user_id, first_seen_at desc);
 create index if not exists idx_ha_signals_event_fingerprint on public.ha_signals(event_fingerprint);
+
+-- Consolidated, attempt-guarded research-output persistence (Phase 2A
+-- implementation-review ROUND 4). One atomic transaction, one advisory
+-- lock, one attempt validation+lease-renewal — accounts, signals, and
+-- ha_uploads research-state either all persist together or none do. See
+-- supabase-schema-migration-6-attempt-guarded-persistence.sql for the full
+-- rationale (why this closes the gap round 3 left open for ha_signals/
+-- ha_uploads, why accounts are persisted by delegating to
+-- replace_ha_accounts_snapshot() rather than duplicating its logic, and the
+-- re-verified race analysis for the three-table case).
+create or replace function public.persist_ha_research_output(
+  p_upload_id uuid,
+  p_user_id uuid,
+  p_research_run_id text,
+  p_attempt_id uuid,
+  p_accounts jsonb default null,
+  p_signals jsonb default null,
+  p_upload_stage text default null,
+  p_upload_summary jsonb default null,
+  p_lease_seconds integer default 300
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_run public.ha_research_runs;
+  v_accounts_result public.ha_accounts[];
+  v_accounts_count int := 0;
+  v_signals_attempted int := 0;
+  v_signals_persisted int := 0;
+begin
+  perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
+
+  if not exists (
+    select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
+  ) then
+    raise exception 'persist_ha_research_output: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
+      using errcode = '42501';
+  end if;
+
+  update public.ha_research_runs
+  set heartbeat_at = now(),
+      lease_expires_at = now() + make_interval(secs => greatest(60, least(coalesce(p_lease_seconds, 300), 900)))
+  where user_id = p_user_id
+    and upload_id = p_upload_id
+    and research_run_id = p_research_run_id
+    and attempt_id = p_attempt_id
+    and status = 'running'
+  returning * into v_run;
+
+  if not found then
+    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+      using errcode = 'HA001';
+  end if;
+
+  if p_accounts is not null then
+    select array_agg(a) into v_accounts_result
+    from public.replace_ha_accounts_snapshot(p_upload_id, p_user_id, p_accounts) a;
+    v_accounts_count := coalesce(array_length(v_accounts_result, 1), 0);
+  end if;
+
+  if p_signals is not null and jsonb_typeof(p_signals) = 'array' and jsonb_array_length(p_signals) > 0 then
+    v_signals_attempted := (
+      select count(*) from jsonb_array_elements(p_signals) s
+      where nullif(s->>'event_fingerprint', '') is not null
+    );
+    with inserted as (
+      insert into public.ha_signals (
+        user_id, upload_id, account_name, signal_hash, event_fingerprint,
+        signal_type, title, why_reach_out, confidence, source_url,
+        source_domain, published_at, payload, first_seen_at, last_seen_at
+      )
+      select
+        p_user_id,
+        p_upload_id,
+        nullif(btrim(s->>'account_name'), ''),
+        s->>'signal_hash',
+        s->>'event_fingerprint',
+        nullif(s->>'signal_type', ''),
+        nullif(s->>'title', ''),
+        nullif(s->>'why_reach_out', ''),
+        nullif(s->>'confidence', '')::numeric,
+        nullif(s->>'source_url', ''),
+        nullif(s->>'source_domain', ''),
+        nullif(s->>'published_at', ''),
+        coalesce(s->'payload', '{}'::jsonb),
+        now(),
+        now()
+      from jsonb_array_elements(p_signals) as s
+      where nullif(s->>'event_fingerprint', '') is not null
+      on conflict (user_id, event_fingerprint) do nothing
+      returning id
+    )
+    select count(*) into v_signals_persisted from inserted;
+  end if;
+
+  if p_upload_stage is not null or p_upload_summary is not null then
+    update public.ha_uploads
+    set stage = coalesce(p_upload_stage, stage),
+        summary = coalesce(p_upload_summary, summary),
+        updated_at = now()
+    where id = p_upload_id;
+  end if;
+
+  return jsonb_build_object(
+    'accountsPersisted', v_accounts_count,
+    'signalsAttempted', v_signals_attempted,
+    'signalsPersisted', v_signals_persisted,
+    'signalsConflictIgnored', greatest(0, v_signals_attempted - v_signals_persisted),
+    'leaseExpiresAt', v_run.lease_expires_at,
+    'attemptId', v_run.attempt_id
+  );
+end;
+$$;
+revoke all on function public.persist_ha_research_output(uuid, uuid, text, uuid, jsonb, jsonb, text, jsonb, integer) from public;
+revoke all on function public.persist_ha_research_output(uuid, uuid, text, uuid, jsonb, jsonb, text, jsonb, integer) from anon;
+revoke all on function public.persist_ha_research_output(uuid, uuid, text, uuid, jsonb, jsonb, text, jsonb, integer) from authenticated;
+grant execute on function public.persist_ha_research_output(uuid, uuid, text, uuid, jsonb, jsonb, text, jsonb, integer) to service_role;

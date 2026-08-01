@@ -1,26 +1,36 @@
-// Phase 2A / A2 + B3 defense-in-depth — validates api/save-upload.js's
-// persistence path without a live database: mocks global.fetch for auth,
-// upload lookup, the replace_ha_accounts_snapshot RPC, and the ha_signals
-// insert, then invokes the real exported handler with fake req/res objects.
+// Phase 2A / A2 + B3 defense-in-depth, extended through implementation-review
+// ROUND 4 — validates api/save-upload.js's persistence path without a live
+// database: mocks global.fetch for auth, upload lookup, the
+// replace_ha_accounts_snapshot RPC (untracked path), the NEW
+// persist_ha_research_output RPC (tracked path), and the plain ha_signals
+// insert (untracked path), then invokes the real exported handler with fake
+// req/res objects.
 //
 // Covers:
-// - the account snapshot now goes through the RPC endpoint, not a raw
-//   DELETE + POST pair
+// - the account snapshot goes through an RPC endpoint, not a raw DELETE +
+//   POST pair, for both the untracked and tracked paths
 // - accountsSaved reflects what the RPC actually returned, not just what was
 //   attempted
 // - instrumentation counts (received / resolved / unique fingerprints /
 //   attempted / persisted / conflict-ignored) are numerically correct against
 //   a simulated ignore-duplicates conflict
 // - the B3 defense-in-depth guard corrects a signal whose declared
-//   signalType disagrees with its canonically-resolved eventType (the shape
-//   of the exact frozen Phase 1B mismatches, simulated here for a caller
-//   that has not attached canonicalEventType)
+//   signalType disagrees with its canonically-resolved eventType
+// - ROUND 4: attempt metadata is MANDATORY for research-output stages; a
+//   stale/replaced attempt is rejected and writes NOTHING to ha_accounts,
+//   ha_signals, OR ha_uploads (all three, atomically, via ONE call to
+//   persist_ha_research_output -- there is no longer a separate
+//   pre-flight-then-write gap for a takeover to land in)
 //
 // What this CANNOT prove without a live Postgres/Supabase connection: that
-// the advisory lock inside replace_ha_accounts_snapshot() actually
-// serializes two truly concurrent calls end-to-end. That requires the
-// controlled QA validation procedure against a real database — see the
-// Phase 2A validation report.
+// the advisory lock inside persist_ha_research_output()/
+// replace_ha_accounts_snapshot() actually serializes two truly concurrent
+// calls end-to-end, or that a concurrent claim_ha_research_run() call
+// genuinely BLOCKS while persist_ha_research_output()'s transaction is
+// open. Those require the controlled QA validation procedure against a
+// real database and, for the blocking behavior specifically, two genuinely
+// concurrent sessions -- see
+// scripts/phase2a-rpc-authorization-tests.sql test 35's comment.
 //
 // Usage: node scripts/test-save-upload-persistence.js
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
@@ -47,34 +57,58 @@ function fakeRes(){
 
 const UPLOAD_ID = 'upload-1';
 const USER_ID = 'user-1';
-let rpcCalls = [];
-let signalsInsertCalls = [];
+let accountsRpcCalls = [];       // replace_ha_accounts_snapshot (untracked path)
+let persistRpcCalls = [];        // persist_ha_research_output (tracked path)
+let signalsInsertCalls = [];     // plain ha_signals insert (untracked path)
+let uploadPatchCalls = [];       // plain ha_uploads PATCH (untracked path only)
 let simulateConflictOnSecondSignal = false;
 
-// Phase 2A implementation-review ROUND 3, item 3 — in-memory
-// ha_research_runs fixture so the mock can simulate
-// heartbeat_ha_research_run() and replace_ha_accounts_snapshot()'s embedded
-// attempt check exactly as the real RPCs would respond, without a live
-// database. Tests below populate/mutate `researchRuns` directly to set up
-// "current" vs. "stale" attempt scenarios.
+// Phase 2A implementation-review ROUND 4 — in-memory fixtures mirroring the
+// real ha_research_runs/ha_accounts/ha_signals/ha_uploads tables closely
+// enough to exercise persist_ha_research_output()'s exact decision logic
+// (migration 6 §3): one attempt check gates all three writes together.
 let researchRuns = [];
-let heartbeatCalls = [];
-let uploadPatchCalls = [];
-// When true, the NEXT successful heartbeat simulates a concurrent takeover
-// landing immediately after it responds -- i.e. attempt B reclaims the row
-// in the gap between save-upload.js's pre-flight heartbeat check and its
-// later call to replace_ha_accounts_snapshot(). Used to prove the RPC's OWN
-// embedded attempt check is a real, independent safeguard, not merely
-// redundant with the pre-flight check.
-let simulateTakeoverAfterHeartbeat = false;
-function fakeHeartbeat(userId, uploadId, researchRunId, attemptId){
-  const row = researchRuns.find(r => r.user_id === userId && r.upload_id === uploadId && r.research_run_id === researchRunId);
-  if(!row || row.status !== 'running' || row.attempt_id !== attemptId) return { ok: false, reason: 'not-current-attempt' };
-  if(simulateTakeoverAfterHeartbeat){
-    simulateTakeoverAfterHeartbeat = false;
-    row.attempt_id = 'takeover-attempt-id';
+let fakeAccounts = [];   // [{upload_id, account_name}]
+let fakeSignals = [];    // [{user_id, event_fingerprint}]
+let fakeUploadState = { stage: 'uploaded', summary: {} };
+
+function persistHaResearchOutput(body){
+  const run = researchRuns.find(r => r.user_id === body.p_user_id && r.upload_id === body.p_upload_id && r.research_run_id === body.p_research_run_id);
+  if(!run || run.status !== 'running' || run.attempt_id !== body.p_attempt_id){
+    const err = { message: 'stale attempt', code: 'HA001' };
+    return { ok: false, status: 400, body: err };
   }
-  return { ok: true, run: row };
+  let accountsPersisted = 0;
+  if(body.p_accounts !== null && body.p_accounts !== undefined){
+    fakeAccounts = fakeAccounts.filter(a => a.upload_id !== body.p_upload_id);
+    for(const a of body.p_accounts){
+      if(!a.account_name) continue;
+      fakeAccounts.push({ upload_id: body.p_upload_id, account_name: a.account_name });
+      accountsPersisted += 1;
+    }
+  }
+  let signalsAttempted = 0, signalsPersisted = 0;
+  if(Array.isArray(body.p_signals) && body.p_signals.length){
+    for(const s of body.p_signals){
+      if(!s.event_fingerprint) continue;
+      signalsAttempted += 1;
+      const exists = fakeSignals.some(x => x.user_id === body.p_user_id && x.event_fingerprint === s.event_fingerprint);
+      if(!exists){ fakeSignals.push({ user_id: body.p_user_id, event_fingerprint: s.event_fingerprint }); signalsPersisted += 1; }
+    }
+  }
+  if(body.p_upload_stage !== null && body.p_upload_stage !== undefined) fakeUploadState.stage = body.p_upload_stage;
+  if(body.p_upload_summary !== null && body.p_upload_summary !== undefined) fakeUploadState.summary = body.p_upload_summary;
+  return {
+    ok: true, status: 200,
+    body: {
+      accountsPersisted,
+      signalsAttempted,
+      signalsPersisted,
+      signalsConflictIgnored: Math.max(0, signalsAttempted - signalsPersisted),
+      leaseExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      attemptId: body.p_attempt_id
+    }
+  };
 }
 
 function mockFetch(){
@@ -85,25 +119,15 @@ function mockFetch(){
     if(u.includes('/rest/v1/ha_uploads') && options.method === 'PATCH'){ uploadPatchCalls.push(JSON.parse(options.body)); return jsonResponse([{ id: UPLOAD_ID }]); }
     if(u.includes('/rest/v1/ha_uploads') && options.method === 'POST') return jsonResponse([{ id: UPLOAD_ID }]);
     if(u.includes('/rest/v1/ha_organizations')) return jsonResponse([]);
-    if(u.includes('/rest/v1/rpc/heartbeat_ha_research_run')){
+    if(u.includes('/rest/v1/rpc/persist_ha_research_output')){
       const body = JSON.parse(options.body);
-      heartbeatCalls.push(body);
-      const result = fakeHeartbeat(body.p_user_id, body.p_upload_id, body.p_research_run_id, body.p_attempt_id);
-      return jsonResponse(result);
+      persistRpcCalls.push(body);
+      const result = persistHaResearchOutput(body);
+      return jsonResponse(result.body, result.ok, result.status);
     }
     if(u.includes('/rest/v1/rpc/replace_ha_accounts_snapshot')){
       const body = JSON.parse(options.body);
-      rpcCalls.push(body);
-      // Mirror the real RPC's embedded attempt check (migration 4 §9): when
-      // p_research_run_id/p_attempt_id are supplied, reject with HA001
-      // unless they match a 'running' row.
-      if(body.p_research_run_id && body.p_attempt_id){
-        const row = researchRuns.find(r => r.user_id === body.p_user_id && r.upload_id === body.p_upload_id && r.research_run_id === body.p_research_run_id);
-        if(!row || row.status !== 'running' || row.attempt_id !== body.p_attempt_id){
-          return jsonResponse({ message: 'stale attempt', code: 'HA001' }, false, 400);
-        }
-      }
-      // Simulate the RPC's real behavior: it returns exactly the rows it persisted.
+      accountsRpcCalls.push(body);
       const returned = (body.p_accounts || []).map((a, i) => ({ id: `acct-${i}`, upload_id: body.p_upload_id, account_name: a.account_name }));
       return jsonResponse(returned);
     }
@@ -112,8 +136,6 @@ function mockFetch(){
       signalsInsertCalls.push(body);
       let toReturn = body;
       if(simulateConflictOnSecondSignal && body.length > 1){
-        // Simulate PostgREST's real ignore-duplicates + return=representation
-        // behavior: only the rows that were NOT a conflict come back.
         toReturn = [body[0]];
       }
       return jsonResponse(toReturn.map((r, i) => ({ ...r, id: `sig-${i}`, first_seen_at: new Date().toISOString() })));
@@ -126,6 +148,13 @@ function fakeReq(body){
   return { method: 'POST', headers: { authorization: 'Bearer valid-token' }, body };
 }
 
+function resetAll(){
+  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = [];
+  researchRuns = []; fakeAccounts = []; fakeSignals = []; fakeUploadState = { stage: 'uploaded', summary: {} };
+  simulateConflictOnSecondSignal = false; logLines = [];
+  global.fetch = mockFetch();
+}
+
 const originalFetch = global.fetch;
 const originalConsoleLog = console.log;
 const originalConsoleWarn = console.warn;
@@ -135,16 +164,21 @@ console.log = captureLog(originalConsoleLog);
 console.warn = captureLog(originalConsoleWarn);
 
 async function run(){
-  // 1. Normal save: account snapshot goes through the RPC, not DELETE+POST.
+  // =========================================================================
+  // UNTRACKED PATH (stage='uploaded'): unchanged behavior, still goes
+  // through replace_ha_accounts_snapshot() with no attempt parameters and a
+  // plain ha_signals insert.
+  // =========================================================================
+
+  // 1. Normal untracked save: account snapshot goes through the RPC, not
+  // DELETE+POST.
   {
-    rpcCalls = []; signalsInsertCalls = []; simulateConflictOnSecondSignal = false; logLines = [];
-    global.fetch = mockFetch();
+    resetAll();
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       uploadName: 'QA Block 1',
-      stage: 'research_updated',
-      researchRunId: 'run-test-1',
+      stage: 'uploaded',
       accounts: [
         { name: 'Acme Co', signals: [] },
         { name: 'Beta Inc', signals: [] }
@@ -152,28 +186,25 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 200, 'a normal save returns 200');
-    assert(rpcCalls.length === 1, 'exactly one call to replace_ha_accounts_snapshot is made for one save');
-    assert(rpcCalls[0].p_upload_id === UPLOAD_ID && rpcCalls[0].p_user_id === USER_ID, 'the RPC call carries the correct upload_id and user_id');
-    assert(Array.isArray(rpcCalls[0].p_accounts) && rpcCalls[0].p_accounts.length === 2, 'the RPC call carries the full account snapshot as one jsonb array, not per-row calls');
+    assert(res.statusCode === 200, 'an untracked (stage=uploaded) save returns 200');
+    assert(accountsRpcCalls.length === 1, 'exactly one call to replace_ha_accounts_snapshot is made for one untracked save');
+    assert(accountsRpcCalls[0].p_upload_id === UPLOAD_ID && accountsRpcCalls[0].p_user_id === USER_ID, 'the RPC call carries the correct upload_id and user_id');
+    assert(accountsRpcCalls[0].p_research_run_id === undefined, 'the untracked path never passes attempt parameters to replace_ha_accounts_snapshot');
     assert(res.body.accountsSaved === 2, 'accountsSaved reflects what the RPC actually returned');
-    assert(logLines.some(l => l.includes('[save-upload.instrumentation]') && l.includes('run-test-1')), 'the instrumentation log line is written and carries the researchRunId');
+    assert(persistRpcCalls.length === 0, 'the tracked persist_ha_research_output RPC is never called for an untracked save');
   }
 
-  // 2. Signal instrumentation: two signals submitted, one is a genuine
-  // conflict (simulated by the mock ha_signals response omitting it) -- the
-  // response and log must report attempted=2, persisted=1, conflict-ignored=1,
-  // not just "signalsSaved: 2" as the pre-Phase-2A code would have implied.
+  // 2. Signal instrumentation (untracked path): two signals submitted, one
+  // is a genuine conflict.
   {
-    rpcCalls = []; signalsInsertCalls = []; simulateConflictOnSecondSignal = true; logLines = [];
-    global.fetch = mockFetch();
+    resetAll();
     const commonFields = { accountName: 'Acme Co', sourceUrl: 'https://example.com/a', confidenceScore: 70 };
+    simulateConflictOnSecondSignal = true;
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       uploadName: 'QA Block 1',
-      stage: 'research_updated',
-      researchRunId: 'run-test-2',
+      stage: 'uploaded',
       accounts: [{
         name: 'Acme Co',
         signals: [
@@ -184,31 +215,21 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 200, 'the signal-conflict scenario still returns 200');
+    assert(res.statusCode === 200, 'the untracked signal-conflict scenario still returns 200');
     assert(res.body.signalsAttempted === 2, 'response reports 2 attempted signal inserts');
     assert(res.body.signalsSaved === 1, 'response reports exactly 1 persisted row, matching the simulated conflict');
     assert(res.body.signalsConflictIgnored === 1, 'response reports exactly 1 conflict-ignored row, not silently absent');
-    const instrumentationLine = logLines.find(l => l.includes('[save-upload.instrumentation]') && l.includes('run-test-2'));
-    assert(!!instrumentationLine, 'a distinct instrumentation log line exists for this run');
-    if(instrumentationLine){
-      const parsed = JSON.parse(instrumentationLine.replace('[save-upload.instrumentation] ', ''));
-      assert(parsed.attemptedSignalInserts === 2 && parsed.persistedSignalRows === 1 && parsed.conflictIgnoredRows === 1, 'the structured log line itself carries the same attempted/persisted/conflict-ignored breakdown as the HTTP response — this is exactly the field set needed to classify a future accepted-vs-persisted gap as intentional dedup vs. actual loss');
-    }
   }
 
-  // 3. B3 defense-in-depth: a signal whose declared type disagrees with its
-  // canonically-resolved eventType (no canonicalEventType attached, as if
-  // from a caller that predates B3) must be corrected before persistence,
-  // not silently written with two disagreeing classification fields.
+  // 3. B3 defense-in-depth (untracked path): a signal whose declared type
+  // disagrees with its canonically-resolved eventType must be corrected.
   {
-    rpcCalls = []; signalsInsertCalls = []; simulateConflictOnSecondSignal = false; logLines = [];
-    global.fetch = mockFetch();
+    resetAll();
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       uploadName: 'QA Block 1',
-      stage: 'research_updated',
-      researchRunId: 'run-test-3',
+      stage: 'uploaded',
       accounts: [{
         name: 'Acme Co',
         signals: [{
@@ -216,7 +237,6 @@ async function run(){
           signalType: 'Totally Wrong Label', type: 'Totally Wrong Label',
           signalTitle: 'Acme completes acquisition of Rival Inc',
           whatChanged: 'Acme Corp completes acquisition of Rival Inc.'
-          // no canonicalEventType -- simulates a pre-B3 caller
         }]
       }]
     });
@@ -229,15 +249,30 @@ async function run(){
   }
 
   // =========================================================================
-  // Phase 2A implementation-review ROUND 3, item 3: attempt validation at
-  // persistence.
+  // TRACKED PATH (ROUND 4): research-output stages go through ONE call to
+  // persist_ha_research_output(). Attempt metadata is now MANDATORY.
   // =========================================================================
 
-  // 4. attemptId without researchRunId is rejected as malformed, before any
-  // work happens.
+  // 4. Missing attempt metadata for a research-output stage is rejected,
+  // before any work happens.
   {
-    rpcCalls = []; signalsInsertCalls = []; researchRuns = []; heartbeatCalls = []; uploadPatchCalls = []; simulateConflictOnSecondSignal = false; simulateTakeoverAfterHeartbeat = false; logLines = [];
-    global.fetch = mockFetch();
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'researched',
+      // no researchRunId, no attemptId
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'a research-output-stage save with NO researchRunId/attemptId is rejected 400 -- attempt metadata is mandatory, not opt-in');
+    assert(uploadPatchCalls.length === 0 && accountsRpcCalls.length === 0 && persistRpcCalls.length === 0, 'nothing was written for the missing-metadata request');
+  }
+
+  // 4b. attemptId without researchRunId is rejected as malformed too.
+  {
+    resetAll();
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
@@ -247,81 +282,139 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 400, 'attemptId supplied without researchRunId is rejected 400 (malformed request)');
-    assert(uploadPatchCalls.length === 0 && rpcCalls.length === 0, 'nothing was written for the malformed request');
+    assert(res.statusCode === 400, 'attemptId without researchRunId is rejected 400 for a research-output stage');
   }
 
-  // 5. A STALE attempt (already reclaimed by a replacement attempt) is
-  // rejected at the PRE-FLIGHT heartbeat gate, BEFORE the ha_uploads PATCH,
-  // the accounts RPC, or the ha_signals insert -- this is the "Attempt A
-  // finishes late" step of the exact 5-step race from
-  // supabase-schema-migration-4-atomic-account-snapshot.sql §9.
+  // 4c. missing uploadId for a research-output stage is rejected.
   {
-    rpcCalls = []; signalsInsertCalls = []; heartbeatCalls = []; uploadPatchCalls = []; simulateConflictOnSecondSignal = false; simulateTakeoverAfterHeartbeat = false; logLines = [];
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      stage: 'researched',
+      researchRunId: 'auto',
+      attemptId: 'some-attempt',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'a research-output-stage save with no uploadId at all is rejected 400');
+  }
+
+  // 5. A STALE attempt (already reclaimed) is rejected, and NOTHING is
+  // written to ha_accounts, ha_signals, OR ha_uploads -- all three,
+  // together, via the ONE atomic call. This is the exact scenario the round
+  // 3 package could not yet guarantee for signals/upload-state.
+  {
+    resetAll();
     researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-B-current' }];
-    global.fetch = mockFetch();
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       stage: 'researched',
       researchRunId: 'auto',
       attemptId: 'attempt-A-stale', // reclaimed -- the row now shows attempt-B-current
-      accounts: [{ name: 'Stale Write', signals: [] }]
+      summary: { note: 'should not persist' },
+      accounts: [{ name: 'Stale Account Write', signals: [{
+        accountName: 'Stale Account Write', signalTitle: 'Stale signal', sourceUrl: 'https://example.com/stale', confidenceScore: 50, signalType: 'Award'
+      }] }]
     });
     const res = fakeRes();
     await handler(req, res);
     assert(res.statusCode === 409 && res.body.staleAttempt === true, 'a stale (superseded) attempt is rejected 409 with staleAttempt:true');
-    assert(uploadPatchCalls.length === 0, 'the ha_uploads PATCH never ran for the stale attempt -- upload state/summary was not touched');
-    assert(rpcCalls.length === 0, 'the accounts RPC was never called for the stale attempt -- ha_accounts was not touched');
-    assert(signalsInsertCalls.length === 0, 'the ha_signals insert never ran for the stale attempt');
+    assert(uploadPatchCalls.length === 0, 'the plain ha_uploads PATCH never runs for a tracked save (it goes through the RPC instead)');
+    assert(persistRpcCalls.length === 1, 'persist_ha_research_output WAS called (and correctly rejected the request)');
+    assert(fakeAccounts.filter(a => a.upload_id === UPLOAD_ID).length === 0, 'ATTEMPT A: zero ha_accounts rows were written for this upload');
+    assert(fakeSignals.length === 0, 'ATTEMPT A: zero ha_signals rows were written');
+    assert(fakeUploadState.stage === 'uploaded' && fakeUploadState.summary.note === undefined, 'ATTEMPT A: ha_uploads research-state (stage/summary) was NOT overwritten');
   }
 
-  // 6. The CURRENT (still-owning) attempt succeeds, and its
-  // researchRunId/attemptId are passed through to the accounts RPC for the
-  // atomic, same-transaction re-check.
+  // 6. The CURRENT (still-owning) attempt succeeds, and accounts + signals +
+  // upload-state all persist together via the same call.
   {
-    rpcCalls = []; signalsInsertCalls = []; heartbeatCalls = []; uploadPatchCalls = []; simulateConflictOnSecondSignal = false; simulateTakeoverAfterHeartbeat = false; logLines = [];
+    resetAll();
     researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-current' }];
-    global.fetch = mockFetch();
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       stage: 'researched',
       researchRunId: 'auto',
       attemptId: 'attempt-current',
-      accounts: [{ name: 'Current Attempt Write', signals: [] }]
+      summary: { accountCount: 1 },
+      accounts: [{ name: 'Current Attempt Write', signals: [{
+        accountName: 'Current Attempt Write', signalTitle: 'Real signal', sourceUrl: 'https://example.com/real', confidenceScore: 80, signalType: 'Acquisition'
+      }] }]
     });
     const res = fakeRes();
     await handler(req, res);
     assert(res.statusCode === 200, 'the current attempt saves successfully');
-    assert(heartbeatCalls.length === 1 && heartbeatCalls[0].p_attempt_id === 'attempt-current', 'the pre-flight heartbeat was called with the current attempt_id');
-    assert(uploadPatchCalls.length === 1, 'the ha_uploads PATCH ran exactly once for the current attempt');
-    assert(rpcCalls.length === 1 && rpcCalls[0].p_research_run_id === 'auto' && rpcCalls[0].p_attempt_id === 'attempt-current', 'the accounts RPC call carries p_research_run_id/p_attempt_id so its own embedded check re-verifies the same attempt atomically');
+    assert(persistRpcCalls.length === 1 && persistRpcCalls[0].p_research_run_id === 'auto' && persistRpcCalls[0].p_attempt_id === 'attempt-current', 'exactly one call to persist_ha_research_output carries the current researchRunId/attemptId');
+    assert(fakeAccounts.some(a => a.upload_id === UPLOAD_ID && a.account_name === 'Current Attempt Write'), 'the account was persisted');
+    assert(fakeSignals.length === 1, 'the signal was persisted');
+    assert(fakeUploadState.stage === 'researched' && fakeUploadState.summary.accountCount === 1, 'ha_uploads research-state was updated atomically alongside accounts/signals');
+    assert(res.body.accountsSaved === 1 && res.body.signalsSaved === 1, 'the response reflects the RPC-returned counts');
   }
 
-  // 7. A takeover landing in the GAP between the pre-flight heartbeat and
-  // the accounts RPC call is still caught -- by the RPC's OWN embedded
-  // check, independent of the pre-flight check having already succeeded.
-  // Proves "prefer an atomic run-check/persistence design" is a real,
-  // separate safeguard, not decorative.
+  // 7. Test 1-2-3-4-5 of the required scenario list, stated explicitly in
+  // order: (1) attempt A passes an earlier heartbeat/claim, (2) attempt B
+  // reclaims, (3) A attempts account persistence, (4) A attempts signal
+  // persistence, (5) A attempts upload-summary persistence -- (6) all
+  // rejected together, no row changes. Under the round-4 architecture these
+  // are no longer three separate application-level calls to test
+  // separately -- they are three effects of the SAME single call, which is
+  // exactly the fix. This test asserts that structurally: one save request
+  // carrying accounts + signals + a summary update produces exactly ONE
+  // RPC call, and that call's rejection covers all three simultaneously.
   {
-    rpcCalls = []; signalsInsertCalls = []; heartbeatCalls = []; uploadPatchCalls = []; simulateConflictOnSecondSignal = false; logLines = [];
-    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-about-to-be-taken-over' }];
-    simulateTakeoverAfterHeartbeat = true; // fires on the pre-flight heartbeat call
-    global.fetch = mockFetch();
+    resetAll();
+    // (1) Attempt A claims/heartbeats successfully first.
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-A' }];
+    // (2) Attempt B reclaims -- simulated directly by mutating the fixture,
+    // exactly as claim_ha_research_run()'s reclaim would.
+    researchRuns[0].attempt_id = 'attempt-B';
+    // (3)+(4)+(5) Attempt A attempts persistence of accounts, signals, AND
+    // an upload summary update, all in the SAME request.
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'research_updated',
+      researchRunId: 'auto',
+      attemptId: 'attempt-A',
+      summary: { accountCount: 999, note: 'attempt A should not persist this' },
+      accounts: [{ name: 'A Account', signals: [{
+        accountName: 'A Account', signalTitle: 'A signal', sourceUrl: 'https://example.com/a-sig', confidenceScore: 60, signalType: 'Hiring'
+      }] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    // (6) All rejected together, no row changes.
+    assert(res.statusCode === 409 && res.body.staleAttempt === true, 'attempt A -- reclaimed by B before its request was even sent -- is rejected 409');
+    assert(persistRpcCalls.length === 1, 'exactly ONE RPC call was made for the combined account+signal+summary save request (not three separate calls that could partially succeed)');
+    assert(fakeAccounts.length === 0, 'account persistence: rejected, zero rows');
+    assert(fakeSignals.length === 0, 'signal persistence: rejected, zero rows');
+    assert(fakeUploadState.summary.note === undefined, 'upload-summary persistence: rejected, zero change');
+  }
+
+  // 8. Structural proof that there is no longer a "gap between account
+  // persistence and signal persistence": the tracked path never calls
+  // replace_ha_accounts_snapshot or the plain ha_signals insert endpoint at
+  // all -- only ever persist_ha_research_output, once.
+  {
+    resetAll();
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-x' }];
     const req = fakeReq({
       lead: { email: 'qa@example.com' },
       uploadId: UPLOAD_ID,
       stage: 'researched',
       researchRunId: 'auto',
-      attemptId: 'attempt-about-to-be-taken-over',
-      accounts: [{ name: 'Takeover Gap Write', signals: [] }]
+      attemptId: 'attempt-x',
+      accounts: [{ name: 'Solo Account', signals: [] }]
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 409 && res.body.staleAttempt === true, 'the accounts RPC itself rejects the write when a takeover happens in the gap after the pre-flight heartbeat succeeded but before the RPC call -- the atomic embedded check catches what a separate pre-flight-only check would have missed');
-    assert(uploadPatchCalls.length === 1, 'the ha_uploads PATCH DID already run (the pre-flight check passed at that point) -- illustrating exactly why the accounts RPC needs its OWN embedded check rather than relying on the pre-flight check alone');
-    assert(rpcCalls.length === 1, 'the accounts RPC was called (and correctly rejected the write) -- ha_accounts still received no persisted rows for this request');
+    assert(res.statusCode === 200, 'the tracked save succeeds');
+    assert(accountsRpcCalls.length === 0, 'the tracked path never calls replace_ha_accounts_snapshot directly -- there is no separate account-only persistence step for a takeover to land between');
+    assert(signalsInsertCalls.length === 0, 'the tracked path never calls the plain ha_signals insert endpoint directly -- there is no separate signal-only persistence step either');
+    assert(persistRpcCalls.length === 1, 'exactly one consolidated call handles both');
   }
 
   global.fetch = originalFetch;

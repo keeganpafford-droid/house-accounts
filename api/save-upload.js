@@ -126,33 +126,20 @@ function applyFreeLimitToAccounts(accounts, usage){
   return {accounts: limited, lockedCount, totalMonitoredAfter: monitored.size};
 }
 
-// Phase 2A implementation-review ROUND 3, item 3 — saves whose stage
-// represents research OUTPUT (as opposed to the initial pre-research save,
-// stage='uploaded', which "may remain separate and does not require a
-// research attempt") are eligible for attempt validation when the caller
-// supplies one. Not every call that uses these stage labels is part of a
-// tracked run -- dashboard/index.html's refreshOpportunityViews() also
-// triggers a 'research_updated' save from several UI contexts that have
-// nothing to do with an active research pass (manual account edits, filter
-// changes), and the standalone single-account "Research Account" button
-// triggers a 'researched' save without ever having claimed a run at all
-// (that button was deliberately scoped OUT of the tracked-run system --
-// see the "manual-before-auto" and provider-gate scoping notes in
-// api/research-batch.js). Those untracked saves are unaffected: attempt
-// validation only activates when the request ITSELF supplies both
-// researchRunId and attemptId (both-or-neither enforced below,
-// independent of stage) -- there is no way for an omitted attemptId to
-// escalate privilege, since ownership of uploadId is independently
-// enforced by getUserFromAuth()/the ha_uploads PATCH filter regardless of
-// whether this save is tracked.
+// Phase 2A implementation-review ROUND 4, item 1 — saves whose stage
+// represents research OUTPUT now REQUIRE attempt metadata; this is no
+// longer an opt-in check. dashboard/index.html's refreshOpportunityViews()
+// is called from several UI contexts that have nothing to do with an
+// active research pass (manual account edits, filter changes) -- those
+// callers now use the distinct stage 'view_updated' (see dashboard's
+// refreshOpportunityViews()), which is deliberately NOT in this set, so
+// they remain untracked exactly as before. The standalone single-account
+// "Research Account" button now claims its own manual research run before
+// calling providers (see dashboard/index.html's researchAccountByName()),
+// so it always has real attempt metadata to send when it saves. There is
+// no longer any code path that legitimately reaches a RESEARCH_OUTPUT_STAGES
+// save without one.
 const RESEARCH_OUTPUT_STAGES = new Set(['researched', 'research_updated']);
-
-async function heartbeatResearchRun({ userId, uploadId, researchRunId, attemptId }){
-  return supabase('rpc/heartbeat_ha_research_run', {
-    method: 'POST',
-    body: JSON.stringify({ p_user_id: userId, p_upload_id: uploadId, p_research_run_id: researchRunId, p_attempt_id: attemptId, p_lease_seconds: 300 })
-  });
-}
 
 async function getUserFromAuth(req){
   const authUser = await authFetchUser(req);
@@ -174,14 +161,6 @@ export default async function handler(req, res){
   try{
     const body = req.body || {};
     const lead = body.lead || {};
-    // Phase 2A / A2 correlation identifier: passed through unchanged from
-    // whatever the caller attached to the logical research run this save
-    // belongs to (dashboard/index.html generates one per researchTopAccounts()
-    // invocation). Callers that don't send one (weekly-scan.js, older client
-    // builds) simply get 'unattributed' — instrumentation still records
-    // every other field, just without a research-batch.js line to correlate
-    // against for that request.
-    const researchRunId = clean(body.researchRunId) || 'unattributed';
     let user = await getUserFromAuth(req);
     if(!user){
       const email = clean(lead.email).toLowerCase();
@@ -205,128 +184,187 @@ export default async function handler(req, res){
     if(!user?.id) throw new Error('User lookup did not return an id.');
 
     let uploadId = clean(body.uploadId);
+    const stage = clean(body.stage || 'uploaded');
+    const isResearchOutputStage = RESEARCH_OUTPUT_STAGES.has(stage);
 
-    // Phase 2A implementation-review ROUND 3, item 3 — attempt validation
-    // BEFORE any write, including the ha_uploads PATCH below (which
-    // replace_ha_accounts_snapshot's own embedded attempt check, further
-    // down, does NOT cover -- that RPC only touches ha_accounts).
-    //
-    // researchRunId ALONE (no attemptId) remains valid and untracked --
-    // this is the pre-existing, backward-compatible log-correlation-only
-    // usage (weekly-scan.js and any older client build never send
-    // attemptId at all, and dashboard/index.html itself sends researchRunId
-    // with no attemptId for every save that isn't part of the tracked
-    // top-accounts run -- see RESEARCH_OUTPUT_STAGES above). attemptId
-    // WITHOUT researchRunId is rejected as malformed: an attempt is only
-    // ever meaningful scoped to the run it belongs to, so this combination
-    // cannot represent a legitimate request from any current caller.
+    // Phase 2A implementation-review ROUND 4, item 1 — attempt metadata is
+    // now MANDATORY for research-output stages, full stop. There is no
+    // longer a "researchRunId alone, untracked" allowance for THESE
+    // specific stages (that allowance still exists implicitly for any other
+    // stage, e.g. 'uploaded' or the new 'view_updated' -- see
+    // RESEARCH_OUTPUT_STAGES above).
     const rawResearchRunId = clean(body.researchRunId);
     const rawAttemptId = clean(body.attemptId);
-    if(rawAttemptId && !rawResearchRunId){
+    if(isResearchOutputStage){
+      if(!rawResearchRunId || !rawAttemptId){
+        return json(res, 400, {error:'researchRunId and attemptId are required for a research-output-stage save.'});
+      }
+      if(!uploadId){
+        return json(res, 400, {error:'uploadId is required for a research-output-stage save.'});
+      }
+    } else if(rawAttemptId && !rawResearchRunId){
       return json(res, 400, {error:'attemptId requires researchRunId to also be provided.'});
     }
-    const trackedAttempt = !!(rawResearchRunId && rawAttemptId);
-    if(trackedAttempt){
-      if(!uploadId) return json(res, 400, {error:'uploadId is required when researchRunId/attemptId are provided.'});
-      try {
-        const heartbeatResult = await heartbeatResearchRun({ userId: user.id, uploadId, researchRunId: rawResearchRunId, attemptId: rawAttemptId });
-        if(!heartbeatResult?.ok){
-          // This attempt has been reclaimed, completed, or failed since it
-          // was issued -- reject the WHOLE request (nothing below this
-          // point runs: not the ha_uploads PATCH, not the accounts RPC, not
-          // the ha_signals insert). This is the "Attempt A finishes late"
-          // case from the review's 5-step race: A's own heartbeat/verify
-          // call fails here because attempt B already reclaimed the row.
-          return json(res, 409, {error:'This research attempt is no longer active; nothing was saved.', staleAttempt:true, reason: heartbeatResult?.reason || 'not-current-attempt'});
-        }
-      } catch(err) {
-        if(err.code === '42501') return json(res, 403, {error:'You do not have access to this upload.'});
-        throw err;
-      }
-    }
+    const trackedAttempt = isResearchOutputStage;
 
     const summary = body.summary || {};
-    const uploadRow = {
-      user_id: user.id,
-      upload_name: clean(body.uploadName || 'Uploaded account list'),
-      stage: clean(body.stage || 'uploaded'),
-      summary,
-      source_page: clean(body.page || body.sourcePage),
-      updated_at: new Date().toISOString()
-    };
 
-    let upload;
-    if(uploadId){
-      const updated = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
-        method:'PATCH',
-        body: JSON.stringify(uploadRow)
+    // ===========================================================================
+    // UNTRACKED PATH: stage='uploaded' (initial pre-research save, which "may
+    // remain separate and does not require a research attempt" per the
+    // review) or any other non-research-output stage (e.g. 'view_updated').
+    // Unchanged from before round 4: a plain ha_uploads PATCH/INSERT, then
+    // replace_ha_accounts_snapshot() with no attempt parameters, then a
+    // plain ha_signals insert.
+    // ===========================================================================
+    if(!trackedAttempt){
+      const uploadRow = {
+        user_id: user.id,
+        upload_name: clean(body.uploadName || 'Uploaded account list'),
+        stage,
+        summary,
+        source_page: clean(body.page || body.sourcePage),
+        updated_at: new Date().toISOString()
+      };
+
+      let upload;
+      if(uploadId){
+        const updated = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method:'PATCH',
+          body: JSON.stringify(uploadRow)
+        });
+        upload = Array.isArray(updated) && updated[0] ? updated[0] : {id: uploadId};
+      } else {
+        const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
+        upload = Array.isArray(inserted) ? inserted[0] : inserted;
+        uploadId = upload.id;
+      }
+      if(!uploadId) throw new Error('Upload save did not return an id. Confirm ha_uploads table exists.');
+
+      const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
+      const usageContext = await getUsageContext(user);
+      const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
+      const accounts = limitResult.accounts;
+      const unlockedAccounts = accounts.filter(a => !a._locked);
+      let persistedAccountCount = 0;
+      if(accounts.length){
+        const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
+          account_name: clean(a.name || a.accountName),
+          industry: clean(a.industry),
+          contact_name: clean(a.contactName),
+          contact_email: clean(a.contactEmail).toLowerCase(),
+          metrics: a.metrics || {},
+          raw_data: a.rawData || {}
+        })).filter(a => a.account_name);
+        if(accountPayload.length){
+          const snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
+            method:'POST',
+            prefer:'return=representation',
+            body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload })
+          });
+          persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
+        }
+      }
+
+      const rawSignals = [];
+      for(const account of unlockedAccounts){
+        const signals = Array.isArray(account.signals) ? account.signals : [];
+        const accountName = clean(account.name || account.accountName);
+        for(const s of signals){
+          rawSignals.push({ ...s, accountName, companyName: s.companyName || accountName });
+        }
+      }
+      const resolvedSignals = resolveOpportunityEvents(rawSignals);
+      let classificationCorrections = 0;
+      for(const s of resolvedSignals){
+        const canonicalLabel = s.eventIdentity?.eventType ? displayLabelForEventType(s.eventIdentity.eventType) : null;
+        const declaredLabel = clean(s.signalType || s.type || '');
+        if(canonicalLabel && declaredLabel && canonicalLabel !== declaredLabel){
+          console.warn('[save-upload] classification mismatch corrected before persistence', {
+            accountNameHash: shortHash(s.accountName), declaredLabel, canonicalLabel, eventType: s.eventIdentity.eventType,
+            ...(DEBUG_INSTRUMENTATION ? { accountName: s.accountName } : {})
+          });
+          s.signalType = canonicalLabel; s.signal_type = canonicalLabel; s.type = canonicalLabel;
+          classificationCorrections += 1;
+        }
+      }
+      const candidateRows = resolvedSignals.map(s => ({
+        user_id: user.id,
+        upload_id: uploadId,
+        account_name: clean(s.accountName),
+        event_fingerprint: s.eventFingerprint,
+        signal_hash: signalHash(user.id, uploadId, s.accountName, s),
+        signal_type: clean(s.signalType || s.type || 'Business Activity'),
+        title: clean(s.signalTitle || s.title || s.whatChanged),
+        why_reach_out: clean(s.whyItMattersForPromo || s.whyReachOut || s.reasonToReachOut || s.whyNow),
+        confidence: Number(s.confidenceScore || s.confidence || 0) || null,
+        source_url: clean(s.sourceUrl || s.url),
+        source_domain: clean(s.cleanSourceName || s.sourceName || ''),
+        published_at: clean(s.publicationDate || s.publishedAt) || null,
+        payload: s,
+        first_seen_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString()
+      })).filter(row => row.event_fingerprint);
+      const signalRows = dedupeByEventFingerprint(candidateRows, {
+        keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
+        scoreOf: row => Number(row.confidence || 0)
       });
-      upload = Array.isArray(updated) && updated[0] ? updated[0] : {id: uploadId};
-    } else {
-      const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
-      upload = Array.isArray(inserted) ? inserted[0] : inserted;
-      uploadId = upload.id;
-    }
-    if(!uploadId) throw new Error('Upload save did not return an id. Confirm ha_uploads table exists.');
+      let insertedFingerprints = [];
+      if(signalRows.length){
+        const chunkSize = 200;
+        for(let i=0;i<signalRows.length;i+=chunkSize){
+          const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
+            method:'POST',
+            prefer:'resolution=ignore-duplicates,return=representation',
+            body: JSON.stringify(signalRows.slice(i, i+chunkSize))
+          });
+          if(Array.isArray(inserted)) insertedFingerprints.push(...inserted.map(r => r.event_fingerprint));
+        }
+      }
+      const conflictIgnoredCount = Math.max(0, signalRows.length - insertedFingerprints.length);
+      const responseResearchRunId = rawResearchRunId || 'unattributed';
 
+      console.log('[save-upload.instrumentation]', JSON.stringify({
+        ts: new Date().toISOString(),
+        researchRunId: responseResearchRunId,
+        uploadId,
+        userId: user.id,
+        tracked: false,
+        signalsReceivedFromClient: rawSignals.length,
+        canonicalEventsAfterResolution: resolvedSignals.length,
+        uniqueEventFingerprints: new Set(resolvedSignals.map(s => s.eventFingerprint)).size,
+        classificationCorrections,
+        attemptedSignalInserts: signalRows.length,
+        persistedSignalRows: insertedFingerprints.length,
+        conflictIgnoredRows: conflictIgnoredCount,
+        persistedAccountCount
+      }));
+
+      return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId:responseResearchRunId, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:insertedFingerprints.length, signalsAttempted:signalRows.length, signalsConflictIgnored:conflictIgnoredCount});
+    }
+
+    // ===========================================================================
+    // TRACKED PATH (ROUND 4): accounts, signals, and ha_uploads research-state
+    // are all persisted through ONE atomic, attempt-guarded call to
+    // persist_ha_research_output(). No separate ha_uploads PATCH runs before
+    // it -- the RPC itself updates stage/summary, guarded by the SAME
+    // attempt check as everything else, closing the gap a pre-flight-only
+    // check (round 3) left open. See
+    // supabase-schema-migration-6-attempt-guarded-persistence.sql.
+    // ===========================================================================
     const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
     const usageContext = await getUsageContext(user);
     const limitResult = applyFreeLimitToAccounts(rawAccounts, usageContext);
     const accounts = limitResult.accounts;
     const unlockedAccounts = accounts.filter(a => !a._locked);
-    // Phase 2A / A2: full-snapshot replacement now goes through one atomic,
-    // per-upload-serialized RPC call (see
-    // supabase-schema-migration-4-atomic-account-snapshot.sql) instead of two
-    // separate, non-transactional DELETE and INSERT calls. This is the
-    // database-side half of the fix for the confirmed duplicate-ha_accounts
-    // race; the application-side half (dashboard/index.html) stops issuing a
-    // save per research-fallback-worker so this RPC is no longer called
-    // concurrently for the same upload_id under normal operation — the
-    // advisory lock inside the RPC is defense in depth for any caller that
-    // still does.
-    let persistedAccountCount = 0;
-    if(accounts.length){
-      const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
-        account_name: clean(a.name || a.accountName),
-        industry: clean(a.industry),
-        contact_name: clean(a.contactName),
-        contact_email: clean(a.contactEmail).toLowerCase(),
-        metrics: a.metrics || {},
-        raw_data: a.rawData || {}
-      })).filter(a => a.account_name);
-      if(accountPayload.length){
-        // Phase 2A implementation-review ROUND 3, item 3: when this is a
-        // tracked research-output save, p_research_run_id/p_attempt_id are
-        // passed through so the RPC re-verifies attempt ownership ATOMICALLY,
-        // in the SAME transaction as the account write (same advisory lock
-        // as claim_ha_research_run() -- see
-        // supabase-schema-migration-4-atomic-account-snapshot.sql §9 for the
-        // full race analysis). The pre-flight heartbeat above already
-        // rejected an already-stale attempt before the ha_uploads PATCH;
-        // this is the second, atomic guard for the highest-blast-radius
-        // write (a full account-list replace) against a takeover landing in
-        // the gap between the two.
-        const snapshotBody = { p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload };
-        if(trackedAttempt){
-          snapshotBody.p_research_run_id = rawResearchRunId;
-          snapshotBody.p_attempt_id = rawAttemptId;
-        }
-        let snapshotResult;
-        try {
-          snapshotResult = await supabase('rpc/replace_ha_accounts_snapshot', {
-            method:'POST',
-            prefer:'return=representation',
-            body: JSON.stringify(snapshotBody)
-          });
-        } catch(err) {
-          if(err.code === 'HA001'){
-            return json(res, 409, {error:'This research attempt is no longer active; its account changes were not saved.', staleAttempt:true});
-          }
-          throw err;
-        }
-        persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
-      }
-    }
+    const accountPayload = unlockedAccounts.slice(0, 2500).map(a => ({
+      account_name: clean(a.name || a.accountName),
+      industry: clean(a.industry),
+      contact_name: clean(a.contactName),
+      contact_email: clean(a.contactEmail).toLowerCase(),
+      metrics: a.metrics || {},
+      raw_data: a.rawData || {}
+    })).filter(a => a.account_name);
 
     // Collect every account's raw signals first, then run ONE global
     // event-resolution pass across the whole upload before persisting. This
@@ -389,45 +427,62 @@ export default async function handler(req, res){
       keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
       scoreOf: row => Number(row.confidence || 0)
     });
-    // Phase 2A / Correction 1 instrumentation: return=representation (instead
-    // of return=minimal) so the response body lists exactly which rows were
-    // actually inserted under ignore-duplicates conflict resolution — the
-    // difference between attempted and inserted is the conflict-ignored
-    // count, not an assumption. This is what lets a future accepted-vs-
-    // persisted gap (like the Ben Wheeler case) be classified as either
-    // intentional canonical dedup (its fingerprint appears in
-    // insertedFingerprints or already existed before this call) or actual
-    // loss, rather than inferred after the fact from log timing alone.
-    let insertedFingerprints = [];
-    if(signalRows.length){
-      const chunkSize = 200;
-      for(let i=0;i<signalRows.length;i+=chunkSize){
-        const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
-          method:'POST',
-          prefer:'resolution=ignore-duplicates,return=representation',
-          body: JSON.stringify(signalRows.slice(i, i+chunkSize))
-        });
-        if(Array.isArray(inserted)) insertedFingerprints.push(...inserted.map(r => r.event_fingerprint));
+    // Phase 2A implementation-review ROUND 4, item 1: accounts, signals, and
+    // the ha_uploads research-state update all happen through ONE call to
+    // persist_ha_research_output() -- one transaction, one advisory lock,
+    // one attempt validation. A stale/replaced attempt is rejected here
+    // (HA001) and NOTHING is written: not accounts, not signals, not
+    // upload state. See supabase-schema-migration-6-attempt-guarded-persistence.sql
+    // §4 for the exact race this closes, re-verified for all three tables.
+    let rpcResult;
+    try {
+      rpcResult = await supabase('rpc/persist_ha_research_output', {
+        method:'POST',
+        prefer:'return=representation',
+        body: JSON.stringify({
+          p_upload_id: uploadId,
+          p_user_id: user.id,
+          p_research_run_id: rawResearchRunId,
+          p_attempt_id: rawAttemptId,
+          p_accounts: accountPayload.length ? accountPayload : null,
+          p_signals: signalRows,
+          p_upload_stage: stage,
+          p_upload_summary: summary
+        })
+      });
+    } catch(err) {
+      if(err.code === 'HA001'){
+        return json(res, 409, {error:'This research attempt is no longer active; nothing was saved.', staleAttempt:true});
       }
+      if(err.code === '42501'){
+        return json(res, 403, {error:'You do not have access to this upload.'});
+      }
+      throw err;
     }
-    const conflictIgnoredCount = Math.max(0, signalRows.length - insertedFingerprints.length);
+
+    const persistedAccountCount = Number(rpcResult?.accountsPersisted || 0);
+    const signalsAttempted = Number(rpcResult?.signalsAttempted || 0);
+    const signalsPersisted = Number(rpcResult?.signalsPersisted || 0);
+    const conflictIgnoredCount = Number(rpcResult?.signalsConflictIgnored || 0);
 
     console.log('[save-upload.instrumentation]', JSON.stringify({
       ts: new Date().toISOString(),
-      researchRunId,
+      researchRunId: rawResearchRunId,
       uploadId,
       userId: user.id,
+      tracked: true,
+      attemptId: rawAttemptId,
       signalsReceivedFromClient: rawSignals.length,
       canonicalEventsAfterResolution: resolvedSignals.length,
       uniqueEventFingerprints: new Set(resolvedSignals.map(s => s.eventFingerprint)).size,
       classificationCorrections,
-      attemptedSignalInserts: signalRows.length,
-      persistedSignalRows: insertedFingerprints.length,
+      attemptedSignalInserts: signalsAttempted,
+      persistedSignalRows: signalsPersisted,
       conflictIgnoredRows: conflictIgnoredCount,
       persistedAccountCount
     }));
 
-    return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:insertedFingerprints.length, signalsAttempted:signalRows.length, signalsConflictIgnored:conflictIgnoredCount});
+    return json(res, 200, {ok:true, userId:user.id, uploadId, researchRunId:rawResearchRunId, accountsAnalyzed:accounts.length, accountsSaved:persistedAccountCount, lockedCount:limitResult.lockedCount||0, totalMonitoredCompanies:limitResult.totalMonitoredAfter, companyLimit:Number.isFinite(usageContext.companyLimit)?usageContext.companyLimit:null, signalsSaved:signalsPersisted, signalsAttempted, signalsConflictIgnored:conflictIgnoredCount});
   } catch(err){
     return json(res, 500, {error: err.message || 'Save failed'});
   }

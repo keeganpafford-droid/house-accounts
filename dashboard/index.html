@@ -2132,30 +2132,41 @@ async function claimAutomaticResearchRun(runIntent){
 // mechanism: it reduces the CHANCE that a takeover happens before the save
 // begins, but a stale/replaced attempt is rejected by the server
 // regardless of whether this call ran or succeeded (see
-// api/save-upload.js's own pre-flight heartbeat gate and
-// replace_ha_accounts_snapshot's embedded, same-transaction attempt check).
+// api/save-upload.js's own pre-flight gate and
+// persist_ha_research_output's embedded, same-transaction attempt check).
 // Best-effort and silent on failure for exactly that reason.
-async function heartbeatCurrentResearchRun(){
-  if(!currentUploadId || !currentResearchRunId || !currentResearchAttemptId) return;
+//
+// ROUND 4: accepts an optional {researchRunId, attemptId} context so the
+// standalone single-account "Research Account" button (which now claims
+// its OWN short-lived manual run -- see researchAccountByName() below) can
+// use this without touching the shared currentResearchRunId/
+// currentResearchAttemptId globals that researchTopAccounts() owns.
+// Defaults to those globals when no context is given (the top-accounts
+// flow's existing behavior, unchanged).
+async function heartbeatCurrentResearchRun(context){
+  const ctx = context || { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
+  if(!currentUploadId || !ctx.researchRunId || !ctx.attemptId) return;
   try{
     await fetch('/api/research-batch', {
       method:'POST',
       headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
-      body: JSON.stringify({ researchRunAction:'heartbeat', uploadId: currentUploadId, researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId })
+      body: JSON.stringify({ researchRunAction:'heartbeat', uploadId: currentUploadId, researchRunId: ctx.researchRunId, attemptId: ctx.attemptId })
     });
   }catch(err){
     console.warn('[Research] pre-save heartbeat failed (best-effort; the save\'s own server-side attempt check is the actual safety mechanism)', { message: err && err.message });
   }
 }
 
-// Reports that the current claimed attempt finished (successfully or not).
-// Best-effort: if this fails (e.g. the tab is closing), the server-side
-// lease will simply expire on its own and become reclaimable -- see
+// Reports that a claimed attempt finished (successfully or not). Best-effort:
+// if this fails (e.g. the tab is closing), the server-side lease will
+// simply expire on its own and become reclaimable -- see
 // supabase-schema-migration-5-research-run-idempotency.sql §2 (lease/
-// attempt semantics). Silently does nothing if no run/attempt is currently
-// tracked (e.g. the claim itself was blocked and no research ever started).
-async function reportResearchRunOutcome(action, resultSummaryOrError){
-  if(!currentResearchRunId || !currentResearchAttemptId) return;
+// attempt semantics). Silently does nothing if no run/attempt is available.
+// ROUND 4: same optional-context pattern as heartbeatCurrentResearchRun()
+// above, for the standalone button's own independently-claimed run.
+async function reportResearchRunOutcome(action, resultSummaryOrError, context){
+  const ctx = context || { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
+  if(!ctx.researchRunId || !ctx.attemptId) return;
   try{
     await fetch('/api/research-batch', {
       method:'POST',
@@ -2163,8 +2174,8 @@ async function reportResearchRunOutcome(action, resultSummaryOrError){
       body: JSON.stringify({
         researchRunAction: action,
         uploadId: currentUploadId,
-        researchRunId: currentResearchRunId,
-        attemptId: currentResearchAttemptId,
+        researchRunId: ctx.researchRunId,
+        attemptId: ctx.attemptId,
         ...(action === 'complete'
           ? { resultSummary: resultSummaryOrError }
           : { errorMessage: String((resultSummaryOrError && resultSummaryOrError.message) || resultSummaryOrError || 'Research failed') })
@@ -3660,21 +3671,59 @@ function getResearchDiagnostics(){
 
 function renderResearchDiagnostics(){ const el=document.getElementById('researchDiagnosticsPanel'); if(el){el.hidden=true;el.style.display='none';el.innerHTML='';} }
 
+// Phase 2A implementation-review ROUND 4, item 2 — a request bound to an
+// existing upload must always carry a server-issued, currently-active
+// attemptId; there is no more untracked path for research against an
+// existing upload. When called from researchTopAccounts()'s fallback loop
+// (options.skipSave === true), the caller already claimed a run and passes
+// its researchRunId/attemptId through options directly. When called
+// standalone (the "Research Account" button, no options.skipSave -- a
+// direct, explicit, authenticated user action), this function claims its
+// OWN short-lived manual research run first, scoped to just this one
+// account, using a LOCAL context rather than the shared
+// currentResearchRunId/currentResearchAttemptId globals researchTopAccounts()
+// owns -- so a standalone click can never clobber, or be clobbered by, a
+// concurrent top-accounts pass in the same tab. If another run is already
+// actively claiming this upload's one active-run slot, the claim is
+// rejected and this function stops before ever calling a provider or
+// saving anything -- the button is simply unavailable while another run
+// owns the upload, by design (see the item-2 "no untracked bypass"
+// requirement).
 async function researchAccountByName(accountName, options = {}){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
   const panel = document.getElementById(`signals-${accountDomId(account.name)}`);
+
+  let runId = options.researchRunId || null;
+  let attemptId = options.attemptId || null;
+  let ownClaim = false;
+  if(currentUploadId && !attemptId){
+    if(panel) panel.innerHTML = `<div class="signal-loading">Starting research for ${escapeHtml(account.name)}...</div>`;
+    const claim = await claimAutomaticResearchRun('manual-rerun');
+    const outcome = claim.ok && claim.data ? claim.data.outcome : null;
+    if(!claim.ok || outcome === 'attached-active' || outcome === 'completed'){
+      if(panel) panel.innerHTML = `<div class="no-signals-message">Another research run is currently active for this account list. Please wait for it to finish before researching an individual account.</div>`;
+      return;
+    }
+    runId = claim.data.researchRunId;
+    attemptId = claim.data.attemptId;
+    ownClaim = true;
+  }
+  const attemptContext = attemptId ? { researchRunId: runId, attemptId } : null;
+
   if(panel) panel.innerHTML = `<div class="signal-loading">Researching ${escapeHtml(account.name)} across public sources...</div>`;
   try{
     const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
     const endpoint = enhancedPublicMode ? '/api/research-batch' : '/api/research-account';
     const payload = enhancedPublicMode ? {
       mode:'warm-account',
-      // Log-correlation only -- the server no longer uses these fields to
-      // decide run identity (see claimAutomaticResearchRun() above). uploadId
-      // still gates a mandatory authenticated-owner check server-side.
-      researchRunId: currentResearchRunId,
-      attemptId: currentResearchAttemptId,
+      // researchRunId/attemptId are MANDATORY server-side whenever uploadId
+      // is present (Phase 2A implementation-review ROUND 4, item 2) -- both
+      // now always come from either the caller (fallback loop) or this
+      // function's own claim above, never invented, never omitted while
+      // currentUploadId is set.
+      researchRunId: runId,
+      attemptId: attemptId,
       uploadId: currentUploadId,
       accounts: batchPayloadForAccounts([account])
     } : {
@@ -3745,11 +3794,14 @@ async function researchAccountByName(accountName, options = {}){
     // triggering its own full-snapshot save. This is what actually stops the
     // confirmed duplicate-ha_accounts race at the source, rather than only
     // containing it after the fact. The standalone "Research Account" button
-    // (no options passed) is unaffected — it still saves immediately after
-    // its own single account finishes, exactly as before.
+    // (no options.skipSave) still saves immediately after its own single
+    // account finishes, now carrying its own claimed attemptContext.
     if(!options.skipSave){
-      refreshOpportunityViews();
-      await saveCurrentUpload('researched');
+      refreshOpportunityViews(attemptContext);
+      await saveCurrentUpload('researched', attemptContext);
+    }
+    if(ownClaim){
+      await reportResearchRunOutcome('complete', { signalsReturned: (account.signals || []).length, accountsResearched: 1 }, attemptContext);
     }
   }catch(err){
     console.error('[Account Research] Research or account update failed.', {
@@ -3757,6 +3809,9 @@ async function researchAccountByName(accountName, options = {}){
       message: err && err.message ? err.message : String(err)
     });
     if(panel) panel.innerHTML = `<div class="no-signals-message">We couldn’t complete research for this account. Please try again.</div>`;
+    if(ownClaim){
+      await reportResearchRunOutcome('fail', err, attemptContext);
+    }
   }
 }
 
@@ -4048,7 +4103,7 @@ async function researchTopAccounts(options = {}){
         while(index < accounts.length){
           const account = accounts[index++];
           if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
-          await researchAccountByName(account.name, {skipSave:true});
+          await researchAccountByName(account.name, {skipSave:true, researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId});
         }
       }
       await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
@@ -4148,7 +4203,19 @@ function getValueLabel(opp){
   return 'Estimated Value';
 }
 
-function refreshOpportunityViews(){
+// ROUND 4: accepts an optional {researchRunId, attemptId} context, passed
+// through by callers that hold their own independently-claimed attempt
+// (the standalone single-account "Research Account" button -- see
+// researchAccountByName() below). Without an explicit context, falls back
+// to the shared currentResearchRunId/currentResearchAttemptId globals the
+// top-accounts flow owns, exactly as before. When NEITHER is available
+// (no tracked attempt at all -- a manual account edit, a filter change),
+// the trailing save uses stage 'view_updated' rather than
+// 'research_updated' -- api/save-upload.js now REQUIRES attempt metadata
+// for 'research_updated'/'researched' (Phase 2A implementation-review
+// ROUND 4, item 1), so an untracked caller must use a stage outside that
+// set to remain a legitimate, unblocked save.
+function refreshOpportunityViews(attemptContext){
   const accounts = window.accountRadarAccounts || [];
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
   const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts);
@@ -4169,16 +4236,16 @@ function refreshOpportunityViews(){
   renderResearchDiagnostics();
   if(currentUploadId){
     // Phase 2A implementation-review ROUND 3, item 1: heartbeat immediately
-    // before final persistence when this save is part of a tracked run
-    // (currentResearchAttemptId set). No-ops instantly (heartbeatCurrentResearchRun
-    // returns immediately) for every other caller of refreshOpportunityViews()
-    // that isn't part of a tracked run, so this does not add latency or a
-    // network call to untracked saves (manual edits, filters, the
-    // standalone single-account button).
-    if(currentResearchAttemptId){
-      heartbeatCurrentResearchRun().finally(() => saveCurrentUpload('research_updated'));
+    // before final persistence when this save is part of a tracked run.
+    const ctx = attemptContext || (currentResearchAttemptId ? { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId } : null);
+    if(ctx && ctx.attemptId){
+      heartbeatCurrentResearchRun(ctx).finally(() => saveCurrentUpload('research_updated', ctx));
     } else {
-      saveCurrentUpload('research_updated');
+      // No tracked attempt available -- e.g. a manual account edit, a
+      // filter change. Stage 'view_updated' is deliberately NOT a
+      // research-output stage, so this save proceeds untracked, unblocked
+      // by the mandatory attempt-metadata requirement.
+      saveCurrentUpload('view_updated');
     }
   }
 }
@@ -5577,7 +5644,7 @@ function serializeAccountForStorage(account){
   };
 }
 
-async function performSaveCurrentUpload(stage){
+async function performSaveCurrentUpload(stage, attemptContext){
   const lead = currentLead || getSavedLead();
   const accounts = window.accountRadarAccounts || [];
   if(!lead || !lead.email || !accounts.length) return;
@@ -5603,13 +5670,16 @@ async function performSaveCurrentUpload(stage){
         stage,
         page: window.location.href,
         summary,
-        // Phase 2A implementation-review ROUND 3, item 3: only sent
-        // (non-null) when this save is part of the tracked top-accounts
-        // run -- currentResearchAttemptId is null for every other save
-        // context (manual edits, the standalone single-account button),
-        // which the server treats as an ordinary untracked save, unchanged.
-        researchRunId: currentResearchRunId,
-        attemptId: currentResearchAttemptId,
+        // Phase 2A implementation-review ROUND 4: for research-output
+        // stages ('researched'/'research_updated'), api/save-upload.js now
+        // REQUIRES both of these. attemptContext lets a caller with its own
+        // independently-claimed attempt (the standalone button) supply them
+        // explicitly; otherwise falls back to the shared
+        // currentResearchRunId/currentResearchAttemptId globals the
+        // top-accounts flow owns. Both are simply absent/null for any
+        // non-research-output stage (e.g. 'uploaded', 'view_updated').
+        researchRunId: (attemptContext && attemptContext.researchRunId) || currentResearchRunId,
+        attemptId: (attemptContext && attemptContext.attemptId) || currentResearchAttemptId,
         accounts: accounts.map(serializeAccountForStorage)
       })
     });
@@ -5652,8 +5722,8 @@ async function performSaveCurrentUpload(stage){
 // single-flight or queued rather than concurrent" an actual guarantee for
 // every caller of this function, not just the research-fallback loop this
 // change specifically stops calling it from per-account.
-function saveCurrentUpload(stage = 'uploaded'){
-  const run = () => performSaveCurrentUpload(stage);
+function saveCurrentUpload(stage = 'uploaded', attemptContext){
+  const run = () => performSaveCurrentUpload(stage, attemptContext);
   saveQueue = saveQueue.then(run, run);
   return saveQueue;
 }

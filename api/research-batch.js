@@ -1433,14 +1433,24 @@ function dedupeSignals(signals = []) {
 
 
 // ---------------------------------------------------------------------------
-// Phase 2A implementation-review item 2 — server-owned research-run
-// idempotency. Strictly opt-in: activates ONLY when the caller sends
-// uploadId (checked below). api/weekly-scan.js's own call to this endpoint
+// Phase 2A implementation-review — server-owned research-run idempotency.
+// Gated entirely on uploadId: a request with NO uploadId (checked below)
+// never reaches any of this. api/weekly-scan.js's own call to this endpoint
 // (mode:'weekly-monitoring') sends no uploadId/auth header at all and is
 // completely unaffected -- it already has its own concurrency guard via
-// ha_weekly_runs. Same for prospect_script.js's prospecting flow. This
-// endpoint still writes NOTHING to ha_signals/ha_accounts itself (unchanged
-// invariant) -- the one narrow exception is bookkeeping rows in
+// ha_weekly_runs. Same for prospect_script.js's prospecting flow.
+//
+// ROUND 4 correction: a request that DOES send uploadId is no longer
+// allowed to opt out of tracking by simply omitting attemptId. Every
+// upload-bound caller -- the automatic batch call, every per-account
+// fallback call, and the standalone single-account "Research Account"
+// button -- now claims a real run/attempt first (see
+// dashboard/index.html's claimAutomaticResearchRun()/researchAccountByName())
+// and this endpoint rejects (400) any uploadId-bound request missing
+// researchRunId/attemptId, rather than silently proceeding untracked.
+//
+// This endpoint still writes NOTHING to ha_signals/ha_accounts itself
+// (unchanged invariant) -- the one narrow exception is bookkeeping rows in
 // ha_research_runs, added specifically so a second tab or a page reload
 // cannot launch an untracked, duplicate research execution against the same
 // upload. See supabase-schema-migration-5-research-run-idempotency.sql.
@@ -1753,20 +1763,28 @@ export default async function handler(req, res) {
 
   try {
     const { accounts = [], mode = 'ranked', researchRunId = '' } = body;
-    const runId = clean(researchRunId) || `unattributed-${startedAt}`;
 
-    // Phase 2A implementation-review ROUND 3, item 2: verify attempt
-    // ownership BEFORE any provider call (OpenAI/Serper/Firecrawl), using
-    // the same heartbeat_ha_research_run() RPC as the periodic renewal
-    // below. Only applies when the caller supplies attemptId alongside
-    // uploadId (the tracked top-accounts flow, both batch and per-account
-    // fallback requests -- dashboard/index.html sends the same
-    // server-issued attemptId on both). The standalone single-account
-    // "Research Account" button and the pre-existing anonymous prospecting
-    // flow never send attemptId and are unaffected -- matching the same
-    // tracked/untracked scoping used in api/save-upload.js.
+    // Phase 2A implementation-review ROUND 4, item 2: ANY request bound to
+    // an existing upload (uploadId present) must carry a real,
+    // server-issued researchRunId AND attemptId -- there is no more
+    // untracked-but-uploadId-bound path. This applies uniformly to the
+    // automatic batch call, every per-account fallback call, AND the
+    // standalone single-account "Research Account" button, which now
+    // claims its own manual research run before ever reaching this
+    // endpoint (see dashboard/index.html's researchAccountByName()). The
+    // only remaining untracked callers are ones that send NO uploadId at
+    // all -- the anonymous prospecting flow (prospect_script.js) -- which
+    // never reaches this block (see the `if (targetUploadId)` gate above).
     const attemptId = clean(body.attemptId || '');
-    if (targetUploadId && attemptId) {
+    const rawResearchRunId = clean(researchRunId);
+    if (targetUploadId) {
+      if (!attemptId || !rawResearchRunId) {
+        return res.status(400).json({ error: 'researchRunId and attemptId are required for any research request bound to an existing upload.' });
+      }
+    }
+    const runId = rawResearchRunId || `unattributed-${startedAt}`;
+
+    if (targetUploadId) {
       const gate = await heartbeatResearchRunAtomic({ userId: uploadOwner.id, uploadId: targetUploadId, researchRunId: runId, attemptId });
       if (!gate.ok) {
         // A stale/replaced attempt is rejected HERE -- before
