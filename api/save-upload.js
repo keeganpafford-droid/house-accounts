@@ -135,18 +135,27 @@ function applyFreeLimitToAccounts(accounts, usage){
 // path that legitimately reaches a RESEARCH_OUTPUT_STAGES save without one.
 const RESEARCH_OUTPUT_STAGES = new Set(['researched', 'research_updated']);
 
-// Phase 2A implementation-review ROUND 5, item 2 — the complete, explicit
-// server-side stage state machine. "The only untracked save stage may be
-// the initial upload/account-persistence operation" -- ALLOWED_STAGES is
-// the full universe of legal stage values; anything else is rejected (400)
-// rather than silently accepted and passed through to ha_uploads.stage.
-// dashboard/index.html's refreshOpportunityViews() previously used a
-// separate 'view_updated' stage for non-research resaves (manual account
-// edits, filter changes); that is now folded into 'uploaded' -- both are,
-// from this server's perspective, the SAME operation class (accounts-only,
-// no research fields), so there is exactly one untracked stage string, not
-// two, matching the requirement literally.
-const ALLOWED_STAGES = new Set(['uploaded', 'researched', 'research_updated']);
+// Phase 2A implementation-review ROUND 6, item 3 — the complete, explicit
+// server-side stage state machine, with TWO untracked stages now that
+// "initial upload creation" and "post-research accounts-only maintenance"
+// are recognized as genuinely different operations (round 5 conflated them
+// under 'uploaded', which made "the only untracked write is initial upload
+// creation" not literally true -- a stage='uploaded' save was also being
+// used, legitimately, to edit accounts on an upload that already had a
+// completed research run):
+//   - 'uploaded': initial upload creation ONLY. Rejected if the target
+//     upload already has ANY research history (a row in ha_research_runs,
+//     active or completed) -- at that point "initial creation" has already
+//     happened, and a caller must use 'accounts_updated' instead.
+//   - 'accounts_updated': authenticated, accounts-only maintenance for an
+//     upload that already exists. No signals, no research summary, no
+//     attempt metadata (same rules as 'uploaded'). Rejected while an ACTIVE
+//     research run exists. Permitted after a run has completed. Critically,
+//     unlike 'uploaded', this stage NEVER touches ha_uploads.stage or
+//     ha_uploads.summary at all -- the prior research stage and summary are
+//     preserved exactly, not overwritten or reset.
+const ACCOUNTS_MAINTENANCE_STAGE = 'accounts_updated';
+const ALLOWED_STAGES = new Set(['uploaded', ACCOUNTS_MAINTENANCE_STAGE, 'researched', 'research_updated']);
 // Fields that only make sense as the OUTPUT of a completed research pass.
 // A stage='uploaded' request carrying any of these (non-zero) is rejected
 // -- "research summaries/results must be absent" is enforced here, not
@@ -221,69 +230,99 @@ export default async function handler(req, res){
         return json(res, 400, {error:'uploadId is required for a research-output-stage save.'});
       }
     } else {
-      // stage === 'uploaded' -- the ONLY untracked stage. Phase 2A
-      // implementation-review ROUND 5, item 2's full state machine:
+      // stage === 'uploaded' or 'accounts_updated' -- the two untracked
+      // stages. Phase 2A implementation-review ROUND 6, item 3's full state
+      // machine. Both are subject to the same "no research output, no
+      // attempt metadata" rules; they differ in whether prior research
+      // history is required/forbidden (see below) and whether
+      // ha_uploads.stage/summary may be touched (see the untracked-path
+      // branch further down).
       if(rawResearchRunId || rawAttemptId){
-        return json(res, 400, {error:'stage="uploaded" cannot carry research run/attempt metadata.'});
+        return json(res, 400, {error:`stage="${stage}" cannot carry research run/attempt metadata.`});
       }
       const hasAnySignals = rawAccountsForValidation.some(a => Array.isArray(a.signals) && a.signals.length > 0);
       if(hasAnySignals){
-        return json(res, 400, {error:'stage="uploaded" cannot carry signals; signals are research output.'});
+        return json(res, 400, {error:`stage="${stage}" cannot carry signals; signals are research output.`});
       }
       const hasResearchResultSummary = RESEARCH_RESULT_SUMMARY_FIELDS.some(field => Number(summary?.[field] || 0) > 0);
       if(hasResearchResultSummary){
-        return json(res, 400, {error:'stage="uploaded" cannot carry a research-result summary.'});
+        return json(res, 400, {error:`stage="${stage}" cannot carry a research-result summary.`});
       }
-      // "Must not be usable to overwrite or append research output to an
-      // upload that already has an ACTIVE research run" -- an untracked
-      // save against an upload with a currently-running, unexpired attempt
-      // is rejected, since its client-held account list could be stale
-      // relative to what that active run is about to persist. A upload
-      // whose most recent run is merely COMPLETED (the normal, permanent
-      // state after research finishes) is unaffected -- plain account edits
-      // must keep working after research completes; they carry no research
-      // output (already guaranteed by the two checks above), so they cannot
-      // violate the invariant regardless of run state.
+      if(stage === ACCOUNTS_MAINTENANCE_STAGE && !uploadId){
+        return json(res, 400, {error:'uploadId is required for stage="accounts_updated" -- it is accounts-only maintenance for an upload that already exists, not a way to create one.'});
+      }
       if(uploadId){
+        // Both stages: "must not be usable to overwrite or append research
+        // output to an upload that already has an ACTIVE research run" --
+        // rejected while a currently-running, unexpired attempt exists,
+        // since the client's held account list could be stale relative to
+        // what that active run is about to persist. Checked BEFORE the
+        // uploaded-reuse check below so an in-progress run always surfaces
+        // as "try again shortly" (409), not "wrong stage" (400) -- both
+        // stages are equally blocked by an active run, so there is no
+        // ordering ambiguity to resolve there. A merely COMPLETED run does
+        // not block 'accounts_updated' -- that is precisely the legitimate
+        // case this stage exists for.
         const activeRuns = await supabase(`ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id&limit=1`, {method:'GET'}).catch(() => []);
         if(Array.isArray(activeRuns) && activeRuns.length){
           return json(res, 409, {error:'A research run is currently active for this upload; cannot save an untracked update while research is in progress.'});
+        }
+        if(stage === 'uploaded'){
+          // "uploaded" is initial upload creation ONLY -- reject reuse
+          // against an upload that already has ANY research history
+          // (completed; an active one was already rejected 409 above). A
+          // caller editing accounts on an already-researched upload must
+          // use 'accounts_updated' instead.
+          const anyRuns = await supabase(`ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&select=id&limit=1`, {method:'GET'}).catch(() => []);
+          if(Array.isArray(anyRuns) && anyRuns.length){
+            return json(res, 400, {error:'stage="uploaded" cannot be reused for an upload that already has research history; use stage="accounts_updated" for a post-research account edit.'});
+          }
         }
       }
     }
     const trackedAttempt = isResearchOutputStage;
 
     // ===========================================================================
-    // UNTRACKED PATH: stage='uploaded' is the ONLY untracked stage (Phase 2A
-    // implementation-review ROUND 5, item 2) -- the state machine above has
+    // UNTRACKED PATH: 'uploaded' or 'accounts_updated' (Phase 2A
+    // implementation-review ROUND 6, item 3) -- the state machine above has
     // already rejected any request that tries to carry research output,
-    // attempt metadata, or target an upload with an active run. A plain
-    // ha_uploads PATCH/INSERT, then replace_ha_accounts_snapshot() with no
-    // attempt parameters, then a signals insert that will always process
-    // zero rows now (signals are rejected above for this stage) but is left
-    // in place structurally rather than special-cased further.
+    // attempt metadata, or target an upload with an active run. Then
+    // replace_ha_accounts_snapshot() with no attempt parameters, then a
+    // signals insert that will always process zero rows now (signals are
+    // rejected above for both these stages) but is left in place
+    // structurally rather than special-cased further.
     // ===========================================================================
     if(!trackedAttempt){
-      const uploadRow = {
-        user_id: user.id,
-        upload_name: clean(body.uploadName || 'Uploaded account list'),
-        stage,
-        summary,
-        source_page: clean(body.page || body.sourcePage),
-        updated_at: new Date().toISOString()
-      };
-
+      const isAccountsMaintenance = stage === ACCOUNTS_MAINTENANCE_STAGE;
       let upload;
-      if(uploadId){
-        const updated = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
-          method:'PATCH',
-          body: JSON.stringify(uploadRow)
-        });
-        upload = Array.isArray(updated) && updated[0] ? updated[0] : {id: uploadId};
+      if(isAccountsMaintenance){
+        // Deliberately does NOT touch ha_uploads.stage or .summary --
+        // "must preserve the existing research stage and research summary
+        // rather than overwrite/reset them." uploadId is already guaranteed
+        // present and required by the state machine above; ownership is
+        // independently re-verified by replace_ha_accounts_snapshot()'s own
+        // check below regardless of whether this PATCH runs.
+        upload = { id: uploadId };
       } else {
-        const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
-        upload = Array.isArray(inserted) ? inserted[0] : inserted;
-        uploadId = upload.id;
+        const uploadRow = {
+          user_id: user.id,
+          upload_name: clean(body.uploadName || 'Uploaded account list'),
+          stage,
+          summary,
+          source_page: clean(body.page || body.sourcePage),
+          updated_at: new Date().toISOString()
+        };
+        if(uploadId){
+          const updated = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+            method:'PATCH',
+            body: JSON.stringify(uploadRow)
+          });
+          upload = Array.isArray(updated) && updated[0] ? updated[0] : {id: uploadId};
+        } else {
+          const inserted = await supabase('ha_uploads', { method:'POST', body: JSON.stringify([uploadRow]) });
+          upload = Array.isArray(inserted) ? inserted[0] : inserted;
+          uploadId = upload.id;
+        }
       }
       if(!uploadId) throw new Error('Upload save did not return an id. Confirm ha_uploads table exists.');
 

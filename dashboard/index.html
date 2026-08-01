@@ -3789,22 +3789,25 @@ async function researchAccountByName(accountName, options = {}){
     renderResearchDiagnostics();
     // Phase 2A / A2: when called from the concurrent research-fallback loop
     // (researchTopAccounts()), skipSave is true — that loop now does exactly
-    // one consolidated refreshOpportunityViews()/save after ALL workers
-    // finish, instead of each of up to 4 concurrent workers independently
-    // triggering its own full-snapshot save. This is what actually stops the
-    // confirmed duplicate-ha_accounts race at the source, rather than only
-    // containing it after the fact. The standalone "Research Account" button
-    // (no options.skipSave) still saves immediately after its own single
-    // account finishes, now carrying its own claimed attemptContext.
-    // Phase 2A implementation-review ROUND 5, item 1: the save below now
+    // one consolidated render/save after ALL workers finish, instead of
+    // each of up to 4 concurrent workers independently triggering its own
+    // full-snapshot save. This is what actually stops the confirmed
+    // duplicate-ha_accounts race at the source, rather than only containing
+    // it after the fact.
+    //
+    // Phase 2A implementation-review ROUND 6, item 1: the standalone button
+    // (no options.skipSave) renders ONCE (refreshOpportunityViews() is now
+    // render-only -- see its definition) and saves ONCE, explicitly, right
+    // here -- this IS the single terminal save for this logical run. It
     // atomically finalizes the run as part of the SAME transaction that
-    // persists its output (see persist_ha_research_output() -- migration 6
-    // §6), so there is no longer a separate reportResearchRunOutcome('complete', ...)
-    // call needed here on success. Failure handling remains separate (see
-    // the catch block) since a research/network failure may never reach
+    // persists its output (persist_ha_research_output() -- migration 6 §6),
+    // so no separate reportResearchRunOutcome('complete', ...) call is
+    // needed on success. Failure handling remains separate (see the catch
+    // block) since a research/network failure may never reach
     // persist_ha_research_output() at all.
     if(!options.skipSave){
-      refreshOpportunityViews(attemptContext);
+      refreshOpportunityViews();
+      await heartbeatCurrentResearchRun(attemptContext);
       await saveCurrentUpload('researched', attemptContext);
     }
   }catch(err){
@@ -4114,12 +4117,23 @@ async function researchTopAccounts(options = {}){
       refreshOpportunityViews();
     }
 
-    // Phase 2A implementation-review ROUND 5, item 1: the save triggered by
-    // refreshOpportunityViews() above (or by researchAccountsBatch()'s own
-    // success path) now atomically finalizes the run as part of the SAME
-    // transaction that persists its output -- no separate
-    // reportResearchRunOutcome('complete', ...) call needed here. Failure
-    // handling remains separate (see the catch block below).
+    // Phase 2A implementation-review ROUND 6, item 1: this is the ONE,
+    // explicit, terminal save for this logical research run -- regardless
+    // of which branch above produced the result (researchAccountsBatch()'s
+    // own success path already rendered via its internal, now render-only,
+    // refreshOpportunityViews() call; the fallback branch rendered via the
+    // explicit call just above). Neither branch saves anything itself
+    // anymore -- rendering and persistence are fully decoupled, and this
+    // single call is the only place a tracked save can originate from this
+    // function. It atomically finalizes the run as part of the SAME
+    // transaction that persists its output (persist_ha_research_output() --
+    // migration 6 §6), so no separate reportResearchRunOutcome('complete', ...)
+    // call is needed on success. Failure handling remains separate (see the
+    // catch block below), since a research/network failure may never reach
+    // persist_ha_research_output() at all.
+    const terminalCtx = { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
+    await heartbeatCurrentResearchRun(terminalCtx);
+    await saveCurrentUpload('research_updated', terminalCtx);
   }catch(err){
     await reportResearchRunOutcome('fail', err);
   }finally{
@@ -4211,22 +4225,24 @@ function getValueLabel(opp){
   return 'Estimated Value';
 }
 
-// ROUND 4: accepts an optional {researchRunId, attemptId} context, passed
-// through by callers that hold their own independently-claimed attempt
-// (the standalone single-account "Research Account" button -- see
-// researchAccountByName() below). Without an explicit context, falls back
-// to the shared currentResearchRunId/currentResearchAttemptId globals the
-// top-accounts flow owns, exactly as before. When NEITHER is available (no
-// tracked attempt at all -- a manual account edit, a filter change), the
-// trailing save uses stage 'uploaded' -- Phase 2A implementation-review
-// ROUND 5, item 2 established 'uploaded' as the ONE AND ONLY untracked
-// stage (folding the round-4 'view_updated' stage into it, since both are
-// the same operation class server-side: accounts-only, no research
-// fields). api/save-upload.js's server-side state machine independently
-// rejects a stage='uploaded' request that carries signals or a
-// research-result summary, so this is not merely a client-side naming
-// convention.
-function refreshOpportunityViews(attemptContext){
+// Phase 2A implementation-review ROUND 6, item 1 — refreshOpportunityViews()
+// is RENDER/STATE-ONLY. It used to also trigger (and, via its own
+// heartbeat-then-save chain, OWN) a tracked save as an implicit side
+// effect -- which meant a caller that rendered via this function AND ALSO
+// explicitly called saveCurrentUpload() itself (the standalone
+// researchAccountByName() path) issued TWO tracked saves for one logical
+// run. Because persist_ha_research_output() finalizes the run on the
+// FIRST successful save (round 5), the second save was always doomed to a
+// stale-attempt 409. Removing the implicit save here is what makes "exactly
+// one terminal save per logical research run" an actual invariant rather
+// than something each caller has to get right independently: there is now
+// exactly ONE place a tracked save can originate from a given call site,
+// and it is always an explicit, visible saveCurrentUpload() call in the
+// OWNING workflow (researchTopAccounts() for the batch/fallback paths,
+// researchAccountByName() for the standalone path) -- never a side effect
+// of rendering. See researchTopAccounts()/researchAccountByName() below for
+// where the (single) terminal save now lives for each path.
+function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
   const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
   const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts);
@@ -4245,20 +4261,6 @@ function refreshOpportunityViews(attemptContext){
   if(highConfEl) highConfEl.textContent = revenueContext.newBusinessOpps;
   if(avgConfEl) avgConfEl.textContent = revenueContext.totalReasons;
   renderResearchDiagnostics();
-  if(currentUploadId){
-    // Phase 2A implementation-review ROUND 3, item 1: heartbeat immediately
-    // before final persistence when this save is part of a tracked run.
-    const ctx = attemptContext || (currentResearchAttemptId ? { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId } : null);
-    if(ctx && ctx.attemptId){
-      heartbeatCurrentResearchRun(ctx).finally(() => saveCurrentUpload('research_updated', ctx));
-    } else {
-      // No tracked attempt available -- e.g. a manual account edit, a
-      // filter change. Stage 'uploaded' is the one untracked stage; this
-      // save proceeds unblocked by the mandatory attempt-metadata
-      // requirement (which only applies to 'researched'/'research_updated').
-      saveCurrentUpload('uploaded');
-    }
-  }
 }
 
 function estimateFutureValue(account, opportunityType){

@@ -61,6 +61,7 @@ let persistRpcCalls = [];
 let signalsInsertCalls = [];
 let uploadPatchCalls = [];
 let activeRunLookupCalls = [];
+let anyRunLookupCalls = [];
 let simulateConflictOnSecondSignal = false;
 
 // In-memory ha_research_runs fixture. Round 5: persistHaResearchOutput()
@@ -129,6 +130,14 @@ function mockFetch(){
       const active = researchRuns.filter(r => r.upload_id === UPLOAD_ID && r.status === 'running' && (r.lease_expires_at_ms === undefined || r.lease_expires_at_ms > now));
       return jsonResponse(active.map(r => ({ id: r.id || 'run-row' })));
     }
+    if(u.includes('/rest/v1/ha_research_runs') && (!options.method || options.method === 'GET')){
+      // The "any runs at all" lookup for stage="uploaded" reuse-rejection
+      // (ROUND 6, item 3) -- deliberately unfiltered by status, unlike the
+      // active-run lookup above.
+      anyRunLookupCalls.push(u);
+      const any = researchRuns.filter(r => r.upload_id === UPLOAD_ID);
+      return jsonResponse(any.map(r => ({ id: r.id || 'run-row' })));
+    }
     if(u.includes('/rest/v1/rpc/persist_ha_research_output')){
       const body = JSON.parse(options.body);
       persistRpcCalls.push(body);
@@ -159,7 +168,7 @@ function fakeReq(body){
 }
 
 function resetAll(){
-  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; activeRunLookupCalls = [];
+  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; activeRunLookupCalls = []; anyRunLookupCalls = [];
   researchRuns = []; fakeAccounts = []; fakeSignals = []; fakeUploadState = { stage: 'uploaded', summary: {} };
   simulateConflictOnSecondSignal = false; logLines = [];
   global.fetch = mockFetch();
@@ -283,8 +292,11 @@ async function run(){
     assert(activeRunLookupCalls.length === 1, 'the active-run lookup was actually performed, not skipped');
   }
 
-  // 6. stage=uploaded against an upload with a COMPLETED run succeeds --
-  // plain account edits must keep working after research finishes.
+  // 6. Phase 2A implementation-review ROUND 6, item 3 — stage="uploaded" is
+  // now initial-upload-creation ONLY. Reusing it against an upload that
+  // already has ANY research history (even a merely COMPLETED run) is
+  // rejected; stage="accounts_updated" (tested below) is the correct way to
+  // edit accounts after research has happened.
   {
     resetAll();
     researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'completed', attempt_id: 'attempt-done', completed_at: new Date().toISOString(), lease_expires_at_ms: Date.now() - 1000 }];
@@ -296,8 +308,118 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 200, 'stage="uploaded" against an upload with a COMPLETED (not active) run succeeds -- a manual account edit after research finishes is not research output and is not blocked');
-    assert(accountsRpcCalls.length === 1, 'the accounts-only edit was persisted normally');
+    assert(res.statusCode === 400, 'ROUND 6 item 3: stage="uploaded" cannot be reused for an upload that already has research history (even a merely completed run) -- it is initial-creation-only now');
+    assert(accountsRpcCalls.length === 0, 'nothing was written for the rejected reused-uploaded request');
+    assert(anyRunLookupCalls.length === 1, 'the any-research-history lookup was actually performed, not skipped');
+  }
+
+  // =========================================================================
+  // Phase 2A implementation-review ROUND 6, item 3: stage="accounts_updated"
+  // -- authenticated accounts-only maintenance for an upload that already
+  // has research history. No signals, no research summary/results, no
+  // attempt metadata; rejected while an ACTIVE research run exists;
+  // permitted after completion; must preserve the existing research stage
+  // and research summary rather than overwrite/reset them.
+  // =========================================================================
+
+  // 6a. accounts_updated requires an existing uploadId (cannot create).
+  {
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      stage: 'accounts_updated',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'stage="accounts_updated" with no uploadId is rejected 400 -- it is maintenance for an upload that already exists, not a way to create one');
+  }
+
+  // 6b. accounts_updated cannot carry signals.
+  {
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [{ name: 'Acme Co', signals: [trackedSignal()] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'stage="accounts_updated" carrying signals is rejected 400');
+  }
+
+  // 6c. accounts_updated cannot carry a research-result summary.
+  {
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      summary: { accountCount: 1, reasonsToReachOut: 5 },
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'stage="accounts_updated" carrying a non-zero research-result summary is rejected 400');
+  }
+
+  // 6d. accounts_updated cannot carry attempt metadata.
+  {
+    resetAll();
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      researchRunId: 'auto',
+      attemptId: 'some-attempt',
+      accounts: [{ name: 'Acme Co', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 400, 'stage="accounts_updated" carrying researchRunId/attemptId is rejected 400');
+  }
+
+  // 6e. accounts_updated is rejected while an ACTIVE research run exists.
+  {
+    resetAll();
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-active', lease_expires_at_ms: Date.now() + 300000 }];
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [{ name: 'Edited Account Name', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 409, 'stage="accounts_updated" against an upload with a currently ACTIVE research run is rejected 409');
+    assert(accountsRpcCalls.length === 0, 'nothing was written while a run is active');
+  }
+
+  // 6f-6h. accounts_updated after a COMPLETED run: succeeds, changes ONLY
+  // the account snapshot, does not touch ha_signals, does not change the
+  // completed research run, and does not replace/erase the prior research
+  // summary or reset the upload to an initial/unresearched state.
+  {
+    resetAll();
+    const priorSummary = { accountCount: 3, reasonsToReachOut: 7, highConfidenceAccounts: 2 };
+    fakeUploadState = { stage: 'researched', summary: priorSummary };
+    fakeSignals = [{ user_id: USER_ID, event_fingerprint: 'preexisting-fingerprint' }];
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'completed', attempt_id: 'attempt-done', completed_at: new Date().toISOString(), lease_expires_at_ms: Date.now() - 1000, result_summary: { accountsPersisted: 3, signalsPersisted: 1 } }];
+    const req = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'accounts_updated',
+      accounts: [{ name: 'Edited Account Name', signals: [] }]
+    });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res.statusCode === 200, '6f) stage="accounts_updated" against an upload with a COMPLETED (not active) run succeeds');
+    assert(accountsRpcCalls.length === 1 && accountsRpcCalls[0].p_accounts[0].account_name === 'Edited Account Name', '6f) the account snapshot was updated via replace_ha_accounts_snapshot');
+    assert(uploadPatchCalls.length === 0, '6g) accounts_updated never issues a PATCH to ha_uploads -- it does not touch stage/summary at all, by construction');
+    assert(fakeUploadState.stage === 'researched' && fakeUploadState.summary === priorSummary, '6g) the existing research stage and research summary are preserved exactly, not overwritten or reset to an initial/unresearched state');
+    assert(signalsInsertCalls.length === 0 && fakeSignals.length === 1 && fakeSignals[0].event_fingerprint === 'preexisting-fingerprint', '6h) ha_signals is completely untouched by an accounts_updated save');
+    assert(researchRuns[0].status === 'completed' && researchRuns[0].result_summary.accountsPersisted === 3, '6h) the completed research run row itself is unchanged');
   }
 
   // =========================================================================
