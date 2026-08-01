@@ -290,6 +290,7 @@ as $$
 declare
   v_existing public.ha_research_runs;
   v_other_active public.ha_research_runs;
+  v_other_completed public.ha_research_runs;
   v_result public.ha_research_runs;
   v_clamped_lease_seconds integer;
 begin
@@ -307,6 +308,22 @@ begin
       using errcode = '42501';
   end if;
 
+  -- A. Automatic completion guard, evaluated BEFORE this call ever looks at
+  -- its own exact row (migration 5 §7 has the full "why" for this ordering)
+  -- — an expired/failed 'auto' row must not be reclaimed once a manual
+  -- rerun for this upload has already completed.
+  if p_research_run_id = 'auto' then
+    select * into v_other_completed
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'completed'
+    order by completed_at desc
+    limit 1;
+    if found then
+      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_completed));
+    end if;
+  end if;
+
+  -- B. Exact-row handling.
   select * into v_existing
   from public.ha_research_runs
   where user_id = p_user_id and upload_id = p_upload_id and research_run_id = p_research_run_id
@@ -319,6 +336,21 @@ begin
 
     if v_existing.status = 'running' and v_existing.lease_expires_at > now() then
       return jsonb_build_object('outcome', 'attached-active', 'run', to_jsonb(v_existing));
+    end if;
+
+    -- failed, or running with an expired lease: a RECLAIM CANDIDATE, not an
+    -- automatic reclaim — first confirm no DIFFERENT research_run_id is
+    -- actively (non-expired) running for this same upload (excluding this
+    -- row itself by id).
+    select * into v_other_active
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()
+      and id <> v_existing.id
+    limit 1;
+
+    if found then
+      raise exception 'claim_ha_research_run: a different research run (%) is already in progress for upload %', v_other_active.research_run_id, p_upload_id
+        using errcode = '55P03';
     end if;
 
     update public.ha_research_runs
@@ -339,20 +371,8 @@ begin
     );
   end if;
 
-  -- Round 3: an automatic claim ('auto') must not start again if ANY run
-  -- for this upload already completed (auto or manual) — see migration 5's
-  -- "close manual-before-auto duplication" section for the full rationale.
-  if p_research_run_id = 'auto' then
-    select * into v_other_active
-    from public.ha_research_runs
-    where upload_id = p_upload_id and status = 'completed'
-    order by completed_at desc
-    limit 1;
-    if found then
-      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_active));
-    end if;
-  end if;
-
+  -- C. No exact row: make sure no DIFFERENT research_run_id is actively
+  -- (non-expired) running for this upload before creating a new one.
   select * into v_other_active
   from public.ha_research_runs
   where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()

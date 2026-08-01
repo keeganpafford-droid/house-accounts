@@ -213,6 +213,37 @@ create table if not exists public.ha_research_runs (
 --          — a DIFFERENT research_run_id is currently actively (non-expired)
 --          running for this upload. Rejected, not joined: joining would
 --          require merging two independent research executions' output.
+--
+-- EVALUATION ORDER (Phase 2A implementation-review ROUND 10 — a claim-
+-- ordering defect, distinct from the round-9 lease-liveness fix): the checks
+-- below run in this exact sequence, inside the SAME advisory-lock-held
+-- transaction, and each step is a hard prerequisite for the next:
+--   A. If p_research_run_id = 'auto': is there ALREADY a completed run
+--      (auto or manual) for this upload? If so, return outcome='completed'
+--      immediately — BEFORE this call ever looks at, let alone reclaims, its
+--      own 'auto' row. Checking this first is what stops an expired or
+--      failed 'auto' row from being reclaimed into a live second execution
+--      after a manual rerun has already produced the upload's real result.
+--   B. Load the exact (user_id, upload_id, research_run_id) row. completed
+--      or actively-leased-running short-circuit as before. A failed or
+--      expired-lease row is NOT reclaimed unconditionally: this function
+--      first checks whether some OTHER research_run_id is actively
+--      (non-expired) running for this same upload (excluding the exact row
+--      itself by id) and raises 55P03 if so — an expired/failed row does
+--      not by itself prove the upload's "one active run" slot is free; a
+--      different run id may be legitimately holding it right now.
+--   C. Only when no exact row exists at all does this function fall back to
+--      the upload-wide "is anything else actively running" check before
+--      inserting a brand-new row.
+-- Prior to this round, the exact-row branch (B) reclaimed on failed/expired
+-- status alone, with no check for a concurrently active different run, and
+-- guard A ran only in branch C (i.e. only when no exact row existed) — so
+-- an expired/failed exact row could be reclaimed straight past both an
+-- actively-running different run id AND an already-completed different run,
+-- producing two simultaneously active runs for one upload, or restarting
+-- research a manual rerun had already finished. This round's fix is a
+-- control-flow reordering only; no return value shape, errcode, or outcome
+-- string changed.
 create or replace function public.claim_ha_research_run(
   p_user_id uuid,
   p_upload_id uuid,
@@ -226,6 +257,7 @@ as $$
 declare
   v_existing public.ha_research_runs;
   v_other_active public.ha_research_runs;
+  v_other_completed public.ha_research_runs;
   v_result public.ha_research_runs;
   v_clamped_lease_seconds integer;
 begin
@@ -247,6 +279,32 @@ begin
       using errcode = '42501';
   end if;
 
+  -- A. AUTOMATIC COMPLETION GUARD, evaluated FIRST, before this call ever
+  -- looks at its own exact row. Round 3 established that the automatic path
+  -- ('auto' -- a reserved literal only the automatic path ever uses, see
+  -- api/research-batch.js's claim branch) must not start again if ANY run
+  -- for this upload has already completed successfully, regardless of
+  -- whether that completed run's id was 'auto' or a server-minted
+  -- 'manual-*' id. Round 10 fixes WHERE this check runs: previously it only
+  -- ran in the "no exact row exists" branch (C below), so an automatic
+  -- claim whose OWN 'auto' row existed but was failed/expired-lease skipped
+  -- this check entirely and fell straight into reclaiming that row, even
+  -- though a manual rerun had already completed. Checking it here, before
+  -- the exact-row lookup, closes that gap. Only an explicit manual-rerun
+  -- request (p_research_run_id <> 'auto') is exempt -- that IS the separate,
+  -- explicitly authorized pathway the review requires.
+  if p_research_run_id = 'auto' then
+    select * into v_other_completed
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'completed'
+    order by completed_at desc
+    limit 1;
+    if found then
+      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_completed));
+    end if;
+  end if;
+
+  -- B. EXACT-ROW HANDLING.
   select * into v_existing
   from public.ha_research_runs
   where user_id = p_user_id and upload_id = p_upload_id and research_run_id = p_research_run_id
@@ -261,7 +319,25 @@ begin
       return jsonb_build_object('outcome', 'attached-active', 'run', to_jsonb(v_existing));
     end if;
 
-    -- status = 'failed', or status = 'running' with an expired lease: reclaim.
+    -- status = 'failed', or status = 'running' with an expired lease: this
+    -- row is a RECLAIM CANDIDATE, not an automatic reclaim. Round 10: a
+    -- failed/expired exact row does not by itself prove the upload's "one
+    -- active run" slot is free -- a DIFFERENT research_run_id could be
+    -- actively (non-expired) running right now (e.g. an expired 'auto' row
+    -- sitting alongside a live manual rerun). Check for that BEFORE
+    -- reclaiming, excluding the exact row itself by id so it never conflicts
+    -- with its own (expired/failed) state.
+    select * into v_other_active
+    from public.ha_research_runs
+    where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()
+      and id <> v_existing.id
+    limit 1;
+
+    if found then
+      raise exception 'claim_ha_research_run: a different research run (%) is already in progress for upload %', v_other_active.research_run_id, p_upload_id
+        using errcode = '55P03';
+    end if;
+
     update public.ha_research_runs
     set status = 'running',
         attempt_id = gen_random_uuid(),
@@ -280,34 +356,11 @@ begin
     );
   end if;
 
-  -- No row for this exact (user, upload, research_run_id) triple.
-  --
-  -- Round 3 (implementation-review, "close manual-before-auto
-  -- duplication"): the AUTOMATIC path (p_research_run_id = 'auto' -- a
-  -- reserved literal only the automatic path ever uses, see
-  -- api/research-batch.js's claim branch, which never lets a client choose
-  -- this value) must not start again if ANY run for this upload has already
-  -- completed successfully, regardless of whether that completed run's id
-  -- was 'auto' (a previous automatic pass) or a server-minted 'manual-*' id
-  -- (an explicit rerun). Only an explicit manual-rerun request
-  -- (p_research_run_id <> 'auto') is exempt from this check -- that IS the
-  -- separate, explicitly authorized pathway the review requires. Without
-  -- this check, an automatic claim after a completed MANUAL run would find
-  -- no exact-triple row for 'auto' (since only a 'manual-*' row exists) and
-  -- incorrectly proceed as if this were the very first run for the upload.
-  if p_research_run_id = 'auto' then
-    select * into v_other_active
-    from public.ha_research_runs
-    where upload_id = p_upload_id and status = 'completed'
-    order by completed_at desc
-    limit 1;
-    if found then
-      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_other_active));
-    end if;
-  end if;
-
-  -- Make sure no DIFFERENT research_run_id is actively (non-expired) running
-  -- for this upload before creating a new one.
+  -- C. NO EXACT ROW: make sure no DIFFERENT research_run_id is actively
+  -- (non-expired) running for this upload before creating a new one. (Guard
+  -- A above already ruled out an already-completed run for the automatic
+  -- path; this is the separate "is something else running right now" check,
+  -- which applies to both the automatic and manual-rerun paths.)
   select * into v_other_active
   from public.ha_research_runs
   where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()

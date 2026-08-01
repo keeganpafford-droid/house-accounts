@@ -1162,3 +1162,167 @@ begin
   delete from public.ha_users where id = v_user;
   raise notice '--- Tests 50-51 cleanup complete ---';
 end $$;
+
+-- ===========================================================================
+-- Tests 52-57 (Phase 2A implementation-review ROUND 10): claim-ordering fix.
+-- The automatic-completion guard and the "is a DIFFERENT run active" check
+-- must run in the correct order relative to the exact-row lookup, or a
+-- failed/expired exact row can be reclaimed straight past a different run
+-- that is either actively leased or already completed -- producing two
+-- simultaneously active runs for one upload, or restarting research a
+-- manual rerun had already finished.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_auto jsonb;
+  v_manual jsonb;
+  v_manual2 jsonb;
+  v_attempt_id_before uuid;
+  v_attempt_count_before int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round10-claim-order-1@example.com', 'Round 10 Claim Order 1') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 claim-order test upload 1', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 52: expired auto row + an actively-leased MANUAL run -- the automatic claim must be REJECTED (55P03), not reclaim its own expired auto row ---';
+  v_auto := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_auto->>'outcome' = 'claimed-new' then raise notice 'PASS: the initial automatic claim succeeds';
+  else raise notice 'FAIL: expected claimed-new, got %', v_auto; end if;
+
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'auto';
+
+  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-active', 300);
+  if v_manual->>'outcome' = 'claimed-new' then raise notice 'PASS: a manual run claims successfully once the auto row''s lease has expired';
+  else raise notice 'FAIL: expected claimed-new for manual-active, got %', v_manual; end if;
+
+  select attempt_id, attempt_count into v_attempt_id_before, v_attempt_count_before
+    from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+
+  begin
+    perform public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+    raise notice 'FAIL: an automatic claim with an expired own row succeeded despite a DIFFERENT run (manual-active) being actively leased';
+  exception when others then
+    if sqlstate = '55P03' then raise notice 'PASS: the automatic claim is rejected with errcode 55P03 -- not reclaimed into a second simultaneously-active run';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  if exists (
+    select 1 from public.ha_research_runs
+    where upload_id = v_upload and research_run_id = 'auto'
+      and attempt_id = v_attempt_id_before and attempt_count = v_attempt_count_before
+  ) then raise notice 'PASS: the expired auto row is NOT reclaimed -- attempt_id and attempt_count are unchanged';
+  else raise notice 'FAIL: the auto row was modified despite the rejected claim'; end if;
+
+  raise notice '--- Test 53: a FAILED (not expired-lease) manual row, with a DIFFERENT run actively leased -- reclaiming the failed row must also be rejected (55P03) ---';
+  update public.ha_research_runs set status = 'failed'
+    where upload_id = v_upload and research_run_id = 'manual-active';
+  v_manual2 := public.claim_ha_research_run(v_user, v_upload, 'manual-2', 300);
+  if v_manual2->>'outcome' = 'claimed-new' then raise notice 'PASS: manual-2 claims successfully once manual-active is failed (no longer blocking)';
+  else raise notice 'FAIL: expected claimed-new for manual-2, got %', v_manual2; end if;
+
+  select attempt_id into v_attempt_id_before from public.ha_research_runs where upload_id = v_upload and research_run_id = 'manual-active';
+  begin
+    perform public.claim_ha_research_run(v_user, v_upload, 'manual-active', 300);
+    raise notice 'FAIL: reclaiming a FAILED exact row succeeded despite a DIFFERENT run (manual-2) being actively leased';
+  exception when others then
+    if sqlstate = '55P03' then raise notice 'PASS: reclaiming the failed manual-active row is rejected with errcode 55P03';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+  if exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'manual-active' and status = 'failed' and attempt_id = v_attempt_id_before) then
+    raise notice 'PASS: the failed manual-active row is NOT reclaimed';
+  else raise notice 'FAIL: the manual-active row was modified despite the rejected claim'; end if;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 52-53 cleanup complete ---';
+end $$;
+
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_auto jsonb;
+  v_manual jsonb;
+  v_attempt_id_before uuid;
+  v_attempt_count_before int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round10-claim-order-2@example.com', 'Round 10 Claim Order 2') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 claim-order test upload 2', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 54: expired auto row + a DIFFERENT run that has already COMPLETED -- the automatic claim must attach to the completed result, not reclaim its own expired row ---';
+  v_auto := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'auto';
+  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-done', 300);
+  if v_manual->>'outcome' = 'claimed-new' then raise notice 'PASS: manual-done claims successfully once auto has expired';
+  else raise notice 'FAIL: expected claimed-new for manual-done, got %', v_manual; end if;
+  update public.ha_research_runs
+    set status = 'completed', completed_at = now(), result_summary = '{"signalsReturned":6}'::jsonb
+    where upload_id = v_upload and research_run_id = 'manual-done';
+
+  select attempt_id into v_attempt_id_before from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+
+  v_auto := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_auto->>'outcome' = 'completed' and (v_auto->'run'->>'research_run_id') = 'manual-done' and (v_auto->'run'->'result_summary'->>'signalsReturned') = '6' then
+    raise notice 'PASS: the automatic claim attaches to the completed MANUAL run''s result, not its own expired row';
+  else raise notice 'FAIL: expected outcome=completed attached to manual-done, got %', v_auto; end if;
+  if exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto' and attempt_id = v_attempt_id_before) then
+    raise notice 'PASS: the expired auto row is NOT reclaimed';
+  else raise notice 'FAIL: the auto row was modified despite attaching to the completed manual run'; end if;
+
+  raise notice '--- Test 55: FAILED auto row + a DIFFERENT run that has already COMPLETED -- same completed-attach behavior, no new attempt minted for the failed row ---';
+  update public.ha_research_runs set status = 'failed', lease_expires_at = now() + interval '5 minutes'
+    where upload_id = v_upload and research_run_id = 'auto';
+  select attempt_count into v_attempt_count_before from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto';
+
+  v_auto := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_auto->>'outcome' = 'completed' and (v_auto->'run'->>'research_run_id') = 'manual-done' then
+    raise notice 'PASS: the automatic claim attaches to the completed manual run even though its OWN auto row is failed (not just expired-lease)';
+  else raise notice 'FAIL: expected outcome=completed attached to manual-done, got %', v_auto; end if;
+  if exists (select 1 from public.ha_research_runs where upload_id = v_upload and research_run_id = 'auto' and attempt_count = v_attempt_count_before) then
+    raise notice 'PASS: no new attempt was minted for the failed auto row';
+  else raise notice 'FAIL: attempt_count on the auto row changed despite attaching to the completed manual run'; end if;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 54-55 cleanup complete ---';
+end $$;
+
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_first jsonb;
+  v_manual jsonb;
+  v_reclaimed jsonb;
+  v_retry jsonb;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round10-claim-order-3@example.com', 'Round 10 Claim Order 3') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 claim-order test upload 3', 'uploaded') returning id into v_upload;
+
+  raise notice '--- Test 56: expired exact row with NO other active or completed blocker -- reclaim must still succeed normally ---';
+  v_first := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'auto';
+  v_reclaimed := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  if v_reclaimed->>'outcome' = 'reclaimed-after-expired-lease' then raise notice 'PASS: an expired exact row with no other active/completed blocker still reclaims normally';
+  else raise notice 'FAIL: expected reclaimed-after-expired-lease, got %', v_reclaimed; end if;
+  if (v_reclaimed->'run'->>'attempt_id')::uuid <> (v_first->'run'->>'attempt_id')::uuid then raise notice 'PASS: reclaiming mints a new attempt_id';
+  else raise notice 'FAIL: attempt_id did not change on reclaim'; end if;
+
+  raise notice '--- Test 57: FAILED exact manual row with no other active blocker -- reclaim-after-failure must still succeed normally ---';
+  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
+  update public.ha_research_runs set status = 'failed' where upload_id = v_upload and research_run_id = 'manual-solo';
+  v_retry := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
+  if v_retry->>'outcome' = 'reclaimed-after-failure' then raise notice 'PASS: a failed exact manual row with no other active blocker still reclaims normally (reclaimed-after-failure)';
+  else raise notice 'FAIL: expected reclaimed-after-failure, got %', v_retry; end if;
+
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 56-57 cleanup complete ---';
+end $$;

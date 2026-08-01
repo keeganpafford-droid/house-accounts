@@ -70,9 +70,26 @@ function makeFakeResearchRunsTable(){
 
   function claim(userId, uploadId, researchRunId, leaseSeconds){
     const key = keyFor(userId, uploadId, researchRunId);
-    const existing = rows.get(key);
     const now = Date.now();
 
+    // A. AUTOMATIC COMPLETION GUARD, evaluated FIRST -- before this call
+    // ever looks at its own exact row. ROUND 10 fix: an automatic claim
+    // ('auto') must not start again if ANY run for this upload already
+    // completed, auto or manual, EVEN IF the 'auto' row itself exists and is
+    // failed/expired-lease -- mirrors
+    // supabase-schema-migration-5-research-run-idempotency.sql §7's
+    // evaluation-order fix. Only an explicit manual-rerun request is exempt.
+    if(researchRunId === 'auto'){
+      const completedRows = [...rows.values()]
+        .filter(row => row.upload_id === uploadId && row.status === 'completed')
+        .sort((a, b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0));
+      if(completedRows.length){
+        return { outcome: 'completed', run: { ...completedRows[0] } };
+      }
+    }
+
+    // B. EXACT-ROW HANDLING.
+    const existing = rows.get(key);
     if(existing){
       if(existing.status === 'completed'){
         return { outcome: 'completed', run: { ...existing } };
@@ -80,7 +97,18 @@ function makeFakeResearchRunsTable(){
       if(existing.status === 'running' && existing.lease_expires_at_ms > now){
         return { outcome: 'attached-active', run: { ...existing } };
       }
-      // failed, or running with an expired lease: reclaim.
+      // failed, or running with an expired lease: a RECLAIM CANDIDATE, not
+      // an automatic reclaim. ROUND 10 fix: confirm no DIFFERENT
+      // research_run_id is actively (non-expired) running for this same
+      // upload before reclaiming -- a failed/expired exact row does not by
+      // itself prove the upload's "one active run" slot is free.
+      for(const row of rows.values()){
+        if(row.id !== existing.id && row.upload_id === uploadId && row.status === 'running' && row.lease_expires_at_ms > now){
+          const err = new Error(`claim_ha_research_run: a different research run (${row.research_run_id}) is already in progress for upload ${uploadId}`);
+          err.code = '55P03';
+          throw err;
+        }
+      }
       const wasFailed = existing.status === 'failed';
       existing.status = 'running';
       existing.attempt_id = fakeAttemptId();
@@ -93,23 +121,8 @@ function makeFakeResearchRunsTable(){
       return { outcome: wasFailed ? 'reclaimed-after-failure' : 'reclaimed-after-expired-lease', run: { ...existing } };
     }
 
-    // No exact-triple row.
-    //
-    // ROUND 3 "close manual-before-auto duplication": an automatic claim
-    // ('auto') must not start again if ANY run for this upload already
-    // completed, auto or manual -- mirrors
-    // supabase-schema-migration-5-research-run-idempotency.sql §7's new
-    // check.
-    if(researchRunId === 'auto'){
-      const completedRows = [...rows.values()]
-        .filter(row => row.upload_id === uploadId && row.status === 'completed')
-        .sort((a, b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0));
-      if(completedRows.length){
-        return { outcome: 'completed', run: { ...completedRows[0] } };
-      }
-    }
-
-    // Check for a different, actively-leased running row for the same upload.
+    // C. NO EXACT ROW: check for a different, actively-leased running row
+    // for the same upload before creating a new one.
     for(const row of rows.values()){
       if(row.upload_id === uploadId && row.status === 'running' && row.lease_expires_at_ms > now){
         const err = new Error(`claim_ha_research_run: a different research run (${row.research_run_id}) is already in progress for upload ${uploadId}`);
@@ -633,6 +646,127 @@ async function run(){
     await completeResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-blocks-auto', attemptId: manual.run.attempt_id, resultSummary: { signalsReturned: 1 } });
     const laterAutomatic = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
     assert(laterAutomatic.outcome === 'completed', 'a completed manual run blocks a later automatic execution from starting -- the automatic claim attaches to the existing completed state instead');
+  }
+
+  // =========================================================================
+  // ROUND 10: claim-ordering fix. The automatic-completion guard and the
+  // "is a DIFFERENT run active" check must run in the correct order relative
+  // to the exact-row lookup, or a failed/expired exact row can be reclaimed
+  // straight past a different run that is either actively leased or already
+  // completed -- producing two simultaneously active runs for one upload, or
+  // restarting research a manual rerun had already finished.
+  // =========================================================================
+
+  // Test 1: expired auto row + an actively-leased MANUAL run for the same
+  // upload -- the automatic claim must be REJECTED (55P03), not reclaim its
+  // own expired 'auto' row into a second simultaneously-active execution.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const auto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(auto.ok && auto.outcome === 'claimed-new', 'the initial automatic claim succeeds');
+    table.expireLease(FIXTURES.uploadId, 'auto');
+    const manual = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-active' });
+    assert(manual.ok && manual.outcome === 'claimed-new', 'a manual run claims successfully once the auto row\'s lease has expired (it is no longer blocking)');
+
+    const autoRowBefore = [...table.rows.values()].find(r => r.research_run_id === 'auto');
+    const autoAttemptIdBefore = autoRowBefore.attempt_id;
+    const autoAttemptCountBefore = autoRowBefore.attempt_count;
+
+    const secondAuto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(!secondAuto.ok && secondAuto.status === 409, 'TEST 1: an automatic claim with an expired own row, while a DIFFERENT run (manual-active) is actively leased, is rejected -- not reclaimed into a second simultaneously-active run');
+
+    const autoRowAfter = [...table.rows.values()].find(r => r.research_run_id === 'auto');
+    assert(autoRowAfter.status === 'running' && autoRowAfter.lease_expires_at_ms <= Date.now(), 'TEST 1: the expired auto row is NOT reclaimed -- it still shows its expired state');
+    assert(autoRowAfter.attempt_id === autoAttemptIdBefore, 'TEST 1: attempt_id is unchanged');
+    assert(autoRowAfter.attempt_count === autoAttemptCountBefore, 'TEST 1: attempt_count is unchanged');
+  }
+
+  // Test 2: a FAILED (not expired-lease) manual row, with a DIFFERENT run
+  // actively leased for the same upload -- reclaiming the failed row must
+  // also be rejected (55P03), not just the expired-lease case above.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const manual1 = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-1' });
+    assert(manual1.ok && manual1.outcome === 'claimed-new', 'manual-1 claims successfully');
+    await failResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-1', attemptId: manual1.run.attempt_id, errorMessage: 'provider timeout' });
+    const manual2 = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-2' });
+    assert(manual2.ok && manual2.outcome === 'claimed-new', 'manual-2 claims successfully once manual-1 is failed (no longer blocking)');
+
+    const manual1AttemptIdBefore = [...table.rows.values()].find(r => r.research_run_id === 'manual-1').attempt_id;
+
+    const reclaimAttempt = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-1' });
+    assert(!reclaimAttempt.ok && reclaimAttempt.status === 409, 'TEST 2: reclaiming a FAILED exact row is rejected (55P03) while a DIFFERENT run (manual-2) is actively leased');
+
+    const manual1RowAfter = [...table.rows.values()].find(r => r.research_run_id === 'manual-1');
+    assert(manual1RowAfter.status === 'failed' && manual1RowAfter.attempt_id === manual1AttemptIdBefore, 'TEST 2: the failed manual-1 row is NOT reclaimed');
+  }
+
+  // Test 3: expired auto row + a DIFFERENT run that has already COMPLETED --
+  // the automatic claim must attach to the completed result (not reclaim its
+  // own expired row into a new execution).
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const auto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    table.expireLease(FIXTURES.uploadId, 'auto');
+    const manual = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-done' });
+    assert(manual.ok && manual.outcome === 'claimed-new', 'manual-done claims successfully once auto has expired');
+    await completeResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-done', attemptId: manual.run.attempt_id, resultSummary: { signalsReturned: 6 } });
+
+    const autoAttemptIdBefore = [...table.rows.values()].find(r => r.research_run_id === 'auto').attempt_id;
+
+    const secondAuto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(secondAuto.ok && secondAuto.outcome === 'completed' && secondAuto.run.research_run_id === 'manual-done' && secondAuto.run.result_summary.signalsReturned === 6, 'TEST 3: the automatic claim attaches to the completed MANUAL run\'s result, not its own expired row');
+
+    const autoRowAfter = [...table.rows.values()].find(r => r.research_run_id === 'auto');
+    assert(autoRowAfter.attempt_id === autoAttemptIdBefore, 'TEST 3: the expired auto row is NOT reclaimed');
+  }
+
+  // Test 4: FAILED auto row + a DIFFERENT run that has already COMPLETED --
+  // same completed-attach behavior as Test 3, for the failed (not just
+  // expired-lease) case, with no new attempt minted for the failed row.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const auto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    await failResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'auto', attemptId: auto.run.attempt_id, errorMessage: 'provider error' });
+    const manual = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-done-2' });
+    await completeResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-done-2', attemptId: manual.run.attempt_id, resultSummary: { signalsReturned: 3 } });
+
+    const autoAttemptCountBefore = [...table.rows.values()].find(r => r.research_run_id === 'auto').attempt_count;
+
+    const secondAuto = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(secondAuto.ok && secondAuto.outcome === 'completed' && secondAuto.run.research_run_id === 'manual-done-2', 'TEST 4: the automatic claim attaches to the completed manual run even though its OWN auto row is failed (not just expired-lease)');
+
+    const autoRowAfter = [...table.rows.values()].find(r => r.research_run_id === 'auto');
+    assert(autoRowAfter.attempt_count === autoAttemptCountBefore, 'TEST 4: no new attempt was minted for the failed auto row');
+  }
+
+  // Test 5: expired exact row with NO other active or completed blocker --
+  // reclaim must still succeed normally (the round-10 fix must not
+  // over-block the ordinary, unblocked reclaim path).
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const first = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    const originalAttemptId = first.run.attempt_id;
+    table.expireLease(FIXTURES.uploadId, 'auto');
+    const reclaimed = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'auto' });
+    assert(reclaimed.ok && reclaimed.outcome === 'reclaimed-after-expired-lease', 'TEST 5: an expired exact row with no other active/completed blocker still reclaims normally');
+    assert(reclaimed.run.attempt_id !== originalAttemptId, 'TEST 5: reclaiming mints a new attempt_id');
+  }
+
+  // Test 6: FAILED exact manual row with no other active blocker --
+  // reclaim-after-failure must still succeed normally.
+  {
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+    const manual = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-solo' });
+    await failResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: 'manual-solo', attemptId: manual.run.attempt_id, errorMessage: 'network error' });
+    const retry = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: 'manual-solo' });
+    assert(retry.ok && retry.outcome === 'reclaimed-after-failure', 'TEST 6: a failed exact manual row with no other active blocker still reclaims normally (reclaimed-after-failure)');
   }
 
   // =========================================================================
