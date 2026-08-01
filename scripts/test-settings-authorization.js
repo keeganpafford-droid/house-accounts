@@ -142,6 +142,67 @@ async function run(){
     assert(res.statusCode === 401, 'a request with no bearer token still gets 401, unchanged from prior behavior');
   }
 
+  // ---------------------------------------------------------------------
+  // Phase 2A implementation-review item 4: trial-reuse entitlement
+  // regression cases. Each state transition below runs through the REAL
+  // handler sequentially against the shared orgState mock, exactly as a
+  // single organization would experience it over time.
+  // ---------------------------------------------------------------------
+
+  // 8. free -> team -> free -> team: switching back to free and requesting
+  // team again must NOT grant a second fresh trial.
+  {
+    orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
+    global.fetch = mockFetch(OWNER);
+    let res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
+    assert(res.statusCode === 200 && orgState.trial_used === true, 'free -> team: first request starts a trial and marks trial_used');
+    res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'free' } }), res);
+    assert(res.statusCode === 200 && orgState.plan === 'free', 'team -> free: downgrade to free succeeds');
+    assert(orgState.trial_used === true, 'team -> free: trial_used is NOT reset by downgrading to free (PATCH only touches the fields the free branch sets)');
+    res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
+    assert(res.statusCode === 403, 'free -> team a second time is REJECTED (403) -- cycling through free does not grant a second trial');
+    assert(orgState.plan === 'free', 'the rejected second team request leaves the org on free, not silently upgraded');
+  }
+
+  // 9. solo -> team: switching between paid tiers WHILE a trial is still
+  // active is allowed and continues the same trial clock (not a new one).
+  {
+    orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
+    global.fetch = mockFetch(OWNER);
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'solo' } }), fakeRes());
+    const trialEndAfterSolo = orgState.trial_end;
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
+    assert(res.statusCode === 200 && orgState.plan === 'team', 'solo -> team while the trial is still active succeeds');
+    assert(orgState.trial_end === trialEndAfterSolo, 'switching solo -> team during an active trial continues the SAME trial_end, it does not restart a fresh 30-day clock');
+  }
+
+  // 10. team -> solo: same as above, reversed.
+  {
+    orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
+    global.fetch = mockFetch(OWNER);
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), fakeRes());
+    const trialEndAfterTeam = orgState.trial_end;
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'solo' } }), res);
+    assert(res.statusCode === 200 && orgState.plan === 'solo', 'team -> solo while the trial is still active succeeds');
+    assert(orgState.trial_end === trialEndAfterTeam, 'switching team -> solo during an active trial continues the SAME trial_end');
+  }
+
+  // 11. Expired trial -> team: an org whose trial has already ended AND was
+  // already used must not be silently re-granted a new trial.
+  {
+    orgState = { id: ORG_ID, plan: 'solo', seat_limit: 1, subscription_status: 'trialing', trial_status: 'active', trial_used: true, trial_end: new Date(Date.now() - 5 * 86400000).toISOString() };
+    global.fetch = mockFetch(OWNER);
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
+    assert(res.statusCode === 403, 'a request to switch to team after the org\'s trial has already expired (and was already used) is rejected (403), not silently renewed');
+    assert(orgState.plan === 'solo', 'the org plan is unchanged by the rejected request');
+  }
+
   // 7. Pure allowlist/config sanity.
   assert(CLIENT_REQUESTABLE_PLANS.includes('free') && CLIENT_REQUESTABLE_PLANS.includes('solo') && CLIENT_REQUESTABLE_PLANS.includes('team'), 'the allowlist includes exactly the three legitimate self-service plans');
   assert(!CLIENT_REQUESTABLE_PLANS.includes('enterprise') && !CLIENT_REQUESTABLE_PLANS.includes('manual'), 'the allowlist excludes enterprise and manual');

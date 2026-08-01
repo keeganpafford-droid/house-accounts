@@ -15,6 +15,19 @@ import {
   resolveEventType,
   displayLabelForEventType
 } from './signal-intelligence.js';
+import { createHash } from 'crypto';
+
+// Phase 2A implementation-review item 5 — instrumentation privacy. Normal
+// production logs use counts and hashed identifiers only; raw customer/
+// account names and full event_fingerprint strings (which embed a
+// normalized company name — see eventFingerprint()/resolveEvents() in
+// signal-intelligence.js) are withheld by default. Set the server-side
+// (never client-controllable) env var HA_DEBUG_INSTRUMENTATION=true to
+// include full identifiers for QA/debugging.
+const DEBUG_INSTRUMENTATION = String(process.env.HA_DEBUG_INSTRUMENTATION || '').toLowerCase() === 'true';
+function shortHash(value = '') {
+  return createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12);
+}
 
 // Priority 0 (reliability): no maxDuration override existed here before this
 // fix (confirmed by repo-wide grep). Verified in the Vercel dashboard: this
@@ -1419,15 +1432,169 @@ function dedupeSignals(signals = []) {
 }
 
 
+// ---------------------------------------------------------------------------
+// Phase 2A implementation-review item 2 — server-owned research-run
+// idempotency. Strictly opt-in: activates ONLY when the caller sends
+// uploadId (checked below). api/weekly-scan.js's own call to this endpoint
+// (mode:'weekly-monitoring') sends no uploadId/auth header at all and is
+// completely unaffected -- it already has its own concurrency guard via
+// ha_weekly_runs. Same for prospect_script.js's prospecting flow. This
+// endpoint still writes NOTHING to ha_signals/ha_accounts itself (unchanged
+// invariant) -- the one narrow exception is bookkeeping rows in
+// ha_research_runs, added specifically so a second tab or a page reload
+// cannot launch an untracked, duplicate research execution against the same
+// upload. See supabase-schema-migration-5-research-run-idempotency.sql.
+// ---------------------------------------------------------------------------
+function rbEnv() {
+  const rawUrl = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!rawUrl || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  const url = String(rawUrl).trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
+  return { url, key };
+}
+async function rbSupabase(path, options = {}) {
+  const { url, key } = rbEnv();
+  const resp = await fetch(`${url}/rest/v1/${path}`, {
+    ...options,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: options.prefer || 'return=representation', ...(options.headers || {}) }
+  });
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = text; } }
+  if (!resp.ok) {
+    const msg = typeof data === 'string' ? data : (data?.message || data?.hint || JSON.stringify(data));
+    const httpErr = new Error(`Supabase ${resp.status}: ${msg}`);
+    httpErr.status = resp.status;
+    throw httpErr;
+  }
+  return data;
+}
+// Looks up the authenticated ha_users record only -- never creates one.
+// By the time research is triggered from the dashboard, saveCurrentUpload()
+// has already run at least once (processData() now awaits it before ever
+// starting research -- see dashboard/index.html), so the user row is
+// guaranteed to already exist; this function existing purely to create a
+// user here would just duplicate api/save-upload.js's own creation logic for
+// a code path that should never need it. Falls back to a lead-email lookup
+// (no auth session) for parity with save-upload.js's own dual path.
+async function resolveUserForResearchRun(req, lead) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (token) {
+    try {
+      const { url, key } = rbEnv();
+      const authResp = await fetch(`${url}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
+      if (authResp.ok) {
+        const authUser = await authResp.json();
+        if (authUser?.id) {
+          const rows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=id,email&limit=1`);
+          const found = Array.isArray(rows) ? rows[0] : null;
+          if (found?.id) return found;
+        }
+      }
+    } catch { /* fall through to lead-email lookup */ }
+  }
+  const email = clean(lead?.email || '').toLowerCase();
+  if (!email) return null;
+  const rows = await rbSupabase(`ha_users?email=eq.${encodeURIComponent(email)}&select=id,email&limit=1`);
+  return Array.isArray(rows) ? rows[0] : null;
+}
+// Attempts to claim a NEW running row for (userId, uploadId, researchRunId).
+// Returns {blocked:false, rowId, outcome} to proceed, or
+// {blocked:true, status, body} to short-circuit the request immediately with
+// that exact response -- no research/OpenAI/search-provider call is made on
+// any blocked path, which is the actual idempotency guarantee.
+async function claimResearchRun({ userId, uploadId, researchRunId }) {
+  try {
+    const inserted = await rbSupabase('ha_research_runs', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify([{ research_run_id: researchRunId, user_id: userId, upload_id: uploadId, status: 'running', started_at: new Date().toISOString() }])
+    });
+    const row = Array.isArray(inserted) ? inserted[0] : inserted;
+    return { blocked: false, rowId: row.id, outcome: 'claimed-new' };
+  } catch (err) {
+    const msg = String(err.message || '');
+    if (err.status === 409 && /ha_research_runs_user_upload_run_key/.test(msg)) {
+      // The exact same (user, upload, researchRunId) triple already exists.
+      const existingRows = await rbSupabase(`ha_research_runs?user_id=eq.${encodeURIComponent(userId)}&upload_id=eq.${encodeURIComponent(uploadId)}&research_run_id=eq.${encodeURIComponent(researchRunId)}&select=*&limit=1`);
+      const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+      if (!existing) return { blocked: true, status: 500, body: { error: 'Research run tracking conflict could not be resolved.' } };
+      if (existing.status === 'running') {
+        // Retry after a network timeout, or two tabs racing on the SAME run
+        // id (only possible if the id itself was somehow shared/replayed) --
+        // either way, idempotent: do not start a second research execution.
+        return { blocked: true, status: 202, body: { ok: true, alreadyRunning: true, researchRunId, message: 'This research run is already in progress.' } };
+      }
+      if (existing.status === 'completed') {
+        // Retry after a completed run: idempotent -- return what's already
+        // known about the outcome, do not re-run research or re-spend
+        // provider calls.
+        return { blocked: true, status: 200, body: { ok: true, alreadyCompleted: true, researchRunId, resultSummary: existing.result_summary || {}, completedAt: existing.completed_at, signals: [], byAccount: {} } };
+      }
+      // status === 'failed': re-claim the SAME run id for a retry.
+      const updated = await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(existing.id)}`, {
+        method: 'PATCH', prefer: 'return=representation',
+        body: JSON.stringify({ status: 'running', started_at: new Date().toISOString(), completed_at: null, error_message: null })
+      });
+      const row = Array.isArray(updated) ? updated[0] : updated;
+      return { blocked: false, rowId: row.id, outcome: 'reclaimed-after-failure' };
+    }
+    if (err.status === 409 && /idx_ha_research_runs_one_running_per_upload/.test(msg)) {
+      // A DIFFERENT researchRunId is already actively running for this
+      // upload -- e.g. a second tab starting its own new run. Rejected, not
+      // joined: joining would require merging two independent research
+      // executions' output, which is exactly the ambiguity this mechanism
+      // exists to prevent.
+      return { blocked: true, status: 409, body: { error: 'A different research run is already in progress for this upload.', researchRunId } };
+    }
+    throw err;
+  }
+}
+async function completeResearchRun(rowId, resultSummary) {
+  await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(rowId)}`, {
+    method: 'PATCH', prefer: 'return=minimal',
+    body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), result_summary: resultSummary })
+  });
+}
+async function failResearchRun(rowId, errorMessage) {
+  await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(rowId)}`, {
+    method: 'PATCH', prefer: 'return=minimal',
+    body: JSON.stringify({ status: 'failed', completed_at: new Date().toISOString(), error_message: clean(errorMessage).slice(0, 2000) })
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
 
+  // Declared outside the try block so the catch handler below can still mark
+  // a claimed run 'failed' rather than leaving it stuck at 'running' forever
+  // (the same class of bug this whole workstream exists to close, just for a
+  // different table).
+  let researchRunTracking = null;
+
   try {
-    const { accounts = [], mode = 'ranked', researchRunId = '' } = req.body || {};
+    const { accounts = [], mode = 'ranked', researchRunId = '', uploadId = '', lead = {} } = req.body || {};
     const runId = clean(researchRunId) || `unattributed-${startedAt}`;
+    const targetUploadId = clean(uploadId);
+
+    // Strictly opt-in: only activates when the caller sends a real uploadId.
+    // See the block comment above claimResearchRun() for why
+    // weekly-scan.js/prospect_script.js are unaffected.
+    if (targetUploadId) {
+      const trackingUser = await resolveUserForResearchRun(req, lead);
+      if (!trackingUser?.id) {
+        return res.status(401).json({ error: 'Login required to start a tracked research run.' });
+      }
+      const claim = await claimResearchRun({ userId: trackingUser.id, uploadId: targetUploadId, researchRunId: runId });
+      if (claim.blocked) {
+        return res.status(claim.status).json(claim.body);
+      }
+      researchRunTracking = { rowId: claim.rowId, outcome: claim.outcome };
+    }
+
     const seenAccountKeys = new Set();
     const safeAccounts = (Array.isArray(accounts) ? accounts : [])
       .filter(a => a && a.name)
@@ -1659,7 +1826,14 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       mappedSignals: mappedSignals.length,
       validMappedSignals: validMappedSignals.length,
       acceptedSignals: signals.length,
-      acceptedEventFingerprints: signals.map(s => s.eventFingerprint).filter(Boolean)
+      // Hashed by default -- an event_fingerprint embeds a normalized
+      // company name (see eventFingerprint()/resolveEvents() in
+      // signal-intelligence.js), so logging it verbatim would be logging a
+      // customer/account identifier. The hash is still stable and joinable
+      // against api/save-upload.js's own hashed instrumentation for the
+      // same run, without needing the raw value in normal logs.
+      acceptedEventFingerprintHashes: signals.map(s => s.eventFingerprint).filter(Boolean).map(shortHash),
+      ...(DEBUG_INSTRUMENTATION ? { acceptedEventFingerprints: signals.map(s => s.eventFingerprint).filter(Boolean) } : {})
     }));
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Signal filtering complete', {
@@ -1738,6 +1912,14 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
+    if (researchRunTracking) {
+      await completeResearchRun(researchRunTracking.rowId, {
+        signalsReturned: finalSignals.length,
+        accountsResearched: safeAccounts.length,
+        avgConfidence
+      }).catch(err => console.warn('[research-batch] failed to mark research run completed', { rowId: researchRunTracking.rowId, message: err.message }));
+    }
+
     return res.status(200).json({
       signals: finalSignals,
       byAccount,
@@ -1785,9 +1967,13 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       }
     });
   } catch (err) {
+    if (researchRunTracking) {
+      await failResearchRun(researchRunTracking.rowId, err.message || 'Batch research failed')
+        .catch(trackingErr => console.warn('[research-batch] failed to mark research run failed', { rowId: researchRunTracking.rowId, message: trackingErr.message }));
+    }
     return res.status(500).json({ error: err.message || 'Batch research failed', diagnostics: { elapsedMs: Date.now() - startedAt } });
   }
 }
 
 // Named exports for testability (Phase 2A / B3 classification tests).
-export { makeSignal, resolveCanonicalEventType };
+export { makeSignal, resolveCanonicalEventType, claimResearchRun, completeResearchRun, failResearchRun, resolveUserForResearchRun };

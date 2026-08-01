@@ -2,6 +2,15 @@
 // Endpoint: POST /api/save-upload
 
 import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType } from './signal-intelligence.js';
+import { createHash } from 'crypto';
+
+// Phase 2A implementation-review item 5 — same instrumentation-privacy
+// convention as api/research-batch.js: normal logs use counts and hashed
+// identifiers only, raw account names withheld by default. See
+// HA_DEBUG_INSTRUMENTATION there for the QA/debug opt-in (server-side env
+// var only, never client-controllable).
+const DEBUG_INSTRUMENTATION = String(process.env.HA_DEBUG_INSTRUMENTATION || '').toLowerCase() === 'true';
+function shortHash(value = ''){ return createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12); }
 
 function json(res, status, body){ res.setHeader('Cache-Control','no-store, max-age=0'); return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
@@ -250,7 +259,8 @@ export default async function handler(req, res){
       const declaredLabel = clean(s.signalType || s.type || '');
       if(canonicalLabel && declaredLabel && canonicalLabel !== declaredLabel){
         console.warn('[save-upload] classification mismatch corrected before persistence', {
-          accountName: s.accountName, declaredLabel, canonicalLabel, eventType: s.eventIdentity.eventType
+          accountNameHash: shortHash(s.accountName), declaredLabel, canonicalLabel, eventType: s.eventIdentity.eventType,
+          ...(DEBUG_INSTRUMENTATION ? { accountName: s.accountName } : {})
         });
         s.signalType = canonicalLabel; s.signal_type = canonicalLabel; s.type = canonicalLabel;
         classificationCorrections += 1;

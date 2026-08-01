@@ -3600,6 +3600,8 @@ async function researchAccountByName(accountName, options = {}){
     const payload = enhancedPublicMode ? {
       mode:'warm-account',
       researchRunId: currentResearchRunId,
+      uploadId: currentUploadId,
+      lead: currentLead || getSavedLead(),
       accounts: batchPayloadForAccounts([account])
     } : {
       accountName: account.name,
@@ -3771,6 +3773,8 @@ async function researchAccountsBatch(accounts, options = {}){
       body: JSON.stringify({
         mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
         researchRunId: currentResearchRunId,
+        uploadId: currentUploadId,
+        lead: currentLead || getSavedLead(),
         accounts: batchPayloadForAccounts(accounts)
       })
     });
@@ -3871,6 +3875,16 @@ function dedupeSignalsClient(signals){
 
 async function researchTopAccounts(options = {}){
   if(researchInProgress) return;
+  // Phase 2A implementation-review item 2: research-batch.js now requires a
+  // real uploadId to claim a server-owned research run. currentUploadId
+  // should always be set by this point (processData() now awaits the
+  // initial save before ever calling this), but this guard stops a request
+  // with no uploadId from ever being sent, rather than surfacing as a
+  // confusing 400 from the server.
+  if(!currentUploadId){
+    console.warn('[Research] researchTopAccounts() called before an upload exists; skipping.');
+    return;
+  }
   researchInProgress = true;
   // Phase 2A / A2: one correlation id for this entire logical research pass,
   // threaded through every research-batch/research-account call it makes
@@ -5649,7 +5663,6 @@ function processData(records){
   renderDetailedAccountViews(accounts);
 
   document.getElementById('results').style.display = 'block';
-  autoResearchTopAccountsOnce();
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
 
@@ -5660,7 +5673,14 @@ function processData(records){
     futureOpportunityCount: futureOpportunities.length,
     reasonsToReachOut: futureOpportunities.length
   };
-  saveCurrentUpload('uploaded');
+  // Phase 2A implementation-review item 2: research must not start until
+  // currentUploadId is guaranteed set, since research-batch.js now requires
+  // a real uploadId to claim a server-owned research run against. Previously
+  // autoResearchTopAccountsOnce() (a 500ms-delayed call) and this save fired
+  // independently with no ordering guarantee between them -- usually the
+  // save won the race, but nothing enforced it. Chaining explicitly closes
+  // that latent race rather than continuing to rely on timing.
+  saveCurrentUpload('uploaded').then(() => autoResearchTopAccountsOnce());
 }
 
 function escapeHtml(text){

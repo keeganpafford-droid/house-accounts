@@ -44,18 +44,44 @@ create table if not exists public.ha_accounts (
   constraint ha_accounts_upload_account_name_key unique (upload_id, account_name)
 );
 
--- Atomic, serialized full-snapshot replace for an upload's account list.
--- See supabase-schema-migration-4-atomic-account-snapshot.sql §4 for why the
--- advisory lock is required in addition to the unique constraint above.
+-- Audit trail for rows removed by the de-duplication step in
+-- supabase-schema-migration-4-atomic-account-snapshot.sql §3 (irrelevant on a
+-- brand-new database, since there is nothing to de-duplicate, but declared
+-- here so the end state matches an already-migrated production database).
+create table if not exists public.ha_accounts_dedup_audit (
+  id uuid primary key default gen_random_uuid(),
+  removed_account_id uuid not null,
+  kept_account_id uuid not null,
+  upload_id uuid not null,
+  account_name text not null,
+  removed_row_snapshot jsonb not null,
+  removed_at timestamptz not null default now()
+);
+
+-- Atomic, serialized, ownership-checked full-snapshot replace for an
+-- upload's account list. SECURITY INVOKER, not DEFINER, and EXECUTE is
+-- revoked from anon/authenticated below — see
+-- supabase-schema-migration-4-atomic-account-snapshot.sql §5 for the full
+-- security rationale (service_role-only trust model, no RLS policies exist
+-- on these tables, ownership of p_upload_id is verified against p_user_id
+-- before any row is touched).
 create or replace function public.replace_ha_accounts_snapshot(
   p_upload_id uuid,
   p_user_id uuid,
   p_accounts jsonb
 ) returns setof public.ha_accounts
 language plpgsql
+security invoker
+set search_path = public
 as $$
 begin
   perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
+  if not exists (
+    select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
+  ) then
+    raise exception 'replace_ha_accounts_snapshot: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
+      using errcode = '42501';
+  end if;
   delete from public.ha_accounts where upload_id = p_upload_id;
   return query
   insert into public.ha_accounts (
@@ -80,6 +106,10 @@ begin
   returning *;
 end;
 $$;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from public;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from anon;
+revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from authenticated;
+grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) to service_role;
 
 create table if not exists public.ha_weekly_runs (
   id uuid primary key default gen_random_uuid(),
@@ -97,6 +127,34 @@ create table if not exists public.ha_weekly_runs (
 -- (complete/partial/failed/timed_out) are unrestricted and accumulate freely.
 create unique index if not exists idx_ha_weekly_runs_one_running_per_upload
   on public.ha_weekly_runs(upload_id)
+  where status = 'running';
+
+-- Server-owned logical research-run tracking (Phase 2A implementation-review
+-- item 2). Distinct from ha_weekly_runs, which tracks the scheduled/cron
+-- monitoring path — this tracks the interactive dashboard research path
+-- (researchTopAccounts() in dashboard/index.html), so a browser reload or a
+-- second tab cannot launch an untracked, duplicate research execution
+-- against the same upload. See api/research-batch.js for the claim/
+-- complete/fail state machine that reads and writes this table.
+create table if not exists public.ha_research_runs (
+  id uuid primary key default gen_random_uuid(),
+  research_run_id text not null,
+  user_id uuid not null references public.ha_users(id) on delete cascade,
+  upload_id uuid not null references public.ha_uploads(id) on delete cascade,
+  status text not null default 'running',
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  result_summary jsonb default '{}'::jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  constraint ha_research_runs_user_upload_run_key unique (user_id, upload_id, research_run_id)
+);
+
+-- At most one 'running' row per upload at any moment — the actual mechanism
+-- that stops a second tab/reload from starting an untracked concurrent
+-- research pass. Mirrors idx_ha_weekly_runs_one_running_per_upload exactly.
+create unique index if not exists idx_ha_research_runs_one_running_per_upload
+  on public.ha_research_runs(upload_id)
   where status = 'running';
 
 create table if not exists public.ha_signals (
