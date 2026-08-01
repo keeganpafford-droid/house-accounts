@@ -105,6 +105,48 @@
 -- replacing the wrong user's accounts.
 --
 -- =============================================================================
+-- 6a. ROUND 2 REVISIONS TO THE RPC BODY (Phase 2A implementation-review round 2)
+-- =============================================================================
+-- This migration has never been applied to any database, so the RPC below is
+-- revised in place rather than tracked as a separate later change:
+--   - Explicit up-front validation that p_accounts is a JSON array (raises
+--     errcode 22023 with a clear message on anything else — an object, a
+--     scalar, null). jsonb_array_elements() would already raise on a
+--     non-array value, but with a cryptic generic message; this makes the
+--     failure explicit and gives it a distinct, checkable errcode. Either
+--     way this is atomic: a plpgsql function body is one implicit
+--     transaction, so an unhandled exception anywhere inside it — including
+--     here, before the DELETE below runs — rolls back everything the
+--     function has done so far. See scripts/phase2a-rpc-authorization-tests.sql
+--     tests 7-8.
+--   - Duplicate account_name values WITHIN one p_accounts array are now
+--     resolved deterministically BEFORE the insert (last occurrence in the
+--     array wins, via WITH ORDINALITY + DISTINCT ON), rather than relying on
+--     ON CONFLICT DO UPDATE to handle it. This closes a genuine bug found
+--     during round-2 review: ON CONFLICT DO UPDATE can only resolve a
+--     conflict against a row that already existed before the statement
+--     started — it cannot resolve two NEW rows in the SAME insert statement
+--     conflicting with EACH OTHER, and raises "ON CONFLICT DO UPDATE command
+--     cannot affect row a second time" if that happens. A p_accounts array
+--     containing two entries with the same account_name would have hit
+--     exactly that error under the round-1 version of this function. See
+--     scripts/phase2a-rpc-authorization-tests.sql test 9.
+--   - An empty p_accounts array ('[]'::jsonb) is explicit, tested behavior:
+--     the DELETE still removes the upload's existing accounts, and the
+--     INSERT inserts nothing (zero rows selected), so the net effect is that
+--     the upload's account list is cleared to empty. This is the correct
+--     reading of "replace the full snapshot with this exact list" including
+--     the empty-list case. See test 11.
+--   - user_id on every inserted row is always the verified p_user_id
+--     parameter — no per-row "user_id" field is ever read from the client's
+--     JSON — so a caller embedding a spoofed user_id inside an individual
+--     account object cannot influence row ownership. See test 10.
+--   - The rows returned by RETURNING * always carry exactly p_upload_id and
+--     p_user_id (both are literal parameters in the SELECT list, not
+--     per-row values), so the returned set structurally cannot include rows
+--     belonging to any other upload or user. See test 12.
+--
+-- =============================================================================
 -- 6. ROLLBACK
 -- =============================================================================
 -- drop function if exists public.replace_ha_accounts_snapshot(uuid, uuid, jsonb);
@@ -183,26 +225,52 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Round 2: p_accounts must be a JSON array. See §6a. This check runs
+  -- BEFORE the DELETE below, but even if it did not, a plpgsql function
+  -- body is one implicit transaction, so an unhandled exception anywhere in
+  -- this function rolls back everything it has done so far, including the
+  -- DELETE — malformed input fails atomically either way.
+  if jsonb_typeof(p_accounts) is distinct from 'array' then
+    raise exception 'replace_ha_accounts_snapshot: p_accounts must be a JSON array (got %)', coalesce(jsonb_typeof(p_accounts), 'null')
+      using errcode = '22023';
+  end if;
+
   delete from public.ha_accounts where upload_id = p_upload_id;
 
+  -- Round 2: in-array duplicate account_name values are resolved
+  -- deterministically (last occurrence wins, by array position) BEFORE the
+  -- insert. See §6a for why ON CONFLICT DO UPDATE alone cannot handle two
+  -- new rows in the same statement conflicting with each other.
   return query
+  with numbered as (
+    select
+      nullif(btrim(elem->>'account_name'), '') as account_name,
+      nullif(btrim(elem->>'industry'), '') as industry,
+      nullif(btrim(elem->>'contact_name'), '') as contact_name,
+      lower(nullif(btrim(elem->>'contact_email'), '')) as contact_email,
+      coalesce(elem->'metrics', '{}'::jsonb) as metrics,
+      coalesce(elem->'raw_data', '{}'::jsonb) as raw_data,
+      ord
+    from jsonb_array_elements(p_accounts) with ordinality as t(elem, ord)
+  ),
+  deduped as (
+    select distinct on (account_name)
+      account_name, industry, contact_name, contact_email, metrics, raw_data
+    from numbered
+    where account_name is not null
+    order by account_name, ord desc
+  )
   insert into public.ha_accounts (
+    -- user_id is ALWAYS the verified p_user_id — no "user_id" field is ever
+    -- read from the client-supplied JSON above, so a spoofed per-row
+    -- user_id in p_accounts cannot influence ownership. See §6a / test 10.
     user_id, upload_id, account_name, industry, contact_name, contact_email,
     metrics, raw_data, created_at, updated_at
   )
   select
-    p_user_id,
-    p_upload_id,
-    nullif(btrim(a->>'account_name'), ''),
-    nullif(btrim(a->>'industry'), ''),
-    nullif(btrim(a->>'contact_name'), ''),
-    lower(nullif(btrim(a->>'contact_email'), '')),
-    coalesce(a->'metrics', '{}'::jsonb),
-    coalesce(a->'raw_data', '{}'::jsonb),
-    now(),
-    now()
-  from jsonb_array_elements(p_accounts) as a
-  where nullif(btrim(a->>'account_name'), '') is not null
+    p_user_id, p_upload_id, account_name, industry, contact_name, contact_email,
+    metrics, raw_data, now(), now()
+  from deduped
   on conflict (upload_id, account_name) do update set
     industry = excluded.industry,
     contact_name = excluded.contact_name,
@@ -211,6 +279,9 @@ begin
     raw_data = excluded.raw_data,
     updated_at = now()
   returning *;
+  -- An empty p_accounts array is explicit, tested behavior: deduped produces
+  -- zero rows, so nothing is inserted, and combined with the DELETE above
+  -- the upload's account list is cleared to empty. See §6a / test 11.
 end;
 $$;
 

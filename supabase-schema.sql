@@ -82,28 +82,56 @@ begin
     raise exception 'replace_ha_accounts_snapshot: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
       using errcode = '42501';
   end if;
+
+  -- p_accounts must be a JSON array (explicit, atomic failure otherwise —
+  -- see supabase-schema-migration-4-atomic-account-snapshot.sql §6a).
+  if jsonb_typeof(p_accounts) is distinct from 'array' then
+    raise exception 'replace_ha_accounts_snapshot: p_accounts must be a JSON array (got %)', coalesce(jsonb_typeof(p_accounts), 'null')
+      using errcode = '22023';
+  end if;
+
   delete from public.ha_accounts where upload_id = p_upload_id;
+
+  -- In-array duplicate account_name values are resolved deterministically
+  -- (last occurrence wins) BEFORE the insert — see migration 4 §6a for why
+  -- ON CONFLICT DO UPDATE alone cannot resolve two new rows in the same
+  -- statement conflicting with each other.
   return query
+  with numbered as (
+    select
+      nullif(btrim(elem->>'account_name'), '') as account_name,
+      nullif(btrim(elem->>'industry'), '') as industry,
+      nullif(btrim(elem->>'contact_name'), '') as contact_name,
+      lower(nullif(btrim(elem->>'contact_email'), '')) as contact_email,
+      coalesce(elem->'metrics', '{}'::jsonb) as metrics,
+      coalesce(elem->'raw_data', '{}'::jsonb) as raw_data,
+      ord
+    from jsonb_array_elements(p_accounts) with ordinality as t(elem, ord)
+  ),
+  deduped as (
+    select distinct on (account_name)
+      account_name, industry, contact_name, contact_email, metrics, raw_data
+    from numbered
+    where account_name is not null
+    order by account_name, ord desc
+  )
   insert into public.ha_accounts (
+    -- user_id is ALWAYS the verified p_user_id — never read from p_accounts.
     user_id, upload_id, account_name, industry, contact_name, contact_email,
     metrics, raw_data, created_at, updated_at
   )
   select
-    p_user_id, p_upload_id,
-    nullif(btrim(a->>'account_name'), ''),
-    nullif(btrim(a->>'industry'), ''),
-    nullif(btrim(a->>'contact_name'), ''),
-    lower(nullif(btrim(a->>'contact_email'), '')),
-    coalesce(a->'metrics', '{}'::jsonb),
-    coalesce(a->'raw_data', '{}'::jsonb),
-    now(), now()
-  from jsonb_array_elements(p_accounts) as a
-  where nullif(btrim(a->>'account_name'), '') is not null
+    p_user_id, p_upload_id, account_name, industry, contact_name, contact_email,
+    metrics, raw_data, now(), now()
+  from deduped
   on conflict (upload_id, account_name) do update set
     industry = excluded.industry, contact_name = excluded.contact_name,
     contact_email = excluded.contact_email, metrics = excluded.metrics,
     raw_data = excluded.raw_data, updated_at = now()
   returning *;
+  -- An empty p_accounts array clears the upload's account list to empty
+  -- (DELETE above still runs; this INSERT inserts nothing) — explicit,
+  -- tested behavior, not an oversight.
 end;
 $$;
 revoke all on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb) from public;
@@ -129,19 +157,27 @@ create unique index if not exists idx_ha_weekly_runs_one_running_per_upload
   on public.ha_weekly_runs(upload_id)
   where status = 'running';
 
--- Server-owned logical research-run tracking (Phase 2A implementation-review
--- item 2). Distinct from ha_weekly_runs, which tracks the scheduled/cron
--- monitoring path — this tracks the interactive dashboard research path
+-- Server-owned logical research-run tracking (Phase 2A implementation-review,
+-- both rounds). Distinct from ha_weekly_runs, which tracks the scheduled/
+-- cron monitoring path — this tracks the interactive dashboard research path
 -- (researchTopAccounts() in dashboard/index.html), so a browser reload or a
 -- second tab cannot launch an untracked, duplicate research execution
--- against the same upload. See api/research-batch.js for the claim/
--- complete/fail state machine that reads and writes this table.
+-- against the same upload, and a killed Vercel invocation cannot leave a run
+-- stuck at status='running' forever. See
+-- supabase-schema-migration-5-research-run-idempotency.sql for the full
+-- design rationale (lease/attempt semantics, why the old partial unique
+-- index was removed in favor of the RPC below) and
+-- api/research-batch.js for the claim/complete/fail call sites.
 create table if not exists public.ha_research_runs (
   id uuid primary key default gen_random_uuid(),
   research_run_id text not null,
   user_id uuid not null references public.ha_users(id) on delete cascade,
   upload_id uuid not null references public.ha_uploads(id) on delete cascade,
   status text not null default 'running',
+  attempt_id uuid not null default gen_random_uuid(),
+  attempt_count integer not null default 1,
+  lease_expires_at timestamptz not null default (now() + interval '5 minutes'),
+  heartbeat_at timestamptz,
   started_at timestamptz not null default now(),
   completed_at timestamptz,
   result_summary jsonb default '{}'::jsonb,
@@ -150,12 +186,95 @@ create table if not exists public.ha_research_runs (
   constraint ha_research_runs_user_upload_run_key unique (user_id, upload_id, research_run_id)
 );
 
--- At most one 'running' row per upload at any moment — the actual mechanism
--- that stops a second tab/reload from starting an untracked concurrent
--- research pass. Mirrors idx_ha_weekly_runs_one_running_per_upload exactly.
-create unique index if not exists idx_ha_research_runs_one_running_per_upload
-  on public.ha_research_runs(upload_id)
-  where status = 'running';
+-- Atomic claim/attach/reclaim RPC — see migration 5 §3/§4/§7 for the full
+-- rationale (why a plain unique index cannot encode lease expiry, why this
+-- must be one atomic function rather than separate REST calls).
+create or replace function public.claim_ha_research_run(
+  p_user_id uuid,
+  p_upload_id uuid,
+  p_research_run_id text,
+  p_lease_seconds integer default 300
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_existing public.ha_research_runs;
+  v_other_active public.ha_research_runs;
+  v_result public.ha_research_runs;
+begin
+  perform pg_advisory_xact_lock(hashtext(p_upload_id::text));
+
+  if not exists (
+    select 1 from public.ha_uploads where id = p_upload_id and user_id = p_user_id
+  ) then
+    raise exception 'claim_ha_research_run: upload % does not belong to user % (or does not exist)', p_upload_id, p_user_id
+      using errcode = '42501';
+  end if;
+
+  select * into v_existing
+  from public.ha_research_runs
+  where user_id = p_user_id and upload_id = p_upload_id and research_run_id = p_research_run_id
+  for update;
+
+  if found then
+    if v_existing.status = 'completed' then
+      return jsonb_build_object('outcome', 'completed', 'run', to_jsonb(v_existing));
+    end if;
+
+    if v_existing.status = 'running' and v_existing.lease_expires_at > now() then
+      return jsonb_build_object('outcome', 'attached-active', 'run', to_jsonb(v_existing));
+    end if;
+
+    update public.ha_research_runs
+    set status = 'running',
+        attempt_id = gen_random_uuid(),
+        attempt_count = v_existing.attempt_count + 1,
+        lease_expires_at = now() + make_interval(secs => p_lease_seconds),
+        heartbeat_at = now(),
+        started_at = now(),
+        completed_at = null,
+        error_message = null
+    where id = v_existing.id
+    returning * into v_result;
+
+    return jsonb_build_object(
+      'outcome', case when v_existing.status = 'failed' then 'reclaimed-after-failure' else 'reclaimed-after-expired-lease' end,
+      'run', to_jsonb(v_result)
+    );
+  end if;
+
+  select * into v_other_active
+  from public.ha_research_runs
+  where upload_id = p_upload_id and status = 'running' and lease_expires_at > now()
+  limit 1;
+
+  if found then
+    raise exception 'claim_ha_research_run: a different research run (%) is already in progress for upload %', v_other_active.research_run_id, p_upload_id
+      using errcode = '55P03';
+  end if;
+
+  insert into public.ha_research_runs (
+    research_run_id, user_id, upload_id, status, attempt_id, attempt_count,
+    lease_expires_at, heartbeat_at, started_at
+  ) values (
+    p_research_run_id, p_user_id, p_upload_id, 'running', gen_random_uuid(), 1,
+    now() + make_interval(secs => p_lease_seconds), now(), now()
+  )
+  returning * into v_result;
+
+  return jsonb_build_object('outcome', 'claimed-new', 'run', to_jsonb(v_result));
+end;
+$$;
+revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from public;
+revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from anon;
+revoke all on function public.claim_ha_research_run(uuid, uuid, text, integer) from authenticated;
+grant execute on function public.claim_ha_research_run(uuid, uuid, text, integer) to service_role;
+
+-- RLS enabled, no policies: denies all anon/authenticated access by default;
+-- service_role (used exclusively by api/research-batch.js) bypasses RLS.
+alter table public.ha_research_runs enable row level security;
 
 create table if not exists public.ha_signals (
   id uuid primary key default gen_random_uuid(),

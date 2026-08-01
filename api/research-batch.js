@@ -1465,135 +1465,215 @@ async function rbSupabase(path, options = {}) {
     const msg = typeof data === 'string' ? data : (data?.message || data?.hint || JSON.stringify(data));
     const httpErr = new Error(`Supabase ${resp.status}: ${msg}`);
     httpErr.status = resp.status;
+    // Postgres's sqlstate (e.g. '42501', '55P03'), when the response body is
+    // a PostgREST-shaped RPC error. Lets callers branch on the actual
+    // database error code rather than regex-matching a human message.
+    httpErr.code = (data && typeof data === 'object') ? data.code : undefined;
     throw httpErr;
   }
   return data;
 }
-// Looks up the authenticated ha_users record only -- never creates one.
-// By the time research is triggered from the dashboard, saveCurrentUpload()
-// has already run at least once (processData() now awaits it before ever
-// starting research -- see dashboard/index.html), so the user row is
-// guaranteed to already exist; this function existing purely to create a
-// user here would just duplicate api/save-upload.js's own creation logic for
-// a code path that should never need it. Falls back to a lead-email lookup
-// (no auth session) for parity with save-upload.js's own dual path.
-async function resolveUserForResearchRun(req, lead) {
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (token) {
-    try {
-      const { url, key } = rbEnv();
-      const authResp = await fetch(`${url}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
-      if (authResp.ok) {
-        const authUser = await authResp.json();
-        if (authUser?.id) {
-          const rows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=id,email&limit=1`);
-          const found = Array.isArray(rows) ? rows[0] : null;
-          if (found?.id) return found;
-        }
-      }
-    } catch { /* fall through to lead-email lookup */ }
-  }
-  const email = clean(lead?.email || '').toLowerCase();
-  if (!email) return null;
-  const rows = await rbSupabase(`ha_users?email=eq.${encodeURIComponent(email)}&select=id,email&limit=1`);
-  return Array.isArray(rows) ? rows[0] : null;
-}
-// Attempts to claim a NEW running row for (userId, uploadId, researchRunId).
-// Returns {blocked:false, rowId, outcome} to proceed, or
-// {blocked:true, status, body} to short-circuit the request immediately with
-// that exact response -- no research/OpenAI/search-provider call is made on
-// any blocked path, which is the actual idempotency guarantee.
-async function claimResearchRun({ userId, uploadId, researchRunId }) {
+
+// Phase 2A implementation-review ROUND 2, item 2 — resolves identity for a
+// request bound to a persisted upload (uploadId present). This is
+// deliberately strict and has NO lead/email fallback of any kind:
+//   - a valid Supabase auth Bearer token is required;
+//   - the resolved ha_users row must actually own uploadId (verified against
+//     ha_uploads.user_id, mirroring claim_ha_research_run()'s own ownership
+//     check -- see supabase-schema-migration-5-research-run-idempotency.sql
+//     §7);
+//   - a nonexistent uploadId is treated identically to a wrong-owner
+//     uploadId (reason: 'not-owner' either way) so this endpoint does not
+//     leak whether an upload id exists, matching the RPC's own behavior.
+// The previous round's resolveUserForResearchRun() fell back to a
+// client-supplied lead.email when no auth token was present. That fallback
+// is REMOVED, not narrowed: this function's only caller is the uploadId-
+// bound branch of handler() below, which claims/mutates a persisted
+// ha_research_runs row and (via the account snapshot RPC, elsewhere)
+// eventually a persisted customer upload -- exactly the case the review
+// flagged as unsafe for a client-supplied email to authenticate ("a spoofed
+// lead email with another user's upload" must not be able to claim or read
+// that user's research run). The pre-existing, unauthenticated prospecting
+// flow (mode: 'prospect-intelligence' / warm-account with no uploadId) never
+// calls this function at all -- see the `if (targetUploadId)` gate in
+// handler() -- and is completely unaffected.
+async function resolveAuthenticatedUploadOwner(req, uploadId) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return { user: null, reason: 'no-token' };
+  let authUserId = '';
   try {
-    const inserted = await rbSupabase('ha_research_runs', {
+    const { url, key } = rbEnv();
+    const authResp = await fetch(`${url}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
+    if (!authResp.ok) return { user: null, reason: 'invalid-token' };
+    const authUser = await authResp.json();
+    authUserId = authUser?.id || '';
+  } catch {
+    return { user: null, reason: 'invalid-token' };
+  }
+  if (!authUserId) return { user: null, reason: 'invalid-token' };
+  const userRows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUserId)}&select=id,email&limit=1`);
+  const user = Array.isArray(userRows) ? userRows[0] : null;
+  if (!user?.id) return { user: null, reason: 'invalid-token' };
+  const uploadRows = await rbSupabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&select=id,user_id&limit=1`);
+  const upload = Array.isArray(uploadRows) ? uploadRows[0] : null;
+  if (!upload || upload.user_id !== user.id) return { user: null, reason: 'not-owner' };
+  return { user, reason: null };
+}
+
+// Phase 2A implementation-review ROUND 2, items 3/4 — calls the atomic
+// claim_ha_research_run() RPC (see
+// supabase-schema-migration-5-research-run-idempotency.sql §7) and
+// translates its {outcome, run} result (or a raised ownership/conflict
+// exception) into a shape handler() can act on directly. This is the ONLY
+// place a row is ever inserted or reclaimed in ha_research_runs -- neither
+// the actual research call nor the fallback-loop's per-account calls claim
+// anything themselves anymore (round 1's design had each of up to 4
+// concurrent fallback-loop requests independently call claimResearchRun()
+// with the SAME shared run id, which would have made 3 of the 4 immediately
+// short-circuit as "already running" -- a real bug found during round-2
+// review, fixed by claiming exactly once per logical
+// researchTopAccounts() pass, before any of the actual research requests are
+// made).
+async function claimResearchRunAtomic({ userId, uploadId, researchRunId, leaseSeconds = 300 }) {
+  try {
+    const result = await rbSupabase('rpc/claim_ha_research_run', {
       method: 'POST',
-      prefer: 'return=representation',
-      body: JSON.stringify([{ research_run_id: researchRunId, user_id: userId, upload_id: uploadId, status: 'running', started_at: new Date().toISOString() }])
+      body: JSON.stringify({ p_user_id: userId, p_upload_id: uploadId, p_research_run_id: researchRunId, p_lease_seconds: leaseSeconds })
     });
-    const row = Array.isArray(inserted) ? inserted[0] : inserted;
-    return { blocked: false, rowId: row.id, outcome: 'claimed-new' };
+    return { ok: true, outcome: result?.outcome, run: result?.run || {} };
   } catch (err) {
-    const msg = String(err.message || '');
-    if (err.status === 409 && /ha_research_runs_user_upload_run_key/.test(msg)) {
-      // The exact same (user, upload, researchRunId) triple already exists.
-      const existingRows = await rbSupabase(`ha_research_runs?user_id=eq.${encodeURIComponent(userId)}&upload_id=eq.${encodeURIComponent(uploadId)}&research_run_id=eq.${encodeURIComponent(researchRunId)}&select=*&limit=1`);
-      const existing = Array.isArray(existingRows) ? existingRows[0] : null;
-      if (!existing) return { blocked: true, status: 500, body: { error: 'Research run tracking conflict could not be resolved.' } };
-      if (existing.status === 'running') {
-        // Retry after a network timeout, or two tabs racing on the SAME run
-        // id (only possible if the id itself was somehow shared/replayed) --
-        // either way, idempotent: do not start a second research execution.
-        return { blocked: true, status: 202, body: { ok: true, alreadyRunning: true, researchRunId, message: 'This research run is already in progress.' } };
-      }
-      if (existing.status === 'completed') {
-        // Retry after a completed run: idempotent -- return what's already
-        // known about the outcome, do not re-run research or re-spend
-        // provider calls.
-        return { blocked: true, status: 200, body: { ok: true, alreadyCompleted: true, researchRunId, resultSummary: existing.result_summary || {}, completedAt: existing.completed_at, signals: [], byAccount: {} } };
-      }
-      // status === 'failed': re-claim the SAME run id for a retry.
-      const updated = await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(existing.id)}`, {
-        method: 'PATCH', prefer: 'return=representation',
-        body: JSON.stringify({ status: 'running', started_at: new Date().toISOString(), completed_at: null, error_message: null })
-      });
-      const row = Array.isArray(updated) ? updated[0] : updated;
-      return { blocked: false, rowId: row.id, outcome: 'reclaimed-after-failure' };
+    if (err.code === '55P03') {
+      return { ok: false, status: 409, body: { error: 'A different research run is already in progress for this upload.' } };
     }
-    if (err.status === 409 && /idx_ha_research_runs_one_running_per_upload/.test(msg)) {
-      // A DIFFERENT researchRunId is already actively running for this
-      // upload -- e.g. a second tab starting its own new run. Rejected, not
-      // joined: joining would require merging two independent research
-      // executions' output, which is exactly the ambiguity this mechanism
-      // exists to prevent.
-      return { blocked: true, status: 409, body: { error: 'A different research run is already in progress for this upload.', researchRunId } };
+    if (err.code === '42501') {
+      // Should not normally happen -- handler() already verified ownership
+      // via resolveAuthenticatedUploadOwner() before calling this. Kept as
+      // defense in depth against a future application-code bug.
+      return { ok: false, status: 403, body: { error: 'You do not have access to this upload.' } };
     }
     throw err;
   }
 }
-async function completeResearchRun(rowId, resultSummary) {
-  await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(rowId)}`, {
-    method: 'PATCH', prefer: 'return=minimal',
-    body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), result_summary: resultSummary })
-  });
+
+// Phase 2A implementation-review ROUND 2, item 4 — completion/failure is
+// guarded by attempt_id: the PATCH only matches (and only takes effect on)
+// the row that is STILL owned by this exact attempt. If a different, later
+// attempt already reclaimed this run (the original attempt's Vercel
+// invocation was killed before it could call this), the WHERE clause below
+// matches zero rows, PostgREST returns an empty array, and `applied` comes
+// back false -- the late result is silently discarded rather than
+// overwriting the replacement attempt's state. See
+// supabase-schema-migration-5-research-run-idempotency.sql §5 and
+// scripts/test-research-run-idempotency.js's "old worker completes after
+// lease takeover" case.
+async function completeResearchRunAttempt({ uploadId, researchRunId, attemptId, resultSummary }) {
+  const updated = await rbSupabase(
+    `ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&research_run_id=eq.${encodeURIComponent(researchRunId)}&attempt_id=eq.${encodeURIComponent(attemptId)}`,
+    { method: 'PATCH', prefer: 'return=representation', body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), result_summary: resultSummary || {} }) }
+  );
+  return { applied: Array.isArray(updated) && updated.length > 0 };
 }
-async function failResearchRun(rowId, errorMessage) {
-  await rbSupabase(`ha_research_runs?id=eq.${encodeURIComponent(rowId)}`, {
-    method: 'PATCH', prefer: 'return=minimal',
-    body: JSON.stringify({ status: 'failed', completed_at: new Date().toISOString(), error_message: clean(errorMessage).slice(0, 2000) })
-  });
+async function failResearchRunAttempt({ uploadId, researchRunId, attemptId, errorMessage }) {
+  const updated = await rbSupabase(
+    `ha_research_runs?upload_id=eq.${encodeURIComponent(uploadId)}&research_run_id=eq.${encodeURIComponent(researchRunId)}&attempt_id=eq.${encodeURIComponent(attemptId)}`,
+    { method: 'PATCH', prefer: 'return=representation', body: JSON.stringify({ status: 'failed', completed_at: new Date().toISOString(), error_message: clean(errorMessage).slice(0, 2000) }) }
+  );
+  return { applied: Array.isArray(updated) && updated.length > 0 };
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
+  const body = req.body || {};
+  const targetUploadId = clean(body.uploadId || '');
+
+  // Phase 2A implementation-review ROUND 2, item 2: ANY request bound to a
+  // persisted upload (uploadId present) -- whether it is a run-control
+  // action (claim/complete/fail, below) or an actual research call -- must
+  // resolve to an authenticated ha_users record that verifiably owns that
+  // upload. There is no lead/email fallback: see
+  // resolveAuthenticatedUploadOwner() above. Requests with NO uploadId (the
+  // pre-existing anonymous prospecting flow -- prospect_script.js,
+  // prospects/index.html) never reach this check and are unaffected.
+  let uploadOwner = null;
+  if (targetUploadId) {
+    const resolved = await resolveAuthenticatedUploadOwner(req, targetUploadId);
+    if (!resolved.user) {
+      const status = resolved.reason === 'not-owner' ? 403 : 401;
+      const error = resolved.reason === 'not-owner'
+        ? 'You do not have access to this upload.'
+        : 'Login required to research an uploaded account list.';
+      return res.status(status).json({ error });
+    }
+    uploadOwner = resolved.user;
+  }
+
+  // Run-control actions never call OpenAI or any search provider -- they
+  // only read/write ha_research_runs via claim_ha_research_run() or an
+  // attempt_id-guarded PATCH -- so they are handled and returned here,
+  // before the OPENAI_API_KEY check below (which would otherwise be an
+  // unrelated, misleading failure mode for a pure bookkeeping call).
+  const researchRunAction = clean(body.researchRunAction || '');
+  if (researchRunAction) {
+    if (!targetUploadId) return res.status(400).json({ error: 'uploadId is required for researchRunAction requests.' });
+    try {
+      if (researchRunAction === 'claim') {
+        const runIntent = clean(body.runIntent || 'auto');
+        // Phase 2A implementation-review ROUND 2, item 3: run identity is
+        // NEVER taken from the client. The automatic upload-research path
+        // always claims the fixed literal research_run_id 'auto', scoped
+        // uniquely by (user_id, upload_id) -- so a reload, a second tab, or
+        // a client sending an arbitrary different string all resolve to the
+        // exact same row. A genuinely new run identity is only ever minted
+        // by THIS server, and only for the explicit, separately-authorized
+        // 'manual-rerun' pathway (the "Research Top Accounts" button click
+        // in dashboard/index.html when a run is not already in progress).
+        const researchRunId = runIntent === 'manual-rerun'
+          ? `manual-${new Date().toISOString()}-${Math.random().toString(36).slice(2, 8)}`
+          : 'auto';
+        const claim = await claimResearchRunAtomic({ userId: uploadOwner.id, uploadId: targetUploadId, researchRunId });
+        if (!claim.ok) return res.status(claim.status).json(claim.body);
+        const { outcome, run } = claim;
+        if (outcome === 'completed') {
+          // Reload / second tab / a stale client-generated id after the
+          // automatic run already finished: return the cached outcome, do
+          // not restart research.
+          return res.status(200).json({ ok: true, outcome, researchRunId: run.research_run_id, resultSummary: run.result_summary || {}, completedAt: run.completed_at });
+        }
+        if (outcome === 'attached-active') {
+          // Another attempt (a different tab, or this same tab's still-live
+          // lease) currently owns this run. Do not launch a second
+          // concurrent execution.
+          return res.status(202).json({ ok: true, outcome, researchRunId: run.research_run_id, message: 'This research run is already in progress.' });
+        }
+        // claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease.
+        return res.status(200).json({ ok: true, outcome, researchRunId: run.research_run_id, attemptId: run.attempt_id, leaseExpiresAt: run.lease_expires_at });
+      }
+      if (researchRunAction === 'complete' || researchRunAction === 'fail') {
+        const researchRunId = clean(body.researchRunId || '');
+        const attemptId = clean(body.attemptId || '');
+        if (!researchRunId || !attemptId) return res.status(400).json({ error: 'researchRunId and attemptId are required.' });
+        const result = researchRunAction === 'complete'
+          ? await completeResearchRunAttempt({ uploadId: targetUploadId, researchRunId, attemptId, resultSummary: body.resultSummary || {} })
+          : await failResearchRunAttempt({ uploadId: targetUploadId, researchRunId, attemptId, errorMessage: body.errorMessage || '' });
+        // applied:false is not an error -- it means a newer attempt already
+        // took over this run (item 4: a late result from a
+        // reclaimed/expired attempt must not overwrite the replacement
+        // attempt's state).
+        return res.status(200).json({ ok: true, applied: result.applied });
+      }
+      return res.status(400).json({ error: `Unknown researchRunAction "${researchRunAction}".` });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Research run tracking request failed.' });
+    }
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
 
-  // Declared outside the try block so the catch handler below can still mark
-  // a claimed run 'failed' rather than leaving it stuck at 'running' forever
-  // (the same class of bug this whole workstream exists to close, just for a
-  // different table).
-  let researchRunTracking = null;
-
   try {
-    const { accounts = [], mode = 'ranked', researchRunId = '', uploadId = '', lead = {} } = req.body || {};
+    const { accounts = [], mode = 'ranked', researchRunId = '' } = body;
     const runId = clean(researchRunId) || `unattributed-${startedAt}`;
-    const targetUploadId = clean(uploadId);
-
-    // Strictly opt-in: only activates when the caller sends a real uploadId.
-    // See the block comment above claimResearchRun() for why
-    // weekly-scan.js/prospect_script.js are unaffected.
-    if (targetUploadId) {
-      const trackingUser = await resolveUserForResearchRun(req, lead);
-      if (!trackingUser?.id) {
-        return res.status(401).json({ error: 'Login required to start a tracked research run.' });
-      }
-      const claim = await claimResearchRun({ userId: trackingUser.id, uploadId: targetUploadId, researchRunId: runId });
-      if (claim.blocked) {
-        return res.status(claim.status).json(claim.body);
-      }
-      researchRunTracking = { rowId: claim.rowId, outcome: claim.outcome };
-    }
 
     const seenAccountKeys = new Set();
     const safeAccounts = (Array.isArray(accounts) ? accounts : [])
@@ -1912,13 +1992,15 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
-    if (researchRunTracking) {
-      await completeResearchRun(researchRunTracking.rowId, {
-        signalsReturned: finalSignals.length,
-        accountsResearched: safeAccounts.length,
-        avgConfidence
-      }).catch(err => console.warn('[research-batch] failed to mark research run completed', { rowId: researchRunTracking.rowId, message: err.message }));
-    }
+    // Note: this endpoint no longer marks any ha_research_runs row
+    // completed/failed itself. Under the round-2 design (item 3/4), a
+    // logical research run can span multiple requests to this endpoint (the
+    // fallback loop makes up to 4 concurrent per-account calls under one
+    // shared attempt), so only the orchestrator that made the 'claim' call
+    // knows when the WHOLE run has finished -- see researchTopAccounts() in
+    // dashboard/index.html, which calls researchRunAction:'complete'/'fail'
+    // explicitly once the entire pass (batch call + any fallback loop) is
+    // done.
 
     return res.status(200).json({
       signals: finalSignals,
@@ -1967,13 +2049,10 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       }
     });
   } catch (err) {
-    if (researchRunTracking) {
-      await failResearchRun(researchRunTracking.rowId, err.message || 'Batch research failed')
-        .catch(trackingErr => console.warn('[research-batch] failed to mark research run failed', { rowId: researchRunTracking.rowId, message: trackingErr.message }));
-    }
     return res.status(500).json({ error: err.message || 'Batch research failed', diagnostics: { elapsedMs: Date.now() - startedAt } });
   }
 }
 
-// Named exports for testability (Phase 2A / B3 classification tests).
-export { makeSignal, resolveCanonicalEventType, claimResearchRun, completeResearchRun, failResearchRun, resolveUserForResearchRun };
+// Named exports for testability (Phase 2A / B3 classification tests, and
+// Phase 2A implementation-review round 2's run-claim/lease tests).
+export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt };

@@ -2094,14 +2094,62 @@ let currentDashboardData = null;
 // each other's DELETE/INSERT (now RPC) calls client-side. Defense in depth
 // alongside the server-side advisory lock in replace_ha_accounts_snapshot().
 let saveQueue = Promise.resolve();
-// Correlation identifier for the current logical research run, generated
-// once per researchTopAccounts() invocation and threaded through every
-// /api/research-batch and /api/save-upload call it triggers, so Vercel logs
-// for the whole pass can be joined on one id.
+// Phase 2A implementation-review ROUND 2, item 3: research-run identity is
+// no longer invented client-side. currentResearchRunId/currentResearchAttemptId
+// are only ever SET from what the server returns from a
+// researchRunAction:'claim' call (see claimAutomaticResearchRun() and
+// researchTopAccounts() below) -- they exist here purely so
+// performSaveCurrentUpload()'s log line can correlate a save with the run
+// that produced it, and so reportResearchRunOutcome() knows which attempt to
+// report completion/failure for. A reload or a second tab can never define a
+// new run merely by generating a new client-side string; only the server
+// decides run identity.
 let currentResearchRunId = null;
-function newResearchRunId(){
-  try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch{}
-  return `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+let currentResearchAttemptId = null;
+
+// Claims (or attaches to, or learns the cached outcome of) the server-owned
+// research run for the current upload. runIntent 'auto' always resolves to
+// the SAME server-side run for a given upload (see
+// api/research-batch.js/claim_ha_research_run()), so a page reload or a
+// second tab reusing 'auto' never starts a second execution and never
+// restarts research that already completed. runIntent 'manual-rerun' is the
+// explicit, separately-authorized pathway (a real "Research Top Accounts"
+// button click) that asks the server to mint a genuinely new run identity.
+async function claimAutomaticResearchRun(runIntent){
+  const res = await fetch('/api/research-batch', {
+    method:'POST',
+    headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+    body: JSON.stringify({ researchRunAction:'claim', uploadId: currentUploadId, runIntent })
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Reports that the current claimed attempt finished (successfully or not).
+// Best-effort: if this fails (e.g. the tab is closing), the server-side
+// lease will simply expire on its own and become reclaimable -- see
+// supabase-schema-migration-5-research-run-idempotency.sql §2 (lease/
+// attempt semantics). Silently does nothing if no run/attempt is currently
+// tracked (e.g. the claim itself was blocked and no research ever started).
+async function reportResearchRunOutcome(action, resultSummaryOrError){
+  if(!currentResearchRunId || !currentResearchAttemptId) return;
+  try{
+    await fetch('/api/research-batch', {
+      method:'POST',
+      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      body: JSON.stringify({
+        researchRunAction: action,
+        uploadId: currentUploadId,
+        researchRunId: currentResearchRunId,
+        attemptId: currentResearchAttemptId,
+        ...(action === 'complete'
+          ? { resultSummary: resultSummaryOrError }
+          : { errorMessage: String((resultSummaryOrError && resultSummaryOrError.message) || resultSummaryOrError || 'Research failed') })
+      })
+    });
+  }catch(err){
+    console.warn('[Research] failed to report research run outcome (server-side lease will expire and become reclaimable)', { action, message: err && err.message });
+  }
 }
 let dashboardViewMode = 'team';
 let dashboardCanViewTeam = false;
@@ -3599,9 +3647,12 @@ async function researchAccountByName(accountName, options = {}){
     const endpoint = enhancedPublicMode ? '/api/research-batch' : '/api/research-account';
     const payload = enhancedPublicMode ? {
       mode:'warm-account',
+      // Log-correlation only -- the server no longer uses these fields to
+      // decide run identity (see claimAutomaticResearchRun() above). uploadId
+      // still gates a mandatory authenticated-owner check server-side.
       researchRunId: currentResearchRunId,
+      attemptId: currentResearchAttemptId,
       uploadId: currentUploadId,
-      lead: currentLead || getSavedLead(),
       accounts: batchPayloadForAccounts([account])
     } : {
       accountName: account.name,
@@ -3772,9 +3823,11 @@ async function researchAccountsBatch(accounts, options = {}){
       headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
       body: JSON.stringify({
         mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
+        // Log-correlation only -- see researchAccountByName()'s payload above
+        // for why lead/email is no longer sent here.
         researchRunId: currentResearchRunId,
+        attemptId: currentResearchAttemptId,
         uploadId: currentUploadId,
-        lead: currentLead || getSavedLead(),
         accounts: batchPayloadForAccounts(accounts)
       })
     });
@@ -3875,59 +3928,119 @@ function dedupeSignalsClient(signals){
 
 async function researchTopAccounts(options = {}){
   if(researchInProgress) return;
-  // Phase 2A implementation-review item 2: research-batch.js now requires a
-  // real uploadId to claim a server-owned research run. currentUploadId
-  // should always be set by this point (processData() now awaits the
-  // initial save before ever calling this), but this guard stops a request
-  // with no uploadId from ever being sent, rather than surfacing as a
-  // confusing 400 from the server.
+  // Phase 2A implementation-review item 2: research-batch.js requires a real
+  // uploadId to claim a server-owned research run. currentUploadId should
+  // always be set by this point (processData() now awaits the initial save
+  // before ever calling this), but this guard stops a request with no
+  // uploadId from ever being sent, rather than surfacing as a confusing
+  // 401/400 from the server.
   if(!currentUploadId){
     console.warn('[Research] researchTopAccounts() called before an upload exists; skipping.');
     return;
   }
   researchInProgress = true;
-  // Phase 2A / A2: one correlation id for this entire logical research pass,
-  // threaded through every research-batch/research-account call it makes
-  // below (including inside researchAccountByName when called from the
-  // fallback loop) and the single save at the end.
-  currentResearchRunId = newResearchRunId();
   const btn = document.getElementById('researchTopBtn');
   const auto = options && options.auto;
-  if(btn){ btn.disabled = true; btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
+  if(btn){ btn.disabled = true; btn.textContent = 'Checking research status...'; }
+
+  // Phase 2A implementation-review ROUND 2, item 3/4: claim the server-owned
+  // run BEFORE doing any actual research. This single claim covers the
+  // entire pass (the batch call below AND the fallback loop's up to 4
+  // concurrent per-account calls) -- those downstream calls do not claim
+  // anything themselves, they only pass the resolved researchRunId/
+  // attemptId through for log correlation. Claiming once up front, rather
+  // than once per HTTP request, is what makes 4 concurrent fallback workers
+  // for 4 DIFFERENT accounts correctly share one run instead of 3 of them
+  // immediately bouncing off "already running".
+  let claim;
+  try{
+    claim = await claimAutomaticResearchRun(auto ? 'auto' : 'manual-rerun');
+  }catch(err){
+    console.error('[Research] failed to claim a research run', { message: err && err.message });
+    researchInProgress = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    return;
+  }
+
+  if(!claim.ok){
+    // 401/403 (not authenticated / does not own this upload), or 409 (a
+    // different run -- e.g. a concurrent manual click while auto is still
+    // running -- already holds the active slot for this upload).
+    console.warn('[Research] research run claim was rejected; not starting research.', { status: claim.status, body: claim.data });
+    researchInProgress = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    return;
+  }
+
+  const { outcome, researchRunId, attemptId } = claim.data || {};
+  currentResearchRunId = researchRunId || null;
+
+  if(outcome === 'completed'){
+    // The automatic run for this upload already finished (possibly in a
+    // previous page load, or moments ago in another tab). The accounts
+    // already reflect that run's saved results -- do not restart research
+    // merely because this call happened (reload, second tab, or a stale
+    // client-generated id all land here identically).
+    currentResearchAttemptId = null;
+    researchInProgress = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    return;
+  }
+  if(outcome === 'attached-active'){
+    // Another attempt (a different tab, or this same claim racing itself)
+    // currently owns this run. Do not launch a second concurrent execution.
+    console.warn('[Research] a research run is already in progress for this upload; not starting a second one.');
+    currentResearchAttemptId = null;
+    researchInProgress = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    return;
+  }
+  // outcome is claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease.
+  currentResearchAttemptId = attemptId || null;
+
+  if(btn){ btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
   window.researchDiagnostics = [];
   renderResearchDiagnostics();
   const accounts = getAccountsForResearch(options);
 
-  // First try the batch AI web-search path. This mirrors the Google-AI-style research flow.
-  const batchWorked = await researchAccountsBatch(accounts, options);
+  try{
+    // First try the batch AI web-search path. This mirrors the Google-AI-style research flow.
+    const batchWorked = await researchAccountsBatch(accounts, options);
 
-  // Fallback: only use slower per-account pipeline if the batch endpoint fails or returns no signals.
-  const batchSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
-  if(!batchWorked || batchSignals === 0){
-    // Phase 2A / A2: workers collect results independently (skipSave:true —
-    // researchAccountByName still renders each account's panel immediately
-    // as it finishes, it just no longer triggers its own save/refresh).
-    // Account-snapshot persistence happens exactly once, via
-    // refreshOpportunityViews() below, after every worker has finished —
-    // this is the actual fix for the confirmed duplicate-ha_accounts race,
-    // which was caused by up to 4 concurrent workers each independently
-    // saving the full current account list as soon as its own account
-    // finished.
-    const concurrency = 4;
-    let index = 0;
-    async function worker(){
-      while(index < accounts.length){
-        const account = accounts[index++];
-        if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
-        await researchAccountByName(account.name, {skipSave:true});
+    // Fallback: only use slower per-account pipeline if the batch endpoint fails or returns no signals.
+    const batchSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
+    if(!batchWorked || batchSignals === 0){
+      // Phase 2A / A2: workers collect results independently (skipSave:true —
+      // researchAccountByName still renders each account's panel immediately
+      // as it finishes, it just no longer triggers its own save/refresh).
+      // Account-snapshot persistence happens exactly once, via
+      // refreshOpportunityViews() below, after every worker has finished —
+      // this is the actual fix for the confirmed duplicate-ha_accounts race,
+      // which was caused by up to 4 concurrent workers each independently
+      // saving the full current account list as soon as its own account
+      // finished.
+      const concurrency = 4;
+      let index = 0;
+      async function worker(){
+        while(index < accounts.length){
+          const account = accounts[index++];
+          if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
+          await researchAccountByName(account.name, {skipSave:true});
+        }
       }
+      await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
+      refreshOpportunityViews();
     }
-    await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
-    refreshOpportunityViews();
-  }
 
-  if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
-  researchInProgress = false;
+    const totalSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
+    await reportResearchRunOutcome('complete', { signalsReturned: totalSignals, accountsResearched: accounts.length });
+  }catch(err){
+    await reportResearchRunOutcome('fail', err);
+  }finally{
+    currentResearchAttemptId = null;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    researchInProgress = false;
+  }
 }
 
 function autoResearchTopAccountsOnce(){
