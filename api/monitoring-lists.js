@@ -89,7 +89,14 @@ async function deleteCustomerAccountViaSnapshot(account){
     }
     throw err;
   }
-  await sb(`ha_signals?user_id=eq.${encodeURIComponent(account.user_id)}&account_name=eq.${encodeURIComponent(targetName)}`,{method:'DELETE',prefer:'return=minimal'}).catch(()=>{});
+  // Release blocker fix: scoped by upload_id AND user_id AND account_name.
+  // ha_signals' uniqueness is (user_id, event_fingerprint), NOT scoped by
+  // upload_id -- the same user can genuinely have two different uploads
+  // that each contain an account named e.g. "Acme Co". Filtering by
+  // user_id + account_name alone (the original shape here) would delete
+  // Acme Co's signals on EVERY upload that user owns, not just the one the
+  // deleted account actually belonged to.
+  await sb(`ha_signals?upload_id=eq.${encodeURIComponent(account.upload_id)}&user_id=eq.${encodeURIComponent(account.user_id)}&account_name=eq.${encodeURIComponent(targetName)}`,{method:'DELETE',prefer:'return=minimal'}).catch(()=>{});
 }
 
 async function deleteList(type,id){if(type==='customer'){await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});return}await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}

@@ -31,6 +31,16 @@
 //   defaults, exactly like the untracked path in api/save-upload.js)
 // - ownership failures (an account not visible to the caller) remain
 //   rejected, unchanged from pre-patch behavior
+// - CROSS-UPLOAD SIGNAL SCOPING (release blocker #2, found in review): the
+//   post-success ha_signals cleanup used to filter by user_id +
+//   account_name only, with no upload_id term -- deleting "Alpha Co" from
+//   one upload would delete EVERY signal matching that account name across
+//   EVERY upload the same user owns, not just the one being edited. The
+//   mock's ha_signals DELETE handler below enforces upload_id/user_id/
+//   account_name exactly like a real WHERE clause (a filter term that is
+//   literally absent from the URL is NOT constrained -- it does not
+//   compare against null), so this test would fail if the real code ever
+//   regressed back to omitting upload_id from that DELETE call.
 //
 // What this CANNOT prove without a live Postgres/Supabase connection: that
 // the advisory lock inside replace_ha_accounts_snapshot() actually
@@ -90,8 +100,8 @@ function seedTwoAccounts(){
     { id: ACCOUNT_BETA_ID, user_id: USER_ID, upload_id: UPLOAD_ID, account_name: 'Beta Co', industry: 'Manufacturing', contact_name: 'Bo', contact_email: 'bo@beta.example', metrics: { revenue: 200 }, raw_data: { monitoring_status: 'active' } }
   ];
   fakeSignals = [
-    { id: 'sig-alpha-1', user_id: USER_ID, account_name: 'Alpha Co', event_fingerprint: 'fp-alpha-1' },
-    { id: 'sig-beta-1', user_id: USER_ID, account_name: 'Beta Co', event_fingerprint: 'fp-beta-1' }
+    { id: 'sig-alpha-1', user_id: USER_ID, upload_id: UPLOAD_ID, account_name: 'Alpha Co', event_fingerprint: 'fp-alpha-1' },
+    { id: 'sig-beta-1', user_id: USER_ID, upload_id: UPLOAD_ID, account_name: 'Beta Co', event_fingerprint: 'fp-beta-1' }
   ];
 }
 
@@ -195,10 +205,25 @@ function mockFetch(){
       return jsonResponse(result.body, result.ok, result.status);
     }
     if(u.includes('/rest/v1/ha_signals') && method === 'DELETE'){
-      const nameMatch = u.match(/account_name=eq\.([^&]+)/);
+      // Mirrors real Postgres WHERE-clause semantics: a filter term that is
+      // literally absent from the URL is UNCONSTRAINED (matches every row),
+      // not "compared against null" (which would match nothing). This is
+      // what makes this mock actually sensitive to a regression that drops
+      // the upload_id term from the real DELETE call -- see release
+      // blocker #2 above.
+      const uploadMatch = u.match(/[?&]upload_id=eq\.([^&]+)/);
+      const userMatch = u.match(/[?&]user_id=eq\.([^&]+)/);
+      const nameMatch = u.match(/[?&]account_name=eq\.([^&]+)/);
+      const qUploadId = uploadMatch ? decodeURIComponent(uploadMatch[1]) : null;
+      const qUserId = userMatch ? decodeURIComponent(userMatch[1]) : null;
       const qName = nameMatch ? decodeURIComponent(nameMatch[1]) : null;
       signalsDeleteCalls.push(u);
-      fakeSignals = fakeSignals.filter(s => s.account_name !== qName);
+      fakeSignals = fakeSignals.filter(s => {
+        const matchesUpload = qUploadId === null || s.upload_id === qUploadId;
+        const matchesUser = qUserId === null || s.user_id === qUserId;
+        const matchesName = qName === null || s.account_name === qName;
+        return !(matchesUpload && matchesUser && matchesName);
+      });
       return jsonResponse([]);
     }
     throw new Error(`Unhandled mock fetch URL in test: ${method} ${u}`);
@@ -332,6 +357,31 @@ async function run(){
     const fnSrc = fnMatch ? fnMatch[0] : '';
     assert(/rpc\/replace_ha_accounts_snapshot/.test(fnSrc), '8) deleteCustomerAccountViaSnapshot() calls replace_ha_accounts_snapshot');
     assert(!/ha_accounts\?id=eq[\s\S]{0,40}method\s*:\s*'DELETE'/.test(fnSrc), '8) deleteCustomerAccountViaSnapshot() contains no direct id-scoped DELETE against ha_accounts');
+  }
+
+  // 9) Release blocker #2 regression: the SAME user has TWO different
+  // uploads, and both happen to contain an account named "Alpha Co" (a
+  // real, plausible scenario -- account names are only unique per-upload,
+  // not per-user). Each upload's "Alpha Co" has its own, separate signal.
+  // Deleting Upload A's Alpha Co must delete only Upload A's Alpha Co
+  // signal -- Upload B's Alpha Co (a completely different account row,
+  // completely different upload) and its signal must be untouched.
+  {
+    resetAll();
+    const UPLOAD_B_ID = 'upload-2';
+    const ACCOUNT_ALPHA_B_ID = 'acct-alpha-b';
+    fakeAccounts.push({ id: ACCOUNT_ALPHA_B_ID, user_id: USER_ID, upload_id: UPLOAD_B_ID, account_name: 'Alpha Co', industry: 'Retail', contact_name: 'Cy', contact_email: 'cy@alphab.example', metrics: { revenue: 300 }, raw_data: { monitoring_status: 'active' } });
+    fakeSignals.push({ id: 'sig-alpha-b-1', user_id: USER_ID, upload_id: UPLOAD_B_ID, account_name: 'Alpha Co', event_fingerprint: 'fp-alpha-b-1' });
+
+    const res = fakeRes();
+    await handler(fakeReq({ type: 'account', id: ACCOUNT_ALPHA_ID, action: 'delete-account' }), res);
+
+    assert(res.statusCode === 200 && res.body?.ok === true, '9) deleting Upload A\'s Alpha Co succeeds');
+    assert(!fakeAccounts.some(a => a.id === ACCOUNT_ALPHA_ID), '9) Upload A\'s Alpha Co account is gone');
+    assert(fakeAccounts.some(a => a.id === ACCOUNT_ALPHA_B_ID), '9) Upload B\'s Alpha Co account is untouched (the RPC snapshot replace is upload_id-scoped and always was)');
+    assert(!fakeSignals.some(s => s.event_fingerprint === 'fp-alpha-1'), '9) Upload A\'s Alpha Co signal was deleted');
+    assert(fakeSignals.some(s => s.event_fingerprint === 'fp-alpha-b-1'), '9) Upload B\'s Alpha Co signal is UNTOUCHED -- this is the exact release-blocker #2 scenario: same user, same account name, different upload, must not cross-delete');
+    assert(fakeSignals.some(s => s.event_fingerprint === 'fp-beta-1'), '9) Upload A\'s unrelated Beta Co signal is also untouched, as before');
   }
 
   global.fetch = originalFetch;
