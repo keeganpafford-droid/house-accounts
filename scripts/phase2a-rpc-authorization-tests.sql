@@ -150,7 +150,6 @@ do $$
 declare
   v_user uuid;
   v_upload uuid;
-  v_rows jsonb;
   v_count int;
   v_distinct_owner_pairs int;
 begin
@@ -180,7 +179,16 @@ begin
 
   raise notice '--- Test 9: duplicate account_name values within one p_accounts array are resolved deterministically (last occurrence wins), not an error ---';
   begin
-    v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user,
+    -- PERFORM, not an assignment: replace_ha_accounts_snapshot() returns
+    -- SETOF public.ha_accounts (a set of composite rows), which cannot be
+    -- assigned to a scalar jsonb variable -- PL/pgSQL would call the
+    -- function, take its one returned row, and attempt an implicit
+    -- composite-to-jsonb cast that does not exist, raising "invalid input
+    -- syntax for type json" from the CALLER's own assignment, not from the
+    -- function itself. This test's actual subject is the persisted ROWS,
+    -- already verified below via direct SELECTs against ha_accounts -- the
+    -- return value itself is not needed.
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
       '[{"account_name":"Acme Corp","industry":"first"},{"account_name":"Acme Corp","industry":"second-and-last"}]'::jsonb, 'initial_upload');
   exception when others then
     raise notice 'FAIL: an in-array duplicate account_name raised an exception instead of being resolved deterministically: % (sqlstate %)', sqlerrm, sqlstate;
@@ -201,7 +209,7 @@ begin
   else raise notice 'FAIL: the spoofed per-row user_id was NOT correctly overridden by p_user_id -- expected 1 row owned by the real user, got %', v_count; end if;
 
   raise notice '--- Test 11: an empty p_accounts array explicitly clears the upload''s account list ---';
-  v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'initial_upload');
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'initial_upload');
   select count(*) into v_count from public.ha_accounts where upload_id = v_upload;
   if v_count = 0 then raise notice 'PASS: calling with an empty array clears all accounts for the upload (explicit full-snapshot-replace semantics), rather than being a no-op or an error';
   else raise notice 'FAIL: expected 0 accounts remaining after an empty-array call, got %', v_count; end if;
@@ -343,15 +351,21 @@ begin
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 3 heartbeat test upload', 'uploaded') returning id into v_upload;
 
   raise notice '--- Test 21: heartbeat succeeds for the current owning attempt and extends the lease ---';
-  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  -- Claim with a SHORT (60s) lease, then heartbeat with a LONGER (300s)
+  -- lease, and compare the two resulting timestamps -- NOT a pg_sleep()
+  -- before/after comparison. now() is stable for the entire transaction
+  -- this DO block runs in (transaction_timestamp() semantics), so a
+  -- pg_sleep() between two now()-derived computations does not change
+  -- either one; the only way to prove extension within one transaction is
+  -- to request a genuinely different offset and compare the results.
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 60);
   v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
   v_lease_1 := (v_claim->'run'->>'lease_expires_at')::timestamptz;
-  perform pg_sleep(1);
   v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 300);
   v_lease_2 := (v_heartbeat->'run'->>'lease_expires_at')::timestamptz;
   if (v_heartbeat->>'ok')::boolean = true then raise notice 'PASS: heartbeat succeeds for the current owning attempt (ok=true)';
   else raise notice 'FAIL: expected ok=true, got %', v_heartbeat->>'ok'; end if;
-  if v_lease_2 > v_lease_1 then raise notice 'PASS: heartbeat extends lease_expires_at forward (% -> %)', v_lease_1, v_lease_2;
+  if v_lease_2 > v_lease_1 then raise notice 'PASS: heartbeat extends lease_expires_at forward (claimed with a 60s lease at %, heartbeat with a 300s lease renews to %)', v_lease_1, v_lease_2;
   else raise notice 'FAIL: lease_expires_at did not advance after heartbeat'; end if;
 
   raise notice '--- Test 22: heartbeat with a WRONG (stale/replaced) attempt_id fails without raising, and does not extend the lease ---';
@@ -483,8 +497,12 @@ declare
   v_user_a uuid;
   v_user_b uuid;
   v_upload_a uuid;
+  v_upload_c uuid;
+  v_upload_d uuid;
   v_claim_a jsonb;
-  v_claim_b jsonb;
+  v_claim_c jsonb;
+  v_claim_d1 jsonb;
+  v_claim_d2 jsonb;
   v_result jsonb;
   v_count int;
   v_upload_row record;
@@ -492,11 +510,21 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round4-persist-owner@example.com', 'Round 4 Persist Owner') returning id into v_user_a;
   insert into public.ha_users (email, name) values ('phase2a-round4-persist-other@example.com', 'Round 4 Persist Other') returning id into v_user_b;
-  insert into public.ha_uploads (user_id, upload_name, stage, summary) values (v_user_a, 'Phase 2A round 4 persist test upload', 'uploaded', '{"seed":true}'::jsonb) returning id into v_upload_a;
 
   v_signals := '[{"account_name":"Acme Co","signal_hash":"h1","event_fingerprint":"fp-1","signal_type":"Acquisition","title":"Acme acquires Rival","confidence":80}]'::jsonb;
 
-  raise notice '--- Test 28: correct owner, current attempt -- accounts + signals + upload-state all persist together ---';
+  -- Round 10 correction: Tests 28-33 now each use their OWN fresh
+  -- upload/run rather than sharing v_upload_a's single 'auto' run.
+  -- persist_ha_research_output() finalizes its run (status='completed') on
+  -- EVERY successful call (migration 6 round 5) -- reusing Test 28's now-
+  -- completed attempt_id for a "second call" (old Test 29) or expecting a
+  -- reclaim of a completed run (old Tests 32-33, which only changed
+  -- lease_expires_at, not status) both fail atomic ownership assumptions
+  -- that stopped holding once atomic finalization was added. Confirmed via
+  -- direct execution against a real Postgres instance, not by inspection.
+
+  raise notice '--- Test 28: correct owner, current attempt -- accounts + signals + upload-state all persist together, on a fresh upload/run ---';
+  insert into public.ha_uploads (user_id, upload_name, stage, summary) values (v_user_a, 'Phase 2A round 4 test 28 upload', 'uploaded', '{"seed":true}'::jsonb) returning id into v_upload_a;
   v_claim_a := public.claim_ha_research_run(v_user_a, v_upload_a, 'auto', 300);
   v_result := public.persist_ha_research_output(
     v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid,
@@ -509,16 +537,21 @@ begin
   select into v_upload_row stage, summary from public.ha_uploads where id = v_upload_a;
   if v_upload_row.stage = 'researched' and v_upload_row.summary->>'accountCount' = '1' then raise notice 'PASS: ha_uploads.stage/summary updated atomically alongside accounts/signals';
   else raise notice 'FAIL: ha_uploads.stage/summary not updated as expected (got stage=%, summary=%)', v_upload_row.stage, v_upload_row.summary; end if;
+  if (select status from public.ha_research_runs where upload_id = v_upload_a and research_run_id = 'auto') = 'completed' then
+    raise notice 'PASS: the run is finalized to status=completed by the same successful call';
+  else raise notice 'FAIL: the run was not finalized to status=completed'; end if;
 
-  raise notice '--- Test 29: a SECOND call with the same signal (same event_fingerprint) is an intentional conflict, not an error ---';
-  v_result := public.persist_ha_research_output(v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, null, v_signals, null, null);
+  raise notice '--- Test 29: a signal sharing (user_id, event_fingerprint) with an already-persisted signal is an intentional conflict, not an error -- on a SEPARATE fresh upload/run with a genuinely CURRENT attempt, since Test 28''s attempt is now completed ---';
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user_a, 'Phase 2A round 4 test 29 upload', 'uploaded') returning id into v_upload_c;
+  v_claim_c := public.claim_ha_research_run(v_user_a, v_upload_c, 'auto', 300);
+  v_result := public.persist_ha_research_output(v_upload_c, v_user_a, 'auto', (v_claim_c->'run'->>'attempt_id')::uuid, null, v_signals, null, null);
   if (v_result->>'signalsAttempted')::int = 1 and (v_result->>'signalsPersisted')::int = 0 and (v_result->>'signalsConflictIgnored')::int = 1 then
-    raise notice 'PASS: a repeat signal is attempted=1, persisted=0, conflictIgnored=1 -- not an error, not silently absent';
+    raise notice 'PASS: a signal reusing Test 28''s (user_id, event_fingerprint) via a valid, currently-active second attempt is attempted=1, persisted=0, conflictIgnored=1 -- not an error, not silently absent';
   else raise notice 'FAIL: unexpected repeat-signal counts in %', v_result; end if;
 
-  raise notice '--- Test 30: wrong user cannot call this RPC against another user''s upload ---';
+  raise notice '--- Test 30: wrong user cannot call this RPC against another user''s upload (independent of any other test''s run state) ---';
   begin
-    perform public.persist_ha_research_output(v_upload_a, v_user_b, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, null, null, null, null);
+    perform public.persist_ha_research_output(v_upload_a, v_user_b, 'auto', gen_random_uuid(), null, null, null, null);
     raise notice 'FAIL: user B was able to call persist_ha_research_output against user A''s upload';
   exception when others then
     if sqlstate = '42501' then raise notice 'PASS: wrong-user call rejected with errcode 42501';
@@ -534,17 +567,21 @@ begin
     else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
   end;
 
-  raise notice '--- Test 32: STALE attempt -- accounts, signals, AND upload-state ALL rejected together, zero rows change in any of the three ---';
-  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload_a and research_run_id = 'auto';
-  v_claim_b := public.claim_ha_research_run(v_user_a, v_upload_a, 'auto', 300); -- reclaims -- new attempt_id
-  select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a;
+  raise notice '--- Tests 32-33 setup: claim attempt A, expire it, reclaim as attempt B, on their own fresh independent upload ---';
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user_a, 'Phase 2A round 4 tests 32-33 upload', 'uploaded') returning id into v_upload_d;
+  v_claim_d1 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- attempt A
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload_d and research_run_id = 'auto';
+  v_claim_d2 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- reclaims -- attempt B
+
+  raise notice '--- Test 32: STALE attempt A -- accounts, signals, AND upload-state ALL rejected together, zero rows change in any of the three ---';
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload_d;
   declare v_accounts_before int := v_count; v_signals_before int; v_summary_before jsonb;
   begin
-    select count(*) into v_signals_before from public.ha_signals where upload_id = v_upload_a;
-    select summary into v_summary_before from public.ha_uploads where id = v_upload_a;
+    select count(*) into v_signals_before from public.ha_signals where upload_id = v_upload_d;
+    select summary into v_summary_before from public.ha_uploads where id = v_upload_d;
     begin
       perform public.persist_ha_research_output(
-        v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, -- A's STALE attempt_id
+        v_upload_d, v_user_a, 'auto', (v_claim_d1->'run'->>'attempt_id')::uuid, -- A's STALE attempt_id
         '[{"account_name":"Stale Account Write"}]'::jsonb,
         '[{"account_name":"Stale Co","signal_hash":"h2","event_fingerprint":"fp-stale","signal_type":"Award","title":"Stale signal","confidence":50}]'::jsonb,
         'researched', '{"accountCount":999,"note":"should not persist"}'::jsonb
@@ -554,31 +591,34 @@ begin
       if sqlstate = 'HA001' then raise notice 'PASS: stale attempt A is rejected with errcode HA001';
       else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
     end;
-    select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a;
+    select count(*) into v_count from public.ha_accounts where upload_id = v_upload_d;
     if v_count = v_accounts_before then raise notice 'PASS: ha_accounts row count unchanged after the rejected stale-attempt call (accounts NOT written)';
     else raise notice 'FAIL: ha_accounts row count changed from % to % despite the rejection', v_accounts_before, v_count; end if;
-    select count(*) into v_count from public.ha_signals where upload_id = v_upload_a;
+    select count(*) into v_count from public.ha_signals where upload_id = v_upload_d;
     if v_count = v_signals_before then raise notice 'PASS: ha_signals row count unchanged after the rejected stale-attempt call (signals NOT written) -- this is the specific invariant round 3 could not yet guarantee';
     else raise notice 'FAIL: ha_signals row count changed from % to % despite the rejection', v_signals_before, v_count; end if;
   end;
-  if not exists (select 1 from public.ha_uploads where id = v_upload_a and summary->>'note' = 'should not persist') then
+  if not exists (select 1 from public.ha_uploads where id = v_upload_d and summary->>'note' = 'should not persist') then
     raise notice 'PASS: ha_uploads.summary was NOT overwritten by the rejected stale-attempt call';
   else raise notice 'FAIL: ha_uploads.summary reflects the stale attempt''s rejected payload'; end if;
-  if not exists (select 1 from public.ha_accounts where upload_id = v_upload_a and account_name = 'Stale Account Write') then
+  if not exists (select 1 from public.ha_accounts where upload_id = v_upload_d and account_name = 'Stale Account Write') then
     raise notice 'PASS: the specific stale account row was never created';
   else raise notice 'FAIL: the stale account row exists despite the rejection'; end if;
-  if not exists (select 1 from public.ha_signals where upload_id = v_upload_a and event_fingerprint = 'fp-stale') then
+  if not exists (select 1 from public.ha_signals where upload_id = v_upload_d and event_fingerprint = 'fp-stale') then
     raise notice 'PASS: the specific stale signal row was never created';
   else raise notice 'FAIL: the stale signal row exists despite the rejection'; end if;
 
-  raise notice '--- Test 33: the CURRENT (post-reclaim) attempt succeeds where the stale one failed ---';
+  raise notice '--- Test 33: the CURRENT (post-reclaim) attempt B succeeds where the stale one failed, and finalizes the run ---';
   v_result := public.persist_ha_research_output(
-    v_upload_a, v_user_a, 'auto', (v_claim_b->'run'->>'attempt_id')::uuid,
-    '[{"account_name":"Current Attempt Write"}]'::jsonb, null, null, null
+    v_upload_d, v_user_a, 'auto', (v_claim_d2->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Current Attempt Write"}]'::jsonb, null, 'researched', '{"accountCount":1}'::jsonb
   );
-  if exists (select 1 from public.ha_accounts where upload_id = v_upload_a and account_name = 'Current Attempt Write') then
+  if exists (select 1 from public.ha_accounts where upload_id = v_upload_d and account_name = 'Current Attempt Write') then
     raise notice 'PASS: the current (reclaimed) attempt successfully persists accounts using the exact same RPC that rejected the stale one';
   else raise notice 'FAIL: the current attempt''s write did not persist'; end if;
+  if (select status from public.ha_research_runs where upload_id = v_upload_d and research_run_id = 'auto') = 'completed' then
+    raise notice 'PASS: attempt B successfully finalizes the run to status=completed';
+  else raise notice 'FAIL: attempt B did not finalize the run'; end if;
 
   raise notice '--- Test 34 (sanity): anon/authenticated cannot call persist_ha_research_output at all ---';
   set role anon;
@@ -598,10 +638,10 @@ begin
   end;
   reset role;
 
-  delete from public.ha_signals where upload_id = v_upload_a;
-  delete from public.ha_accounts where upload_id = v_upload_a;
-  delete from public.ha_research_runs where upload_id = v_upload_a;
-  delete from public.ha_uploads where id = v_upload_a;
+  delete from public.ha_signals where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_accounts where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_research_runs where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_uploads where id in (v_upload_a, v_upload_c, v_upload_d);
   delete from public.ha_users where id in (v_user_a, v_user_b);
   raise notice '--- Tests 28-34 cleanup complete ---';
 end $$;
@@ -1295,34 +1335,44 @@ end $$;
 do $$
 declare
   v_user uuid;
-  v_upload uuid;
+  v_upload_56 uuid;
+  v_upload_57 uuid;
   v_first jsonb;
-  v_manual jsonb;
   v_reclaimed jsonb;
+  v_manual jsonb;
   v_retry jsonb;
 begin
   insert into public.ha_users (email, name) values ('phase2a-round10-claim-order-3@example.com', 'Round 10 Claim Order 3') returning id into v_user;
-  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 claim-order test upload 3', 'uploaded') returning id into v_upload;
 
   raise notice '--- Test 56: expired exact row with NO other active or completed blocker -- reclaim must still succeed normally ---';
-  v_first := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 test 56 upload', 'uploaded') returning id into v_upload_56;
+  v_first := public.claim_ha_research_run(v_user, v_upload_56, 'auto', 300);
   update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
-    where upload_id = v_upload and research_run_id = 'auto';
-  v_reclaimed := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+    where upload_id = v_upload_56 and research_run_id = 'auto';
+  v_reclaimed := public.claim_ha_research_run(v_user, v_upload_56, 'auto', 300);
   if v_reclaimed->>'outcome' = 'reclaimed-after-expired-lease' then raise notice 'PASS: an expired exact row with no other active/completed blocker still reclaims normally';
   else raise notice 'FAIL: expected reclaimed-after-expired-lease, got %', v_reclaimed; end if;
   if (v_reclaimed->'run'->>'attempt_id')::uuid <> (v_first->'run'->>'attempt_id')::uuid then raise notice 'PASS: reclaiming mints a new attempt_id';
   else raise notice 'FAIL: attempt_id did not change on reclaim'; end if;
 
-  raise notice '--- Test 57: FAILED exact manual row with no other active blocker -- reclaim-after-failure must still succeed normally ---';
-  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
-  update public.ha_research_runs set status = 'failed' where upload_id = v_upload and research_run_id = 'manual-solo';
-  v_retry := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
+  -- Round 10 correction: Test 57 now uses its OWN fresh upload. On the
+  -- original shared upload, Test 56's reclaim leaves the 'auto' row
+  -- actively leased (a genuine, still-active run) -- claiming a DIFFERENT
+  -- research_run_id ('manual-solo') on that SAME upload correctly hits the
+  -- "one active run per upload" invariant and is rejected with 55P03,
+  -- which is not what this test claims to prove ("no other active
+  -- blocker"). Using a separate upload proves the intended invariant
+  -- without weakening the one-active-run guarantee anywhere.
+  raise notice '--- Test 57: FAILED exact manual row with NO other active blocker -- reclaim-after-failure must still succeed normally ---';
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 test 57 upload', 'uploaded') returning id into v_upload_57;
+  v_manual := public.claim_ha_research_run(v_user, v_upload_57, 'manual-solo', 300);
+  update public.ha_research_runs set status = 'failed' where upload_id = v_upload_57 and research_run_id = 'manual-solo';
+  v_retry := public.claim_ha_research_run(v_user, v_upload_57, 'manual-solo', 300);
   if v_retry->>'outcome' = 'reclaimed-after-failure' then raise notice 'PASS: a failed exact manual row with no other active blocker still reclaims normally (reclaimed-after-failure)';
   else raise notice 'FAIL: expected reclaimed-after-failure, got %', v_retry; end if;
 
-  delete from public.ha_research_runs where upload_id = v_upload;
-  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_research_runs where upload_id in (v_upload_56, v_upload_57);
+  delete from public.ha_uploads where id in (v_upload_56, v_upload_57);
   delete from public.ha_users where id = v_user;
   raise notice '--- Tests 56-57 cleanup complete ---';
 end $$;

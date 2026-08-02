@@ -335,7 +335,6 @@ do $$
 declare
   v_user uuid;
   v_upload uuid;
-  v_rows jsonb;
   v_count int;
   v_distinct_owner_pairs int;
 begin
@@ -366,8 +365,12 @@ begin
   end;
 
   -- Test 9: duplicate account_name values within one p_accounts array are resolved deterministically (last occurrence wins), not an error
+  -- replace_ha_accounts_snapshot() returns SETOF ha_accounts; a scalar
+  -- variable cannot receive that result via :=, so the call result is
+  -- discarded via PERFORM and verified through the count/industry
+  -- assertions below instead.
   begin
-    v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user,
+    perform public.replace_ha_accounts_snapshot(v_upload, v_user,
       '[{"account_name":"Acme Corp","industry":"first"},{"account_name":"Acme Corp","industry":"second-and-last"}]'::jsonb, 'initial_upload');
   exception when others then
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 9: ' || 'an in-array duplicate account_name raised an exception instead of being resolved deterministically: % (sqlstate %)', false, format('an in-array duplicate account_name raised an exception instead of being resolved deterministically: %s (sqlstate %s)', sqlerrm, sqlstate));
@@ -388,7 +391,7 @@ begin
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 10: ' || 'the spoofed per-row user_id was NOT correctly overridden by p_user_id -- expected 1 row owned by the real user, got %', false, format('the spoofed per-row user_id was NOT correctly overridden by p_user_id -- expected 1 row owned by the real user, got %s', v_count)); end if;
 
   -- Test 11: an empty p_accounts array explicitly clears the upload's account list
-  v_rows := public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'initial_upload');
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[]'::jsonb, 'initial_upload');
   select count(*) into v_count from public.ha_accounts where upload_id = v_upload;
   if v_count = 0 then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 11: ' || 'calling with an empty array clears all accounts for the upload (explicit full-snapshot-replace semantics), rather than being a no-op or an error', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 11: ' || 'expected 0 accounts remaining after an empty-array call, got %', false, format('expected 0 accounts remaining after an empty-array call, got %s', v_count)); end if;
@@ -613,10 +616,16 @@ begin
   insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload);
 
   -- Test 21: heartbeat succeeds for the current owning attempt and extends the lease
-  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  -- now() is stable for the entire transaction this DO block runs in
+  -- (transaction_timestamp() semantics), so a pg_sleep() between two
+  -- now()-derived computations does not change either one. Claim with a
+  -- SHORT (60s) lease, then heartbeat with a LONGER (300s) lease, and
+  -- compare the two resulting timestamps -- this proves extension
+  -- deterministically, without depending on wall-clock movement inside
+  -- one transaction.
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 60);
   v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
   v_lease_1 := (v_claim->'run'->>'lease_expires_at')::timestamptz;
-  perform pg_sleep(1);
   v_heartbeat := public.heartbeat_ha_research_run(v_user, v_upload, 'auto', v_attempt_id, 300);
   v_lease_2 := (v_heartbeat->'run'->>'lease_expires_at')::timestamptz;
   if (v_heartbeat->>'ok')::boolean = true then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 21: ' || 'heartbeat succeeds for the current owning attempt (ok=true)', true, null);
@@ -837,8 +846,12 @@ declare
   v_user_a uuid;
   v_user_b uuid;
   v_upload_a uuid;
+  v_upload_c uuid;
+  v_upload_d uuid;
   v_claim_a jsonb;
-  v_claim_b jsonb;
+  v_claim_c jsonb;
+  v_claim_d1 jsonb;
+  v_claim_d2 jsonb;
   v_result jsonb;
   v_count int;
   v_upload_row record;
@@ -848,12 +861,22 @@ begin
   insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_users', v_user_a);
   insert into public.ha_users (email, name) values ('phase2a-round4-persist-other+' || current_setting('phase2a.suite_run_id') || '@example.invalid', 'Round 4 Persist Other') returning id into v_user_b;
   insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_users', v_user_b);
-  insert into public.ha_uploads (user_id, upload_name, stage, summary) values (v_user_a, 'Phase 2A round 4 persist test upload', 'uploaded', '{"seed":true}'::jsonb) returning id into v_upload_a;
-  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_a);
 
   v_signals := '[{"account_name":"Acme Co","signal_hash":"h1","event_fingerprint":"fp-1","signal_type":"Acquisition","title":"Acme acquires Rival","confidence":80}]'::jsonb;
 
-  -- Test 28: correct owner, current attempt -- accounts + signals + upload-state all persist together
+  -- Round 10 correction: Tests 28-33 now each use their OWN fresh
+  -- upload/run rather than sharing v_upload_a's single 'auto' run.
+  -- persist_ha_research_output() finalizes its run (status='completed') on
+  -- EVERY successful call (migration 6 round 5) -- reusing Test 28's now-
+  -- completed attempt_id for a "second call" (old Test 29) or expecting a
+  -- reclaim of a completed run (old Tests 32-33, which only changed
+  -- lease_expires_at, not status) both fail atomic ownership assumptions
+  -- that stopped holding once atomic finalization was added. Confirmed via
+  -- direct execution against a real Postgres instance, not by inspection.
+
+  -- Test 28: correct owner, current attempt -- accounts + signals + upload-state all persist together, on a fresh upload/run
+  insert into public.ha_uploads (user_id, upload_name, stage, summary) values (v_user_a, 'Phase 2A round 4 test 28 upload', 'uploaded', '{"seed":true}'::jsonb) returning id into v_upload_a;
+  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_a);
   v_claim_a := public.claim_ha_research_run(v_user_a, v_upload_a, 'auto', 300);
   v_result := public.persist_ha_research_output(
     v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid,
@@ -866,16 +889,22 @@ begin
   select into v_upload_row stage, summary from public.ha_uploads where id = v_upload_a;
   if v_upload_row.stage = 'researched' and v_upload_row.summary->>'accountCount' = '1' then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 28: ' || 'ha_uploads.stage/summary updated atomically alongside accounts/signals', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 28: ' || 'ha_uploads.stage/summary not updated as expected (got stage=%, summary=%)', false, format('ha_uploads.stage/summary not updated as expected (got stage=%s, summary=%s)', v_upload_row.stage, v_upload_row.summary)); end if;
+  if (select status from public.ha_research_runs where upload_id = v_upload_a and research_run_id = 'auto') = 'completed' then
+    insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 28: ' || 'the run is finalized to status=completed by the same successful call', true, null);
+  else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 28: ' || 'the run was not finalized to status=completed', false, null); end if;
 
-  -- Test 29: a SECOND call with the same signal (same event_fingerprint) is an intentional conflict, not an error
-  v_result := public.persist_ha_research_output(v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, null, v_signals, null, null);
+  -- Test 29: a signal sharing (user_id, event_fingerprint) with an already-persisted signal is an intentional conflict, not an error -- on a SEPARATE fresh upload/run with a genuinely CURRENT attempt, since Test 28's attempt is now completed
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user_a, 'Phase 2A round 4 test 29 upload', 'uploaded') returning id into v_upload_c;
+  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_c);
+  v_claim_c := public.claim_ha_research_run(v_user_a, v_upload_c, 'auto', 300);
+  v_result := public.persist_ha_research_output(v_upload_c, v_user_a, 'auto', (v_claim_c->'run'->>'attempt_id')::uuid, null, v_signals, null, null);
   if (v_result->>'signalsAttempted')::int = 1 and (v_result->>'signalsPersisted')::int = 0 and (v_result->>'signalsConflictIgnored')::int = 1 then
-    insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 29: ' || 'a repeat signal is attempted=1, persisted=0, conflictIgnored=1 -- not an error, not silently absent', true, null);
+    insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 29: ' || 'a signal reusing Test 28''s (user_id, event_fingerprint) via a valid, currently-active second attempt is attempted=1, persisted=0, conflictIgnored=1 -- not an error, not silently absent', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 29: ' || 'unexpected repeat-signal counts in %', false, format('unexpected repeat-signal counts in %s', v_result)); end if;
 
-  -- Test 30: wrong user cannot call this RPC against another user's upload
+  -- Test 30: wrong user cannot call this RPC against another user's upload (independent of any other test's run state)
   begin
-    perform public.persist_ha_research_output(v_upload_a, v_user_b, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, null, null, null, null);
+    perform public.persist_ha_research_output(v_upload_a, v_user_b, 'auto', gen_random_uuid(), null, null, null, null);
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 30: ' || 'user B was able to call persist_ha_research_output against user A''s upload', false, null);
   exception when others then
     if sqlstate = '42501' then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 30: ' || 'wrong-user call rejected with errcode 42501', true, null);
@@ -891,17 +920,22 @@ begin
     else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 31: ' || 'rejected, but with unexpected sqlstate % (message: %)', false, format('rejected, but with unexpected sqlstate %s (message: %s)', sqlstate, sqlerrm)); end if;
   end;
 
-  -- Test 32: STALE attempt -- accounts, signals, AND upload-state ALL rejected together, zero rows change in any of the three
-  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload_a and research_run_id = 'auto';
-  v_claim_b := public.claim_ha_research_run(v_user_a, v_upload_a, 'auto', 300); -- reclaims -- new attempt_id
-  select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a;
+  -- Tests 32-33 setup: claim attempt A, expire it, reclaim as attempt B, on their own fresh independent upload
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user_a, 'Phase 2A round 4 tests 32-33 upload', 'uploaded') returning id into v_upload_d;
+  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_d);
+  v_claim_d1 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- attempt A
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload_d and research_run_id = 'auto';
+  v_claim_d2 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- reclaims -- attempt B
+
+  -- Test 32: STALE attempt A -- accounts, signals, AND upload-state ALL rejected together, zero rows change in any of the three
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload_d;
   declare v_accounts_before int := v_count; v_signals_before int; v_summary_before jsonb;
   begin
-    select count(*) into v_signals_before from public.ha_signals where upload_id = v_upload_a;
-    select summary into v_summary_before from public.ha_uploads where id = v_upload_a;
+    select count(*) into v_signals_before from public.ha_signals where upload_id = v_upload_d;
+    select summary into v_summary_before from public.ha_uploads where id = v_upload_d;
     begin
       perform public.persist_ha_research_output(
-        v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid, -- A's STALE attempt_id
+        v_upload_d, v_user_a, 'auto', (v_claim_d1->'run'->>'attempt_id')::uuid, -- A's STALE attempt_id
         '[{"account_name":"Stale Account Write"}]'::jsonb,
         '[{"account_name":"Stale Co","signal_hash":"h2","event_fingerprint":"fp-stale","signal_type":"Award","title":"Stale signal","confidence":50}]'::jsonb,
         'researched', '{"accountCount":999,"note":"should not persist"}'::jsonb
@@ -911,31 +945,34 @@ begin
       if sqlstate = 'HA001' then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'stale attempt A is rejected with errcode HA001', true, null);
       else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'rejected, but with unexpected sqlstate % (message: %)', false, format('rejected, but with unexpected sqlstate %s (message: %s)', sqlstate, sqlerrm)); end if;
     end;
-    select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a;
+    select count(*) into v_count from public.ha_accounts where upload_id = v_upload_d;
     if v_count = v_accounts_before then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_accounts row count unchanged after the rejected stale-attempt call (accounts NOT written)', true, null);
     else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_accounts row count changed from % to % despite the rejection', false, format('ha_accounts row count changed from %s to %s despite the rejection', v_accounts_before, v_count)); end if;
-    select count(*) into v_count from public.ha_signals where upload_id = v_upload_a;
+    select count(*) into v_count from public.ha_signals where upload_id = v_upload_d;
     if v_count = v_signals_before then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_signals row count unchanged after the rejected stale-attempt call (signals NOT written) -- this is the specific invariant round 3 could not yet guarantee', true, null);
     else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_signals row count changed from % to % despite the rejection', false, format('ha_signals row count changed from %s to %s despite the rejection', v_signals_before, v_count)); end if;
   end;
-  if not exists (select 1 from public.ha_uploads where id = v_upload_a and summary->>'note' = 'should not persist') then
+  if not exists (select 1 from public.ha_uploads where id = v_upload_d and summary->>'note' = 'should not persist') then
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_uploads.summary was NOT overwritten by the rejected stale-attempt call', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'ha_uploads.summary reflects the stale attempt''s rejected payload', false, null); end if;
-  if not exists (select 1 from public.ha_accounts where upload_id = v_upload_a and account_name = 'Stale Account Write') then
+  if not exists (select 1 from public.ha_accounts where upload_id = v_upload_d and account_name = 'Stale Account Write') then
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'the specific stale account row was never created', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'the stale account row exists despite the rejection', false, null); end if;
-  if not exists (select 1 from public.ha_signals where upload_id = v_upload_a and event_fingerprint = 'fp-stale') then
+  if not exists (select 1 from public.ha_signals where upload_id = v_upload_d and event_fingerprint = 'fp-stale') then
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'the specific stale signal row was never created', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 32: ' || 'the stale signal row exists despite the rejection', false, null); end if;
 
-  -- Test 33: the CURRENT (post-reclaim) attempt succeeds where the stale one failed
+  -- Test 33: the CURRENT (post-reclaim) attempt B succeeds where the stale one failed, and finalizes the run
   v_result := public.persist_ha_research_output(
-    v_upload_a, v_user_a, 'auto', (v_claim_b->'run'->>'attempt_id')::uuid,
-    '[{"account_name":"Current Attempt Write"}]'::jsonb, null, null, null
+    v_upload_d, v_user_a, 'auto', (v_claim_d2->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Current Attempt Write"}]'::jsonb, null, 'researched', '{"accountCount":1}'::jsonb
   );
-  if exists (select 1 from public.ha_accounts where upload_id = v_upload_a and account_name = 'Current Attempt Write') then
+  if exists (select 1 from public.ha_accounts where upload_id = v_upload_d and account_name = 'Current Attempt Write') then
     insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 33: ' || 'the current (reclaimed) attempt successfully persists accounts using the exact same RPC that rejected the stale one', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 33: ' || 'the current attempt''s write did not persist', false, null); end if;
+  if (select status from public.ha_research_runs where upload_id = v_upload_d and research_run_id = 'auto') = 'completed' then
+    insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 33: ' || 'attempt B successfully finalizes the run to status=completed', true, null);
+  else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 33: ' || 'attempt B did not finalize the run', false, null); end if;
 
   -- Test 34 (sanity): anon/authenticated cannot call persist_ha_research_output at all
   declare
@@ -1035,10 +1072,10 @@ begin
       values ('Test 34: authenticated role cannot call persist_ha_research_output', v_role_passed, v_role_detail);
   end;
 
-  delete from public.ha_signals where upload_id = v_upload_a;
-  delete from public.ha_accounts where upload_id = v_upload_a;
-  delete from public.ha_research_runs where upload_id = v_upload_a;
-  delete from public.ha_uploads where id = v_upload_a;
+  delete from public.ha_signals where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_accounts where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_research_runs where upload_id in (v_upload_a, v_upload_c, v_upload_d);
+  delete from public.ha_uploads where id in (v_upload_a, v_upload_c, v_upload_d);
   delete from public.ha_users where id in (v_user_a, v_user_b);
   insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Tests 28-34 cleanup complete', true, 'cleanup marker');
 end $$;
@@ -1754,7 +1791,8 @@ end $$;
 do $$
 declare
   v_user uuid;
-  v_upload uuid;
+  v_upload_56 uuid;
+  v_upload_57 uuid;
   v_first jsonb;
   v_manual jsonb;
   v_reclaimed jsonb;
@@ -1762,28 +1800,38 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round10-claim-order-3+' || current_setting('phase2a.suite_run_id') || '@example.invalid', 'Round 10 Claim Order 3') returning id into v_user;
   insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_users', v_user);
-  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 claim-order test upload 3', 'uploaded') returning id into v_upload;
-  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload);
 
   -- Test 56: expired exact row with NO other active or completed blocker -- reclaim must still succeed normally
-  v_first := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 test 56 upload', 'uploaded') returning id into v_upload_56;
+  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_56);
+  v_first := public.claim_ha_research_run(v_user, v_upload_56, 'auto', 300);
   update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
-    where upload_id = v_upload and research_run_id = 'auto';
-  v_reclaimed := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+    where upload_id = v_upload_56 and research_run_id = 'auto';
+  v_reclaimed := public.claim_ha_research_run(v_user, v_upload_56, 'auto', 300);
   if v_reclaimed->>'outcome' = 'reclaimed-after-expired-lease' then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 56: ' || 'an expired exact row with no other active/completed blocker still reclaims normally', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 56: ' || 'expected reclaimed-after-expired-lease, got %', false, format('expected reclaimed-after-expired-lease, got %s', v_reclaimed)); end if;
   if (v_reclaimed->'run'->>'attempt_id')::uuid <> (v_first->'run'->>'attempt_id')::uuid then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 56: ' || 'reclaiming mints a new attempt_id', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 56: ' || 'attempt_id did not change on reclaim', false, null); end if;
 
+  -- Round 10 correction: Test 57 now uses its OWN fresh upload. On the
+  -- original shared upload, Test 56's reclaim leaves the 'auto' row
+  -- actively leased (a genuine, still-active run) -- claiming a DIFFERENT
+  -- research_run_id ('manual-solo') on that SAME upload correctly hits the
+  -- "one active run per upload" invariant and is rejected with 55P03,
+  -- which is not what this test claims to prove ("no other active
+  -- blocker"). Using a separate upload proves the intended invariant
+  -- without weakening the one-active-run guarantee anywhere.
   -- Test 57: FAILED exact manual row with no other active blocker -- reclaim-after-failure must still succeed normally
-  v_manual := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
-  update public.ha_research_runs set status = 'failed' where upload_id = v_upload and research_run_id = 'manual-solo';
-  v_retry := public.claim_ha_research_run(v_user, v_upload, 'manual-solo', 300);
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 test 57 upload', 'uploaded') returning id into v_upload_57;
+  insert into _phase2a_fixture_registry (entity_type, entity_id) values ('ha_uploads', v_upload_57);
+  v_manual := public.claim_ha_research_run(v_user, v_upload_57, 'manual-solo', 300);
+  update public.ha_research_runs set status = 'failed' where upload_id = v_upload_57 and research_run_id = 'manual-solo';
+  v_retry := public.claim_ha_research_run(v_user, v_upload_57, 'manual-solo', 300);
   if v_retry->>'outcome' = 'reclaimed-after-failure' then insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 57: ' || 'a failed exact manual row with no other active blocker still reclaims normally (reclaimed-after-failure)', true, null);
   else insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Test 57: ' || 'expected reclaimed-after-failure, got %', false, format('expected reclaimed-after-failure, got %s', v_retry)); end if;
 
-  delete from public.ha_research_runs where upload_id = v_upload;
-  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_research_runs where upload_id in (v_upload_56, v_upload_57);
+  delete from public.ha_uploads where id in (v_upload_56, v_upload_57);
   delete from public.ha_users where id = v_user;
   insert into _phase2a_auth_test_results (assertion, passed, detail) values ('Tests 56-57 cleanup complete', true, 'cleanup marker');
 end $$;
