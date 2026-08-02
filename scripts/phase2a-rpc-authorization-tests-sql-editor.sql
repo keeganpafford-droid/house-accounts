@@ -160,23 +160,47 @@ end $$;
 -- ===========================================================================
 do $$
 declare
+  v_role_switch_succeeded boolean := false;
   v_role_passed boolean := false;
   v_role_detail text := 'test did not complete';
+  v_current_role text;
 begin
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
       set role anon;
-      perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
-      v_role_passed := false;
-      v_role_detail := 'anon role was able to call replace_ha_accounts_snapshot at all -- EXECUTE grant is not properly revoked';
-    exception when insufficient_privilege then
-      v_role_passed := true;
-      v_role_detail := 'anon role is rejected at the privilege level (insufficient_privilege) before the function body runs';
-    when others then
-      v_role_passed := false;
-      v_role_detail := format('anon call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
+      select current_user into v_current_role;
+      if v_current_role = 'anon' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE anon appeared to succeed but current_user is %s, not anon -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE anon itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
     end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
+      begin
+        perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
+        v_role_passed := false;
+        v_role_detail := 'anon role was able to call replace_ha_accounts_snapshot at all -- EXECUTE grant is not properly revoked';
+      exception when insufficient_privilege then
+        v_role_passed := true;
+        v_role_detail := 'anon role is rejected at the privilege level (insufficient_privilege) before the function body runs';
+      when others then
+        v_role_passed := false;
+        v_role_detail := format('anon call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
+      end;
+    else
+      v_role_passed := false;
+    end if;
   exception when others then
+    v_role_switch_succeeded := false;
     v_role_passed := false;
     v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
   end;
@@ -192,23 +216,47 @@ end $$;
 -- ===========================================================================
 do $$
 declare
+  v_role_switch_succeeded boolean := false;
   v_role_passed boolean := false;
   v_role_detail text := 'test did not complete';
+  v_current_role text;
 begin
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
       set role authenticated;
-      perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
-      v_role_passed := false;
-      v_role_detail := 'authenticated role was able to call replace_ha_accounts_snapshot directly -- EXECUTE grant is not properly revoked';
-    exception when insufficient_privilege then
-      v_role_passed := true;
-      v_role_detail := 'authenticated role is rejected at the privilege level (insufficient_privilege), matching the intended service_role-only design';
-    when others then
-      v_role_passed := false;
-      v_role_detail := format('authenticated call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
+      select current_user into v_current_role;
+      if v_current_role = 'authenticated' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE authenticated appeared to succeed but current_user is %s, not authenticated -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE authenticated itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
     end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
+      begin
+        perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
+        v_role_passed := false;
+        v_role_detail := 'authenticated role was able to call replace_ha_accounts_snapshot directly -- EXECUTE grant is not properly revoked';
+      exception when insufficient_privilege then
+        v_role_passed := true;
+        v_role_detail := 'authenticated role is rejected at the privilege level (insufficient_privilege), matching the intended service_role-only design';
+      when others then
+        v_role_passed := false;
+        v_role_detail := format('authenticated call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
+      end;
+    else
+      v_role_passed := false;
+    end if;
   exception when others then
+    v_role_switch_succeeded := false;
     v_role_passed := false;
     v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
   end;
@@ -224,23 +272,50 @@ end $$;
 -- ===========================================================================
 do $$
 declare
+  v_role_switch_succeeded boolean := false;
   v_role_passed boolean := false;
   v_role_detail text := 'test did not complete';
+  v_current_role text;
 begin
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
       set role service_role;
-      perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
-      v_role_passed := false;
-      v_role_detail := 'service_role call unexpectedly succeeded against a nonexistent upload/user (should hit the ownership check, sqlstate 42501)';
-    exception when sqlstate '42501' then
-      v_role_passed := true;
-      v_role_detail := 'service_role CAN call the function (reaches the function body -- rejected here only because the test upload/user do not exist, which is the correct, expected outcome for this specific call)';
-    when insufficient_privilege then
-      v_role_passed := false;
-      v_role_detail := 'service_role itself is blocked at the privilege level -- the GRANT to service_role is missing';
+      select current_user into v_current_role;
+      if v_current_role = 'service_role' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE service_role appeared to succeed but current_user is %s, not service_role -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE service_role itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid sanity-check result', sqlerrm, sqlstate);
     end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
+      begin
+        perform public.replace_ha_accounts_snapshot(gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 'initial_upload');
+        v_role_passed := false;
+        v_role_detail := 'service_role call unexpectedly succeeded against a nonexistent upload/user (should hit the ownership check, sqlstate 42501)';
+      exception when sqlstate '42501' then
+        v_role_passed := true;
+        v_role_detail := 'service_role CAN call the function (reaches the function body -- rejected here only because the test upload/user do not exist, which is the correct, expected outcome for this specific call)';
+      when insufficient_privilege then
+        v_role_passed := false;
+        v_role_detail := 'service_role itself is blocked at the privilege level -- the GRANT to service_role is missing';
+      when others then
+        v_role_passed := false;
+        v_role_detail := format('service_role call raised an unexpected error (expected sqlstate 42501): %s (sqlstate %s)', sqlerrm, sqlstate);
+      end;
+    else
+      v_role_passed := false;
+    end if;
   exception when others then
+    v_role_switch_succeeded := false;
     v_role_passed := false;
     v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
   end;
@@ -414,12 +489,31 @@ begin
 
   -- Test 20 (sanity): anon and authenticated cannot call claim_ha_research_run at all
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role anon;
+      select current_user into v_current_role;
+      if v_current_role = 'anon' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE anon appeared to succeed but current_user is %s, not anon -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE anon itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role anon;
         perform public.claim_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', 300);
         v_role_passed := false;
         v_role_detail := 'anon role was able to call claim_ha_research_run -- EXECUTE grant is not properly revoked';
@@ -430,21 +524,44 @@ begin
         v_role_passed := false;
         v_role_detail := format('anon call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 20: anon role cannot call claim_ha_research_run', v_role_passed, v_role_detail);
   end;
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role authenticated;
+      select current_user into v_current_role;
+      if v_current_role = 'authenticated' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE authenticated appeared to succeed but current_user is %s, not authenticated -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE authenticated itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role authenticated;
         perform public.claim_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', 300);
         v_role_passed := false;
         v_role_detail := 'authenticated role was able to call claim_ha_research_run directly -- EXECUTE grant is not properly revoked';
@@ -455,10 +572,14 @@ begin
         v_role_passed := false;
         v_role_detail := format('authenticated call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 20: authenticated role cannot call claim_ha_research_run', v_role_passed, v_role_detail);
@@ -515,12 +636,31 @@ begin
 
   -- Test 24: anon/authenticated cannot call heartbeat_ha_research_run at all
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role anon;
+      select current_user into v_current_role;
+      if v_current_role = 'anon' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE anon appeared to succeed but current_user is %s, not anon -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE anon itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role anon;
         perform public.heartbeat_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), 300);
         v_role_passed := false;
         v_role_detail := 'anon role was able to call heartbeat_ha_research_run -- EXECUTE grant is not properly revoked';
@@ -531,21 +671,44 @@ begin
         v_role_passed := false;
         v_role_detail := format('anon call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 24: anon role cannot call heartbeat_ha_research_run', v_role_passed, v_role_detail);
   end;
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role authenticated;
+      select current_user into v_current_role;
+      if v_current_role = 'authenticated' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE authenticated appeared to succeed but current_user is %s, not authenticated -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE authenticated itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role authenticated;
         perform public.heartbeat_ha_research_run(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), 300);
         v_role_passed := false;
         v_role_detail := 'authenticated role was able to call heartbeat_ha_research_run directly -- EXECUTE grant is not properly revoked';
@@ -556,10 +719,14 @@ begin
         v_role_passed := false;
         v_role_detail := format('authenticated call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 24: authenticated role cannot call heartbeat_ha_research_run', v_role_passed, v_role_detail);
@@ -770,12 +937,31 @@ begin
 
   -- Test 34 (sanity): anon/authenticated cannot call persist_ha_research_output at all
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role anon;
+      select current_user into v_current_role;
+      if v_current_role = 'anon' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE anon appeared to succeed but current_user is %s, not anon -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE anon itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role anon;
         perform public.persist_ha_research_output(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), null, null, null, null);
         v_role_passed := false;
         v_role_detail := 'anon role was able to call persist_ha_research_output';
@@ -786,21 +972,44 @@ begin
         v_role_passed := false;
         v_role_detail := format('anon call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 34: anon role cannot call persist_ha_research_output', v_role_passed, v_role_detail);
   end;
   declare
+    v_role_switch_succeeded boolean := false;
     v_role_passed boolean := false;
     v_role_detail text := 'test did not complete';
+    v_current_role text;
   begin
+    -- Phase 1: attempt the role switch in its own protected block; confirm
+    -- it actually took effect (current_user reflects it) before treating
+    -- anything downstream as a genuine RPC-level privilege test.
     begin
+      set role authenticated;
+      select current_user into v_current_role;
+      if v_current_role = 'authenticated' then
+        v_role_switch_succeeded := true;
+      else
+        v_role_switch_succeeded := false;
+        v_role_detail := format('SET ROLE authenticated appeared to succeed but current_user is %s, not authenticated -- not treating this as a valid RPC-level test', v_current_role);
+      end if;
+    exception when others then
+      v_role_switch_succeeded := false;
+      v_role_detail := format('SET ROLE authenticated itself failed: %s (sqlstate %s) -- the RPC was never invoked, this is not a valid privilege-denial result', sqlerrm, sqlstate);
+    end;
+
+    -- Phase 2: only invoke the RPC once the role switch is CONFIRMED.
+    if v_role_switch_succeeded then
       begin
-        set role authenticated;
         perform public.persist_ha_research_output(gen_random_uuid(), gen_random_uuid(), 'x', gen_random_uuid(), null, null, null, null);
         v_role_passed := false;
         v_role_detail := 'authenticated role was able to call persist_ha_research_output directly';
@@ -811,10 +1020,14 @@ begin
         v_role_passed := false;
         v_role_detail := format('authenticated call raised an unexpected error (expected insufficient_privilege): %s (sqlstate %s)', sqlerrm, sqlstate);
       end;
-    exception when others then
+    else
       v_role_passed := false;
-      v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
-    end;
+    end if;
+  exception when others then
+    v_role_switch_succeeded := false;
+    v_role_passed := false;
+    v_role_detail := format('unexpected error during role-switch test setup: %s', sqlerrm);
+  end;
     reset role;
     insert into _phase2a_auth_test_results (assertion, passed, detail)
       values ('Test 34: authenticated role cannot call persist_ha_research_output', v_role_passed, v_role_detail);
@@ -1645,10 +1858,23 @@ declare
   v_runs_before bigint;
   v_restored boolean;
 begin
-  delete from public.ha_users
-  where id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_users');
+  -- Dependency-first: children before parents, explicitly -- does not rely
+  -- solely on ON DELETE CASCADE, even though these FKs are in fact cascading.
+  delete from public.ha_signals
+  where upload_id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_uploads');
+
+  delete from public.ha_accounts
+  where upload_id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_uploads');
+
+  delete from public.ha_research_runs
+  where upload_id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_uploads')
+     or user_id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_users');
+
   delete from public.ha_uploads
   where id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_uploads');
+
+  delete from public.ha_users
+  where id in (select entity_id from _phase2a_fixture_registry where entity_type = 'ha_users');
 
   select row_count into v_users_before from _phase2a_auth_baseline_counts where table_name = 'ha_users';
   select row_count into v_uploads_before from _phase2a_auth_baseline_counts where table_name = 'ha_uploads';
@@ -1683,18 +1909,29 @@ end $$;
 -- ===========================================================================
 do $$
 declare
-  v_total int;
-  v_passed int;
-  v_failed int;
+  v_existing_total int;
+  v_existing_passed int;
+  v_existing_failed int;
+  v_final_total int;
+  v_final_passed int;
+  v_final_failed int;
+  v_summary_passed boolean;
 begin
   select count(*), count(*) filter (where passed), count(*) filter (where not passed)
-    into v_total, v_passed, v_failed
+    into v_existing_total, v_existing_passed, v_existing_failed
     from _phase2a_auth_test_results;
 
+  -- Totals must describe the FINAL result set, i.e. include this summary
+  -- row itself -- not just the rows that existed before it was inserted.
+  v_summary_passed := (v_existing_failed = 0);
+  v_final_total := v_existing_total + 1;
+  v_final_passed := v_existing_passed + (case when v_summary_passed then 1 else 0 end);
+  v_final_failed := v_existing_failed + (case when v_summary_passed then 0 else 1 end);
+
   insert into _phase2a_auth_test_results (assertion, passed, detail) values (
-    'SUMMARY: total/passed/failed rows (failed must be 0)',
-    v_failed = 0,
-    format('total=%s passed=%s failed=%s', v_total, v_passed, v_failed)
+    'SUMMARY: total/passed/failed rows, INCLUDING this summary row (failed must be 0)',
+    v_summary_passed,
+    format('total=%s passed=%s failed=%s', v_final_total, v_final_passed, v_final_failed)
   );
 end $$;
 
