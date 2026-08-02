@@ -14,6 +14,7 @@
     "test:save-upload-persistence": "node scripts/test-save-upload-persistence.js",
     "test:single-flight-save-queue": "node scripts/test-single-flight-save-queue.js",
     "test:research-run-idempotency": "node scripts/test-research-run-idempotency.js",
+    "test:monitoring-lists-account-delete": "node scripts/test-monitoring-lists-account-delete.js",
     "test:signal-benchmark": "node scripts/run-signal-benchmark.js",
     "research:benchmark": "node scripts/run-live-research.js",
     "research:all": "node scripts/run-live-research.js --all"
