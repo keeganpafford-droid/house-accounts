@@ -223,8 +223,9 @@ begin
         and research_run_id = p_research_run_id
         and attempt_id = p_attempt_id
         and status = 'running'
+        and lease_expires_at > now()
     ) then
-      raise exception 'replace_ha_accounts_snapshot: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+      raise exception 'replace_ha_accounts_snapshot: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, failed, or its lease had already expired)', p_attempt_id, p_research_run_id, p_upload_id
         using errcode = 'HA001';
     end if;
   else
@@ -354,11 +355,17 @@ grant execute on function public.replace_ha_accounts_snapshot(uuid, uuid, jsonb,
 -- 8. persist_ha_research_output(): SAME SIGNATURE, ONE INTERNAL CALL SITE
 --    UPDATED
 -- =============================================================================
--- Re-issued verbatim from migration 6 except for the single
--- replace_ha_accounts_snapshot(...) call, which now passes
--- p_mode='tracked_research' explicitly (required, no default -- see §3).
--- Nothing else in this function's body, signature, grants, or the rest of
--- migration 6 changes.
+-- Re-issued from migration 6 AS CORRECTED (Phase 2A implementation-review
+-- ROUND 9 -- the lease_expires_at > now() addition to the attempt-validation
+-- UPDATE, approved and applied to the live database via migration 6), with
+-- exactly one further change: the replace_ha_accounts_snapshot(...) call now
+-- passes p_mode='tracked_research' explicitly (required, no default -- see
+-- §3). This migration must carry the CURRENT, already-deployed version of
+-- migration 6's function forward, not the pre-round-9 version -- re-issuing
+-- an older body here would silently regress the already-approved
+-- expired-but-unreclaimed-attempt protection the moment this migration is
+-- applied, even though migration 6 itself was never touched. Nothing else in
+-- this function's signature, grants, or the rest of migration 6 changes.
 create or replace function public.persist_ha_research_output(
   p_upload_id uuid,
   p_user_id uuid,
@@ -390,6 +397,13 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Requires the row's OWN lease to still be unexpired, not just a matching
+  -- attempt_id and status='running' -- mirrors heartbeat_ha_research_run()'s
+  -- same lease_expires_at > now() condition (migration 5 §7a); an expired-
+  -- but-not-yet-reclaimed attempt cannot renew itself and persist through
+  -- this RPC. Carried forward unchanged from migration 6 as corrected
+  -- (Phase 2A implementation-review ROUND 9) -- see §8 note above this
+  -- function for why migration 7 must not silently regress this check.
   update public.ha_research_runs
   set heartbeat_at = now(),
       lease_expires_at = now() + make_interval(secs => greatest(60, least(coalesce(p_lease_seconds, 300), 900)))
@@ -398,10 +412,11 @@ begin
     and research_run_id = p_research_run_id
     and attempt_id = p_attempt_id
     and status = 'running'
+    and lease_expires_at > now()
   returning * into v_run;
 
   if not found then
-    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, or failed)', p_attempt_id, p_research_run_id, p_upload_id
+    raise exception 'persist_ha_research_output: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, failed, or its lease had already expired)', p_attempt_id, p_research_run_id, p_upload_id
       using errcode = 'HA001';
   end if;
 

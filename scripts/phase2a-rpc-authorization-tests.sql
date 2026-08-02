@@ -1326,3 +1326,52 @@ begin
   delete from public.ha_users where id = v_user;
   raise notice '--- Tests 56-57 cleanup complete ---';
 end $$;
+
+-- ===========================================================================
+-- Test 58 (Phase 2A implementation-review ROUND 10, migration 7 defect
+-- found during pre-execution review): replace_ha_accounts_snapshot()'s
+-- p_mode='tracked_research' attempt-validation check must also require the
+-- row's OWN lease to still be unexpired, mirroring the SAME
+-- lease_expires_at > now() condition already proven for
+-- heartbeat_ha_research_run() (Test 50) and persist_ha_research_output()
+-- (Test 51). Distinct from Test 27 above, which covers an attempt_id that no
+-- longer matches at all post-reclaim -- here attempt_id STILL matches; only
+-- the lease has lapsed, and nobody has reclaimed it yet.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim jsonb;
+  v_attempt_id uuid;
+  v_count int;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-round10-migration7-expired-lease@example.com', 'Round 10 Migration 7 Expired Lease') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 10 migration 7 expired-lease test upload', 'uploaded') returning id into v_upload;
+
+  v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'auto';
+
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload, v_user, '[{"account_name":"Expired Lease Direct Write"}]'::jsonb,
+      'tracked_research', 'auto', v_attempt_id
+    );
+    raise notice 'FAIL: an attempt whose lease already expired was able to write accounts via replace_ha_accounts_snapshot -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA001' then raise notice 'PASS: Test 58: the expired-but-unreclaimed attempt is rejected with errcode HA001 by replace_ha_accounts_snapshot directly';
+    else raise notice 'FAIL: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  select count(*) into v_count from public.ha_accounts where upload_id = v_upload and account_name = 'Expired Lease Direct Write';
+  if v_count = 0 then raise notice 'PASS: Test 58: nothing was written to ha_accounts by the expired attempt';
+  else raise notice 'FAIL: % row(s) were written despite the rejection', v_count; end if;
+
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Test 58 cleanup complete ---';
+end $$;
