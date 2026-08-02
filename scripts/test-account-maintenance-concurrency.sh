@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Phase 2A implementation-review ROUND 7, item 3 (hardened ROUND 8, item 3)
+# Phase 2A implementation-review ROUND 7, item 3 (hardened ROUND 8, item 3;
+# hardened again ROUND 9 for live-Supabase approval)
 # — two-SESSION concurrency test for replace_ha_accounts_snapshot()'s
 # p_mode=accounts_maintenance active-run check
 # (supabase-schema-migration-7-mode-scoped-account-writes.sql).
@@ -15,49 +16,88 @@
 # the write happens. This script drives that with two REAL, concurrent
 # psql connections and deterministic pg_sleep-based interleaving.
 #
-# NOT executed in this session — no live database connection is available
-# here (same constraint as scripts/phase2a-rpc-authorization-tests.sql).
-# Run this manually against a non-production Supabase/Postgres instance,
-# AFTER migration 7 has been applied there, before trusting this behavior
-# in production. Requires: bash and psql only (see ROUND 8 item 3 fix notes
-# below for why `bc` is no longer required). DATABASE_URL must point at a
-# direct (non-PgBouncer-transaction-mode) Postgres connection — advisory
-# locks and multi-statement transactions require a session-level
-# connection, exactly like the rest of this schema's locking model.
+# Verified end-to-end against a real local PostgreSQL 16 instance loaded
+# from supabase-schema.sql (see ROUND 9 execution notes). Run it manually
+# against a non-production Supabase/Postgres instance, AFTER migration 7
+# has been applied there, before trusting this behavior in production.
+#
+# Required utilities: bash (native integer arithmetic, arrays, $RANDOM) and
+# psql only. Elapsed-time measurement is done via Postgres's own
+# clock_timestamp(), read back through psql, NOT via `date +%s%N` — that
+# %N field is a GNU coreutils extension absent from e.g. macOS/BSD date, so
+# depending on it while claiming "bash and psql only" would be inaccurate.
+# No `bc`, no other external dependency.
+#
+# DATABASE_URL must point at a direct (non-PgBouncer-transaction-mode)
+# Postgres connection. Advisory locks and multi-statement transactions
+# require a session-level connection, exactly like the rest of this
+# schema's locking model — a Supabase transaction-pooler (port 6543)
+# connection would silently invalidate this test's premise, so the script
+# preflights the port below and refuses to run against one.
 #
 # Usage:
 #   DATABASE_URL=postgres://... ./scripts/test-account-maintenance-concurrency.sh
 #
 # =============================================================================
-# ROUND 8, item 3 — what changed from the ROUND 7 version, and why
+# ROUND 9 — what changed from the ROUND 8 version, and why
 # =============================================================================
-# 1. SQLSTATE detection: the old version grepped session B's raw psql error
-#    output for the literal string "55P03". Default psql error formatting
-#    (VERBOSITY=default) does NOT include the SQLSTATE code in that output
-#    at all — the grep could silently never match even when the RPC
-#    correctly raised 55P03, misreporting a PASS as a FAIL (or worse,
-#    matching some unrelated coincidental substring). Every RPC call this
-#    script makes is now wrapped in its own `do $$ ... exception when
-#    others then raise notice 'CONCURRENCY_RESULT:SQLSTATE=%', sqlstate;
-#    end $$;` block (the same explicit-capture pattern
-#    scripts/phase2a-rpc-authorization-tests.sql already uses throughout) --
-#    this prints a single, deterministic, greppable marker line regardless
-#    of any client-side verbosity setting, because it is emitted by our own
-#    RAISE NOTICE, not parsed out of Postgres's error-formatting output.
-# 2. `bc` is no longer used anywhere. Elapsed-time measurement now uses
-#    `date +%s%N` (whole nanoseconds, an integer) and bash's native integer
-#    arithmetic (`$(( ... ))`) exclusively -- no floating-point comparison,
-#    no external dependency beyond bash and psql themselves.
-# 3. `set -e` is no longer used. A failed assertion (or a genuinely
-#    unexpected command failure) no longer aborts the script before
-#    cleanup runs -- every check funnels through pass()/fail() below, which
-#    record the outcome and let the script continue, and a `trap cleanup
-#    EXIT` (registered immediately after the shared fixture is created)
-#    guarantees the DELETE statements at the bottom run on EVERY exit path,
-#    not just the successful one.
-# 4. The script now exits non-zero if ANY assertion failed (tracked via a
-#    FAILURES counter, checked at the very end), so it is safe to wire into
-#    CI/automation and have a failure actually be noticed.
+# 1. Unique fixture user, no UPSERT. The fixed, reusable
+#    'phase2a-round7-concurrency@example.com' email + `ON CONFLICT (email) DO
+#    UPDATE` is gone. Every run generates its own run id and its own
+#    never-reused email (phase2a-concurrency+<run_id>@example.invalid), then
+#    creates that user with a plain INSERT. This script must never adopt,
+#    and later delete, a user row left behind by an earlier run.
+# 2. Atomic fixture setup. The user and its upload are created together in
+#    ONE statement (a CTE: insert into ha_users ... returning id, then
+#    insert into ha_uploads selecting that id ... returning id) — a single
+#    implicit transaction, so either both rows exist or neither does. The
+#    exact fixture email is also kept in a shell variable so cleanup can
+#    resolve the exact row by that exact value if the statement committed
+#    but output parsing somehow failed to capture the IDs.
+# 3. Exact-ID cleanup only, unchanged in spirit from ROUND 8: dependency-
+#    first deletes (signals -> accounts -> research_runs -> upload -> user),
+#    always scoped to a specific captured id. No LIKE, no prefix match, no
+#    wildcard delete anywhere, including in the email-based fallback path
+#    (the email is used only to look up the exact row's id, never as a
+#    delete predicate against ha_accounts/ha_research_runs/ha_uploads).
+# 4. No `eval`. `PSQL` is a bash array (`PSQL=(psql "$DATABASE_URL" -X -q -v
+#    ON_ERROR_STOP=1)`), invoked everywhere as `"${PSQL[@]}" ...` — nothing
+#    in DATABASE_URL can be reinterpreted by the shell the way a string
+#    passed through `eval` could be.
+# 5. Finite timeouts. `PGCONNECT_TIMEOUT=10` bounds connection attempts;
+#    `PGOPTIONS='-c statement_timeout=20000'` bounds every statement in
+#    every session (including the ones deliberately blocked on the shared
+#    advisory lock) to 20s. Both scenarios' ~3s blocking windows sit
+#    comfortably inside that budget. A stuck connection or a genuinely
+#    wedged lock now produces a clear, bounded failure instead of an
+#    indefinite hang.
+# 6. Timing portability. `date +%s%N` is gone. Elapsed time is measured by
+#    asking Postgres itself, via a tiny `select
+#    (extract(epoch from clock_timestamp()) * 1000)::bigint` round trip
+#    before and after the blocking call, and diffing the two millisecond
+#    integers with bash's native `$(( ... ))` — no GNU-specific `date`, no
+#    `bc`, matching the "bash and psql only" requirement literally.
+# 7. Connection preflight. Before doing anything else, the script parses
+#    just the host:port portion out of DATABASE_URL (without ever printing
+#    DATABASE_URL itself) and refuses to run if the port is 6543 (Supabase's
+#    transaction-pooler port), since transaction pooling does not give
+#    session-scoped advisory locks and would silently invalidate every
+#    assertion this script makes.
+#
+# =============================================================================
+# ROUND 8, item 3 (retained) — SQLSTATE detection, no `bc`, no `set -e`
+# =============================================================================
+# - Every RPC call is wrapped in `do $$ ... exception when others then raise
+#   notice 'CONCURRENCY_RESULT:SQLSTATE=%', sqlstate; end $$;` so the result
+#   is a single, deterministic, greppable marker line regardless of client
+#   verbosity settings, rather than grepping psql's own error formatting
+#   (which does not reliably include the SQLSTATE code at all).
+# - `set -e` is not used. A failed assertion no longer aborts the script
+#   before cleanup runs — every check funnels through pass()/fail(), and a
+#   `trap cleanup EXIT` (registered before any SQL work) guarantees the
+#   DELETE statements run on every exit path.
+# - The script exits non-zero if ANY assertion failed (tracked via a
+#   FAILURES counter), so it is safe to wire into CI/automation.
 #
 # =============================================================================
 # WHAT EACH SCENARIO PROVES
@@ -94,56 +134,113 @@ set -uo pipefail
 
 : "${DATABASE_URL:?Set DATABASE_URL to a direct (session-mode) Postgres connection string before running this script.}"
 
-PSQL="psql \"$DATABASE_URL\" -X -q -v ON_ERROR_STOP=1"
+# ---------------------------------------------------------------------------
+# Connection preflight: refuse a Supabase transaction-pooler (port 6543)
+# connection. Parses only the host:port segment out of the URL -- never
+# echoes DATABASE_URL itself, anywhere, including in error output.
+# ---------------------------------------------------------------------------
+url_no_scheme="${DATABASE_URL#*://}"
+url_no_userinfo="${url_no_scheme#*@}"
+hostport="${url_no_userinfo%%/*}"
+hostport="${hostport%%\?*}"
+if [[ "$hostport" == *:6543 ]]; then
+  echo "ERROR: DATABASE_URL targets port 6543 (Supabase's transaction-pooler port)." >&2
+  echo "Advisory locks and multi-statement transactions require a direct or" >&2
+  echo "session-mode connection (Supabase: port 5432, direct or session pooler)." >&2
+  echo "Refusing to run this test against a transaction-pooler connection." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Finite timeouts: a bounded connection attempt and a bounded per-statement
+# execution budget, so a bad connection or a genuinely wedged lock produces
+# a clear failure instead of an indefinite hang. Both scenarios' ~3s
+# blocking windows sit comfortably inside a 20s statement timeout.
+# ---------------------------------------------------------------------------
+export PGCONNECT_TIMEOUT=10
+export PGOPTIONS='-c statement_timeout=20000'
+
+# psql invoked as an array everywhere below, never via `eval` on a string --
+# nothing in DATABASE_URL can be reinterpreted by the shell.
+PSQL=(psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1)
+
 SCRATCH_DIR="$(mktemp -d)"
 
 FAILURES=0
 pass(){ echo "PASS: $1"; }
 fail(){ echo "FAIL: $1"; FAILURES=$((FAILURES + 1)); }
 
+# ---------------------------------------------------------------------------
+# Unique fixture identity: a fresh run id and a fresh, never-reused email.
+# No ON CONFLICT / UPSERT anywhere in this script -- it must never adopt,
+# and later delete, a user row left behind by an earlier run.
+# ---------------------------------------------------------------------------
+RUN_ID="$(date +%s)-$$-$RANDOM"
+FIXTURE_EMAIL="phase2a-concurrency+${RUN_ID}@example.invalid"
+
 # Registered EARLY (before either session's SQL work below) so cleanup
-# fires no matter how the script exits -- a failed assertion (which no
-# longer calls `set -e`-triggered early exit, see item 3 above), a genuine
-# command failure, Ctrl-C, or normal completion all route through here.
+# fires no matter how the script exits -- a failed assertion (no `set -e`),
+# a genuine command failure, Ctrl-C, or normal completion all route here.
 USER_ID=""
 UPLOAD_ID=""
 cleanup(){
   rm -rf "$SCRATCH_DIR"
+
+  # Fallback: if the atomic setup statement below committed but output
+  # parsing somehow failed to capture USER_ID/UPLOAD_ID, resolve them from
+  # the exact unique fixture email. This is still an exact-identity lookup,
+  # not a wildcard match -- the email is freshly generated per run and
+  # inserted with a plain INSERT, so an exact `= $FIXTURE_EMAIL` match can
+  # only ever resolve to a row this specific run created.
+  if [ -z "$USER_ID" ]; then
+    USER_ID="$("${PSQL[@]}" -t -A -c "select id from public.ha_users where email = '$FIXTURE_EMAIL';" 2>/dev/null)"
+  fi
+  if [ -z "$UPLOAD_ID" ] && [ -n "$USER_ID" ]; then
+    UPLOAD_ID="$("${PSQL[@]}" -t -A -c "select id from public.ha_uploads where user_id = '$USER_ID'::uuid;" 2>/dev/null)"
+  fi
+
   if [ -n "$UPLOAD_ID" ]; then
-    eval $PSQL -c "delete from public.ha_signals where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
-    eval $PSQL -c "delete from public.ha_accounts where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
-    eval $PSQL -c "delete from public.ha_research_runs where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
-    eval $PSQL -c "delete from public.ha_uploads where id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
+    "${PSQL[@]}" -c "delete from public.ha_signals where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
+    "${PSQL[@]}" -c "delete from public.ha_accounts where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
+    "${PSQL[@]}" -c "delete from public.ha_research_runs where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
+    "${PSQL[@]}" -c "delete from public.ha_uploads where id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
   fi
   if [ -n "$USER_ID" ]; then
-    eval $PSQL -c "delete from public.ha_users where id = '$USER_ID'::uuid;" > /dev/null 2>&1
+    "${PSQL[@]}" -c "delete from public.ha_users where id = '$USER_ID'::uuid;" > /dev/null 2>&1
   fi
   echo ""
   echo "=== cleanup complete ==="
 }
 trap cleanup EXIT
 
-echo "=== Phase 2A ROUND 7/8 two-session concurrency test ==="
+echo "=== Phase 2A ROUND 7/8/9 two-session concurrency test ==="
 echo "Scratch dir: $SCRATCH_DIR"
+echo "Fixture run id: $RUN_ID"
 
 # ---------------------------------------------------------------------------
-# Shared setup: one user, one fresh upload.
+# Shared setup: the user and its upload are created together in ONE atomic
+# statement (a CTE, one implicit transaction) -- if either insert fails,
+# both roll back, so there is never a user row without its upload or vice
+# versa. Captures USER_ID/UPLOAD_ID from that same statement.
 # ---------------------------------------------------------------------------
-eval $PSQL <<'SQL' > "$SCRATCH_DIR/setup.out"
-insert into public.ha_users (email, name)
-  values ('phase2a-round7-concurrency@example.com', 'Round 7 Concurrency')
-  on conflict (email) do update set name = excluded.name
-  returning id as user_id \gset
-insert into public.ha_uploads (user_id, upload_name, stage)
-  values (:'user_id', 'Phase 2A round 7 concurrency test upload', 'uploaded')
-  returning id as upload_id \gset
+"${PSQL[@]}" <<SQL > "$SCRATCH_DIR/setup.out"
+with new_user as (
+  insert into public.ha_users (email, name)
+  values ('$FIXTURE_EMAIL', 'Round 7 Concurrency')
+  returning id
+), new_upload as (
+  insert into public.ha_uploads (user_id, upload_name, stage)
+  select id, 'Phase 2A round 7 concurrency test upload', 'uploaded' from new_user
+  returning id, user_id
+)
+select new_upload.user_id as user_id, new_upload.id as upload_id from new_upload \gset
 \echo USER_ID :user_id
 \echo UPLOAD_ID :upload_id
 SQL
 SETUP_STATUS=$?
 cat "$SCRATCH_DIR/setup.out"
 if [ $SETUP_STATUS -ne 0 ]; then
-  fail "shared setup (user + upload) failed -- cannot run either scenario"
+  fail "atomic shared setup (user + upload) failed -- cannot run either scenario"
   echo ""
   echo "$((FAILURES)) FAILURE(S)"
   exit 1
@@ -151,14 +248,17 @@ fi
 USER_ID=$(grep '^USER_ID' "$SCRATCH_DIR/setup.out" | awk '{print $2}')
 UPLOAD_ID=$(grep '^UPLOAD_ID' "$SCRATCH_DIR/setup.out" | awk '{print $2}')
 if [ -z "$USER_ID" ] || [ -z "$UPLOAD_ID" ]; then
-  fail "shared setup did not produce a USER_ID/UPLOAD_ID -- cannot run either scenario"
+  fail "atomic setup appears to have committed but USER_ID/UPLOAD_ID could not be parsed from output -- cleanup will fall back to the exact fixture email ($FIXTURE_EMAIL) to resolve and remove this run's rows"
+  echo ""
+  echo "$((FAILURES)) FAILURE(S)"
   exit 1
 fi
 echo "user_id=$USER_ID upload_id=$UPLOAD_ID"
 
-# Returns nanoseconds since epoch as a plain integer -- used for elapsed-time
-# assertions via bash integer arithmetic only (no bc, no floating point).
-now_ns(){ date +%s%N; }
+# Returns milliseconds since epoch as a plain integer, read from Postgres's
+# own clock_timestamp() -- used for elapsed-time assertions via bash integer
+# arithmetic only (no bc, no floating point, no GNU-specific `date +%s%N`).
+now_ms(){ "${PSQL[@]}" -t -A -c "select (extract(epoch from clock_timestamp()) * 1000)::bigint;"; }
 
 # ---------------------------------------------------------------------------
 # Scenario 1: claim wins the lock first; accounts_maintenance blocks, then
@@ -193,13 +293,13 @@ end
 \$outer\$;
 SQL
 
-( eval $PSQL -f "$SCRATCH_DIR/session_a_claim.sql" > "$SCRATCH_DIR/session_a.out" 2>&1 ) &
+( "${PSQL[@]}" -f "$SCRATCH_DIR/session_a_claim.sql" > "$SCRATCH_DIR/session_a.out" 2>&1 ) &
 A_PID=$!
 sleep 0.5 # let session A acquire the advisory lock first
-START_B=$(now_ns)
-eval $PSQL -f "$SCRATCH_DIR/session_b_maintenance.sql" > "$SCRATCH_DIR/session_b.out" 2>&1
-END_B=$(now_ns)
-ELAPSED_B_NS=$((END_B - START_B))
+START_B=$(now_ms)
+"${PSQL[@]}" -f "$SCRATCH_DIR/session_b_maintenance.sql" > "$SCRATCH_DIR/session_b.out" 2>&1
+END_B=$(now_ms)
+ELAPSED_B_MS=$((END_B - START_B))
 
 if grep -q 'CONCURRENCY_RESULT:SQLSTATE=55P03' "$SCRATCH_DIR/session_b.out"; then
   pass "session B was rejected with errcode 55P03 (a research run is currently active), only after actually being able to see A's committed claim"
@@ -211,11 +311,11 @@ else
   cat "$SCRATCH_DIR/session_b.out"
 fi
 
-# 2,500,000,000 ns = 2.5s -- integer nanosecond comparison, no bc.
-if [ "$ELAPSED_B_NS" -ge 2500000000 ]; then
-  pass "session B was genuinely BLOCKED for ~3s by session A's advisory lock (measured $((ELAPSED_B_NS / 1000000))ms) -- it did not race ahead and evaluate a stale pre-claim state"
+# 2500 ms = 2.5s -- integer millisecond comparison, no bc.
+if [ "$ELAPSED_B_MS" -ge 2500 ]; then
+  pass "session B was genuinely BLOCKED for ~3s by session A's advisory lock (measured ${ELAPSED_B_MS}ms) -- it did not race ahead and evaluate a stale pre-claim state"
 else
-  fail "session B returned too quickly ($((ELAPSED_B_NS / 1000000))ms) to have actually been blocked by A's lock -- the two calls may not be sharing the same advisory lock key"
+  fail "session B returned too quickly (${ELAPSED_B_MS}ms) to have actually been blocked by A's lock -- the two calls may not be sharing the same advisory lock key"
 fi
 
 wait "$A_PID"
@@ -226,14 +326,14 @@ else
   cat "$SCRATCH_DIR/session_a.out"
 fi
 
-ACCOUNT_COUNT=$(eval $PSQL -t -A -c "select count(*) from public.ha_accounts where upload_id = '$UPLOAD_ID'::uuid;" 2>/dev/null)
+ACCOUNT_COUNT=$("${PSQL[@]}" -t -A -c "select count(*) from public.ha_accounts where upload_id = '$UPLOAD_ID'::uuid;" 2>/dev/null)
 if [ "$ACCOUNT_COUNT" = "0" ]; then
   pass "no account row was written by the rejected accounts_maintenance call"
 else
   fail "the rejected accounts_maintenance call in scenario 1 still wrote a row (count=$ACCOUNT_COUNT)"
 fi
 
-eval $PSQL -c "delete from public.ha_research_runs where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
+"${PSQL[@]}" -c "delete from public.ha_research_runs where upload_id = '$UPLOAD_ID'::uuid;" > /dev/null 2>&1
 
 # ---------------------------------------------------------------------------
 # Scenario 2: reverse interleaving -- maintenance takes the lock first (no
@@ -260,13 +360,13 @@ select public.claim_ha_research_run('$USER_ID'::uuid, '$UPLOAD_ID'::uuid, 'auto'
 \echo SESSION_A_CLAIM_DONE
 SQL
 
-( eval $PSQL -f "$SCRATCH_DIR/session_b_maintenance_first.sql" > "$SCRATCH_DIR/session_b2.out" 2>&1 ) &
+( "${PSQL[@]}" -f "$SCRATCH_DIR/session_b_maintenance_first.sql" > "$SCRATCH_DIR/session_b2.out" 2>&1 ) &
 B_PID=$!
 sleep 0.5
-START_A=$(now_ns)
-eval $PSQL -f "$SCRATCH_DIR/session_a_claim_second.sql" > "$SCRATCH_DIR/session_a2.out" 2>&1
-END_A=$(now_ns)
-ELAPSED_A_NS=$((END_A - START_A))
+START_A=$(now_ms)
+"${PSQL[@]}" -f "$SCRATCH_DIR/session_a_claim_second.sql" > "$SCRATCH_DIR/session_a2.out" 2>&1
+END_A=$(now_ms)
+ELAPSED_A_MS=$((END_A - START_A))
 wait "$B_PID"
 
 if grep -q SESSION_B_DONE "$SCRATCH_DIR/session_b2.out"; then
@@ -281,10 +381,10 @@ else
   fail "session A's claim did not complete as expected"
   cat "$SCRATCH_DIR/session_a2.out"
 fi
-if [ "$ELAPSED_A_NS" -ge 2500000000 ]; then
-  pass "session A was genuinely BLOCKED for ~3s by session B's advisory lock (measured $((ELAPSED_A_NS / 1000000))ms) -- lock ownership, not call order in application code, determines who proceeds first"
+if [ "$ELAPSED_A_MS" -ge 2500 ]; then
+  pass "session A was genuinely BLOCKED for ~3s by session B's advisory lock (measured ${ELAPSED_A_MS}ms) -- lock ownership, not call order in application code, determines who proceeds first"
 else
-  fail "session A returned too quickly ($((ELAPSED_A_NS / 1000000))ms) to have actually been blocked by B's lock"
+  fail "session A returned too quickly (${ELAPSED_A_MS}ms) to have actually been blocked by B's lock"
 fi
 
 echo ""
