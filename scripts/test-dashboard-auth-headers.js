@@ -99,13 +99,36 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
   }
   return slice;
 }
-const REAL_DASHBOARD_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2118, 2128, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2148, 2165, {async: true}),
-  extractFn('reportResearchRunOutcome', 2174, 2199, {async: true}),
-  extractFn('loadDashboardUsage', 2221, 2231, {async: true}),
-  extractFn('request', 6164, 6171, {async: true})
-].join('\n\n');
+const EXTRACTED = {
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2118, 2128, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2148, 2165, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2174, 2199, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2221, 2231, {async: true}),
+  request: extractFn('request', 6164, 6171, {async: true})
+};
+const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
+
+// ===========================================================================
+// Static regression assertion (in addition to the behavioral ones further
+// down): each extracted function's VERBATIM source -- pulled from the real,
+// on-disk dashboard/index.html above, not a reconstructed/hand-written
+// string -- must call authHeadersAsync() and must NOT call the synchronous
+// authHeaders(). This directly answers "is the shipped source what we
+// think it is", the exact question a Preview build serving a stale bundle
+// raised: this check operates on the actual file contents regardless of
+// what any particular deployment happens to be running, so a future
+// regression that reintroduces the sync call here fails this test
+// immediately, on the very next local/CI run, rather than being
+// discovered only via a live 401 in production.
+// ===========================================================================
+{
+  const SYNC_CALL = /authHeaders\(/; // does NOT match "authHeadersAsync(" -- "Async" intervenes before the "("
+  const ASYNC_CALL = /authHeadersAsync/;
+  for(const [name, src] of Object.entries(EXTRACTED)){
+    assert(ASYNC_CALL.test(src), `static: ${name}()'s real, on-disk source contains authHeadersAsync`);
+    assert(!SYNC_CALL.test(src), `static: ${name}()'s real, on-disk source contains NO synchronous authHeaders() call`);
+  }
+}
 
 // ===========================================================================
 // Sandbox: the REAL auth-client.js source (unmocked) plus the REAL
