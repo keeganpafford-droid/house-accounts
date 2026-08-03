@@ -1799,6 +1799,25 @@
   .acct-mgr-row{grid-template-columns:1fr auto auto;row-gap:8px;}
   .acct-mgr-toggle span.acct-toggle-label{display:none;}
 }
+.acct-mgr-row-researching{background:#F7F8FA;}
+.acct-mgr-run-banner{margin:10px 0 2px;padding:9px 12px;border-radius:8px;font-size:.84rem;font-weight:600;line-height:1.4;}
+.acct-mgr-run-banner-active{background:#EAF6F4;color:var(--ink);border-left:3px solid var(--radar);}
+.acct-mgr-run-banner-error{background:var(--danger-surface);color:var(--danger);border-left:3px solid var(--danger);}
+
+/* ROUND 12, UX item 2 -- Recently Researched (above This Week's Priorities)
+   and the shared "just landed here" highlight used by scrollToAccountResult(). */
+.recently-researched-section{max-width:1136px;margin:0 auto 16px;}
+.recently-researched-section .section-header{margin-bottom:10px;}
+.recently-researched-list{display:flex;flex-direction:column;gap:8px;}
+.recently-researched-card{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--radar);border-radius:8px;padding:10px 14px;flex-wrap:wrap;}
+.rr-name{font-weight:700;color:var(--ink);font-size:.92rem;}
+.rr-meta{color:var(--muted);font-size:.78rem;margin-top:2px;}
+.rr-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.rr-dismiss-btn{background:none;border:1px solid var(--line);border-radius:6px;width:26px;height:26px;line-height:1;color:var(--muted);cursor:pointer;font-size:.85rem;}
+.rr-dismiss-btn:hover{border-color:var(--ink);color:var(--ink);}
+.rr-dismiss-btn:focus-visible,.rr-view-btn:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
+@keyframes haHighlightPulse{0%,100%{box-shadow:0 0 0 0 rgba(15,157,140,.35);}50%{box-shadow:0 0 0 8px rgba(15,157,140,0);}}
+.ha-just-researched-highlight{outline:3px solid var(--radar);outline-offset:3px;animation:haHighlightPulse 1.4s ease-in-out 2;}
 
 /* Manage Customer Accounts modal -- branded toast (reversible actions) and
    destructive-confirmation dialog, replacing window.confirm(). */
@@ -2100,6 +2119,14 @@
 
     </div>
 
+    <!-- ROUND 12, UX item 2: compact, temporary section showing accounts
+         researched in the last little while, above This Week's Priorities.
+         Purely additive display -- renderRecentlyResearchedSection() (main
+         script below) never touches the underlying priority sort, it only
+         reads window.accountRadarAccounts' persisted lastResearchedAt/
+         signals to decide what belongs here and for how long. -->
+    <div class="recently-researched-section" id="recentlyResearchedSection" hidden></div>
+
     <!-- Opportunity Cards Section -->
     <div class="opportunities-section">
       <div class="section-header" id="timeboxSectionHeader">This Week's Priorities</div>
@@ -2238,6 +2265,11 @@ async function heartbeatCurrentResearchRun(context){
 // attempt semantics). Silently does nothing if no run/attempt is available.
 // ROUND 4: same optional-context pattern as heartbeatCurrentResearchRun()
 // above, for the standalone button's own independently-claimed run.
+// ROUND 12: ctx.uploadId lets a scoped caller (researchAccountFromManageModal's
+// catch block) report against its own captured expectedUploadId instead of
+// the currentUploadId global -- same rationale as claimAutomaticResearchRun's
+// explicitUploadId parameter above. Omitted context/uploadId keeps reading
+// currentUploadId exactly as before, so existing callers are unaffected.
 async function reportResearchRunOutcome(action, resultSummaryOrError, context){
   const ctx = context || { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
   if(!ctx.researchRunId || !ctx.attemptId) return;
@@ -2252,7 +2284,7 @@ async function reportResearchRunOutcome(action, resultSummaryOrError, context){
       headers,
       body: JSON.stringify({
         researchRunAction: action,
-        uploadId: currentUploadId,
+        uploadId: ctx.uploadId || currentUploadId,
         researchRunId: ctx.researchRunId,
         attemptId: ctx.attemptId,
         ...(action === 'complete'
@@ -3610,14 +3642,14 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
 function renderRepOpportunityCard(opp){
   if(opp._locked){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
-    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
+    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card" data-account="${acct}"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
   }
   const recBadge = recommendationBadgeMeta(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
   const evidenceRows = structuredEvidenceRows(opp);
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
   return `
-    <div class="opportunity-card daily-reason-card">
+    <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}">
       <div class="opp-card-header">
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
@@ -3893,6 +3925,45 @@ async function persistScopedResearchResult({uploadId, uploadName, accounts, rese
 // function claims, calls the provider, and persists using only its own
 // locally-captured context; the account-card version of "Research" /
 // "Research Again" continues to use researchAccountByName() unchanged.
+// ROUND 12: best-effort, NEVER-authoritative localStorage breadcrumb. The
+// server (api/monitoring-lists.js's researchRunState, computed from
+// ha_research_runs) is the sole source of truth for WHETHER a run is
+// active/failed; this only remembers WHICH account name a given
+// research_run_id corresponds to, purely so the Manage Customer Accounts
+// modal can show "Researching <name>..." instead of a nameless state after
+// a reopen or full page reload. If this is ever missing, stale, or simply
+// disagrees with the server, the UI falls back to a generic message -- it
+// is never consulted to decide active/idle/failed, only to label an
+// already-server-confirmed active run.
+const ACTIVE_RESEARCH_BREADCRUMB_KEY = 'ha_active_research_breadcrumb_v1';
+function setActiveResearchBreadcrumb(uploadId, researchRunId, accountName){
+  try{
+    const all = JSON.parse(localStorage.getItem(ACTIVE_RESEARCH_BREADCRUMB_KEY) || '{}');
+    all[uploadId] = { researchRunId, accountName, savedAt: new Date().toISOString() };
+    localStorage.setItem(ACTIVE_RESEARCH_BREADCRUMB_KEY, JSON.stringify(all));
+  }catch(err){ /* best-effort only -- localStorage may be unavailable/full */ }
+}
+function clearActiveResearchBreadcrumb(uploadId, researchRunId){
+  try{
+    const all = JSON.parse(localStorage.getItem(ACTIVE_RESEARCH_BREADCRUMB_KEY) || '{}');
+    // Only clear if it still matches the run that wrote it, so a late
+    // clear from a superseded attempt can never wipe a NEWER claim's
+    // breadcrumb for the same upload.
+    if(all[uploadId] && all[uploadId].researchRunId === researchRunId){
+      delete all[uploadId];
+      localStorage.setItem(ACTIVE_RESEARCH_BREADCRUMB_KEY, JSON.stringify(all));
+    }
+  }catch(err){ /* best-effort only */ }
+}
+function getActiveResearchBreadcrumb(uploadId, researchRunId){
+  try{
+    const all = JSON.parse(localStorage.getItem(ACTIVE_RESEARCH_BREADCRUMB_KEY) || '{}');
+    const entry = all[uploadId];
+    if(entry && (!researchRunId || entry.researchRunId === researchRunId)) return entry.accountName || '';
+  }catch(err){ /* best-effort only */ }
+  return '';
+}
+
 async function researchAccountFromManageModal(accountName, listId){
   if(listId !== currentUploadId){
     return {ok:false, outOfScope:true, error:'Open this list on the dashboard to research this account.'};
@@ -3920,6 +3991,12 @@ async function researchAccountFromManageModal(accountName, listId){
   }
   const researchRunId = claim.data.researchRunId;
   const attemptId = claim.data.attemptId;
+  const runContext = { researchRunId, attemptId, uploadId: expectedUploadId };
+  // Written the instant we own the run, before the provider call, so a
+  // reopen or full-page-reload that lands while the request is still in
+  // flight can label the server-confirmed active run with this account's
+  // name (see requirement 2/7 of the run-state reattachment feature).
+  setActiveResearchBreadcrumb(expectedUploadId, researchRunId, targetAccountName);
 
   try{
     const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
@@ -3970,10 +4047,25 @@ async function researchAccountFromManageModal(accountName, listId){
       attemptId
     });
     if(!saveResult.ok){
+      // Best-effort: marks the run 'failed' so a reopen/reload surfaces the
+      // branded failure state (requirement 6). If this was actually a
+      // staleAttempt (another claim already superseded ours), the
+      // attempt-id-guarded RPC simply no-ops (applied:false) rather than
+      // clobbering the newer run's state -- see failResearchRunAttempt().
+      await reportResearchRunOutcome('fail', saveResult.error, runContext);
+      clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
       return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
     }
+    // Success: persist_ha_research_output() (via /api/save-upload's tracked
+    // path) atomically finalizes the run as part of the same transaction
+    // that persisted its output -- same rationale as researchAccountByName()
+    // above, so no separate reportResearchRunOutcome('complete', ...) call
+    // is needed here either.
+    clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
     return {ok:true, account};
   }catch(err){
+    await reportResearchRunOutcome('fail', err, runContext);
+    clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
     return {ok:false, error: (err && err.message) || 'Research failed. Please try again.'};
   }
 }
@@ -4579,7 +4671,159 @@ function refreshOpportunityViews(){
   if(highConfEl) highConfEl.textContent = revenueContext.newBusinessOpps;
   if(avgConfEl) avgConfEl.textContent = revenueContext.totalReasons;
   renderResearchDiagnostics();
+  renderRecentlyResearchedSection();
 }
+
+// ===========================================================================
+// ROUND 12, UX item 2 -- post-research result handoff.
+//
+// applyModalResearchResultToDashboard() is display-only and deliberately
+// separate from researchAccountFromManageModal()/persistScopedResearchResult()
+// above, which never read or write window.accountRadarAccounts by design
+// (see their own comments -- that principle protects the SAVE path from
+// stale/global-derived corruption). This function runs strictly AFTER a
+// save has already succeeded; it only patches the main dashboard's
+// in-memory display copy of the SAME account with the SAME already-saved
+// result, purely so the existing render functions immediately reflect it.
+// researchAccountFromManageModal() only ever operates on an account whose
+// listId === currentUploadId (it returns outOfScope otherwise), so the
+// researched account is guaranteed to already exist in
+// window.accountRadarAccounts here -- this never invents a new entry.
+function applyModalResearchResultToDashboard(freshAccount){
+  if(!freshAccount || !freshAccount.name) return null;
+  const accounts = window.accountRadarAccounts || [];
+  const target = accounts.find(a => a.name === freshAccount.name);
+  if(!target) return null;
+  target.signals = freshAccount.signals || [];
+  target.lastResearchedAt = freshAccount.lastResearchedAt || new Date().toISOString();
+  addSignalDerivedOpportunities(target, target.signals);
+  refreshOpportunityViews();
+  return target;
+}
+
+// Finds the first timebox (in priority order) for which this account
+// already has at least one matching opportunity, so scrollToAccountResult()
+// can switch the visible tab there instead of leaving the result hidden
+// behind whichever tab happened to be open. Returns null (not an error --
+// just "nothing to jump to yet") when the account has no opportunities at
+// all, e.g. a zero-signal research result.
+function findTimeboxForAccountOpportunity(accountName){
+  const accounts = window.accountRadarAccounts || [];
+  const account = accounts.find(a => a.name === accountName);
+  const opps = (account && account.futureOpportunities) || [];
+  if(!opps.length) return null;
+  const order = ['week','month','quarter','annual'];
+  return order.find(tb => opps.some(o => opportunityMatchesTimebox(o, tb))) || null;
+}
+
+function highlightResultElement(el){
+  if(!el) return;
+  el.classList.add('ha-just-researched-highlight');
+  if(!el.hasAttribute('tabindex')) el.setAttribute('tabindex','-1');
+  try{ el.focus({preventScroll:true}); }catch(err){ /* focus is a courtesy, not required */ }
+  setTimeout(() => el.classList.remove('ha-just-researched-highlight'), 4000);
+}
+
+// "View opportunities" -- requirement: must work even when the account is
+// not near the top of the normal priority ranking, WITHOUT permanently
+// distorting that ranking. Reuses the existing "View All Opportunities"
+// toggle (showAllWeeklyPriorities) that already removes the display cap for
+// the CURRENT session's view -- the underlying sort/limit logic in
+// prepareTimeboxReasons()/prepareAllOpportunities() is untouched, this only
+// flips the same switch a user could click themselves.
+function scrollToAccountResult(accountName){
+  const matchedTimebox = findTimeboxForAccountOpportunity(accountName);
+  if(matchedTimebox){
+    if(activeTimebox !== matchedTimebox){
+      activeTimebox = matchedTimebox;
+      document.querySelectorAll('.timebox-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.timebox === activeTimebox));
+    }
+    showAllWeeklyPriorities = true;
+    refreshOpportunityViews();
+  }
+  const grid = document.getElementById('opportunitiesGrid');
+  const gridCard = grid && [...grid.querySelectorAll('[data-account]')].find(el => el.dataset.account === accountName);
+  const detailCard = !gridCard && [...document.querySelectorAll('#accountList .account-card')].find(el => el.dataset.accountName === accountName);
+  // Fallback: no rendered opportunity/detail card at all (e.g. a genuine
+  // zero-signal result) -- the Recently Researched entry for this account
+  // is always guaranteed to exist right after a completed run, so land
+  // there instead of doing nothing.
+  const recentCard = !gridCard && !detailCard && [...document.querySelectorAll('#recentlyResearchedSection .recently-researched-card')].find(el => el.dataset.accountName === accountName);
+  const target = gridCard || detailCard || recentCard || document.getElementById('recentlyResearchedSection');
+  if(target){ target.scrollIntoView({behavior:'smooth', block:'center'}); highlightResultElement(target); }
+}
+
+// Recently Researched -- compact, temporary, ADDITIVE section above This
+// Week's Priorities. Sourced entirely from window.accountRadarAccounts'
+// persisted lastResearchedAt/signals (never a transient "just clicked"
+// DOM-only flag), so it survives a page reload and correctly reflects a
+// research run that completed while the Manage Customer Accounts modal was
+// closed. Deduplicated by account name (a rerun updates the same entry's
+// timestamp rather than adding a second one) and naturally drops out of the
+// window on its own after RECENTLY_RESEARCHED_WINDOW_MS -- no separate
+// expiry timer needed since this only ever recomputes on the next render.
+const RECENTLY_RESEARCHED_WINDOW_MS = 30 * 60 * 1000;
+const dismissedRecentlyResearched = new Set();
+function getRecentlyResearchedAccounts(){
+  const accounts = window.accountRadarAccounts || [];
+  const cutoff = Date.now() - RECENTLY_RESEARCHED_WINDOW_MS;
+  return accounts
+    .filter(a => a.lastResearchedAt && !dismissedRecentlyResearched.has(a.name))
+    .map(a => ({
+      name: a.name,
+      ts: new Date(a.lastResearchedAt).getTime(),
+      signalCount: dedupeVerifiedSignals(a.signals || []).length
+    }))
+    .filter(e => Number.isFinite(e.ts) && e.ts >= cutoff)
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 5);
+}
+function relativeResearchTimeLabel(ts){
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if(mins < 1) return 'Researched moments ago';
+  if(mins === 1) return 'Researched 1 minute ago';
+  if(mins < 60) return `Researched ${mins} minutes ago`;
+  const hrs = Math.floor(mins / 60);
+  return `Researched ${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+}
+function renderRecentlyResearchedSection(){
+  const host = document.getElementById('recentlyResearchedSection');
+  if(!host) return;
+  const entries = getRecentlyResearchedAccounts();
+  if(!entries.length){ host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  // data-account-name carries the name (HTML-attribute-escaped, read back
+  // via .dataset -- never evaluated as code); no account name is ever
+  // interpolated into an inline onclick, matching the R8.1 fix's rationale
+  // for account-card actions above.
+  host.innerHTML = `
+    <div class="section-header">Recently Researched</div>
+    <div class="recently-researched-list">
+      ${entries.map(e => `
+        <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}">
+          <div class="rr-info">
+            <div class="rr-name">${escapeHtml(e.name)}</div>
+            <div class="rr-meta">${e.signalCount ? `${e.signalCount} verified signal${e.signalCount === 1 ? '' : 's'} found` : 'No verified signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
+          </div>
+          <div class="rr-actions">
+            ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">View opportunities</button>` : ''}
+            <button type="button" class="rr-dismiss-btn" aria-label="Dismiss ${escapeHtml(e.name)} from Recently Researched">✕</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+document.addEventListener('click', (event) => {
+  const card = event.target.closest('.recently-researched-card');
+  if(!card) return;
+  const accountName = card.dataset.accountName;
+  if(!accountName) return;
+  if(event.target.closest('.rr-view-btn')){ scrollToAccountResult(accountName); return; }
+  if(event.target.closest('.rr-dismiss-btn')){
+    dismissedRecentlyResearched.add(accountName);
+    renderRecentlyResearchedSection();
+  }
+});
+// ===========================================================================
 
 function estimateFutureValue(account, opportunityType){
   const revenue = account.revenue || 0;
@@ -6462,7 +6706,17 @@ function escapeHtml(text){
    if(!headers) throw new Error('Your session has expired. Please log in again.');
    const r=await fetch('/api/monitoring-lists',{method,headers,body:body?JSON.stringify(body):undefined,cache:'no-store'});
    const d=await r.json().catch(()=>({}));
-   if(!r.ok)throw new Error(d.error||'Customer account request failed');
+   if(!r.ok){
+     const err = new Error(d.error||'Customer account request failed');
+     // ROUND 12, UX item 1: api/monitoring-lists.js sets identityLocked:true
+     // on the JSON body specifically for the HA004 rejection (deleting an
+     // account whose upload has research history). Carried through onto the
+     // thrown Error so the delete-account handler below can show the
+     // branded HA004 dialog instead of a generic error message, without
+     // string-matching err.message.
+     if(d.identityLocked) err.identityLocked = true;
+     throw err;
+   }
    return d;
  }
 
@@ -6482,18 +6736,36 @@ function escapeHtml(text){
  // is exactly the cross-list gap the review flagged, and is explicitly out
  // of scope for this patch -- those rows show a disabled, clearly-labeled
  // action instead of silently failing.
+ // ROUND 12: list.researchRunState comes straight from
+ // api/monitoring-lists.js's summarizeResearchRunState() -- a plain,
+ // side-effect-free read of the latest ha_research_runs row for this
+ // upload. It is the server-owned source of truth for "is a run active /
+ // did the last one fail", independent of anything this tab's own DOM
+ // happens to remember. getActiveResearchBreadcrumb() only supplies the
+ // human-readable account NAME for an already-server-confirmed run (see its
+ // own comment above researchAccountFromManageModal in the main script) --
+ // if it can't resolve a name, the UI still reflects the correct state,
+ // just with a generic phrase instead of the account name.
  function accountRow(list, a){
    const paused = a.monitoringStatus === 'paused';
    const inScope = typeof currentUploadId !== 'undefined' && list.id === currentUploadId;
    const researched = !!a.lastResearchedAt;
-   const researchLabel = researched ? 'Research Again' : 'Research';
+   const runState = list.researchRunState || {status:'idle'};
+   const runActive = runState.status === 'active';
+   const activeAccountName = runActive ? getActiveResearchBreadcrumb(list.id, runState.researchRunId) : '';
+   const isBeingResearched = runActive && activeAccountName === a.name;
+   const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Research Again' : 'Research');
+   const researchDisabled = !inScope || runActive;
+   let researchTitle = '';
+   if(!inScope) researchTitle = 'Open this list on the dashboard to research this account.';
+   else if(runActive) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
    const metaParts = [
      a.industry ? esc(a.industry) : '',
      a.domain ? esc(a.domain) : 'No domain on file',
      `Added ${fmt(a.dateAdded)}`,
      researched ? `Last researched ${fmt(a.lastResearchedAt)}` : 'Not researched yet'
    ].filter(Boolean);
-   return `<div class="acct-mgr-row">
+   return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
         <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
         <div class="acct-mgr-meta">${metaParts.join(' · ')}</div>
@@ -6501,7 +6773,7 @@ function escapeHtml(text){
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
-      <button type="button" class="acct-mgr-action${inScope?'':' acct-mgr-action-secondary'}" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${inScope?'':' disabled title="Open this list on the dashboard to research this account."'}>${inScope?researchLabel:'Open this list to research'}</button>
+      <button type="button" class="acct-mgr-action${inScope?'':' acct-mgr-action-secondary'}" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${inScope?researchLabel:'Open this list to research'}</button>
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
@@ -6511,6 +6783,22 @@ function escapeHtml(text){
       </div>
       <div class="acct-mgr-status-line" data-row-status hidden></div>
     </div>`;
+ }
+ // Renders a list-level banner from the same server-owned researchRunState
+ // used by accountRow() above, so an active/failed run is visible even
+ // before scrolling to the specific row (requirement 2's "clear message
+ // naming the account being researched, when available").
+ function researchRunBanner(list){
+   const state = list.researchRunState || {status:'idle'};
+   if(state.status === 'idle') return '';
+   const name = getActiveResearchBreadcrumb(list.id, state.researchRunId);
+   if(state.status === 'active'){
+     const who = name ? `<strong>${esc(name)}</strong>` : 'an account in this list';
+     return `<div class="acct-mgr-run-banner acct-mgr-run-banner-active" role="status" aria-live="polite">Researching ${who}… This will keep running even if you close this window.</div>`;
+   }
+   // status === 'failed'
+   const who = name ? esc(name) : 'The last research run for this list';
+   return `<div class="acct-mgr-run-banner acct-mgr-run-banner-error" role="alert">${who} research failed${state.errorMessage ? ': ' + esc(state.errorMessage) : '.'} You can try again below.</div>`;
  }
  function listCard(list){
    const paused = list.status === 'paused';
@@ -6532,13 +6820,48 @@ function escapeHtml(text){
           </div>
         </div>
       </div>
+      ${researchRunBanner(list)}
       <div>${(list.accounts||[]).map(a=>accountRow(list,a)).join('') || '<div class="acct-mgr-empty">No customer accounts in this list.</div>'}</div>
     </section>`;
  }
  function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(listCard).join('')||'<p class="acct-mgr-empty">No uploaded customer accounts found.</p>';}
- async function load(){try{const d=await request('GET');cachedLists=d.lists?.customer||[];renderManager()}catch(e){console.warn('Customer account management load failed',e)}}
+
+ // ROUND 12: bounded polling so a reopened/left-open modal picks up a run
+ // that finishes (or fails) server-side without the user manually
+ // refreshing. Deliberately reuses the SAME GET /api/monitoring-lists this
+ // modal already calls on every load() -- no new endpoint, no new provider
+ // call, nothing faster than necessary. Only runs while the modal is
+ // actually visible AND at least one loaded list has an active run; stops
+ // itself the moment neither is true, and is explicitly stopped on close().
+ const RESEARCH_POLL_INTERVAL_MS = 6000;
+ let researchPollTimer = null;
+ function isModalOpen(){
+   const el = document.getElementById('accountManagerModal');
+   return !!el && el.style.display === 'block';
+ }
+ function anyListHasActiveRun(){
+   return cachedLists.some(l => l.researchRunState && l.researchRunState.status === 'active');
+ }
+ function stopResearchPoll(){
+   if(researchPollTimer){ clearTimeout(researchPollTimer); researchPollTimer = null; }
+ }
+ function scheduleResearchPollIfNeeded(){
+   stopResearchPoll();
+   if(!isModalOpen() || !anyListHasActiveRun()) return;
+   researchPollTimer = setTimeout(async () => { await load(); }, RESEARCH_POLL_INTERVAL_MS);
+ }
+ async function load(){
+   try{
+     const d=await request('GET');
+     cachedLists=d.lists?.customer||[];
+     renderManager();
+   }catch(e){
+     console.warn('Customer account management load failed',e);
+   }
+   scheduleResearchPollIfNeeded();
+ }
  function open(){document.getElementById('accountManagerModal').style.display='block';load()}
- function close(){closeAllMenus();document.getElementById('accountManagerModal').style.display='none'}
+ function close(){closeAllMenus();stopResearchPoll();document.getElementById('accountManagerModal').style.display='none'}
 
  // Overflow menus -- position:fixed (computed from the trigger's own
  // bounding rect) so they float above the modal's scroll container instead
@@ -6629,6 +6952,22 @@ function escapeHtml(text){
        : 'Research complete — no verified signals found.');
      btn.disabled = false;
      btn.textContent = 'Research Again';
+
+     // ROUND 12, UX item 2: display-only refresh of the main dashboard (see
+     // applyModalResearchResultToDashboard()'s own comment in the main
+     // script -- this never touches the save path above, which already
+     // completed). Then hand the user straight to the result: closing this
+     // modal and scrolling/highlighting it, even if the account is not near
+     // the top of the normal priority ranking.
+     if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh);
+     else if(typeof renderRecentlyResearchedSection === 'function') renderRecentlyResearchedSection();
+     const toastMessage = signalCount
+       ? `${signalCount} verified signal${signalCount===1?'':'s'} found for ${accountName}.`
+       : `Research complete for ${accountName} — no verified signals found.`;
+     showToast(toastMessage, signalCount ? {
+       label:'View opportunities',
+       fn: () => { close(); if(typeof scrollToAccountResult === 'function') scrollToAccountResult(accountName); }
+     } : null, 8000);
    }catch(err){
      setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');
      btn.disabled = false;
@@ -6636,13 +6975,17 @@ function escapeHtml(text){
    }
  }
 
- // Branded toast (reversible pause/resume) -- replaces window.confirm() for
- // these actions entirely. Only one toast is ever active: a new call
- // removes any existing one first. Auto-dismisses; Undo re-issues the
- // inverse PATCH through the same authenticated request() helper everything
- // else in this modal uses.
+ // Branded toast (reversible pause/resume, and -- ROUND 12, UX item 2 -- the
+ // post-research "View opportunities" handoff) -- replaces window.confirm()
+ // for these actions entirely. Only one toast is ever active: a new call
+ // removes any existing one first.
+ //
+ // action may be a bare function (back-compat: renders as an "Undo" button,
+ // the existing pause/resume call shape) or {label, fn} for a custom label
+ // (e.g. "View opportunities"). durationMs lets the research-completion
+ // toast stay up a little longer than the default reversible-action toast.
  let activeToastTimer = null;
- function showToast(message, undoFn){
+ function showToast(message, action, durationMs){
    const existing = document.getElementById('haToast');
    if(existing) existing.remove();
    if(activeToastTimer){ clearTimeout(activeToastTimer); activeToastTimer = null; }
@@ -6654,20 +6997,23 @@ function escapeHtml(text){
    const text = document.createElement('span');
    text.textContent = message;
    el.appendChild(text);
-   if(undoFn){
+   const isFn = typeof action === 'function';
+   const actionFn = isFn ? action : (action && action.fn);
+   const actionLabel = isFn ? 'Undo' : ((action && action.label) || 'Undo');
+   if(actionFn){
      const btn = document.createElement('button');
      btn.type = 'button';
      btn.className = 'ha-toast-undo';
-     btn.textContent = 'Undo';
+     btn.textContent = actionLabel;
      btn.addEventListener('click', async () => {
        el.remove();
        if(activeToastTimer){ clearTimeout(activeToastTimer); activeToastTimer = null; }
-       await undoFn();
+       await actionFn();
      });
      el.appendChild(btn);
    }
    document.body.appendChild(el);
-   activeToastTimer = setTimeout(() => { el.remove(); activeToastTimer = null; }, 5000);
+   activeToastTimer = setTimeout(() => { el.remove(); activeToastTimer = null; }, durationMs || 5000);
  }
 
  // Branded destructive-confirmation dialog -- replaces window.confirm() for
@@ -6716,6 +7062,46 @@ function escapeHtml(text){
    });
  }
 
+ // ROUND 12, UX item 1: branded, non-destructive info dialog -- reuses the
+ // same .ha-confirm-* CSS as showDestructiveConfirm() above (no new
+ // component system) but with a single acknowledgement button and no
+ // "cannot be undone" warning line, since nothing destructive happened.
+ // Used to replace window.alert() for the HA004 server rejection.
+ function showInfoDialog({title, bodyHtml, okLabel}){
+   return new Promise(resolve => {
+     const triggerEl = document.activeElement;
+     const backdrop = document.createElement('div');
+     backdrop.className = 'ha-confirm-backdrop';
+     backdrop.innerHTML = `
+       <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haInfoTitle" aria-describedby="haInfoBody">
+         <h3 class="ha-confirm-title" id="haInfoTitle">${esc(title)}</h3>
+         <p class="ha-confirm-body" id="haInfoBody">${bodyHtml}</p>
+         <div class="ha-confirm-actions">
+           <button type="button" class="ha-confirm-cancel ha-info-ok">${esc(okLabel || 'Got it')}</button>
+         </div>
+       </div>`;
+     document.body.appendChild(backdrop);
+     const okBtn = backdrop.querySelector('.ha-info-ok');
+
+     function close(){
+       document.removeEventListener('keydown', onKeydown, true);
+       backdrop.remove();
+       if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+       resolve();
+     }
+     function onKeydown(e){
+       if(e.key === 'Escape'){ e.preventDefault(); close(); return; }
+       // Only one focusable control -- trap Tab on it rather than letting
+       // focus escape to the page behind the backdrop.
+       if(e.key === 'Tab'){ e.preventDefault(); okBtn.focus(); }
+     }
+     okBtn.addEventListener('click', () => close());
+     backdrop.addEventListener('click', e => { if(e.target === backdrop) close(); });
+     document.addEventListener('keydown', onKeydown, true);
+     okBtn.focus();
+   });
+ }
+
  document.addEventListener('click',async e=>{
    if(e.target.id==='manageCustomerAccountsBtn')return open();
    if(e.target.id==='closeAccountManagerBtn'||e.target.id==='accountManagerModal')return close();
@@ -6743,7 +7129,26 @@ function escapeHtml(text){
        });
        if(!confirmed) return;
        try{ await request('PATCH',{type:'account',id,action}); await load(); }
-       catch(err){ alert(err.message); }
+       catch(err){
+         // ROUND 12, UX item 1: HA004 (this account's upload has research
+         // history -- the server's identity lock rejects individual account
+         // deletion, see api/monitoring-lists.js's deleteCustomerAccountViaSnapshot())
+         // gets its own branded, exact-copy dialog instead of a native
+         // alert(). The server-side rejection itself is unchanged -- this is
+         // presentation only, gated on the identityLocked flag request()
+         // carries through from the response body.
+         if(err.identityLocked){
+           // title is passed raw -- showInfoDialog's own template already
+           // runs esc(title) once; pre-escaping here would double-encode
+           // any HTML-significant characters in the account name.
+           await showInfoDialog({
+             title: `${name} can't be deleted individually`,
+             bodyHtml: `This account belongs to a researched list. Pause monitoring to preserve its history, or delete the entire uploaded list.`
+           });
+         }else{
+           alert(err.message);
+         }
+       }
        return;
      }
      // pause-account / resume-account: reversible -- no confirm(), a

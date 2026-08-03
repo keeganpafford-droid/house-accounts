@@ -89,34 +89,40 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // scanning from the current file and spot-verified by direct reads, not
 // hand-counted -- extractFn()'s own signature check below is the final,
 // self-enforcing guarantee regardless.
+// ROUND 12 note: line ranges re-derived after this round's run-state
+// reattachment / HA004 dialog / post-research handoff changes shifted
+// almost every function below. extractFn()/extractRaw()'s own
+// signature/closing-brace checks are the actual guarantee of correctness --
+// these numbers were re-derived mechanically (brace-depth scan from each
+// function's real signature line), not hand-counted.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2185, 2195, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2215, 2232, {async: true}),
-  extractFn('reportResearchRunOutcome', 2241, 2266, {async: true}),
-  extractFn('normalizeSavedAccount', 2382, 2439),
-  extractFn('accountCardFor', 3222, 3224),
-  extractFn('accountSignalsPanel', 3225, 3228),
-  extractFn('fetchUploadScopedSnapshot', 3810, 3832, {async: true}),
-  extractFn('persistScopedResearchResult', 3840, 3885, {async: true}),
-  extractFn('researchAccountFromManageModal', 3896, 3979, {async: true}),
-  extractFn('researchAccountByName', 3999, 4139, {async: true}),
-  extractFn('getAccountsForResearch', 4144, 4157),
-  extractFn('batchPayloadForAccounts', 4159, 4203),
-  extractFn('applyBusinessSignalAccountBoost', 4206, 4214),
-  extractFn('researchAccountsBatch', 4216, 4305, {async: true}),
-  extractFn('signalTopicKeyClient', 4307, 4315),
-  extractFn('dedupeSignalsClient', 4317, 4330),
-  extractFn('researchTopAccounts', 4332, 4462, {async: true}),
-  extractFn('refreshOpportunityViews', 4563, 4582),
-  extractFn('renderDetailedAccountViews', 5875, 5943),
-  extractFn('serializeAccountForStorage', 5953, 6012),
-  extractFn('performSaveCurrentUpload', 6022, 6122, {async: true}),
-  extractFn('saveCurrentUpload', 6131, 6135),
-  extractFn('toggleAccountMetadataEdit', 6143, 6149),
-  extractFn('saveAccountMetadataEdit', 6172, 6208, {async: true}),
-  extractRaw('delegatedClickListener', 6226, 6248, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 6261, 6277),
-  extractFn('escapeHtml', 6441, 6444)
+  extractFn('claimAutomaticResearchRun', 2212, 2222, {async: true}),
+  extractFn('heartbeatCurrentResearchRun', 2242, 2259, {async: true}),
+  extractFn('reportResearchRunOutcome', 2273, 2298, {async: true}),
+  extractFn('normalizeSavedAccount', 2414, 2471),
+  extractFn('accountCardFor', 3254, 3256),
+  extractFn('accountSignalsPanel', 3257, 3260),
+  extractFn('fetchUploadScopedSnapshot', 3842, 3864, {async: true}),
+  extractFn('persistScopedResearchResult', 3872, 3917, {async: true}),
+  extractFn('researchAccountFromManageModal', 3967, 4071, {async: true}),
+  extractFn('researchAccountByName', 4091, 4231, {async: true}),
+  extractFn('getAccountsForResearch', 4236, 4249),
+  extractFn('batchPayloadForAccounts', 4251, 4295),
+  extractFn('applyBusinessSignalAccountBoost', 4298, 4306),
+  extractFn('researchAccountsBatch', 4308, 4397, {async: true}),
+  extractFn('signalTopicKeyClient', 4399, 4407),
+  extractFn('dedupeSignalsClient', 4409, 4422),
+  extractFn('researchTopAccounts', 4424, 4554, {async: true}),
+  extractFn('refreshOpportunityViews', 4655, 4675),
+  extractFn('renderDetailedAccountViews', 6119, 6187),
+  extractFn('serializeAccountForStorage', 6197, 6256),
+  extractFn('performSaveCurrentUpload', 6266, 6366, {async: true}),
+  extractFn('saveCurrentUpload', 6375, 6379),
+  extractFn('toggleAccountMetadataEdit', 6387, 6393),
+  extractFn('saveAccountMetadataEdit', 6416, 6452, {async: true}),
+  extractRaw('delegatedClickListener', 6470, 6492, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 6505, 6521),
+  extractFn('escapeHtml', 6685, 6688)
 ].join('\n\n');
 
 // ===========================================================================
@@ -128,6 +134,19 @@ const REAL_SOURCE = [
 const STUB_SOURCE = `
 function renderVerifiedSignals(signals){ return ''; }
 function renderResearchDiagnostics(){}
+// ROUND 12: refreshOpportunityViews() now also calls this (see the real
+// definition in dashboard/index.html) -- pure DOM rendering, no bearing on
+// save/heartbeat/claim invocation counts, so it is stubbed exactly like the
+// other renderXxx() calls above/below.
+function renderRecentlyResearchedSection(){}
+// ROUND 12: localStorage-only breadcrumb helpers researchAccountFromManageModal()
+// now calls -- no fetch/save/claim side effects, so no bearing on this
+// file's call-count assertions. Real behavior (write/read/clear semantics,
+// including the "never clobber a newer claim's breadcrumb" guard) has its
+// own dedicated coverage in scripts/test-research-run-reattachment.js.
+function setActiveResearchBreadcrumb(){}
+function clearActiveResearchBreadcrumb(){}
+function getActiveResearchBreadcrumb(){ return ''; }
 function renderWeeklyPrioritiesFeed(opportunities, accounts){ return {displayedOpportunities: opportunities}; }
 function calculateRevenueContext(accounts, opportunities){ return {historicalRevenue:0, historicalOpps:0, newBusinessOpps:0, totalReasons:0}; }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){ return accounts; }

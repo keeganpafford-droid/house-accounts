@@ -99,12 +99,15 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
   }
   return slice;
 }
+// ROUND 12: line ranges re-derived after this round's changes shifted the
+// file -- extractFn()'s own signature/closing-brace checks are the actual
+// correctness guarantee, not these numbers.
 const EXTRACTED = {
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2185, 2195, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2215, 2232, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2241, 2266, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2288, 2298, {async: true}),
-  request: extractFn('request', 6460, 6467, {async: true})
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2212, 2222, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2242, 2259, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2273, 2298, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2320, 2330, {async: true}),
+  request: extractFn('request', 6704, 6721, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 
