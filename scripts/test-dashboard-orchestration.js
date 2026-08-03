@@ -114,15 +114,15 @@ const REAL_SOURCE = [
   extractFn('dedupeSignalsClient', 4420, 4433),
   extractFn('researchTopAccounts', 4435, 4565, {async: true}),
   extractFn('refreshOpportunityViews', 4666, 4686),
-  extractFn('renderDetailedAccountViews', 6170, 6238),
-  extractFn('serializeAccountForStorage', 6248, 6307),
-  extractFn('performSaveCurrentUpload', 6317, 6417, {async: true}),
-  extractFn('saveCurrentUpload', 6426, 6430),
-  extractFn('toggleAccountMetadataEdit', 6438, 6444),
-  extractFn('saveAccountMetadataEdit', 6467, 6503, {async: true}),
-  extractRaw('delegatedClickListener', 6521, 6543, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 6556, 6572),
-  extractFn('escapeHtml', 6736, 6739)
+  extractFn('renderDetailedAccountViews', 6259, 6327),
+  extractFn('serializeAccountForStorage', 6337, 6396),
+  extractFn('performSaveCurrentUpload', 6406, 6506, {async: true}),
+  extractFn('saveCurrentUpload', 6515, 6519),
+  extractFn('toggleAccountMetadataEdit', 6527, 6533),
+  extractFn('saveAccountMetadataEdit', 6556, 6592, {async: true}),
+  extractRaw('delegatedClickListener', 6610, 6632, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 6645, 6661),
+  extractFn('escapeHtml', 6825, 6828)
 ].join('\n\n');
 
 // ===========================================================================

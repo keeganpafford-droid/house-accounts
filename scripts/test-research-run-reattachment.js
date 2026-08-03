@@ -337,7 +337,7 @@ async function runServerTests(){
 // ===========================================================================
 // PART 2 -- client: extracted verbatim from dashboard/index.html.
 // ===========================================================================
-// ROUND 13 note: line ranges re-derived after the composite-identity fix
+// ROUND 14 note: line ranges re-derived after the durable-dismissal fix
 // shifted the file further -- extractFn()/extractRaw()'s own signature/
 // closing checks are the actual correctness guarantee, not these numbers.
 const REAL_SOURCE = [
@@ -351,25 +351,34 @@ const REAL_SOURCE = [
   extractFn('findTimeboxForAccountOpportunity', 4746, 4753),
   extractFn('highlightResultElement', 4755, 4761),
   extractFn('scrollToAccountResult', 4775, 4795),
-  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 4809, 4810, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
-  extractFn('getRecentlyResearchedAccounts', 4811, 4825),
-  extractFn('relativeResearchTimeLabel', 4826, 4833),
-  extractFn('renderRecentlyResearchedSection', 4834, 4859),
-  extractRaw('recentlyResearchedClickListener', 4860, 4871, "document.addEventListener('click', (event) => {"),
-  extractFn('escapeHtml', 6736, 6739),
-  extractRaw('modalFmtEsc', 6744, 6746, "const fmt=d=>"),
-  extractFn('request', 6755, 6772, {async: true}),
-  extractFn('accountRow', 6800, 6837),
-  extractFn('researchRunBanner', 6842, 6853),
-  extractFn('listCard', 6854, 6877),
-  extractRaw('renderManager', 6878, 6878, 'function renderManager(){'),
-  extractFn('isModalOpen', 6889, 6892),
-  extractFn('anyListHasActiveRun', 6893, 6895),
-  extractFn('stopResearchPoll', 6896, 6898),
-  extractFn('scheduleResearchPollIfNeeded', 6899, 6903),
-  extractFn('load', 6904, 6913, {async: true}),
-  extractRaw('openClose', 6914, 6915, "function open(){"),
-  extractFn('showInfoDialog', 7127, 7160)
+  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 4809, 4809, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
+  extractRaw('DISMISSED_RESEARCH_STORAGE_PREFIX', 4838, 4838, 'const DISMISSED_RESEARCH_STORAGE_PREFIX'),
+  extractRaw('DISMISSED_RESEARCH_PRUNE_AFTER_MS', 4845, 4845, 'const DISMISSED_RESEARCH_PRUNE_AFTER_MS'),
+  extractFn('dismissedResearchNamespace', 4846, 4852),
+  extractFn('dismissedResearchStorageKey', 4853, 4853),
+  extractFn('readDismissedResearchMap', 4854, 4863),
+  extractFn('writeDismissedResearchMap', 4864, 4867),
+  extractFn('pruneDismissedResearchMap', 4868, 4875),
+  extractFn('isResearchResultDismissed', 4880, 4888),
+  extractFn('dismissResearchResult', 4889, 4893),
+  extractFn('getRecentlyResearchedAccounts', 4896, 4910),
+  extractFn('relativeResearchTimeLabel', 4911, 4918),
+  extractFn('renderRecentlyResearchedSection', 4919, 4944),
+  extractRaw('recentlyResearchedClickListener', 4945, 4960, "document.addEventListener('click', (event) => {"),
+  extractFn('escapeHtml', 6825, 6828),
+  extractRaw('modalFmtEsc', 6833, 6835, "const fmt=d=>"),
+  extractFn('request', 6844, 6861, {async: true}),
+  extractFn('accountRow', 6889, 6926),
+  extractFn('researchRunBanner', 6931, 6942),
+  extractFn('listCard', 6943, 6966),
+  extractRaw('renderManager', 6967, 6967, 'function renderManager(){'),
+  extractFn('isModalOpen', 6978, 6981),
+  extractFn('anyListHasActiveRun', 6982, 6984),
+  extractFn('stopResearchPoll', 6985, 6987),
+  extractFn('scheduleResearchPollIfNeeded', 6988, 6992),
+  extractFn('load', 6993, 7002, {async: true}),
+  extractRaw('openClose', 7003, 7004, "function open(){"),
+  extractFn('showInfoDialog', 7216, 7249)
 ].join('\n\n');
 
 // Static regression proof for requirement 1: nothing in dashboard/index.html
@@ -380,7 +389,7 @@ const REAL_SOURCE = [
 // provider-facing research request.
 assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.html contains no AbortController/abort() anywhere -- an in-flight provider request cannot be cancelled by ANY client action, including closing the modal');
 {
-  const closeSrc = extractRaw('closeOnly', 6915, 6915, "function close(){");
+  const closeSrc = extractRaw('closeOnly', 7004, 7004, "function close(){");
   assert(!/abort/i.test(closeSrc) && !/fetch\(/.test(closeSrc), '1) close()\'s own source contains no abort/cancel/fetch call');
   assert(/stopResearchPoll\(\)/.test(closeSrc), '1) close() stops only the modal\'s own UI polling loop (stopResearchPoll()), not the provider request');
 }
@@ -390,7 +399,7 @@ assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.htm
 // identity-locked, and only falls back to alert() in the else branch (never
 // unconditionally) -- extracted directly from the real click handler.
 {
-  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 7181, 7210, "if(action==='delete-account'){");
+  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 7270, 7299, "if(action==='delete-account'){");
   assert(/if\(err\.identityLocked\)\{/.test(deleteAccountBranch), '6) the delete-account catch branch checks err.identityLocked');
   assert(/showInfoDialog\(/.test(deleteAccountBranch), '6) the identityLocked branch calls showInfoDialog(), the branded non-destructive dialog');
   assert(/\}else\{\s*alert\(err\.message\);\s*\}/.test(deleteAccountBranch), '6) alert() is reached ONLY in the else branch -- never unconditionally for this rejection');
@@ -407,11 +416,28 @@ assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.htm
   assert(/function scrollToAccountResult\(uploadId, accountName\)/.test(DASHBOARD_SRC), 'composite: scrollToAccountResult() takes (uploadId, accountName)');
   assert(/el\.dataset\.account === accountName && el\.dataset\.uploadId === uploadId/.test(DASHBOARD_SRC), 'composite: the opportunity-grid card lookup matches BOTH data-account and data-upload-id, not name alone');
   assert(/el\.dataset\.accountName === accountName && el\.dataset\.uploadId === uploadId/.test(DASHBOARD_SRC), 'composite: the detail/recently-researched card lookups match BOTH data-account-name and data-upload-id');
-  assert(/recentlyResearchedKey\(a\.uploadId, a\.name\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() dedupes/filters using the composite key, not account name alone');
-  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 7019, 7027, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
+  // ROUND 14: the filter now goes through isResearchResultDismissed(), which
+  // itself forms the composite key via recentlyResearchedKey(uploadId,
+  // accountName) internally -- see the "durable" checks below for the
+  // direct proof of that call site.
+  assert(/!isResearchResultDismissed\(a\.uploadId, a\.name, a\.lastResearchedAt\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() filters using the composite (uploadId, name) identity, not account name alone');
+  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 7108, 7116, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
   assert(/scrollToAccountResult\(listId, accountName\)/.test(handoffSrc), 'composite: the "View opportunities" toast action passes the same captured listId into scrollToAccountResult(), not currentUploadId');
   assert(!/scrollToAccountResult\(accountName\)/.test(DASHBOARD_SRC) && !/applyModalResearchResultToDashboard\(fresh\)\s*[;)]/.test(DASHBOARD_SRC), 'composite: no remaining call site uses the old name-only signature');
+}
+
+// ROUND 14 -- static regression proof for durable dismissal: the dismiss
+// handler must persist via the real localStorage-backed functions (never
+// reintroduce an in-memory-only Set), and the visibility filter must call
+// isResearchResultDismissed() (which itself compares the stored dismissed
+// timestamp against the CURRENT lastResearchedAt), not a bare membership
+// check.
+{
+  assert(!/dismissedRecentlyResearched/.test(DASHBOARD_SRC), 'durable: the old in-memory-only dismissedRecentlyResearched Set no longer exists anywhere in the file');
+  assert(/dismissResearchResult\(uploadId, accountName, card\.dataset\.completedAt\)/.test(DASHBOARD_SRC), 'durable: the real click handler dismisses via dismissResearchResult(), passing the card\'s own rendered completedAt');
+  assert(/!isResearchResultDismissed\(a\.uploadId, a\.name, a\.lastResearchedAt\)/.test(DASHBOARD_SRC), 'durable: getRecentlyResearchedAccounts() filters using isResearchResultDismissed() against the account\'s CURRENT lastResearchedAt, not a bare Set membership check');
+  assert(/data-completed-at="\$\{escapeHtml\(new Date\(e\.ts\)\.toISOString\(\)\)\}"/.test(DASHBOARD_SRC), 'durable: the rendered card carries the exact completed timestamp it was shown with, in data-completed-at');
 }
 
 // ===========================================================================
@@ -554,8 +580,15 @@ function createFakeDom(){
 // semantics (string-keyed, string values), exactly what the breadcrumb
 // helpers need; nothing about their own read/write/guard logic is
 // reimplemented here.
-function createFakeLocalStorage(){
-  const store = new Map();
+// ROUND 14: backingMap lets multiple createSandbox() calls share the SAME
+// underlying storage, exactly like a real browser's localStorage persists
+// across a page reload while everything ELSE (the JS heap, module-level
+// variables, the DOM) is torn down and rebuilt from scratch -- a fresh
+// vm.Script/vm.createContext per createSandbox() call already reproduces
+// that "everything in memory is gone" reload semantics; passing the same
+// backingMap is what then proves the dismissal survived it.
+function createFakeLocalStorage(backingMap){
+  const store = backingMap || new Map();
   return {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
     setItem: (k, v) => { store.set(k, String(v)); },
@@ -563,15 +596,19 @@ function createFakeLocalStorage(){
   };
 }
 
-function createSandbox({accounts = [], currentUploadId = 'upload-1', fetchImpl} = {}){
+// ROUND 14: user lets a test set HouseAuth.getUser()'s return value (the
+// REAL dismissal-namespacing code reads auth_user_id/id/email off of
+// exactly this shape) -- defaults to a single stable identity so existing
+// callers that don't care about user-isolation are unaffected.
+function createSandbox({accounts = [], currentUploadId = 'upload-1', fetchImpl, user = { auth_user_id: 'auth-user-1', id: 'user-1', email: 'qa@example.com' }, localStorageBackingMap} = {}){
   const dom = createFakeDom();
-  const houseAuth = { authHeadersAsync: async (h) => (fetchImpl === 'no-session' ? null : (h || {})) };
+  const houseAuth = { authHeadersAsync: async (h) => (fetchImpl === 'no-session' ? null : (h || {})), getUser: () => user };
   const alertCalls = [];
   const sandbox = {
     window: { accountRadarAccounts: accounts, HouseAuth: houseAuth, location: { href: 'https://example.com/dashboard' } },
     HouseAuth: houseAuth,
     document: dom.document_,
-    localStorage: createFakeLocalStorage(),
+    localStorage: createFakeLocalStorage(localStorageBackingMap),
     fetch: typeof fetchImpl === 'function' ? fetchImpl : (async () => { throw new Error('fetch should not be called in this test'); }),
     alert: (msg) => alertCalls.push(msg),
     console: { log: () => {}, warn: () => {}, error: () => {} },
@@ -655,7 +692,7 @@ async function runClientTests(){
   // reopening can never itself claim another run or call a provider.
   // ---------------------------------------------------------------------
   {
-    const loadSrc = extractFn('load', 6904, 6913, { async: true });
+    const loadSrc = extractFn('load', 6993, 7002, { async: true });
     assert(/request\('GET'\)/.test(loadSrc), "5) load() calls request('GET')");
     assert(!/researchRunAction/.test(loadSrc) && !/claim/i.test(loadSrc), '5) load() never references a claim/researchRunAction -- reopening the modal cannot itself start or attach to a run beyond reading its state');
   }
@@ -791,17 +828,128 @@ async function runClientTests(){
     // listener (recentlyResearchedClickListener, extracted verbatim above
     // and registered via the sandbox's document.addEventListener capture),
     // not a reimplementation of its dismiss logic.
+    const completedAt = new Date().toISOString();
     const account = fixtureAccount('Dismiss Co', { uploadId: 'upload-1' });
     const sandbox = createSandbox({ accounts: [account] });
-    sandbox.applyModalResearchResultToDashboard({ name: 'Dismiss Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-1');
+    sandbox.applyModalResearchResultToDashboard({ name: 'Dismiss Co', signals: [{ isReal: true }], lastResearchedAt: completedAt }, 'upload-1');
     assert(sandbox.getRecentlyResearchedAccounts().length === 1, 'dismiss: sanity check -- the entry exists before dismissal');
-    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Dismiss Co', 'data-upload-id': 'upload-1' });
+    // data-completed-at mirrors exactly what renderRecentlyResearchedSection()
+    // itself stamps on the real card (new Date(e.ts).toISOString(), where
+    // e.ts comes from the account's own lastResearchedAt).
+    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Dismiss Co', 'data-upload-id': 'upload-1', 'data-completed-at': completedAt });
     const dismissBtn = new FakeEl('button', { class: 'rr-dismiss-btn' });
     card.appendChild(dismissBtn);
     const handler = sandbox.__dom.listeners.click;
     assert(typeof handler === 'function', 'dismiss: the real recentlyResearchedClickListener registered itself via document.addEventListener');
     handler({ target: dismissBtn });
     assert(sandbox.getRecentlyResearchedAccounts().length === 0, 'dismiss: after the real dismiss-button click handler runs, the account no longer appears in Recently Researched');
+  }
+
+  // =========================================================================
+  // ROUND 14 -- durable dismissal (localStorage, user- and composite-
+  // identity-scoped, timestamp-aware). Root cause of the reported bug: the
+  // OLD dismissedRecentlyResearched was a bare in-memory Set, reset on every
+  // page load -- a dismissal never survived a browser refresh. Fixed by
+  // persisting dismissals to localStorage, namespaced per authenticated
+  // user, keyed by (uploadId, account name), with the STORED VALUE being
+  // the specific completed-research timestamp that was dismissed (so a
+  // later, newer completion is correctly treated as a different result).
+  // =========================================================================
+  {
+    // 1/2/3) dismiss -> rerender (same sandbox) AND dismiss -> simulated
+    // page reload (a SECOND, freshly-constructed sandbox -- a brand new
+    // vm.Script/vm.createContext, i.e. everything in memory is gone exactly
+    // like a real reload -- sharing only the same localStorage backing Map
+    // and the same authenticated user) both keep the SAME-timestamp result
+    // hidden.
+    // A few minutes ago -- comfortably inside RECENTLY_RESEARCHED_WINDOW_MS
+    // (30 min), so these tests are about DISMISSAL, not about the section's
+    // own separate time-window expiry.
+    const completedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const sharedStorage = new Map();
+    const user = { auth_user_id: 'auth-user-1', id: 'user-1', email: 'qa@example.com' };
+    const sandbox1 = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1' })], user, localStorageBackingMap: sharedStorage });
+    sandbox1.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }], lastResearchedAt: completedAt }, 'upload-1');
+    assert(sandbox1.getRecentlyResearchedAccounts().length === 1, 'durable 1: sanity check -- the entry exists before dismissal');
+    sandbox1.dismissResearchResult('upload-1', 'L.L.Bean', completedAt);
+    assert(sandbox1.getRecentlyResearchedAccounts().length === 0, 'durable 1: dismissing hides the entry immediately');
+    // Rerender in the SAME sandbox (same in-memory account data) -- a plain
+    // rerender must not un-dismiss it.
+    sandbox1.renderRecentlyResearchedSection();
+    assert(sandbox1.getRecentlyResearchedAccounts().length === 0, 'durable 1: a dashboard rerender does not bring the dismissed entry back');
+
+    // Simulated reload: brand new sandbox (fresh vm context -- no in-memory
+    // state survives), same user, same underlying localStorage.
+    const sandbox2 = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1', lastResearchedAt: completedAt })], user, localStorageBackingMap: sharedStorage });
+    assert(sandbox2.getRecentlyResearchedAccounts().length === 0, 'durable 2/3: after a simulated browser refresh (fresh sandbox, same localStorage), the SAME (upload, account, timestamp) result remains dismissed');
+  }
+  {
+    // 4) A LATER Research Again completion with a newer persisted timestamp
+    // makes the account visible again -- the dismissal was for the OLD
+    // result, not a permanent "hide this account" rule.
+    const dismissedAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const newerCompletedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+    const sharedStorage = new Map();
+    const user = { auth_user_id: 'auth-user-1', id: 'user-1', email: 'qa@example.com' };
+    const sandbox1 = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1' })], user, localStorageBackingMap: sharedStorage });
+    sandbox1.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }], lastResearchedAt: dismissedAt }, 'upload-1');
+    sandbox1.dismissResearchResult('upload-1', 'L.L.Bean', dismissedAt);
+    assert(sandbox1.getRecentlyResearchedAccounts().length === 0, 'durable 4: sanity check -- dismissed and hidden');
+    // A fresh Research Again completion, still within the same session.
+    sandbox1.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }, { isReal: true }], lastResearchedAt: newerCompletedAt }, 'upload-1');
+    assert(sandbox1.getRecentlyResearchedAccounts().length === 1, 'durable 4: a NEWER completed research timestamp makes the account visible again, in the same session');
+    // Also true after a simulated reload -- the newer timestamp was itself
+    // persisted server-side (lastResearchedAt), so a reload's freshly
+    // loaded account data still carries it and still beats the old
+    // dismissal.
+    const sandbox2 = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1', lastResearchedAt: newerCompletedAt })], user, localStorageBackingMap: sharedStorage });
+    assert(sandbox2.getRecentlyResearchedAccounts().length === 1, 'durable 4: the newer result is still visible after a simulated reload -- the OLD dismissal does not apply to it');
+  }
+  {
+    // 6) Two different authenticated users sharing the same browser (same
+    // localStorage) must not inherit each other's dismissals.
+    const completedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const sharedStorage = new Map();
+    const userA = { auth_user_id: 'auth-user-a', id: 'user-a', email: 'a@example.com' };
+    const userB = { auth_user_id: 'auth-user-b', id: 'user-b', email: 'b@example.com' };
+    const sandboxA = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1' })], user: userA, localStorageBackingMap: sharedStorage });
+    sandboxA.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }], lastResearchedAt: completedAt }, 'upload-1');
+    sandboxA.dismissResearchResult('upload-1', 'L.L.Bean', completedAt);
+    assert(sandboxA.getRecentlyResearchedAccounts().length === 0, 'durable 6: user A dismissed the entry and it is hidden for user A');
+    const sandboxB = createSandbox({ accounts: [fixtureAccount('L.L.Bean', { uploadId: 'upload-1', lastResearchedAt: completedAt })], user: userB, localStorageBackingMap: sharedStorage });
+    assert(sandboxB.getRecentlyResearchedAccounts().length === 1, "durable 6: user B, sharing the SAME browser/localStorage, still sees the SAME entry -- user A's dismissal did not leak to user B");
+  }
+  {
+    // 8) Corrupt/unavailable localStorage fails safe -- rendering never
+    // throws, and (since it cannot be trusted) nothing is treated as
+    // dismissed.
+    const sharedStorage = new Map();
+    const user = { auth_user_id: 'auth-user-1', id: 'user-1', email: 'qa@example.com' };
+    // Pre-seed genuinely corrupt JSON under the exact key the real code
+    // would use for this user.
+    sharedStorage.set('ha_dismissed_research_v1::auth-user-1', '{not valid json!!');
+    const account = fixtureAccount('L.L.Bean', { uploadId: 'upload-1', lastResearchedAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+    const sandbox = createSandbox({ accounts: [account], user, localStorageBackingMap: sharedStorage });
+    let entries = null;
+    let threw = null;
+    try{ entries = sandbox.getRecentlyResearchedAccounts(); sandbox.renderRecentlyResearchedSection(); }catch(err){ threw = err; }
+    assert(!threw, `durable 8: corrupt localStorage does not throw while computing/rendering Recently Researched (got: ${threw && threw.message})`);
+    assert(Array.isArray(entries) && entries.length === 1, 'durable 8: with unreadable dismissal data, the entry is treated as NOT dismissed (fails safe by showing it) rather than crashing or silently hiding everything');
+  }
+  {
+    // 8b) localStorage.getItem itself throwing (a real browser behavior in
+    // some private-browsing/quota-exceeded configurations) also fails safe.
+    const user = { auth_user_id: 'auth-user-1', id: 'user-1', email: 'qa@example.com' };
+    const completedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const account = fixtureAccount('L.L.Bean', { uploadId: 'upload-1', lastResearchedAt: completedAt });
+    const sandbox = createSandbox({ accounts: [account], user });
+    sandbox.localStorage.getItem = () => { throw new Error('SecurityError: localStorage is not available'); };
+    sandbox.localStorage.setItem = () => { throw new Error('SecurityError: localStorage is not available'); };
+    let entries = null;
+    let threw = null;
+    try{ entries = sandbox.getRecentlyResearchedAccounts(); sandbox.dismissResearchResult('upload-1', 'L.L.Bean', completedAt); }catch(err){ threw = err; }
+    assert(!threw, `durable 8b: a throwing localStorage does not break reading OR dismissing (got: ${threw && threw.message})`);
+    assert(Array.isArray(entries) && entries.length === 1, 'durable 8b: with localStorage entirely unavailable, the entry still renders (fails safe) instead of crashing the dashboard');
   }
   {
     // "View opportunities" clicked from a Recently Researched card routes
@@ -872,10 +1020,10 @@ async function runClientTests(){
     // uses (this fake DOM stores innerHTML as a string rather than parsing
     // it back into traversable nodes -- see FakeEl -- so the dispatched
     // element is constructed to match, not walked out of the HTML string).
-    const renderedHtml = sandbox.renderRecentlyResearchedSection();
+    sandbox.renderRecentlyResearchedSection();
     const host = sandbox.__dom.recentlyResearchedSection;
     assert(/data-account-name="Acme" data-upload-id="upload-a"/.test(host.innerHTML) && /data-account-name="Acme" data-upload-id="upload-b"/.test(host.innerHTML), 'AB-scenario (d): sanity check -- the real render actually emitted BOTH upload-a\'s and upload-b\'s Acme cards with distinct data-upload-id');
-    const cardAInSection = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Acme', 'data-upload-id': 'upload-a' });
+    const cardAInSection = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Acme', 'data-upload-id': 'upload-a', 'data-completed-at': new Date(entryARerun.ts).toISOString() });
     const dismissBtnA = new FakeEl('button', { class: 'rr-dismiss-btn' });
     cardAInSection.appendChild(dismissBtnA);
     const handler = sandbox.__dom.listeners.click;

@@ -4807,12 +4807,97 @@ function scrollToAccountResult(uploadId, accountName){
 // separate expiry timer needed since this only ever recomputes on the next
 // render.
 const RECENTLY_RESEARCHED_WINDOW_MS = 30 * 60 * 1000;
-const dismissedRecentlyResearched = new Set();
+
+// ===========================================================================
+// ROUND 14 fix -- dismissal must be DURABLE (survive a rerender, a browser
+// refresh, and closing/reopening the tab), not just an in-memory Set that
+// resets on every page load. Persisted to localStorage, namespaced to the
+// authenticated user (so two different people sharing a browser never
+// inherit each other's dismissals -- requirement 7), keyed by the SAME
+// composite (uploadId, normalized account name) identity used everywhere
+// else in this section, with the value being the SPECIFIC completed
+// research timestamp that was dismissed -- not a bare boolean. That is
+// what makes a dismissal mean "I dismissed THIS completed result" rather
+// than "hide this account forever": a later Research Again completion with
+// a newer lastResearchedAt is a NEW result, so it is compared against the
+// stored timestamp and shown again (requirement 4) rather than silently
+// swallowed by a stale dismissal.
+//
+// Storage key: `ha_dismissed_research_v1::<userNamespace>` where
+// userNamespace is HouseAuth.getUser()'s auth_user_id (falling back to id,
+// then email, then 'anonymous' if no session is resolvable at all -- never
+// a shared/empty key that could let two real, different users collide).
+// Stored value: a plain JSON object, `{ "<uploadId>::<name>": "<ISO
+// timestamp of the dismissed completion>", ... }`.
+//
+// Like the existing localStorage breadcrumb helpers above, this is
+// best-effort: every read/write is wrapped so a corrupt value, a full/
+// disabled localStorage, or a private-browsing quota error degrades to
+// "nothing is dismissed" rather than ever throwing and breaking dashboard
+// rendering (requirement 8).
+const DISMISSED_RESEARCH_STORAGE_PREFIX = 'ha_dismissed_research_v1::';
+// Pruned opportunistically on write only (never on read/render, so a plain
+// rerender can never itself cause a dismissal to reappear -- requirement
+// 9) -- purely storage hygiene, generous enough that it is never reached
+// while the underlying Recently Researched entry could still be visible
+// (entries already drop out of view after RECENTLY_RESEARCHED_WINDOW_MS
+// regardless of dismissal).
+const DISMISSED_RESEARCH_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+function dismissedResearchNamespace(){
+  try{
+    const user = (window.HouseAuth && typeof HouseAuth.getUser === 'function') ? HouseAuth.getUser() : null;
+    const raw = user && (user.auth_user_id || user.id || user.email);
+    return raw ? String(raw).trim().toLowerCase() : 'anonymous';
+  }catch(err){ return 'anonymous'; }
+}
+function dismissedResearchStorageKey(){ return `${DISMISSED_RESEARCH_STORAGE_PREFIX}${dismissedResearchNamespace()}`; }
+function readDismissedResearchMap(){
+  try{
+    const raw = localStorage.getItem(dismissedResearchStorageKey());
+    if(!raw) return {};
+    const parsed = JSON.parse(raw);
+    // Corrupt/unexpected shape -- fail safe to "nothing dismissed" rather
+    // than letting a bad stored value break rendering (requirement 8).
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  }catch(err){ return {}; }
+}
+function writeDismissedResearchMap(map){
+  try{ localStorage.setItem(dismissedResearchStorageKey(), JSON.stringify(map)); }
+  catch(err){ /* best-effort only -- localStorage may be unavailable/full/corrupt */ }
+}
+function pruneDismissedResearchMap(map){
+  const cutoff = Date.now() - DISMISSED_RESEARCH_PRUNE_AFTER_MS;
+  Object.keys(map).forEach(key => {
+    const ts = new Date(map[key]).getTime();
+    if(!Number.isFinite(ts) || ts < cutoff) delete map[key];
+  });
+  return map;
+}
+// A dismissal represents "I dismissed THIS completed result" -- if
+// completedAt (the account's OWN current lastResearchedAt) is strictly
+// newer than the timestamp that was dismissed, this is a different,
+// un-dismissed result and must be shown again.
+function isResearchResultDismissed(uploadId, accountName, completedAt){
+  const dismissedAt = readDismissedResearchMap()[recentlyResearchedKey(uploadId, accountName)];
+  if(!dismissedAt) return false;
+  const dismissedTs = new Date(dismissedAt).getTime();
+  if(!Number.isFinite(dismissedTs)) return false;
+  const completedTs = new Date(completedAt).getTime();
+  if(!Number.isFinite(completedTs)) return true;
+  return completedTs <= dismissedTs;
+}
+function dismissResearchResult(uploadId, accountName, completedAt){
+  const map = readDismissedResearchMap();
+  map[recentlyResearchedKey(uploadId, accountName)] = completedAt || new Date().toISOString();
+  writeDismissedResearchMap(pruneDismissedResearchMap(map));
+}
+// ===========================================================================
+
 function getRecentlyResearchedAccounts(){
   const accounts = window.accountRadarAccounts || [];
   const cutoff = Date.now() - RECENTLY_RESEARCHED_WINDOW_MS;
   return accounts
-    .filter(a => a.lastResearchedAt && a.uploadId && !dismissedRecentlyResearched.has(recentlyResearchedKey(a.uploadId, a.name)))
+    .filter(a => a.lastResearchedAt && a.uploadId && !isResearchResultDismissed(a.uploadId, a.name, a.lastResearchedAt))
     .map(a => ({
       uploadId: a.uploadId,
       name: a.name,
@@ -4845,7 +4930,7 @@ function renderRecentlyResearchedSection(){
     <div class="section-header">Recently Researched</div>
     <div class="recently-researched-list">
       ${entries.map(e => `
-        <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}" data-upload-id="${escapeHtml(e.uploadId)}">
+        <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}" data-upload-id="${escapeHtml(e.uploadId)}" data-completed-at="${escapeHtml(new Date(e.ts).toISOString())}">
           <div class="rr-info">
             <div class="rr-name">${escapeHtml(e.name)}</div>
             <div class="rr-meta">${e.signalCount ? `${e.signalCount} verified signal${e.signalCount === 1 ? '' : 's'} found` : 'No verified signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
@@ -4865,7 +4950,11 @@ document.addEventListener('click', (event) => {
   if(!uploadId || !accountName) return;
   if(event.target.closest('.rr-view-btn')){ scrollToAccountResult(uploadId, accountName); return; }
   if(event.target.closest('.rr-dismiss-btn')){
-    dismissedRecentlyResearched.add(recentlyResearchedKey(uploadId, accountName));
+    // data-completed-at is the exact lastResearchedAt this card was
+    // rendered with -- records "I dismissed THIS completed result", so a
+    // later Research Again completion (a newer lastResearchedAt) is
+    // correctly treated as a different, un-dismissed result.
+    dismissResearchResult(uploadId, accountName, card.dataset.completedAt);
     renderRecentlyResearchedSection();
   }
 });
