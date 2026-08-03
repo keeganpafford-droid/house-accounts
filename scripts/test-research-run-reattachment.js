@@ -107,8 +107,15 @@ const AUTH_USER_ID = 'auth-user-1';
 const USER_ID = 'user-1';
 const UPLOAD_ID = 'upload-1';
 
-function mockFetch({ researchRuns = [] } = {}){
-  return async (url, options = {}) => {
+// ROUND 13 fix: api/monitoring-lists.js now issues ONE BATCHED
+// ha_research_runs?upload_id=in.(...) query (loadResearchRunsByUpload())
+// instead of one query per upload -- this mock reflects that real shape and
+// EXPOSES a call counter (researchRunsQueryCalls) so the query-count test
+// below can prove the count stays O(1) as the number of uploads grows,
+// instead of merely not crashing.
+function mockFetch({ uploads = [{ id: UPLOAD_ID, user_id: USER_ID, upload_name: 'QA List', stage: 'researched', updated_at: '2026-08-01T00:00:00Z' }], accountsByUpload = null, researchRuns = [], calls = null } = {}){
+  const callLog = calls || { researchRunsQueryCalls: 0, researchRunsQueryUrls: [] };
+  return Object.assign(async (url, options = {}) => {
     const u = String(url);
     const method = options.method || 'GET';
     if(u.includes('/auth/v1/user')){
@@ -120,17 +127,26 @@ function mockFetch({ researchRuns = [] } = {}){
       return jsonResponse([{ id: USER_ID, email: 'qa@example.com', app_role: 'member', role: 'member', organization_id: null, status: 'active' }]);
     }
     if(u.includes('/rest/v1/ha_users') && u.includes('organization_id=eq.')) return jsonResponse([]);
-    if(u.includes('/rest/v1/ha_uploads')) return jsonResponse([{ id: UPLOAD_ID, user_id: USER_ID, upload_name: 'QA List', stage: 'researched', updated_at: '2026-08-01T00:00:00Z' }]);
+    if(u.includes('/rest/v1/ha_uploads')) return jsonResponse(uploads);
     if(u.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
     if(u.includes('/rest/v1/ha_accounts') && u.includes('upload_id=eq.') && method === 'GET'){
+      const uploadMatch = u.match(/upload_id=eq\.([^&]+)/);
+      const qUploadId = uploadMatch ? decodeURIComponent(uploadMatch[1]) : null;
+      if(accountsByUpload) return jsonResponse(accountsByUpload[qUploadId] || []);
       return jsonResponse([{ id: 'acct-1', upload_id: UPLOAD_ID, account_name: 'L.L.Bean', industry: 'Retail', raw_data: { monitoring_status: 'active', research_status: 'researched', last_researched_at: '2026-08-03T12:00:00Z' }, created_at: '2026-07-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' }]);
     }
     if(u.includes('/rest/v1/ha_signals')) return jsonResponse([]);
-    if(u.includes('/rest/v1/ha_research_runs') && u.includes('upload_id=eq.') && method === 'GET'){
+    if(u.includes('/rest/v1/ha_research_runs') && u.includes('upload_id=in.') && method === 'GET'){
+      callLog.researchRunsQueryCalls += 1;
+      callLog.researchRunsQueryUrls.push(u);
       return jsonResponse(researchRuns);
     }
+    // A per-upload ha_research_runs?upload_id=eq.<id> request would land
+    // here and throw "Unhandled mock fetch URL" -- i.e. this mock has no
+    // handler for the OLD N+1 shape at all, so a regression back to
+    // per-upload querying fails loudly rather than silently passing.
     throw new Error(`Unhandled mock fetch URL in test: ${method} ${u}`);
-  };
+  }, { __callLog: callLog });
 }
 
 async function runServerTests(){
@@ -151,7 +167,7 @@ async function runServerTests(){
   // breadcrumb and label the state.
   {
     const runId = 'manual-2026-08-03T12-00-00-abcd';
-    global.fetch = mockFetch({ researchRuns: [{ research_run_id: runId, attempt_id: 'attempt-1', status: 'running', lease_expires_at: new Date(Date.now() + 60_000).toISOString(), started_at: '2026-08-03T12:00:00Z', error_message: null }] });
+    global.fetch = mockFetch({ researchRuns: [{ upload_id: UPLOAD_ID, research_run_id: runId, attempt_id: 'attempt-1', status: 'running', lease_expires_at: new Date(Date.now() + 60_000).toISOString(), started_at: '2026-08-03T12:00:00Z', error_message: null }] });
     const res = fakeRes();
     await monitoringListsHandler(fakeReq('GET'), res);
     const state = res.body?.lists?.customer?.[0]?.researchRunState;
@@ -163,7 +179,7 @@ async function runServerTests(){
   // "active" -- matches claim_ha_research_run()'s own attached-active vs
   // reclaimable distinction (same lease_expires_at > now() condition).
   {
-    global.fetch = mockFetch({ researchRuns: [{ research_run_id: 'auto', attempt_id: 'attempt-old', status: 'running', lease_expires_at: new Date(Date.now() - 60_000).toISOString(), started_at: '2026-08-01T00:00:00Z', error_message: null }] });
+    global.fetch = mockFetch({ researchRuns: [{ upload_id: UPLOAD_ID, research_run_id: 'auto', attempt_id: 'attempt-old', status: 'running', lease_expires_at: new Date(Date.now() - 60_000).toISOString(), started_at: '2026-08-01T00:00:00Z', error_message: null }] });
     const res = fakeRes();
     await monitoringListsHandler(fakeReq('GET'), res);
     const state = res.body?.lists?.customer?.[0]?.researchRunState;
@@ -173,7 +189,7 @@ async function runServerTests(){
   // 4) A failed row -> failed, carrying the error message for the branded
   // failure banner (requirement 4/6).
   {
-    global.fetch = mockFetch({ researchRuns: [{ research_run_id: 'manual-x', attempt_id: 'attempt-x', status: 'failed', lease_expires_at: null, started_at: '2026-08-03T11:00:00Z', error_message: 'Research failed. Please try again.' }] });
+    global.fetch = mockFetch({ researchRuns: [{ upload_id: UPLOAD_ID, research_run_id: 'manual-x', attempt_id: 'attempt-x', status: 'failed', lease_expires_at: null, started_at: '2026-08-03T11:00:00Z', error_message: 'Research failed. Please try again.' }] });
     const res = fakeRes();
     await monitoringListsHandler(fakeReq('GET'), res);
     const state = res.body?.lists?.customer?.[0]?.researchRunState;
@@ -183,37 +199,136 @@ async function runServerTests(){
 
   // 5) A completed row -> idle (the button is "Research Again", no banner).
   {
-    global.fetch = mockFetch({ researchRuns: [{ research_run_id: 'manual-y', attempt_id: 'attempt-y', status: 'completed', lease_expires_at: null, started_at: '2026-08-03T09:00:00Z', error_message: null }] });
+    global.fetch = mockFetch({ researchRuns: [{ upload_id: UPLOAD_ID, research_run_id: 'manual-y', attempt_id: 'attempt-y', status: 'completed', lease_expires_at: null, started_at: '2026-08-03T09:00:00Z', error_message: null }] });
     const res = fakeRes();
     await monitoringListsHandler(fakeReq('GET'), res);
     const state = res.body?.lists?.customer?.[0]?.researchRunState;
     assert(state && state.status === 'idle', '5) a completed row collapses to idle -- no lingering banner once a run has finished');
   }
 
-  // 6) Structural proof for requirement 10: every response this handler can
-  // ever produce carries a status the code itself explicitly chose (200,
-  // 400, 401, 403, 405, or a caught error's own e.status||500) -- 404 does
-  // not appear anywhere in its own source, so a 404 cannot originate from
-  // this file's routing/logic.
+  // 6) ROUND 13 fix -- the ORIGINAL "no code path can emit a 404" claim was
+  // wrong: it only checked for a literal 404 inside this file. sb()'s
+  // catch (api/monitoring-lists.js) attaches err.status = r.status, the RAW
+  // HTTP status Supabase/PostgREST itself returned for ANY downstream
+  // request (ha_uploads, ha_accounts, ha_signals, ha_research_runs,
+  // ha_prospect_*, or the replace_ha_accounts_snapshot RPC) -- and
+  // PostgREST genuinely CAN return 404 (e.g. a table/view its schema cache
+  // doesn't recognize, or an RPC with no matching signature). Before this
+  // round's fix, that raw status propagated straight to the client via
+  // e.status||500, indistinguishable in the Network tab from this Vercel
+  // function being missing/undeployed. This proves the FIX: a downstream
+  // 404 is deliberately mapped to 502 with a clear, understood contract
+  // (upstreamStatus echoes the real downstream status for diagnosis) --
+  // not silently passed through as an apparent-routing 404.
   {
-    assert(!/res\.status\(\s*404\s*\)|json\(res\s*,\s*404/.test(MONITORING_LISTS_SRC), '10) api/monitoring-lists.js contains no code path that returns a 404 -- confirms the observed 404 is not this file\'s own routing/logic (consistent with a Preview-deployment-availability gap, not an application defect)');
+    // ha_research_runs itself returns a raw 404 -- the exact scenario this
+    // round's new batched query would trigger if the connected database
+    // were ever missing that table (e.g. migration 5 not applied there).
+    global.fetch = async (url, options = {}) => {
+      const u = String(url);
+      if(u.includes('/auth/v1/user')) return jsonResponse({ id: AUTH_USER_ID, email: 'qa@example.com' });
+      if(u.includes('/rest/v1/ha_users') && u.includes('auth_user_id=eq.')) return jsonResponse([{ id: USER_ID, email: 'qa@example.com', app_role: 'member', role: 'member', organization_id: null, status: 'active' }]);
+      if(u.includes('/rest/v1/ha_users') && u.includes('organization_id=eq.')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_uploads')) return jsonResponse([{ id: UPLOAD_ID, user_id: USER_ID, upload_name: 'QA List', stage: 'researched', updated_at: '2026-08-01T00:00:00Z' }]);
+      if(u.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_research_runs')) return jsonResponse({ code: '42P01', message: 'relation "public.ha_research_runs" does not exist', hint: null }, false, 404);
+      throw new Error(`Unhandled mock fetch URL in test 6: ${options.method || 'GET'} ${u}`);
+    };
+    const res = fakeRes();
+    await monitoringListsHandler(fakeReq('GET'), res);
+    assert(res.statusCode === 502, '6) a raw downstream 404 (ha_research_runs missing/unrecognized) is mapped to 502, never passed through as a raw 404');
+    assert(res.statusCode !== 404, '6) the client never sees a bare 404 for this failure -- a bare 404 here would be indistinguishable from a missing Vercel function');
+    assert(res.body && typeof res.body.error === 'string' && res.body.error.length > 0, '6) the 502 response carries a clear, human-readable error message (a genuine missing-Vercel-function 404 carries no such JSON body)');
+    assert(res.body && res.body.upstreamStatus === 404, '6) the real upstream status (404) is preserved in upstreamStatus for diagnosis, not discarded');
   }
 
-  // 7) Behavioral proof, same conclusion: an assortment of malformed/
-  // unexpected requests against the REAL handler (unknown method, missing
-  // body fields, wrong type) never returns 404 -- always a real 4xx/5xx the
-  // handler chose deliberately.
+  // 7) The same downstream-404 scenario, but for ha_accounts (a query this
+  // endpoint has always made, not one this round added) -- proves the fix
+  // is general to ANY sb() call in this file, not special-cased to
+  // ha_research_runs.
+  {
+    global.fetch = async (url, options = {}) => {
+      const u = String(url);
+      if(u.includes('/auth/v1/user')) return jsonResponse({ id: AUTH_USER_ID, email: 'qa@example.com' });
+      if(u.includes('/rest/v1/ha_users') && u.includes('auth_user_id=eq.')) return jsonResponse([{ id: USER_ID, email: 'qa@example.com', app_role: 'member', role: 'member', organization_id: null, status: 'active' }]);
+      if(u.includes('/rest/v1/ha_users') && u.includes('organization_id=eq.')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_uploads')) return jsonResponse([{ id: UPLOAD_ID, user_id: USER_ID, upload_name: 'QA List', stage: 'researched', updated_at: '2026-08-01T00:00:00Z' }]);
+      if(u.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_research_runs')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_signals')) return jsonResponse([]);
+      if(u.includes('/rest/v1/ha_accounts')) return jsonResponse({ code: '42P01', message: 'relation "public.ha_accounts" does not exist' }, false, 404);
+      throw new Error(`Unhandled mock fetch URL in test 7: ${options.method || 'GET'} ${u}`);
+    };
+    const res = fakeRes();
+    await monitoringListsHandler(fakeReq('GET'), res);
+    assert(res.statusCode === 502, '7) the same normalization applies to a pre-existing query (ha_accounts), not just the new ha_research_runs one');
+  }
+
+  // 8) Deliberate application statuses are NOT swept into 502 by the fix --
+  // only errors sb() itself marked as raw/unclassified are. HA004 (identity
+  // lock) still returns exactly 400 with identityLocked:true.
+  {
+    global.fetch = mockFetch({ researchRuns: [] });
+    // Reuse the real deleteCustomerAccountViaSnapshot() path indirectly is
+    // out of scope here (covered by scripts/test-monitoring-lists-account-delete.js);
+    // this proves the CLASSIFICATION mechanism itself: a fresh, unmarked
+    // Error with .status set (exactly what deleteCustomerAccountViaSnapshot()
+    // throws for HA004/55P03/42501, and what patchCustomerAccount() throws
+    // for "not found"/"invalid action") is preserved as-is by the top-level
+    // catch, not renormalized to 502.
+    assert(/e\.status\|\|500/.test(MONITORING_LISTS_SRC) && /e&&e\.fromSupabase/.test(MONITORING_LISTS_SRC), '8) the top-level catch checks e.fromSupabase BEFORE falling back to e.status||500 -- deliberately-classified errors (identityLocked HA004, 55P03, 42501, "not found", "invalid action") are unaffected by the 502 normalization');
+  }
+
+  // 9) Normal GET still returns 200 when research-run rows genuinely do not
+  // exist for any upload (the common case) -- the fix does not turn an
+  // ordinary empty result into an error.
+  {
+    global.fetch = mockFetch({ researchRuns: [] });
+    const res = fakeRes();
+    await monitoringListsHandler(fakeReq('GET'), res);
+    assert(res.statusCode === 200, '9) GET still returns a normal 200 when ha_research_runs has no rows for this user\'s uploads at all');
+  }
+
+  // 10) An assortment of malformed/unexpected requests against the REAL
+  // handler (unknown method, missing body fields, wrong type) still return
+  // real, deliberate 4xx statuses -- unaffected by the fromSupabase/502
+  // change, since these never reach sb() at all.
   {
     global.fetch = mockFetch({ researchRuns: [] });
     const unknownMethodRes = fakeRes();
     await monitoringListsHandler({ method: 'PUT', headers: { authorization: 'Bearer valid-token' }, body: {} }, unknownMethodRes);
-    assert(unknownMethodRes.statusCode === 405, '7) an unsupported HTTP method returns 405 (Method not allowed), not 404');
+    assert(unknownMethodRes.statusCode === 405, '10) an unsupported HTTP method returns 405 (Method not allowed)');
     const badPatchRes = fakeRes();
     await monitoringListsHandler(fakeReq('PATCH', { type: 'bogus', id: 'x', action: 'bogus' }), badPatchRes);
-    assert(badPatchRes.statusCode === 400, '7) a malformed PATCH body returns 400, not 404');
+    assert(badPatchRes.statusCode === 400, '10) a malformed PATCH body returns 400');
     const badDeleteRes = fakeRes();
     await monitoringListsHandler(fakeReq('DELETE', { type: 'bogus' }), badDeleteRes);
-    assert(badDeleteRes.statusCode === 400, '7) a malformed DELETE body returns 400, not 404');
+    assert(badDeleteRes.statusCode === 400, '10) a malformed DELETE body returns 400');
+  }
+
+  // ---------------------------------------------------------------------
+  // Issue 3 -- query-count / scalability: the research-run query must be
+  // O(1) per GET (one batched upload_id=in.(...) call), not O(N) as the
+  // number of uploaded lists grows. Seeds N=5 customer uploads and proves
+  // exactly ONE ha_research_runs request was made, scoped to all 5 upload
+  // ids at once, regardless of N.
+  // ---------------------------------------------------------------------
+  {
+    const N = 5;
+    const uploads = Array.from({ length: N }, (_, i) => ({ id: `upload-scale-${i}`, user_id: USER_ID, upload_name: `List ${i}`, stage: 'researched', updated_at: '2026-08-01T00:00:00Z' }));
+    const accountsByUpload = Object.fromEntries(uploads.map(u => [u.id, [{ id: `acct-${u.id}`, upload_id: u.id, account_name: 'Acme', industry: '', raw_data: {}, created_at: '2026-07-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' }]]));
+    const researchRuns = [{ upload_id: 'upload-scale-2', research_run_id: 'run-2', attempt_id: 'att-2', status: 'running', lease_expires_at: new Date(Date.now() + 60_000).toISOString(), started_at: '2026-08-03T12:00:00Z', error_message: null }];
+    const callLog = { researchRunsQueryCalls: 0, researchRunsQueryUrls: [] };
+    global.fetch = mockFetch({ uploads, accountsByUpload, researchRuns, calls: callLog });
+    const res = fakeRes();
+    await monitoringListsHandler(fakeReq('GET'), res);
+    assert(res.statusCode === 200, 'scale: the batched-query GET still succeeds for N=5 uploads');
+    assert(callLog.researchRunsQueryCalls === 1, `scale: exactly ONE ha_research_runs query was made for N=${N} uploads (got ${callLog.researchRunsQueryCalls}) -- not one per upload`);
+    assert(callLog.researchRunsQueryUrls[0] && uploads.every(u => callLog.researchRunsQueryUrls[0].includes(encodeURIComponent(u.id).replace(/%22/g, '') ) || callLog.researchRunsQueryUrls[0].includes(u.id)), 'scale: the single query covers every upload id at once (upload_id=in.(...))');
+    const uploadScale2 = res.body?.lists?.customer?.find(l => l.id === 'upload-scale-2');
+    assert(uploadScale2 && uploadScale2.researchRunState.status === 'active', 'scale: the batched query still correctly attributes the active run to its OWN upload (upload-scale-2)');
+    const uploadScale0 = res.body?.lists?.customer?.find(l => l.id === 'upload-scale-0');
+    assert(uploadScale0 && uploadScale0.researchRunState.status === 'idle', 'scale: an upload with no run row of its own is idle, not accidentally attributed another upload\'s run');
   }
 
   global.fetch = originalFetch;
@@ -222,34 +337,39 @@ async function runServerTests(){
 // ===========================================================================
 // PART 2 -- client: extracted verbatim from dashboard/index.html.
 // ===========================================================================
+// ROUND 13 note: line ranges re-derived after the composite-identity fix
+// shifted the file further -- extractFn()/extractRaw()'s own signature/
+// closing checks are the actual correctness guarantee, not these numbers.
 const REAL_SOURCE = [
-  extractRaw('ACTIVE_RESEARCH_BREADCRUMB_KEY', 3938, 3938, 'const ACTIVE_RESEARCH_BREADCRUMB_KEY'),
-  extractFn('setActiveResearchBreadcrumb', 3939, 3945),
-  extractFn('clearActiveResearchBreadcrumb', 3946, 3957),
-  extractFn('getActiveResearchBreadcrumb', 3958, 3965),
-  extractFn('applyModalResearchResultToDashboard', 4692, 4702),
-  extractFn('findTimeboxForAccountOpportunity', 4710, 4717),
-  extractFn('highlightResultElement', 4719, 4725),
-  extractFn('scrollToAccountResult', 4734, 4754),
-  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 4765, 4766, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
-  extractFn('getRecentlyResearchedAccounts', 4767, 4780),
-  extractFn('relativeResearchTimeLabel', 4781, 4788),
-  extractFn('renderRecentlyResearchedSection', 4789, 4814),
-  extractRaw('recentlyResearchedClickListener', 4815, 4825, "document.addEventListener('click', (event) => {"),
-  extractFn('escapeHtml', 6685, 6688),
-  extractRaw('modalFmtEsc', 6693, 6695, "const fmt=d=>"),
-  extractFn('request', 6704, 6721, {async: true}),
-  extractFn('accountRow', 6749, 6786),
-  extractFn('researchRunBanner', 6791, 6802),
-  extractFn('listCard', 6803, 6826),
-  extractRaw('renderManager', 6827, 6827, 'function renderManager(){'),
-  extractFn('isModalOpen', 6838, 6841),
-  extractFn('anyListHasActiveRun', 6842, 6844),
-  extractFn('stopResearchPoll', 6845, 6847),
-  extractFn('scheduleResearchPollIfNeeded', 6848, 6852),
-  extractFn('load', 6853, 6862, {async: true}),
-  extractRaw('openClose', 6863, 6864, "function open(){"),
-  extractFn('showInfoDialog', 7070, 7103)
+  extractRaw('ACTIVE_RESEARCH_BREADCRUMB_KEY', 3949, 3949, 'const ACTIVE_RESEARCH_BREADCRUMB_KEY'),
+  extractFn('setActiveResearchBreadcrumb', 3950, 3956),
+  extractFn('clearActiveResearchBreadcrumb', 3957, 3968),
+  extractFn('getActiveResearchBreadcrumb', 3969, 3976),
+  extractFn('applyModalResearchResultToDashboard', 4718, 4728),
+  extractFn('normalizeAccountNameForKey', 4733, 4733),
+  extractFn('recentlyResearchedKey', 4738, 4738),
+  extractFn('findTimeboxForAccountOpportunity', 4746, 4753),
+  extractFn('highlightResultElement', 4755, 4761),
+  extractFn('scrollToAccountResult', 4775, 4795),
+  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 4809, 4810, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
+  extractFn('getRecentlyResearchedAccounts', 4811, 4825),
+  extractFn('relativeResearchTimeLabel', 4826, 4833),
+  extractFn('renderRecentlyResearchedSection', 4834, 4859),
+  extractRaw('recentlyResearchedClickListener', 4860, 4871, "document.addEventListener('click', (event) => {"),
+  extractFn('escapeHtml', 6736, 6739),
+  extractRaw('modalFmtEsc', 6744, 6746, "const fmt=d=>"),
+  extractFn('request', 6755, 6772, {async: true}),
+  extractFn('accountRow', 6800, 6837),
+  extractFn('researchRunBanner', 6842, 6853),
+  extractFn('listCard', 6854, 6877),
+  extractRaw('renderManager', 6878, 6878, 'function renderManager(){'),
+  extractFn('isModalOpen', 6889, 6892),
+  extractFn('anyListHasActiveRun', 6893, 6895),
+  extractFn('stopResearchPoll', 6896, 6898),
+  extractFn('scheduleResearchPollIfNeeded', 6899, 6903),
+  extractFn('load', 6904, 6913, {async: true}),
+  extractRaw('openClose', 6914, 6915, "function open(){"),
+  extractFn('showInfoDialog', 7127, 7160)
 ].join('\n\n');
 
 // Static regression proof for requirement 1: nothing in dashboard/index.html
@@ -260,7 +380,7 @@ const REAL_SOURCE = [
 // provider-facing research request.
 assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.html contains no AbortController/abort() anywhere -- an in-flight provider request cannot be cancelled by ANY client action, including closing the modal');
 {
-  const closeSrc = extractRaw('closeOnly', 6864, 6864, "function close(){");
+  const closeSrc = extractRaw('closeOnly', 6915, 6915, "function close(){");
   assert(!/abort/i.test(closeSrc) && !/fetch\(/.test(closeSrc), '1) close()\'s own source contains no abort/cancel/fetch call');
   assert(/stopResearchPoll\(\)/.test(closeSrc), '1) close() stops only the modal\'s own UI polling loop (stopResearchPoll()), not the provider request');
 }
@@ -270,10 +390,28 @@ assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.htm
 // identity-locked, and only falls back to alert() in the else branch (never
 // unconditionally) -- extracted directly from the real click handler.
 {
-  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 7124, 7153, "if(action==='delete-account'){");
+  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 7181, 7210, "if(action==='delete-account'){");
   assert(/if\(err\.identityLocked\)\{/.test(deleteAccountBranch), '6) the delete-account catch branch checks err.identityLocked');
   assert(/showInfoDialog\(/.test(deleteAccountBranch), '6) the identityLocked branch calls showInfoDialog(), the branded non-destructive dialog');
   assert(/\}else\{\s*alert\(err\.message\);\s*\}/.test(deleteAccountBranch), '6) alert() is reached ONLY in the else branch -- never unconditionally for this rejection');
+}
+
+// Static regression proof for the composite-identity fix (issue 2): every
+// site that keys Recently Researched / navigation must use BOTH uploadId
+// and account name, never account name alone -- proven directly on the
+// real, on-disk function signatures/bodies rather than re-asserted only
+// through behavior.
+{
+  assert(/function applyModalResearchResultToDashboard\(freshAccount, uploadId\)/.test(DASHBOARD_SRC), 'composite: applyModalResearchResultToDashboard() takes an explicit uploadId parameter');
+  assert(/function findTimeboxForAccountOpportunity\(uploadId, accountName\)/.test(DASHBOARD_SRC), 'composite: findTimeboxForAccountOpportunity() takes (uploadId, accountName)');
+  assert(/function scrollToAccountResult\(uploadId, accountName\)/.test(DASHBOARD_SRC), 'composite: scrollToAccountResult() takes (uploadId, accountName)');
+  assert(/el\.dataset\.account === accountName && el\.dataset\.uploadId === uploadId/.test(DASHBOARD_SRC), 'composite: the opportunity-grid card lookup matches BOTH data-account and data-upload-id, not name alone');
+  assert(/el\.dataset\.accountName === accountName && el\.dataset\.uploadId === uploadId/.test(DASHBOARD_SRC), 'composite: the detail/recently-researched card lookups match BOTH data-account-name and data-upload-id');
+  assert(/recentlyResearchedKey\(a\.uploadId, a\.name\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() dedupes/filters using the composite key, not account name alone');
+  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 7019, 7027, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
+  assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
+  assert(/scrollToAccountResult\(listId, accountName\)/.test(handoffSrc), 'composite: the "View opportunities" toast action passes the same captured listId into scrollToAccountResult(), not currentUploadId');
+  assert(!/scrollToAccountResult\(accountName\)/.test(DASHBOARD_SRC) && !/applyModalResearchResultToDashboard\(fresh\)\s*[;)]/.test(DASHBOARD_SRC), 'composite: no remaining call site uses the old name-only signature');
 }
 
 // ===========================================================================
@@ -455,8 +593,13 @@ var RESEARCH_POLL_INTERVAL_MS = 6000;
   return sandbox;
 }
 
+// ROUND 13 fix: uploadId defaults to 'upload-1' (matching createSandbox's
+// own default currentUploadId) but is always an explicit, settable field --
+// account names are only unique WITHIN one upload, so every composite-
+// identity test below constructs fixtures with a real, distinct uploadId
+// per upload rather than relying on name uniqueness.
 function fixtureAccount(name, overrides = {}){
-  return { id: `acct-${name}`, name, lastResearchedAt: null, signals: [], futureOpportunities: [], ...overrides };
+  return { id: `acct-${name}`, name, uploadId: 'upload-1', lastResearchedAt: null, signals: [], futureOpportunities: [], ...overrides };
 }
 
 async function runClientTests(){
@@ -512,7 +655,7 @@ async function runClientTests(){
   // reopening can never itself claim another run or call a provider.
   // ---------------------------------------------------------------------
   {
-    const loadSrc = extractFn('load', 6853, 6862, { async: true });
+    const loadSrc = extractFn('load', 6904, 6913, { async: true });
     assert(/request\('GET'\)/.test(loadSrc), "5) load() calls request('GET')");
     assert(!/researchRunAction/.test(loadSrc) && !/claim/i.test(loadSrc), '5) load() never references a claim/researchRunAction -- reopening the modal cannot itself start or attach to a run beyond reading its state');
   }
@@ -553,26 +696,27 @@ async function runClientTests(){
   // result even when it would not appear in the default top-ranked view,
   // by switching to the matching timebox and flipping the SAME
   // showAllWeeklyPriorities switch the existing "View All Opportunities"
-  // button already uses (never a permanent ranking change).
+  // button already uses (never a permanent ranking change). Uses the
+  // COMPOSITE (uploadId, account name) identity throughout.
   // ---------------------------------------------------------------------
   {
-    const account = fixtureAccount('L.L.Bean', { futureOpportunities: [{ account: 'L.L.Bean', timebox: 'quarter' }] });
+    const account = fixtureAccount('L.L.Bean', { uploadId: 'upload-1', futureOpportunities: [{ account: 'L.L.Bean', uploadId: 'upload-1', timebox: 'quarter' }] });
     const sandbox = createSandbox({ accounts: [account] });
     sandbox.activeTimebox = 'week';
     sandbox.showAllWeeklyPriorities = false;
     sandbox.__refreshCalls.length = 0;
     // Not rendered anywhere yet (grid/detail/recent all empty) -- exercises
     // the "nothing found" fallback path.
-    sandbox.scrollToAccountResult('L.L.Bean');
+    sandbox.scrollToAccountResult('upload-1', 'L.L.Bean');
     assert(sandbox.activeTimebox === 'quarter', "7) scrollToAccountResult() switches to the timebox where the account's own opportunity actually lives, not whatever tab happened to be open");
     assert(sandbox.showAllWeeklyPriorities === true, '7) scrollToAccountResult() flips the existing showAllWeeklyPriorities switch -- the SAME mechanism "View All Opportunities" already uses, not a new ranking override');
     assert(sandbox.__refreshCalls.length === 1, '7) refreshOpportunityViews() is called exactly once to materialize the now-visible result');
 
     // Now the account's opportunity card IS in the grid (simulating a
     // real render): scrollToAccountResult must find and highlight it.
-    const card = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'L.L.Bean' });
+    const card = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'L.L.Bean', 'data-upload-id': 'upload-1' });
     sandbox.__dom.opportunitiesGrid.appendChild(card);
-    sandbox.scrollToAccountResult('L.L.Bean');
+    sandbox.scrollToAccountResult('upload-1', 'L.L.Bean');
     assert(card._scrolledIntoView >= 1, "7) the account's own opportunity card is scrolled into view when it is present in the grid");
     assert(card.classList.contains('ha-just-researched-highlight'), "7) the account's own opportunity card is highlighted");
   }
@@ -580,29 +724,46 @@ async function runClientTests(){
     // Account has zero opportunities at all (a genuine zero-signal
     // result) -- falls back to the Recently Researched card, never a dead
     // click.
-    const account = fixtureAccount('Zero Signal Co', { futureOpportunities: [] });
+    const account = fixtureAccount('Zero Signal Co', { uploadId: 'upload-1', futureOpportunities: [] });
     const sandbox = createSandbox({ accounts: [account] });
-    const recentCard = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Zero Signal Co' });
+    const recentCard = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Zero Signal Co', 'data-upload-id': 'upload-1' });
     sandbox.__dom.recentlyResearchedSection.appendChild(recentCard);
-    sandbox.scrollToAccountResult('Zero Signal Co');
+    sandbox.scrollToAccountResult('upload-1', 'Zero Signal Co');
     assert(recentCard._scrolledIntoView >= 1, '7) with no opportunity/detail card anywhere, "View opportunities" falls back to the guaranteed Recently Researched entry instead of doing nothing');
+  }
+  {
+    // ROUND 13 fix -- composite-identity proof: a card for the SAME
+    // account name in a DIFFERENT upload must NOT be matched. Only
+    // "acme-b-card" (upload-b) may be scrolled/highlighted when asked for
+    // ('upload-b', 'Acme'); "acme-a-card" (upload-a) must be left alone.
+    const accountA = fixtureAccount('Acme', { uploadId: 'upload-a', futureOpportunities: [] });
+    const accountB = fixtureAccount('Acme', { uploadId: 'upload-b', futureOpportunities: [] });
+    const sandbox = createSandbox({ accounts: [accountA, accountB] });
+    const cardA = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'Acme', 'data-upload-id': 'upload-a' });
+    const cardB = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'Acme', 'data-upload-id': 'upload-b' });
+    sandbox.__dom.opportunitiesGrid.appendChild(cardA);
+    sandbox.__dom.opportunitiesGrid.appendChild(cardB);
+    sandbox.scrollToAccountResult('upload-b', 'Acme');
+    assert(cardB._scrolledIntoView >= 1 && cardB.classList.contains('ha-just-researched-highlight'), 'composite: requesting upload-b\'s Acme scrolls/highlights ONLY upload-b\'s card');
+    assert(cardA._scrolledIntoView === 0 && !cardA.classList.contains('ha-just-researched-highlight'), 'composite: upload-a\'s identically-named Acme card is completely untouched -- name-only matching would have hit the first one found instead');
   }
 
   // ---------------------------------------------------------------------
   // Requirement 8/9 -- Recently Researched dedupes reruns of the same
-  // account and never distorts the underlying priority ranking.
+  // (uploadId, account) and never distorts the underlying priority
+  // ranking. Both use the COMPOSITE identity.
   // ---------------------------------------------------------------------
   {
-    const account = fixtureAccount('L.L.Bean');
+    const account = fixtureAccount('L.L.Bean', { uploadId: 'upload-1' });
     const sandbox = createSandbox({ accounts: [account] });
     // First research: 1 signal.
-    sandbox.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }], lastResearchedAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+    sandbox.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }], lastResearchedAt: new Date(Date.now() - 5 * 60_000).toISOString() }, 'upload-1');
     // Rerun: 2 signals, newer timestamp.
-    sandbox.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }, { isReal: true }], lastResearchedAt: new Date().toISOString() });
+    sandbox.applyModalResearchResultToDashboard({ name: 'L.L.Bean', signals: [{ isReal: true }, { isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-1');
     const entries = sandbox.getRecentlyResearchedAccounts();
-    assert(entries.length === 1, '8) two research runs for the SAME account produce exactly ONE Recently Researched entry, not two');
-    assert(entries[0].name === 'L.L.Bean' && entries[0].signalCount === 2, '8) the single entry reflects the LATEST rerun\'s result (2 signals), not the first');
-    assert(sandbox.__addSignalDerivedCalls.length === 2, '8) both research completions were genuinely applied (this is real dedup by account identity, not just "only one call happened")');
+    assert(entries.length === 1, '8) two research runs for the SAME (upload, account) produce exactly ONE Recently Researched entry, not two');
+    assert(entries[0].name === 'L.L.Bean' && entries[0].uploadId === 'upload-1' && entries[0].signalCount === 2, '8) the single entry reflects the LATEST rerun\'s result (2 signals), not the first');
+    assert(sandbox.__addSignalDerivedCalls.length === 2, '8) both research completions were genuinely applied (this is real dedup by composite identity, not just "only one call happened")');
   }
   {
     // Requirement 9: recently-researched status must not appear anywhere
@@ -610,16 +771,16 @@ async function runClientTests(){
     // ranking comparator -- applyModalResearchResultToDashboard() only
     // patches signals/lastResearchedAt/futureOpportunities and calls the
     // existing render pipeline; it contains no sort/comparator of its own.
-    const src = extractFn('applyModalResearchResultToDashboard', 4692, 4702);
+    const src = extractFn('applyModalResearchResultToDashboard', 4718, 4728);
     assert(!/\.sort\(/.test(src), '9) applyModalResearchResultToDashboard() itself performs no sorting -- it cannot distort priority order, by construction');
   }
   {
     // Zero-signal result still produces a useful Recently Researched entry
     // (the "no-signal state" requirement) rather than being dropped.
-    const account = fixtureAccount('No Signal Co');
+    const account = fixtureAccount('No Signal Co', { uploadId: 'upload-1' });
     const sandbox = createSandbox({ accounts: [account] });
-    sandbox.applyModalResearchResultToDashboard({ name: 'No Signal Co', signals: [], lastResearchedAt: new Date().toISOString() });
-    const html = sandbox.renderRecentlyResearchedSection();
+    sandbox.applyModalResearchResultToDashboard({ name: 'No Signal Co', signals: [], lastResearchedAt: new Date().toISOString() }, 'upload-1');
+    sandbox.renderRecentlyResearchedSection();
     const host = sandbox.__dom.recentlyResearchedSection;
     assert(/No verified signals found/.test(host.innerHTML), '9/8) a zero-signal research result still renders a clear "No verified signals found" Recently Researched entry, not a broken/empty one');
     assert(!/rr-view-btn/.test(host.innerHTML), '9/8) a zero-signal entry does not offer a dead "View opportunities" link (nothing to view)');
@@ -630,11 +791,11 @@ async function runClientTests(){
     // listener (recentlyResearchedClickListener, extracted verbatim above
     // and registered via the sandbox's document.addEventListener capture),
     // not a reimplementation of its dismiss logic.
-    const account = fixtureAccount('Dismiss Co');
+    const account = fixtureAccount('Dismiss Co', { uploadId: 'upload-1' });
     const sandbox = createSandbox({ accounts: [account] });
-    sandbox.applyModalResearchResultToDashboard({ name: 'Dismiss Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() });
+    sandbox.applyModalResearchResultToDashboard({ name: 'Dismiss Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-1');
     assert(sandbox.getRecentlyResearchedAccounts().length === 1, 'dismiss: sanity check -- the entry exists before dismissal');
-    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Dismiss Co' });
+    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Dismiss Co', 'data-upload-id': 'upload-1' });
     const dismissBtn = new FakeEl('button', { class: 'rr-dismiss-btn' });
     card.appendChild(dismissBtn);
     const handler = sandbox.__dom.listeners.click;
@@ -648,16 +809,80 @@ async function runClientTests(){
     // above -- proven here by observing its real side effect (a
     // refreshOpportunityViews() call) when triggered via the delegated
     // listener rather than a direct call.
-    const account = fixtureAccount('Click Co', { futureOpportunities: [{ account: 'Click Co', timebox: 'week' }] });
+    const account = fixtureAccount('Click Co', { uploadId: 'upload-1', futureOpportunities: [{ account: 'Click Co', uploadId: 'upload-1', timebox: 'week' }] });
     const sandbox = createSandbox({ accounts: [account] });
-    sandbox.applyModalResearchResultToDashboard({ name: 'Click Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() });
+    sandbox.applyModalResearchResultToDashboard({ name: 'Click Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-1');
     sandbox.__refreshCalls.length = 0;
-    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Click Co' });
+    const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Click Co', 'data-upload-id': 'upload-1' });
     const viewBtn = new FakeEl('button', { class: 'rr-view-btn' });
     card.appendChild(viewBtn);
     const handler = sandbox.__dom.listeners.click;
     handler({ target: viewBtn });
     assert(sandbox.__refreshCalls.length === 1, '7/8) clicking the real "View opportunities" button on a Recently Researched card triggers the real scrollToAccountResult() (observed via its refreshOpportunityViews() call)');
+  }
+
+  // ---------------------------------------------------------------------
+  // Explicit regression scenario from the user's report: Upload A has
+  // "Acme"; Upload B ALSO has "Acme" -- a genuinely realistic case, since
+  // account names are only unique per-upload. Proves every operation
+  // (highlight, independent visibility, dedup, dismissal) respects the
+  // composite identity end-to-end through the REAL functions, not just in
+  // isolation.
+  // ---------------------------------------------------------------------
+  {
+    const acmeA = fixtureAccount('Acme', { uploadId: 'upload-a', futureOpportunities: [{ account: 'Acme', uploadId: 'upload-a', timebox: 'week' }] });
+    const acmeB = fixtureAccount('Acme', { uploadId: 'upload-b', futureOpportunities: [{ account: 'Acme', uploadId: 'upload-b', timebox: 'week' }] });
+    const sandbox = createSandbox({ accounts: [acmeA, acmeB] });
+
+    // (a) Completing research for upload-a highlights only upload-a's card;
+    // upload-b's identically-named card is untouched.
+    const cardA = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'Acme', 'data-upload-id': 'upload-a' });
+    const cardB = new FakeEl('div', { class: 'opportunity-card', 'data-account': 'Acme', 'data-upload-id': 'upload-b' });
+    sandbox.__dom.opportunitiesGrid.appendChild(cardA);
+    sandbox.__dom.opportunitiesGrid.appendChild(cardB);
+    sandbox.applyModalResearchResultToDashboard({ name: 'Acme', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-a');
+    sandbox.scrollToAccountResult('upload-a', 'Acme');
+    assert(cardA._scrolledIntoView >= 1, 'AB-scenario (a): completing research for upload-a\'s Acme highlights upload-a\'s own card');
+    assert(cardB._scrolledIntoView === 0, 'AB-scenario (a): upload-b\'s Acme result is untouched by upload-a\'s completion');
+
+    // (b) Both can appear independently in Recently Researched.
+    sandbox.applyModalResearchResultToDashboard({ name: 'Acme', signals: [{ isReal: true }, { isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-b');
+    const entries = sandbox.getRecentlyResearchedAccounts();
+    const entryA = entries.find(e => e.uploadId === 'upload-a');
+    const entryB = entries.find(e => e.uploadId === 'upload-b');
+    assert(entries.length === 2, 'AB-scenario (b): both upload-a\'s Acme and upload-b\'s Acme appear as two SEPARATE Recently Researched entries');
+    assert(entryA && entryA.signalCount === 1, 'AB-scenario (b): upload-a\'s entry reflects upload-a\'s own result (1 signal)');
+    assert(entryB && entryB.signalCount === 2, 'AB-scenario (b): upload-b\'s entry reflects upload-b\'s own result (2 signals), independent of upload-a\'s');
+
+    // (c) Rerunning upload-a deduplicates only upload-a -- still 2 entries
+    // total, not 3, and upload-b's entry is untouched.
+    sandbox.applyModalResearchResultToDashboard({ name: 'Acme', signals: [{ isReal: true }, { isReal: true }, { isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-a');
+    const entriesAfterRerun = sandbox.getRecentlyResearchedAccounts();
+    assert(entriesAfterRerun.length === 2, 'AB-scenario (c): rerunning upload-a\'s Acme still leaves exactly 2 entries total (deduped within upload-a, upload-b unaffected)');
+    const entryARerun = entriesAfterRerun.find(e => e.uploadId === 'upload-a');
+    const entryBUnchanged = entriesAfterRerun.find(e => e.uploadId === 'upload-b');
+    assert(entryARerun && entryARerun.signalCount === 3, 'AB-scenario (c): upload-a\'s entry now reflects the rerun\'s result (3 signals)');
+    assert(entryBUnchanged && entryBUnchanged.signalCount === 2, 'AB-scenario (c): upload-b\'s entry is completely unaffected by upload-a\'s rerun');
+
+    // (d) Dismissing upload-a's entry leaves upload-b's entry visible.
+    // Renders the section for real first (so renderRecentlyResearchedSection()'s
+    // OWN markup generation for both entries is genuinely exercised), then
+    // dispatches through the real delegated listener using a card built
+    // with the same data-account-name/data-upload-id shape that markup
+    // uses (this fake DOM stores innerHTML as a string rather than parsing
+    // it back into traversable nodes -- see FakeEl -- so the dispatched
+    // element is constructed to match, not walked out of the HTML string).
+    const renderedHtml = sandbox.renderRecentlyResearchedSection();
+    const host = sandbox.__dom.recentlyResearchedSection;
+    assert(/data-account-name="Acme" data-upload-id="upload-a"/.test(host.innerHTML) && /data-account-name="Acme" data-upload-id="upload-b"/.test(host.innerHTML), 'AB-scenario (d): sanity check -- the real render actually emitted BOTH upload-a\'s and upload-b\'s Acme cards with distinct data-upload-id');
+    const cardAInSection = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Acme', 'data-upload-id': 'upload-a' });
+    const dismissBtnA = new FakeEl('button', { class: 'rr-dismiss-btn' });
+    cardAInSection.appendChild(dismissBtnA);
+    const handler = sandbox.__dom.listeners.click;
+    handler({ target: dismissBtnA });
+    const entriesAfterDismissA = sandbox.getRecentlyResearchedAccounts();
+    assert(!entriesAfterDismissA.some(e => e.uploadId === 'upload-a'), 'AB-scenario (d): dismissing upload-a\'s entry removes it');
+    assert(entriesAfterDismissA.some(e => e.uploadId === 'upload-b'), 'AB-scenario (d): upload-b\'s entry remains visible after dismissing upload-a\'s -- dismissal is scoped to the composite key, not the account name');
   }
 }
 

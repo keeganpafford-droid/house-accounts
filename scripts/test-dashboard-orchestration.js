@@ -89,40 +89,40 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // scanning from the current file and spot-verified by direct reads, not
 // hand-counted -- extractFn()'s own signature check below is the final,
 // self-enforcing guarantee regardless.
-// ROUND 12 note: line ranges re-derived after this round's run-state
-// reattachment / HA004 dialog / post-research handoff changes shifted
-// almost every function below. extractFn()/extractRaw()'s own
-// signature/closing-brace checks are the actual guarantee of correctness --
-// these numbers were re-derived mechanically (brace-depth scan from each
+// ROUND 13 note: line ranges re-derived after this round's error-
+// classification/query-batching/composite-identity changes shifted almost
+// every function below. extractFn()/extractRaw()'s own signature/
+// closing-brace checks are the actual guarantee of correctness -- these
+// numbers were re-derived mechanically (brace-depth scan from each
 // function's real signature line), not hand-counted.
 const REAL_SOURCE = [
   extractFn('claimAutomaticResearchRun', 2212, 2222, {async: true}),
   extractFn('heartbeatCurrentResearchRun', 2242, 2259, {async: true}),
   extractFn('reportResearchRunOutcome', 2273, 2298, {async: true}),
-  extractFn('normalizeSavedAccount', 2414, 2471),
-  extractFn('accountCardFor', 3254, 3256),
-  extractFn('accountSignalsPanel', 3257, 3260),
-  extractFn('fetchUploadScopedSnapshot', 3842, 3864, {async: true}),
-  extractFn('persistScopedResearchResult', 3872, 3917, {async: true}),
-  extractFn('researchAccountFromManageModal', 3967, 4071, {async: true}),
-  extractFn('researchAccountByName', 4091, 4231, {async: true}),
-  extractFn('getAccountsForResearch', 4236, 4249),
-  extractFn('batchPayloadForAccounts', 4251, 4295),
-  extractFn('applyBusinessSignalAccountBoost', 4298, 4306),
-  extractFn('researchAccountsBatch', 4308, 4397, {async: true}),
-  extractFn('signalTopicKeyClient', 4399, 4407),
-  extractFn('dedupeSignalsClient', 4409, 4422),
-  extractFn('researchTopAccounts', 4424, 4554, {async: true}),
-  extractFn('refreshOpportunityViews', 4655, 4675),
-  extractFn('renderDetailedAccountViews', 6119, 6187),
-  extractFn('serializeAccountForStorage', 6197, 6256),
-  extractFn('performSaveCurrentUpload', 6266, 6366, {async: true}),
-  extractFn('saveCurrentUpload', 6375, 6379),
-  extractFn('toggleAccountMetadataEdit', 6387, 6393),
-  extractFn('saveAccountMetadataEdit', 6416, 6452, {async: true}),
-  extractRaw('delegatedClickListener', 6470, 6492, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 6505, 6521),
-  extractFn('escapeHtml', 6685, 6688)
+  extractFn('normalizeSavedAccount', 2414, 2476),
+  extractFn('accountCardFor', 3259, 3261),
+  extractFn('accountSignalsPanel', 3262, 3265),
+  extractFn('fetchUploadScopedSnapshot', 3853, 3875, {async: true}),
+  extractFn('persistScopedResearchResult', 3883, 3928, {async: true}),
+  extractFn('researchAccountFromManageModal', 3978, 4082, {async: true}),
+  extractFn('researchAccountByName', 4102, 4242, {async: true}),
+  extractFn('getAccountsForResearch', 4247, 4260),
+  extractFn('batchPayloadForAccounts', 4262, 4306),
+  extractFn('applyBusinessSignalAccountBoost', 4309, 4317),
+  extractFn('researchAccountsBatch', 4319, 4408, {async: true}),
+  extractFn('signalTopicKeyClient', 4410, 4418),
+  extractFn('dedupeSignalsClient', 4420, 4433),
+  extractFn('researchTopAccounts', 4435, 4565, {async: true}),
+  extractFn('refreshOpportunityViews', 4666, 4686),
+  extractFn('renderDetailedAccountViews', 6170, 6238),
+  extractFn('serializeAccountForStorage', 6248, 6307),
+  extractFn('performSaveCurrentUpload', 6317, 6417, {async: true}),
+  extractFn('saveCurrentUpload', 6426, 6430),
+  extractFn('toggleAccountMetadataEdit', 6438, 6444),
+  extractFn('saveAccountMetadataEdit', 6467, 6503, {async: true}),
+  extractRaw('delegatedClickListener', 6521, 6543, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 6556, 6572),
+  extractFn('escapeHtml', 6736, 6739)
 ].join('\n\n');
 
 // ===========================================================================

@@ -2459,6 +2459,11 @@ function normalizeSavedAccount(account){
   a.signals = dedupeVerifiedSignals(Array.isArray(a.signals) ? a.signals : []);
   a.futureOpportunities.forEach(opp => {
     opp.account = opp.account || a.name || a.accountName || 'Saved account';
+    // ROUND 13 fix: opportunities loaded from persisted storage (existing
+    // signals/repeat patterns saved before this field existed) may not
+    // carry uploadId yet -- backfill from the owning account, which always
+    // has the correct, server-assigned upload_id (see api/get-dashboard.js).
+    opp.uploadId = opp.uploadId || a.uploadId || '';
     opp.email = opp.email || a.contactEmail || '';
     opp.contactEmail = opp.contactEmail || a.contactEmail || '';
     opp.contactTitle = opp.contactTitle || opp.contact || a.contactName || 'Relevant contact';
@@ -3639,17 +3644,23 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
   }).join('')}</div></div>`;
 }
 
+// ROUND 13 fix: data-upload-id alongside data-account on every rendered
+// card -- account names are only unique WITHIN one upload (see the
+// composite-identity comments on createOpportunity()/normalizeSavedAccount()
+// above), so any code that needs to find "this exact account's" card must
+// match both attributes together, never data-account alone.
 function renderRepOpportunityCard(opp){
   if(opp._locked){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
-    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card" data-account="${acct}"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
+    const lockedUploadId = escapeHtml(opp.uploadId || '');
+    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card" data-account="${acct}" data-upload-id="${lockedUploadId}"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
   }
   const recBadge = recommendationBadgeMeta(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
   const evidenceRows = structuredEvidenceRows(opp);
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
   return `
-    <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}">
+    <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
       <div class="opp-card-header">
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
@@ -4676,6 +4687,13 @@ function refreshOpportunityViews(){
 
 // ===========================================================================
 // ROUND 12, UX item 2 -- post-research result handoff.
+// ROUND 13 fix -- account names are only unique WITHIN one upload, not
+// globally (two different uploaded lists can both contain "Acme"). Every
+// function below now keys on the COMPOSITE identity (uploadId, account
+// name), never on account name alone, so two identically-named accounts in
+// different uploads can never be confused, cross-highlighted, cross-deduped,
+// or cross-dismissed. recentlyResearchedKey() is the single place that
+// composite identity is formed, so every read/write site agrees on it.
 //
 // applyModalResearchResultToDashboard() is display-only and deliberately
 // separate from researchAccountFromManageModal()/persistScopedResearchResult()
@@ -4689,10 +4707,18 @@ function refreshOpportunityViews(){
 // listId === currentUploadId (it returns outOfScope otherwise), so the
 // researched account is guaranteed to already exist in
 // window.accountRadarAccounts here -- this never invents a new entry.
-function applyModalResearchResultToDashboard(freshAccount){
-  if(!freshAccount || !freshAccount.name) return null;
+//
+// uploadId is REQUIRED and must be the caller's own explicit, immutable
+// scoped upload id (handleResearchClick's btn.dataset.listId, the SAME
+// value researchAccountFromManageModal itself used to claim/save this
+// result) -- never recovered from currentUploadId, dashboardViewMode/Team
+// View state, or the account name, all of which can legitimately differ
+// from the upload this particular result actually belongs to by the time
+// this runs.
+function applyModalResearchResultToDashboard(freshAccount, uploadId){
+  if(!freshAccount || !freshAccount.name || !uploadId) return null;
   const accounts = window.accountRadarAccounts || [];
-  const target = accounts.find(a => a.name === freshAccount.name);
+  const target = accounts.find(a => a.name === freshAccount.name && a.uploadId === uploadId);
   if(!target) return null;
   target.signals = freshAccount.signals || [];
   target.lastResearchedAt = freshAccount.lastResearchedAt || new Date().toISOString();
@@ -4701,15 +4727,25 @@ function applyModalResearchResultToDashboard(freshAccount){
   return target;
 }
 
-// Finds the first timebox (in priority order) for which this account
-// already has at least one matching opportunity, so scrollToAccountResult()
-// can switch the visible tab there instead of leaving the result hidden
-// behind whichever tab happened to be open. Returns null (not an error --
-// just "nothing to jump to yet") when the account has no opportunities at
-// all, e.g. a zero-signal research result.
-function findTimeboxForAccountOpportunity(accountName){
+// Normalizes an account name for composite-key comparison ONLY (trim +
+// lowercase) -- never used for display; display always uses the account's
+// real, original-cased name.
+function normalizeAccountNameForKey(name){ return String(name || '').trim().toLowerCase(); }
+// The single place the composite (uploadId, account name) identity is
+// formed into a string key -- every Recently Researched read/write site
+// below calls this instead of concatenating the two fields itself, so they
+// can never drift out of agreement with each other.
+function recentlyResearchedKey(uploadId, accountName){ return `${uploadId || ''}::${normalizeAccountNameForKey(accountName)}`; }
+
+// Finds the first timebox (in priority order) for which this EXACT
+// (uploadId, account name) account already has at least one matching
+// opportunity, so scrollToAccountResult() can switch the visible tab there
+// instead of leaving the result hidden behind whichever tab happened to be
+// open. Returns null (not an error -- just "nothing to jump to yet") when
+// the account has no opportunities at all, e.g. a zero-signal result.
+function findTimeboxForAccountOpportunity(uploadId, accountName){
   const accounts = window.accountRadarAccounts || [];
-  const account = accounts.find(a => a.name === accountName);
+  const account = accounts.find(a => a.name === accountName && a.uploadId === uploadId);
   const opps = (account && account.futureOpportunities) || [];
   if(!opps.length) return null;
   const order = ['week','month','quarter','annual'];
@@ -4731,8 +4767,13 @@ function highlightResultElement(el){
 // the CURRENT session's view -- the underlying sort/limit logic in
 // prepareTimeboxReasons()/prepareAllOpportunities() is untouched, this only
 // flips the same switch a user could click themselves.
-function scrollToAccountResult(accountName){
-  const matchedTimebox = findTimeboxForAccountOpportunity(accountName);
+//
+// Takes the EXPLICIT uploadId this result belongs to and matches it against
+// BOTH data-account AND data-upload-id on every candidate element --
+// account names are not globally unique, so a name-only match could land
+// on a different upload's same-named account's card.
+function scrollToAccountResult(uploadId, accountName){
+  const matchedTimebox = findTimeboxForAccountOpportunity(uploadId, accountName);
   if(matchedTimebox){
     if(activeTimebox !== matchedTimebox){
       activeTimebox = matchedTimebox;
@@ -4742,13 +4783,13 @@ function scrollToAccountResult(accountName){
     refreshOpportunityViews();
   }
   const grid = document.getElementById('opportunitiesGrid');
-  const gridCard = grid && [...grid.querySelectorAll('[data-account]')].find(el => el.dataset.account === accountName);
-  const detailCard = !gridCard && [...document.querySelectorAll('#accountList .account-card')].find(el => el.dataset.accountName === accountName);
+  const gridCard = grid && [...grid.querySelectorAll('[data-account]')].find(el => el.dataset.account === accountName && el.dataset.uploadId === uploadId);
+  const detailCard = !gridCard && [...document.querySelectorAll('#accountList .account-card')].find(el => el.dataset.accountName === accountName && el.dataset.uploadId === uploadId);
   // Fallback: no rendered opportunity/detail card at all (e.g. a genuine
-  // zero-signal result) -- the Recently Researched entry for this account
-  // is always guaranteed to exist right after a completed run, so land
-  // there instead of doing nothing.
-  const recentCard = !gridCard && !detailCard && [...document.querySelectorAll('#recentlyResearchedSection .recently-researched-card')].find(el => el.dataset.accountName === accountName);
+  // zero-signal result) -- the Recently Researched entry for this exact
+  // (uploadId, account) is always guaranteed to exist right after a
+  // completed run, so land there instead of doing nothing.
+  const recentCard = !gridCard && !detailCard && [...document.querySelectorAll('#recentlyResearchedSection .recently-researched-card')].find(el => el.dataset.accountName === accountName && el.dataset.uploadId === uploadId);
   const target = gridCard || detailCard || recentCard || document.getElementById('recentlyResearchedSection');
   if(target){ target.scrollIntoView({behavior:'smooth', block:'center'}); highlightResultElement(target); }
 }
@@ -4758,18 +4799,22 @@ function scrollToAccountResult(accountName){
 // persisted lastResearchedAt/signals (never a transient "just clicked"
 // DOM-only flag), so it survives a page reload and correctly reflects a
 // research run that completed while the Manage Customer Accounts modal was
-// closed. Deduplicated by account name (a rerun updates the same entry's
-// timestamp rather than adding a second one) and naturally drops out of the
-// window on its own after RECENTLY_RESEARCHED_WINDOW_MS -- no separate
-// expiry timer needed since this only ever recomputes on the next render.
+// closed. Deduplicated by the COMPOSITE (uploadId, account name) key (a
+// rerun of the same account in the same upload updates that one entry's
+// timestamp rather than adding a second one; an identically-named account
+// in a DIFFERENT upload is always a separate entry) and naturally drops out
+// of the window on its own after RECENTLY_RESEARCHED_WINDOW_MS -- no
+// separate expiry timer needed since this only ever recomputes on the next
+// render.
 const RECENTLY_RESEARCHED_WINDOW_MS = 30 * 60 * 1000;
 const dismissedRecentlyResearched = new Set();
 function getRecentlyResearchedAccounts(){
   const accounts = window.accountRadarAccounts || [];
   const cutoff = Date.now() - RECENTLY_RESEARCHED_WINDOW_MS;
   return accounts
-    .filter(a => a.lastResearchedAt && !dismissedRecentlyResearched.has(a.name))
+    .filter(a => a.lastResearchedAt && a.uploadId && !dismissedRecentlyResearched.has(recentlyResearchedKey(a.uploadId, a.name)))
     .map(a => ({
+      uploadId: a.uploadId,
       name: a.name,
       ts: new Date(a.lastResearchedAt).getTime(),
       signalCount: dedupeVerifiedSignals(a.signals || []).length
@@ -4792,15 +4837,15 @@ function renderRecentlyResearchedSection(){
   const entries = getRecentlyResearchedAccounts();
   if(!entries.length){ host.hidden = true; host.innerHTML = ''; return; }
   host.hidden = false;
-  // data-account-name carries the name (HTML-attribute-escaped, read back
-  // via .dataset -- never evaluated as code); no account name is ever
-  // interpolated into an inline onclick, matching the R8.1 fix's rationale
-  // for account-card actions above.
+  // data-account-name/data-upload-id carry the composite identity
+  // (HTML-attribute-escaped, read back via .dataset -- never evaluated as
+  // code); no account name is ever interpolated into an inline onclick,
+  // matching the R8.1 fix's rationale for account-card actions above.
   host.innerHTML = `
     <div class="section-header">Recently Researched</div>
     <div class="recently-researched-list">
       ${entries.map(e => `
-        <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}">
+        <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}" data-upload-id="${escapeHtml(e.uploadId)}">
           <div class="rr-info">
             <div class="rr-name">${escapeHtml(e.name)}</div>
             <div class="rr-meta">${e.signalCount ? `${e.signalCount} verified signal${e.signalCount === 1 ? '' : 's'} found` : 'No verified signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
@@ -4815,11 +4860,12 @@ function renderRecentlyResearchedSection(){
 document.addEventListener('click', (event) => {
   const card = event.target.closest('.recently-researched-card');
   if(!card) return;
+  const uploadId = card.dataset.uploadId;
   const accountName = card.dataset.accountName;
-  if(!accountName) return;
-  if(event.target.closest('.rr-view-btn')){ scrollToAccountResult(accountName); return; }
+  if(!uploadId || !accountName) return;
+  if(event.target.closest('.rr-view-btn')){ scrollToAccountResult(uploadId, accountName); return; }
   if(event.target.closest('.rr-dismiss-btn')){
-    dismissedRecentlyResearched.add(accountName);
+    dismissedRecentlyResearched.add(recentlyResearchedKey(uploadId, accountName));
     renderRecentlyResearchedSection();
   }
 });
@@ -4987,6 +5033,11 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
 
   const opp = {
     account: account.name,
+    // ROUND 13 fix: account names are only unique WITHIN one upload, not
+    // globally -- every opportunity carries its own account's uploadId so
+    // Recently Researched / "View opportunities" navigation can key on the
+    // composite (uploadId, account name) identity instead of name alone.
+    uploadId: account.uploadId || '',
     industry: account.industry,
     opportunity: name,
     opportunityName: name,
@@ -6125,7 +6176,7 @@ function renderDetailedAccountViews(accounts){
   });
   const detailedAccounts = safeAccounts.slice(0, 10);
   accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
-    <div class="account-card" data-account-name="${escapeHtml(a.name)}">
+    <div class="account-card" data-account-name="${escapeHtml(a.name)}" data-upload-id="${escapeHtml(a.uploadId || '')}">
       <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
         <div class="rank">#${idx + 1}</div>
         <div>
@@ -6953,20 +7004,26 @@ function escapeHtml(text){
      btn.disabled = false;
      btn.textContent = 'Research Again';
 
-     // ROUND 12, UX item 2: display-only refresh of the main dashboard (see
-     // applyModalResearchResultToDashboard()'s own comment in the main
-     // script -- this never touches the save path above, which already
-     // completed). Then hand the user straight to the result: closing this
-     // modal and scrolling/highlighting it, even if the account is not near
-     // the top of the normal priority ranking.
-     if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh);
+     // ROUND 12, UX item 2 / ROUND 13 fix: display-only refresh of the main
+     // dashboard (see applyModalResearchResultToDashboard()'s own comment in
+     // the main script -- this never touches the save path above, which
+     // already completed). listId is passed EXPLICITLY here -- it is the
+     // same immutable, locally-captured value researchAccountFromManageModal()
+     // itself used to claim/save this exact result (btn.dataset.listId,
+     // captured at the top of this function) -- never currentUploadId or
+     // any other global, which could have changed by the time this
+     // (possibly long-running) research call resolves. Then hand the user
+     // straight to the result: closing this modal and scrolling/highlighting
+     // it, even if the account is not near the top of the normal priority
+     // ranking.
+     if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);
      else if(typeof renderRecentlyResearchedSection === 'function') renderRecentlyResearchedSection();
      const toastMessage = signalCount
        ? `${signalCount} verified signal${signalCount===1?'':'s'} found for ${accountName}.`
        : `Research complete for ${accountName} — no verified signals found.`;
      showToast(toastMessage, signalCount ? {
        label:'View opportunities',
-       fn: () => { close(); if(typeof scrollToAccountResult === 'function') scrollToAccountResult(accountName); }
+       fn: () => { close(); if(typeof scrollToAccountResult === 'function') scrollToAccountResult(listId, accountName); }
      } : null, 8000);
    }catch(err){
      setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');

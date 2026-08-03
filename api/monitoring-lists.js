@@ -8,7 +8,20 @@ async function sb(path,opt={}){const{url,key}=env();const r=await fetch(`${url}/
   // actual database error code, same pattern as api/save-upload.js's
   // supabase() helper. Previously absent here, which silently broke any
   // err.code-based branching a caller might add around an sb() RPC call.
-  err.code=(d&&typeof d==='object')?d.code:undefined;throw err}return d}
+  err.code=(d&&typeof d==='object')?d.code:undefined;
+  // ROUND 13 fix: marks this as a RAW, unclassified upstream status -- see
+  // the handler's top-level catch below. err.status here is whatever HTTP
+  // status Supabase/PostgREST itself returned (which CAN be 404 -- e.g. a
+  // table/view PostgREST's schema cache doesn't recognize, or a malformed
+  // RPC signature -- among other possibilities). Passing that raw status
+  // straight through to the client would be indistinguishable, in the
+  // Network tab, from a genuinely missing Vercel serverless function. Any
+  // caller that wants to deliberately map a specific upstream failure (see
+  // deleteCustomerAccountViaSnapshot()'s HA004/55P03/42501 handling below)
+  // does so by throwing a FRESH, unmarked Error -- only errors that reach
+  // the top-level catch still carrying this flag get the safe default.
+  err.fromSupabase=true;
+  throw err}return d}
 async function authUser(req){const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const r=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});if(!r.ok)return null;return r.json()}
 async function context(req){const au=await authUser(req);if(!au?.id)return null;let rows=await sb(`ha_users?auth_user_id=eq.${encodeURIComponent(au.id)}&select=*&limit=1`);let user=Array.isArray(rows)?rows[0]:null;if(!user&&au.email){rows=await sb(`ha_users?email=eq.${encodeURIComponent(lower(au.email))}&select=*&limit=1`);user=Array.isArray(rows)?rows[0]:null}if(!user)return null;const role=lower(user.app_role||user.role||'member');const canViewTeam=role==='owner'||role==='admin';let visibleUsers=[user];if(canViewTeam&&user.organization_id){const users=await sb(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id,email,status,app_role,role`);visibleUsers=(Array.isArray(users)?users:[]).filter(x=>lower(x.status||'active')!=='inactive')}return{user,role,canViewTeam,userIds:visibleUsers.map(x=>x.id).filter(Boolean),emails:visibleUsers.map(x=>lower(x.email)).filter(Boolean)}}
 function inFilter(vals){return `in.(${vals.map(v=>`\"${String(v).replace(/\"/g,'')}\"`).join(',')})`}
@@ -35,10 +48,35 @@ function summarizeResearchRunState(row){
   if(row.status === 'failed') return {status:'failed', researchRunId:row.research_run_id, attemptId:row.attempt_id, startedAt:row.started_at||null, errorMessage:row.error_message||null};
   return {status:'idle', researchRunId:null, attemptId:null, startedAt:null, errorMessage:null};
 }
+// ROUND 13 fix: previously issued one ha_research_runs query PER customer
+// upload, inside the same per-upload Promise.all as ha_accounts/ha_signals
+// -- for N uploaded lists that is N research-run queries on every single
+// GET, and this endpoint is now polled repeatedly (bounded, but still
+// repeatedly) while the Manage Customer Accounts modal has an active run.
+// Batched here into exactly ONE upload_id=in.(...) query covering every
+// customer upload this ctx can see, run ONCE before the per-upload loop --
+// so the research-run query count is O(1) per GET regardless of how many
+// lists the caller has, not O(N). Ownership stays scoped: the id list fed
+// into upload_id=in.(...) is itself already the ctx-filtered `cu` result
+// (ha_uploads?user_id=${ids}...), and user_id=${ids} is repeated on this
+// query as defense in depth. Ordered upload_id then started_at DESC so the
+// first row seen per upload_id below is that upload's own latest run.
+async function loadResearchRunsByUpload(uploadIds, ids){
+  const map = new Map();
+  if(!uploadIds.length) return map;
+  const rows = await sb(`ha_research_runs?upload_id=${inFilter(uploadIds)}&user_id=${ids}&select=upload_id,research_run_id,attempt_id,status,lease_expires_at,started_at,error_message&order=upload_id.asc,started_at.desc`);
+  for(const row of (rows||[])){
+    if(!map.has(row.upload_id)) map.set(row.upload_id, row);
+  }
+  return map;
+}
 async function loadLists(ctx){const ids=ctx.userIds.length?inFilter(ctx.userIds):'eq.__none__';const emails=ctx.emails.length?inFilter(ctx.emails):'eq.__none__';const [cu,pu]=await Promise.all([
  sb(`ha_uploads?user_id=${ids}&select=*&order=updated_at.desc&limit=200`),
  sb(`ha_prospect_uploads?user_email=${emails}&select=*&order=created_at.desc&limit=200`)
-]);const customer=[];for(const u of (cu||[])){const [ac,sg,rr]=await Promise.all([sb(`ha_accounts?upload_id=eq.${encodeURIComponent(u.id)}&select=id,upload_id,account_name,industry,raw_data,created_at,updated_at&order=account_name.asc&limit=5000`),sb(`ha_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,first_seen_at&order=first_seen_at.desc&limit=1`),sb(`ha_research_runs?upload_id=eq.${encodeURIComponent(u.id)}&select=research_run_id,attempt_id,status,lease_expires_at,started_at,error_message&order=started_at.desc&limit=1`)]);customer.push({id:u.id,type:'customer',name:u.upload_name||'Customer List',status:isPaused(u.stage)?'paused':'active',companyCount:(ac||[]).length,lastUpload:u.updated_at||u.created_at||'',lastScan:(sg||[])[0]?.first_seen_at||'',signalCount:(sg||[]).length,researchRunState:summarizeResearchRunState((rr||[])[0]),accounts:(ac||[]).map(a=>({id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false}))})}
+]);
+ const customerUploadIds=(cu||[]).map(u=>u.id).filter(Boolean);
+ const researchRunsByUpload=await loadResearchRunsByUpload(customerUploadIds, ids);
+ const customer=[];for(const u of (cu||[])){const [ac,sg]=await Promise.all([sb(`ha_accounts?upload_id=eq.${encodeURIComponent(u.id)}&select=id,upload_id,account_name,industry,raw_data,created_at,updated_at&order=account_name.asc&limit=5000`),sb(`ha_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,first_seen_at&order=first_seen_at.desc&limit=1`)]);customer.push({id:u.id,type:'customer',name:u.upload_name||'Customer List',status:isPaused(u.stage)?'paused':'active',companyCount:(ac||[]).length,lastUpload:u.updated_at||u.created_at||'',lastScan:(sg||[])[0]?.first_seen_at||'',signalCount:(sg||[]).length,researchRunState:summarizeResearchRunState(researchRunsByUpload.get(u.id)),accounts:(ac||[]).map(a=>({id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false}))})}
  const prospect=[];for(const u of (pu||[])){const [ac,sg]=await Promise.all([sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(u.id)}&select=id,company_name,last_scanned_at,status&limit=5000`),sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,created_at&order=created_at.desc&limit=5000`)]);const latest=(ac||[]).map(a=>a.last_scanned_at).filter(Boolean).sort().reverse()[0]||'';prospect.push({id:u.id,type:'prospect',name:u.filename||'Prospect List',status:isPaused(u.status)?'paused':'active',companyCount:(ac||[]).length,lastUpload:u.created_at||'',lastScan:latest,signalCount:(sg||[]).length,newSignalsThisWeek:(sg||[]).filter(s=>Date.now()-new Date(s.created_at||0).getTime()<=7*86400000).length})}
  return{customer,prospect}}
 async function patchList(type,id,action,name){if(type==='customer'){const payload=action==='rename'?{upload_name:clean(name),updated_at:new Date().toISOString()}:{stage:action==='pause'?'paused':'uploaded',updated_at:new Date().toISOString()};return sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(payload)})}const payload=action==='rename'?{filename:clean(name)}:{status:action==='pause'?'paused':'active'};await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(payload)});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status:action==='pause'?'paused':'active'})});}
@@ -46,7 +84,15 @@ async function patchList(type,id,action,name){if(type==='customer'){const payloa
 async function patchCustomerAccount(ctx,id,action){
   const owned = await sb(`ha_accounts?id=eq.${encodeURIComponent(id)}&user_id=${inFilter(ctx.userIds)}&select=id,user_id,upload_id,account_name,raw_data&limit=1`);
   const account = Array.isArray(owned) ? owned[0] : null;
-  if(!account) throw new Error('Customer account not found or not accessible');
+  // ROUND 13 fix: these two are deliberately app-decided statuses for a
+  // successfully-routed request against a specific resource (this account
+  // id) -- a 404 here is a normal, well-understood REST response ("this
+  // account id doesn't exist or isn't yours"), categorically different
+  // from an unexpected raw upstream failure. Explicitly setting .status
+  // (and leaving err.fromSupabase unset, since these are fresh Error
+  // objects, not the sb() failure itself) is what lets the top-level catch
+  // trust and pass these through instead of normalizing them to 502.
+  if(!account){ const e = new Error('Customer account not found or not accessible'); e.status = 404; throw e; }
   const raw = account.raw_data || {};
   if(action === 'pause-account' || action === 'resume-account'){
     const next = {...raw, monitoring_status: action === 'pause-account' ? 'paused' : 'active', updated_by_account_management:true};
@@ -55,7 +101,7 @@ async function patchCustomerAccount(ctx,id,action){
   if(action === 'delete-account'){
     return deleteCustomerAccountViaSnapshot(account);
   }
-  throw new Error('Invalid account action');
+  { const e = new Error('Invalid account action'); e.status = 400; throw e; }
 }
 
 // Release blocker fix (post-Phase-2A review): account-level delete used to
@@ -122,4 +168,22 @@ async function deleteCustomerAccountViaSnapshot(account){
 }
 
 async function deleteList(type,id){if(type==='customer'){await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});return}await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
-export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){const lists=await loadLists(ctx);const activeCustomers=lists.customer.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedCustomers=lists.customer.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0),activeProspects=lists.prospect.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedProspects=lists.prospect.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0);return json(res,200,{ok:true,scope:ctx.canViewTeam?'organization':'user',role:ctx.role,lists,summary:{activeCustomers,pausedCustomers,activeProspects,pausedProspects,nextWeeklyScan:'Monday',monitoringStatus:(activeCustomers+activeProspects)>0?'Active':'No active lists'}})}if(req.method==='PATCH'){const{type,id,action,name}=req.body||{};if(type==='account'&&id&&['pause-account','resume-account','delete-account'].includes(action)){await patchCustomerAccount(ctx,id,action);return json(res,200,{ok:true})}if(!['customer','prospect'].includes(type)||!id||!['rename','pause','resume'].includes(action))return json(res,400,{error:'Invalid list update'});if(action==='rename'&&!clean(name))return json(res,400,{error:'List name is required'});await patchList(type,id,action,name);return json(res,200,{ok:true})}if(req.method==='DELETE'){const{type,id}=req.body||{};if(!['customer','prospect'].includes(type)||!id)return json(res,400,{error:'Invalid list delete'});await deleteList(type,id);return json(res,200,{ok:true})}return json(res,405,{error:'Method not allowed'})}catch(e){console.error('[Monitoring Lists]',e);return json(res,e.status||500,{error:e.message||'Monitoring list request failed',...(e.identityLocked?{identityLocked:true}:{})})}}
+export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){const lists=await loadLists(ctx);const activeCustomers=lists.customer.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedCustomers=lists.customer.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0),activeProspects=lists.prospect.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedProspects=lists.prospect.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0);return json(res,200,{ok:true,scope:ctx.canViewTeam?'organization':'user',role:ctx.role,lists,summary:{activeCustomers,pausedCustomers,activeProspects,pausedProspects,nextWeeklyScan:'Monday',monitoringStatus:(activeCustomers+activeProspects)>0?'Active':'No active lists'}})}if(req.method==='PATCH'){const{type,id,action,name}=req.body||{};if(type==='account'&&id&&['pause-account','resume-account','delete-account'].includes(action)){await patchCustomerAccount(ctx,id,action);return json(res,200,{ok:true})}if(!['customer','prospect'].includes(type)||!id||!['rename','pause','resume'].includes(action))return json(res,400,{error:'Invalid list update'});if(action==='rename'&&!clean(name))return json(res,400,{error:'List name is required'});await patchList(type,id,action,name);return json(res,200,{ok:true})}if(req.method==='DELETE'){const{type,id}=req.body||{};if(!['customer','prospect'].includes(type)||!id)return json(res,400,{error:'Invalid list delete'});await deleteList(type,id);return json(res,200,{ok:true})}return json(res,405,{error:'Method not allowed'})}catch(e){console.error('[Monitoring Lists]',e);
+  // ROUND 13 fix: e.fromSupabase (set only inside sb() -- see its own
+  // comment) means NO application code chose this status; it is whatever
+  // raw HTTP status Supabase/PostgREST happened to return for some
+  // downstream request (any of the ha_uploads/ha_accounts/ha_signals/
+  // ha_research_runs/ha_prospect_* reads, or the replace_ha_accounts_snapshot
+  // RPC, made anywhere above). That CAN be 404 (e.g. a table/view PostgREST's
+  // schema cache doesn't recognize) and previously passed straight through
+  // via e.status||500 -- indistinguishable, in the Network tab, from this
+  // Vercel function itself being missing/undeployed. Normalized to 502
+  // (Bad Gateway: this route ran, but a downstream dependency failed) so an
+  // unexpected upstream failure can never be misread as a routing problem.
+  // Deliberately-classified errors (HA004/55P03/42501 in
+  // deleteCustomerAccountViaSnapshot, the two in patchCustomerAccount, and
+  // every direct 400/401/403/405 returned above) are fresh, unmarked Error
+  // objects and are unaffected -- they still return exactly the status
+  // application code chose.
+  if(e&&e.fromSupabase) return json(res,502,{error:'A downstream data request failed. Please try again.',upstreamStatus:e.status||null});
+  return json(res,e.status||500,{error:e.message||'Monitoring list request failed',...(e.identityLocked?{identityLocked:true}:{})})}}
