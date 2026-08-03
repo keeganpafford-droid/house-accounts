@@ -13,6 +13,8 @@
     --radar:#14B8A6;
     --line:#d7dee8;
     --muted:#6B7280;
+    --danger:#B3261E;
+    --danger-surface:#FBEAE8;
     --display: 'Fraunces', Georgia, serif;
     --mono: 'IBM Plex Mono', monospace;
     --body: 'Inter', system-ui, sans-serif;
@@ -1756,6 +1758,47 @@
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){.mvp-dashboard-heading{align-items:stretch;flex-direction:column}.mvp-dashboard-heading .btn{width:100%}}
 
+/* Manage Customer Accounts modal -- compact branded refinement. Reuses the
+   existing token set (--ink navy, --radar teal, --signal orange, --paper /
+   #F7F8FA cream surfaces, --line dividers) and the existing .btn family
+   rather than introducing a new component system. */
+.acct-mgr-list{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 16px;box-shadow:0 6px 18px rgba(23,55,94,.05);}
+.acct-mgr-list-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:12px;margin-bottom:4px;border-bottom:1px solid var(--line);}
+.acct-mgr-list-title{margin:0;font-family:var(--display);font-size:1.15rem;color:var(--ink);}
+.acct-mgr-list-meta{color:var(--muted);font-size:.82rem;margin-top:3px;display:flex;align-items:center;gap:6px;}
+.acct-mgr-list-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.acct-mgr-row{display:grid;grid-template-columns:minmax(160px,2.2fr) auto auto auto;align-items:center;gap:8px 14px;padding:11px 4px;border-bottom:1px solid var(--line);}
+.acct-mgr-row:last-child{border-bottom:none;}
+.acct-mgr-name{font-weight:700;color:var(--ink);font-size:.94rem;}
+.acct-mgr-meta{color:var(--muted);font-size:.78rem;margin-top:2px;}
+.acct-mgr-empty{color:var(--muted);font-size:.88rem;padding:14px 4px;}
+.acct-dot{display:inline-block;width:8px;height:8px;border-radius:999px;flex-shrink:0;}
+.acct-dot-active{background:var(--radar);}
+.acct-dot-paused{background:var(--muted);}
+.acct-mgr-toggle{display:inline-flex;align-items:center;gap:7px;background:none;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-family:var(--body);font-size:.78rem;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap;}
+.acct-mgr-toggle:hover{border-color:var(--radar);}
+.acct-mgr-toggle:focus-visible,.acct-mgr-menu-btn:focus-visible,.acct-mgr-action:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
+.acct-mgr-toggle:disabled,.acct-mgr-action:disabled{opacity:.5;cursor:not-allowed;}
+.acct-mgr-action{display:inline-block;font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;background:var(--radar);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:background .15s;}
+.acct-mgr-action:hover:not(:disabled){background:#0d9488;}
+.acct-mgr-action.acct-mgr-action-secondary{background:transparent;color:var(--ink);border:1px solid var(--line);}
+.acct-mgr-action.acct-mgr-action-secondary:hover:not(:disabled){border-color:var(--ink);}
+.acct-mgr-status-line{grid-column:1/-1;font-size:.8rem;color:var(--muted);margin-top:-2px;}
+.acct-mgr-status-line.is-error{color:var(--danger);}
+.acct-mgr-status-line.is-success{color:#0d9488;}
+.acct-mgr-menu-wrap{position:relative;display:inline-block;}
+.acct-mgr-menu-btn{background:none;border:1px solid var(--line);border-radius:6px;width:30px;height:30px;font-size:1rem;line-height:1;color:var(--ink);cursor:pointer;}
+.acct-mgr-menu-btn:hover{border-color:var(--ink);}
+.acct-mgr-menu{position:fixed;min-width:200px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 14px 34px rgba(23,55,94,.18);padding:6px;z-index:10050;display:none;}
+.acct-mgr-menu.open{display:block;}
+.acct-mgr-menu button{display:flex;width:100%;text-align:left;background:none;border:none;padding:9px 10px;border-radius:5px;font-size:.85rem;color:var(--ink);cursor:pointer;font-family:var(--body);}
+.acct-mgr-menu button:hover,.acct-mgr-menu button:focus-visible{background:#F7F8FA;}
+.acct-mgr-menu button.acct-mgr-danger-item{color:var(--danger);}
+.acct-mgr-menu button.acct-mgr-danger-item:hover,.acct-mgr-menu button.acct-mgr-danger-item:focus-visible{background:var(--danger-surface);}
+@media(max-width:900px){
+  .acct-mgr-row{grid-template-columns:1fr auto auto;row-gap:8px;}
+  .acct-mgr-toggle span.acct-toggle-label{display:none;}
+}
 </style>
 <script src="/auth-client.js"></script>
 <link rel="stylesheet" href="/site-header.css">
@@ -2317,6 +2360,8 @@ function normalizeSavedAccount(account){
   const metrics = a.metrics || {};
   const raw = a.rawData || a.raw_data || {};
   a.name = a.name || a.accountName || a.account_name || 'Saved account';
+  a.monitoringStatus = a.monitoringStatus || 'active';
+  a.lastResearchedAt = a.lastResearchedAt || '';
   a.industry = a.industry || 'Saved Account';
   a.contactName = a.contactName || a.contact_name || '';
   a.contactEmail = a.contactEmail || a.contact_email || '';
@@ -3706,6 +3751,68 @@ function getResearchDiagnostics(){
 
 function renderResearchDiagnostics(){ const el=document.getElementById('researchDiagnosticsPanel'); if(el){el.hidden=true;el.style.display='none';el.innerHTML='';} }
 
+// Manage Customer Accounts modal / single-account research freshness fix.
+// researchAccountByName() persists the FULL window.accountRadarAccounts
+// snapshot on every save (see its own comments below). The modal can
+// pause/resume/delete accounts directly against the database
+// (api/monitoring-lists.js) without updating that in-memory snapshot, so
+// researching from the modal without refreshing first could silently
+// resurrect a just-deleted sibling account, or revert a just-paused
+// sibling's monitoring status, in the very next snapshot save. This runs
+// the SAME /api/get-dashboard fetch loadSavedDashboard() uses, but updates
+// only the two pieces of state researchAccountByName() actually reads
+// (window.accountRadarAccounts, currentUploadId) -- it intentionally does
+// not touch any dashboard DOM/banner/scroll state, since it can be invoked
+// while the Manage Customer Accounts modal is open on top of the page, and
+// loadSavedDashboard()'s full render path is not safe to run underneath it.
+async function refreshCurrentUploadSnapshot(){
+  const email = currentDashboardData?.user?.email || currentLead?.email || (typeof getSavedLead === 'function' ? getSavedLead()?.email : '') || '';
+  const e = String(email || '').trim().toLowerCase();
+  if(!e || !currentUploadId) return {ok:false, error:'No active account list to refresh.'};
+  const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : {};
+  if(!headers) return {ok:false, error:'Your session has expired. Please log in again.'};
+  let data;
+  try{
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
+    data = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(data.error || 'Could not refresh account list.');
+  }catch(err){
+    return {ok:false, error: (err && err.message) || 'Could not refresh account list.'};
+  }
+  const refreshedUploadId = data.upload?.id || null;
+  const accounts = (data.accounts || []).map(normalizeSavedAccount);
+  window.accountRadarAccounts = accounts;
+  if(refreshedUploadId) currentUploadId = refreshedUploadId;
+  return {ok:true, uploadId: currentUploadId, accounts};
+}
+
+// Entry point the Manage Customer Accounts modal calls for its "Research" /
+// "Research Again" row action. Refuses cross-list research outright (the
+// modal can list accounts from OTHER uploaded lists that were never loaded
+// into window.accountRadarAccounts -- see the audit this responds to), then
+// re-fetches this exact upload's snapshot fresh from the server BEFORE ever
+// claiming a run or calling a provider, and re-finds the account in that
+// fresh snapshot rather than trusting the (possibly stale) modal row. If the
+// upload identity changed mid-refresh, or the account is gone from the fresh
+// snapshot, this stops before any claim/provider request is sent.
+async function researchAccountFromManageModal(accountName, listId){
+  if(listId !== currentUploadId){
+    return {ok:false, outOfScope:true, error:'Open this list on the dashboard to research this account.'};
+  }
+  const targetUploadId = currentUploadId;
+  const refreshed = await refreshCurrentUploadSnapshot();
+  if(!refreshed.ok) return {ok:false, error: refreshed.error || 'Could not refresh account list.'};
+  if(refreshed.uploadId !== targetUploadId){
+    return {ok:false, error:'This account list changed while refreshing. Please reopen Manage Customer Accounts and try again.'};
+  }
+  const freshAccount = (window.accountRadarAccounts || []).find(a => a.name === accountName);
+  if(!freshAccount){
+    return {ok:false, error:'This account no longer exists in this list.'};
+  }
+  await researchAccountByName(freshAccount.name);
+  return {ok:true};
+}
+
 // Phase 2A implementation-review ROUND 4, item 2 — a request bound to an
 // existing upload must always carry a server-issued, currently-active
 // attemptId; there is no more untracked path for research against an
@@ -3787,6 +3894,13 @@ async function researchAccountByName(accountName, options = {}){
     account.signals = enhancedPublicMode
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
       : (Array.isArray(data.signals) ? data.signals : []);
+    // Stamped unconditionally (standalone AND options.skipSave batch-loop
+    // calls) so whichever save eventually runs -- this function's own
+    // (standalone) or researchTopAccounts()'s consolidated one (batch) --
+    // persists it via serializeAccountForStorage(). Without this, the
+    // Manage Customer Accounts modal's "Research Again" label could never
+    // actually appear -- lastResearchedAt would stay empty forever.
+    account.lastResearchedAt = new Date().toISOString();
     const diagnostics = getResearchDiagnostics();
     const diag = data && data.diagnostics && typeof data.diagnostics === 'object' && !Array.isArray(data.diagnostics)
       ? data.diagnostics
@@ -5691,6 +5805,23 @@ function serializeAccountForStorage(account, options = {}){
       mostRecentDate: account.mostRecentDate || 'Unknown'
     },
     rawData: {
+      // snake_case is intentional here, not a style slip -- this is the
+      // literal key api/monitoring-lists.js reads (raw_data?.monitoring_status)
+      // and writes on pause/resume. api/save-upload.js passes rawData straight
+      // through as raw_data with no key translation, and the upsert RPC
+      // overwrites raw_data wholesale (no jsonb merge) -- so this field must
+      // be echoed back verbatim on every save or a pause/resume made via the
+      // Manage Customer Accounts modal is silently reverted to 'active' the
+      // next time this account is saved from the dashboard (research, an
+      // account-info edit, anything that calls saveCurrentUpload()).
+      monitoring_status: account.monitoringStatus || 'active',
+      // Same intentional snake_case + round-trip rationale as
+      // monitoring_status above -- api/monitoring-lists.js reads this
+      // literal key to decide whether the modal shows "Research" or
+      // "Research Again". researchAccountByName() stamps
+      // account.lastResearchedAt on every successful research completion
+      // (standalone and batch); this echoes it into the next save.
+      last_researched_at: account.lastResearchedAt || '',
       notes: account.notes || '',
       employees: account.employees || '',
       historicalCategories: [...(account.categoryTypes || [])],
@@ -6169,12 +6300,218 @@ function escapeHtml(text){
    if(!r.ok)throw new Error(d.error||'Customer account request failed');
    return d;
  }
- function accountRows(list){return (list.accounts||[]).map(a=>`<tr><td><strong>${esc(a.name)}</strong><div style="font-size:.78rem;color:var(--muted);">${esc(a.industry||'')}</div></td><td>${esc(list.name)}</td><td>${a.monitoringStatus==='paused'?'Paused':'Active'}</td><td>${a.lastResearchedAt?fmt(a.lastResearchedAt):'Not researched yet'}</td><td>${a.hasActionableAlert?'Yes':'No'}</td><td>${a.domain?esc(a.domain):'Not provided'}</td><td>${fmt(a.dateAdded)}</td><td><button data-account-act="${a.monitoringStatus==='paused'?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}">${a.monitoringStatus==='paused'?'Resume':'Stop Monitoring'}</button> <button class="danger" data-account-act="delete-account" data-account-id="${esc(a.id)}">Delete Account Data</button></td></tr>`).join('')}
- function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(list=>`<section style="margin:0 0 24px;"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">${esc(list.name)}</h3><div style="color:var(--muted);font-size:.85rem;">${list.companyCount} customer accounts · ${list.status==='paused'?'Monitoring paused':'Monitoring active'}</div></div><div><button data-list-act="${list.status==='paused'?'resume':'pause'}" data-list-id="${esc(list.id)}">${list.status==='paused'?'Resume List':'Pause List'}</button> <button class="danger" data-list-act="delete" data-list-id="${esc(list.id)}">Delete Uploaded List</button></div></div><div style="overflow:auto;margin-top:12px;"><table style="width:100%;border-collapse:collapse;font-size:.84rem;"><thead><tr><th>Customer</th><th>Source</th><th>Monitoring</th><th>Last researched</th><th>Alert</th><th>Domain</th><th>Added</th><th>Actions</th></tr></thead><tbody>${accountRows(list)||'<tr><td colspan="8">No customer accounts in this list.</td></tr>'}</tbody></table></div></section>`).join('')||'<p>No uploaded customer accounts found.</p>'}
+
+ // Visual refinement: one compact branded row per account (name/meta,
+ // monitoring toggle, primary Research action, overflow menu for
+ // infrequent/destructive actions) instead of a raw <table>. Reuses the
+ // existing token set and .btn family -- see the .acct-mgr-* rules added
+ // near the top of this file's <style> block.
+ //
+ // inScope gates the Research action to accounts belonging to the upload
+ // currently loaded into window.accountRadarAccounts (currentUploadId,
+ // declared in the main dashboard <script> above -- classic inline scripts
+ // in the same document share one top-level let/const scope, so it is
+ // directly readable here without a window. prefix). This modal can list
+ // accounts from OTHER uploaded lists that were never loaded into that
+ // in-memory snapshot; researching one of those without first loading it
+ // is exactly the cross-list gap the review flagged, and is explicitly out
+ // of scope for this patch -- those rows show a disabled, clearly-labeled
+ // action instead of silently failing.
+ function accountRow(list, a){
+   const paused = a.monitoringStatus === 'paused';
+   const inScope = typeof currentUploadId !== 'undefined' && list.id === currentUploadId;
+   const researched = !!a.lastResearchedAt;
+   const researchLabel = researched ? 'Research Again' : 'Research';
+   const metaParts = [
+     a.industry ? esc(a.industry) : '',
+     a.domain ? esc(a.domain) : 'No domain on file',
+     `Added ${fmt(a.dateAdded)}`,
+     researched ? `Last researched ${fmt(a.lastResearchedAt)}` : 'Not researched yet'
+   ].filter(Boolean);
+   return `<div class="acct-mgr-row">
+      <div>
+        <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
+        <div class="acct-mgr-meta">${metaParts.join(' · ')}</div>
+      </div>
+      <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
+        <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
+      </button>
+      <button type="button" class="acct-mgr-action${inScope?'':' acct-mgr-action-secondary'}" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${inScope?'':' disabled title="Open this list on the dashboard to research this account."'}>${inScope?researchLabel:'Open this list to research'}</button>
+      <div class="acct-mgr-menu-wrap">
+        <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
+        <div class="acct-mgr-menu" role="menu">
+          <button type="button" role="menuitem" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}">${paused?'Resume monitoring':'Pause monitoring'}</button>
+          <button type="button" role="menuitem" class="acct-mgr-danger-item" data-account-act="delete-account" data-account-id="${esc(a.id)}">Delete Account Data</button>
+        </div>
+      </div>
+      <div class="acct-mgr-status-line" data-row-status hidden></div>
+    </div>`;
+ }
+ function listCard(list){
+   const paused = list.status === 'paused';
+   return `<section class="acct-mgr-list">
+      <div class="acct-mgr-list-head">
+        <div>
+          <h3 class="acct-mgr-list-title">${esc(list.name)}</h3>
+          <div class="acct-mgr-list-meta"><span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span>${list.companyCount} customer account${list.companyCount===1?'':'s'} · ${paused?'Monitoring paused':'Monitoring active'}</div>
+        </div>
+        <div class="acct-mgr-list-actions">
+          <button type="button" class="acct-mgr-toggle" data-list-act="${paused?'resume':'pause'}" data-list-id="${esc(list.id)}" aria-label="${paused?'Resume monitoring for '+esc(list.name):'Pause monitoring for '+esc(list.name)}">
+            <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Resume List':'Pause List'}</span>
+          </button>
+          <div class="acct-mgr-menu-wrap">
+            <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(list.name)}">⋯</button>
+            <div class="acct-mgr-menu" role="menu">
+              <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}">Delete Uploaded List</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>${(list.accounts||[]).map(a=>accountRow(list,a)).join('') || '<div class="acct-mgr-empty">No customer accounts in this list.</div>'}</div>
+    </section>`;
+ }
+ function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(listCard).join('')||'<p class="acct-mgr-empty">No uploaded customer accounts found.</p>';}
  async function load(){try{const d=await request('GET');cachedLists=d.lists?.customer||[];renderManager()}catch(e){console.warn('Customer account management load failed',e)}}
  function open(){document.getElementById('accountManagerModal').style.display='block';load()}
- function close(){document.getElementById('accountManagerModal').style.display='none'}
- document.addEventListener('click',async e=>{if(e.target.id==='manageCustomerAccountsBtn')return open();if(e.target.id==='closeAccountManagerBtn'||e.target.id==='accountManagerModal')return close();const ab=e.target.closest('[data-account-act]');if(ab){const action=ab.dataset.accountAct,id=ab.dataset.accountId;const destructive=action==='delete-account';if(!confirm(destructive?'Delete this account data and its saved signals? This cannot be undone. Use Stop Monitoring instead to preserve history.':'Change monitoring status for this customer account?'))return;try{await request('PATCH',{type:'account',id,action});await load()}catch(err){alert(err.message)}return}const b=e.target.closest('[data-list-act]');if(!b)return;const action=b.dataset.listAct,id=b.dataset.listId;try{if(action==='delete'){if(!confirm('Delete this entire uploaded list, all customer account data, and associated signals? This cannot be undone.'))return;await request('DELETE',{type:'customer',id})}else await request('PATCH',{type:'customer',id,action});await load()}catch(err){alert(err.message)}});
+ function close(){closeAllMenus();document.getElementById('accountManagerModal').style.display='none'}
+
+ // Overflow menus -- position:fixed (computed from the trigger's own
+ // bounding rect) so they float above the modal's scroll container instead
+ // of being clipped by it, per the visual-refinement requirement. Closed on
+ // Escape, on an outside click, and on scroll (position is not tracked
+ // live, so the safe behavior on scroll is to close rather than show a
+ // stale/misplaced menu).
+ function closeAllMenus(){
+   document.querySelectorAll('.acct-mgr-menu.open').forEach(m=>{
+     m.classList.remove('open');
+     const btn = m.previousElementSibling;
+     if(btn) btn.setAttribute('aria-expanded','false');
+   });
+ }
+ function positionMenu(menu, trigger){
+   const r = trigger.getBoundingClientRect();
+   const menuWidth = menu.offsetWidth || 200;
+   let left = r.right - menuWidth;
+   if(left < 8) left = 8;
+   const vw = window.innerWidth || document.documentElement.clientWidth;
+   if(left + menuWidth > vw - 8) left = Math.max(8, vw - menuWidth - 8);
+   menu.style.top = `${r.bottom + 6}px`;
+   menu.style.left = `${left}px`;
+ }
+ function toggleMenu(trigger){
+   const wrap = trigger.closest('.acct-mgr-menu-wrap');
+   const menu = wrap && wrap.querySelector('.acct-mgr-menu');
+   if(!menu) return;
+   const isOpen = menu.classList.contains('open');
+   closeAllMenus();
+   if(!isOpen){
+     menu.classList.add('open');
+     trigger.setAttribute('aria-expanded','true');
+     positionMenu(menu, trigger);
+     const first = menu.querySelector('button');
+     if(first) first.focus();
+   }
+ }
+
+ // Single-account research from the modal. Delegates to
+ // researchAccountFromManageModal() (defined in the main dashboard
+ // <script> above), which enforces the current-upload scope guard again,
+ // refreshes the exact upload's snapshot from the server, and re-finds the
+ // account in that fresh snapshot before ever claiming a run -- see that
+ // function's own comments for the stale-snapshot rationale. This handler
+ // is only responsible for the row's in-progress/success/error UI states.
+ function setRowStatus(row, kind, message){
+   const el = row && row.querySelector('[data-row-status]');
+   if(!el) return;
+   el.hidden = !message;
+   el.textContent = message || '';
+   el.classList.remove('is-error','is-success');
+   if(kind==='error') el.classList.add('is-error');
+   if(kind==='success') el.classList.add('is-success');
+ }
+ async function handleResearchClick(btn){
+   const row = btn.closest('.acct-mgr-row');
+   const accountName = btn.dataset.accountName;
+   const listId = btn.dataset.listId;
+   const originalLabel = btn.textContent;
+   btn.disabled = true;
+   btn.textContent = 'Researching…';
+   setRowStatus(row, 'progress', `Researching ${accountName} across public sources…`);
+   try{
+     if(typeof researchAccountFromManageModal !== 'function') throw new Error('Research is not available on this page.');
+     const result = await researchAccountFromManageModal(accountName, listId);
+     if(!result.ok){
+       setRowStatus(row, 'error', result.error || 'Research failed.');
+       btn.disabled = false;
+       btn.textContent = originalLabel;
+       return;
+     }
+     const fresh = (window.accountRadarAccounts||[]).find(x => x.name === accountName);
+     const signalCount = fresh && Array.isArray(fresh.signals) ? fresh.signals.length : 0;
+     // Patch this modal's own cached row in place (rather than a full
+     // load()/re-render) so the row correctly shows "Research Again" and a
+     // fresh "Last researched" date on the NEXT render, without wiping this
+     // success message off-screen the instant it appears.
+     const listEntry = cachedLists.find(l => l.id === listId);
+     const acctEntry = listEntry && (listEntry.accounts||[]).find(x => x.name === accountName);
+     if(acctEntry) acctEntry.lastResearchedAt = (fresh && fresh.lastResearchedAt) || new Date().toISOString();
+     setRowStatus(row, 'success', signalCount
+       ? `Research complete — ${signalCount} verified signal${signalCount===1?'':'s'} found.`
+       : 'Research complete — no verified signals found.');
+     btn.disabled = false;
+     btn.textContent = 'Research Again';
+   }catch(err){
+     setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');
+     btn.disabled = false;
+     btn.textContent = originalLabel;
+   }
+ }
+
+ document.addEventListener('click',async e=>{
+   if(e.target.id==='manageCustomerAccountsBtn')return open();
+   if(e.target.id==='closeAccountManagerBtn'||e.target.id==='accountManagerModal')return close();
+
+   const menuTrigger = e.target.closest('[data-menu-trigger]');
+   if(menuTrigger){ toggleMenu(menuTrigger); return; }
+
+   const researchBtn = e.target.closest('[data-research-act="account"]');
+   if(researchBtn){
+     if(researchBtn.disabled) return;
+     closeAllMenus();
+     await handleResearchClick(researchBtn);
+     return;
+   }
+
+   const ab=e.target.closest('[data-account-act]');
+   if(ab){
+     closeAllMenus();
+     const action=ab.dataset.accountAct,id=ab.dataset.accountId;
+     const destructive=action==='delete-account';
+     if(!confirm(destructive?'Delete this account data and its saved signals? This cannot be undone. Use Pause Monitoring instead to preserve history.':'Change monitoring status for this customer account?'))return;
+     try{await request('PATCH',{type:'account',id,action});await load()}catch(err){alert(err.message)}
+     return;
+   }
+
+   const b=e.target.closest('[data-list-act]');
+   if(b){
+     closeAllMenus();
+     const action=b.dataset.listAct,id=b.dataset.listId;
+     try{
+       if(action==='delete'){
+         if(!confirm('Delete this entire uploaded list, all customer account data, and associated signals? This cannot be undone.'))return;
+         await request('DELETE',{type:'customer',id});
+       }else{
+         await request('PATCH',{type:'customer',id,action});
+       }
+       await load();
+     }catch(err){alert(err.message)}
+     return;
+   }
+
+   if(!e.target.closest('.acct-mgr-menu-wrap')) closeAllMenus();
+ });
+ document.addEventListener('keydown', e => { if(e.key === 'Escape') closeAllMenus(); });
+ document.addEventListener('scroll', () => closeAllMenus(), true);
  document.addEventListener('DOMContentLoaded',()=>{document.getElementById('manageCustomerAccountsBtn')?.addEventListener('click',open)});
 })();
 </script>

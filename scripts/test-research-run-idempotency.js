@@ -932,6 +932,106 @@ async function run(){
     assert(reclaimed.ok && reclaimed.outcome === 'reclaimed-after-expired-lease', 'ROUND 5 ITEM 1 TEST 5: a run whose process died before ever calling final persistence becomes reclaimable once its lease expires, with no explicit failure marking required');
   }
 
+  // =========================================================================
+  // Manage Customer Accounts modal / "Research Again" button semantics.
+  // Proves, against the real decision logic, that clicking "Research Again"
+  // on an already-completed account genuinely starts a NEW server-owned run
+  // rather than silently reusing/attaching to the prior completed result --
+  // the concern raised in the account-management-modal review: a button
+  // labeled "Research Again" must not just re-display cached signals.
+  // =========================================================================
+  {
+    // Part A: the full unresearched -> blocked-while-active -> completed ->
+    // "Research Again" narrative, at the claim_ha_research_run() decision
+    // level (claimResearchRunAtomic() is the RPC wrapper; the actual
+    // per-click id is minted by handler()'s claim branch, verified
+    // separately in Part C below).
+    const table = makeFakeResearchRunsTable();
+    global.fetch = table.fetch.bind(table);
+
+    // 1) An unresearched account: the first manual-rerun claim (the id the
+    // server would mint for a fresh single-account click) succeeds and
+    // creates a brand-new run.
+    const firstClickId = 'manual-2026-08-03T00:00:00.000Z-aaaaaa';
+    const firstClick = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: firstClickId });
+    assert(firstClick.ok && firstClick.outcome === 'claimed-new', 'RESEARCH AGAIN 1: an unresearched account\'s first manual single-account claim creates a new run');
+    const firstAttemptId = firstClick.run.attempt_id;
+
+    // 2) A second, DIFFERENT manual click (e.g. a double-click, or the
+    // account-card button and the modal button both firing) while the first
+    // is still actively leased must be blocked, not start a concurrent run.
+    const secondClickId = 'manual-2026-08-03T00:00:00.000Z-bbbbbb';
+    const secondClickWhileActive = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: secondClickId });
+    assert(secondClickWhileActive.ok === false && secondClickWhileActive.status === 409, 'RESEARCH AGAIN 2: a second manual claim for the same upload while the first is still actively leased is rejected (409), not started concurrently');
+
+    // 3) The first run completes.
+    const completed = await completeResearchRunAttempt({ uploadId: FIXTURES.uploadId, researchRunId: firstClickId, attemptId: firstAttemptId, resultSummary: { signalsReturned: 3 } });
+    assert(completed.applied === true, 'RESEARCH AGAIN 3: the first manual run completes successfully');
+
+    // 4) "Research Again": a THIRD click, after completion, with yet another
+    // fresh server-minted id (never reused -- see Part C for why this is
+    // guaranteed). This must claim a genuinely NEW run (outcome
+    // 'claimed-new'), not 'completed' -- if it returned 'completed', the
+    // button would silently just redisplay the old result_summary instead
+    // of starting a new one, which is exactly the risk being tested for.
+    const researchAgainId = 'manual-2026-08-03T00:05:00.000Z-cccccc';
+    const researchAgainClick = await claimResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: researchAgainId });
+    assert(researchAgainClick.ok && researchAgainClick.outcome === 'claimed-new', 'RESEARCH AGAIN 4: clicking "Research Again" after completion claims a genuinely NEW run (outcome claimed-new), not the cached "completed" result');
+    assert(researchAgainClick.run.attempt_id !== firstAttemptId, 'RESEARCH AGAIN 5: the "Research Again" run\'s attempt_id is different from the original completed run\'s attempt_id -- it is a distinct attempt, not a reattachment');
+    assert(researchAgainClick.run.research_run_id !== firstClickId, 'RESEARCH AGAIN 6: the "Research Again" run has its own distinct research_run_id, never the id of the run it followed');
+
+    // 5) The provider-call gate (heartbeatResearchRunAtomic, the same check
+    // the real research request handler runs before ever calling a provider
+    // -- see the ROUND 4 item 3 invariant test above) passes for this NEW
+    // attempt, proving the pipeline would actually proceed to real work, not
+    // stop after the claim.
+    const gateForResearchAgain = await heartbeatResearchRunAtomic({ userId: FIXTURES.ownerUserId, uploadId: FIXTURES.uploadId, researchRunId: researchAgainId, attemptId: researchAgainClick.run.attempt_id });
+    assert(gateForResearchAgain.ok === true, 'RESEARCH AGAIN 7: the provider-call gate passes for the "Research Again" run\'s own new attempt -- the request pipeline would proceed to call a provider, not stop at the claim');
+  }
+
+  // Part B: structural proof that researchAccountByName() (the real,
+  // on-disk function the modal's "Research"/"Research Again" action will
+  // call -- see researchAccountFromManageModal() below) only treats
+  // 'attached-active' and 'completed' as "stop, do not research" outcomes.
+  // 'claimed-new' (and the reclaim outcomes) fall through and proceed to the
+  // actual fetch() call -- i.e. a "Research Again" claim is never silently
+  // swallowed by the same early-return guard that blocks a truly active run.
+  {
+    const dashSource = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
+    const fnStart = dashSource.indexOf('async function researchAccountByName(accountName, options = {}){');
+    const fnEnd = dashSource.indexOf('\nlet researchInProgress', fnStart);
+    const fnBody = dashSource.slice(fnStart, fnEnd > -1 ? fnEnd : fnStart + 6000);
+    const guardMatch = fnBody.match(/if\(!claim\.ok \|\| outcome === '([a-z-]+)' \|\| outcome === '([a-z-]+)'\)\{/);
+    assert(!!guardMatch, 'researchAccountByName() has a single early-return outcome guard after claiming');
+    const guardedOutcomes = guardMatch ? [guardMatch[1], guardMatch[2]].sort() : [];
+    assert(JSON.stringify(guardedOutcomes) === JSON.stringify(['attached-active', 'completed'].sort()), `researchAccountByName() only stops research for outcome 'attached-active' or 'completed' -- 'claimed-new' and the reclaim outcomes are NOT in the stop-list, so a "Research Again" claim (which is always 'claimed-new', never 'completed' -- proved in Part A) falls through and proceeds. Actual guarded outcomes found: ${JSON.stringify(guardedOutcomes)}`);
+    // After the guard, the function must build its payload/attemptContext
+    // from THIS claim's own runId/attemptId (not any prior run's) and issue
+    // the actual research fetch -- i.e. "proceeds" means "calls the
+    // provider-facing endpoint", not merely "returns without error".
+    const guardEnd = fnBody.indexOf('}', fnBody.indexOf(guardMatch[0])) ;
+    const postGuardBody = fnBody.slice(guardEnd);
+    assert(/runId = claim\.data\.researchRunId/.test(postGuardBody) && /attemptId = claim\.data\.attemptId/.test(postGuardBody), 'after the guard, runId/attemptId are taken from THIS claim\'s own response -- a "Research Again" run uses its own new run/attempt identity, never a stale prior one');
+    assert(/await fetch\(endpoint,/.test(postGuardBody), 'after a successful claim (including "Research Again"\'s claimed-new), researchAccountByName() actually proceeds to call the research endpoint -- it does not stop after claiming');
+  }
+
+  // Part C: the server-minted manual-rerun id is guaranteed unique per
+  // click, even for two clicks in the same millisecond -- mirrors the exact
+  // expression in api/research-batch.js's claim branch
+  // (`manual-${new Date().toISOString()}-${Math.random().toString(36).slice(2,8)}`),
+  // so "Research Again" can never coincidentally collide with a prior run's
+  // exact research_run_id and be misread as the SAME run by claim_ha_research_run()'s
+  // exact-row branch.
+  {
+    const source = readFileSync(new URL('../api/research-batch.js', import.meta.url), 'utf8');
+    const mintExprMatch = source.match(/researchRunId = runIntent === 'manual-rerun'\s*\n\s*\? `manual-\$\{new Date\(\)\.toISOString\(\)\}-\$\{Math\.random\(\)\.toString\(36\)\.slice\(2, 8\)\}`/);
+    assert(!!mintExprMatch, 'the manual-rerun id-minting expression is present verbatim in api/research-batch.js (timestamp + random suffix)');
+    const mintId = () => `manual-${new Date().toISOString()}-${Math.random().toString(36).slice(2, 8)}`;
+    const idsFromSameMillisecond = new Set();
+    for(let i = 0; i < 1000; i++) idsFromSameMillisecond.add(mintId());
+    assert(idsFromSameMillisecond.size === 1000, 'the id-minting expression produces 1000/1000 unique ids even called in a tight loop (same-millisecond timestamps) -- collision with a prior run\'s exact id, which would misroute a "Research Again" click onto the old run via claim_ha_research_run()\'s exact-row branch, cannot practically happen');
+  }
+
   global.fetch = originalFetch;
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
   process.exitCode = failures === 0 ? 0 : 1;

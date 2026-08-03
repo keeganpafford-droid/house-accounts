@@ -308,6 +308,19 @@ export default async function handler(req, res){
       ];
       byAccount.set(a.account_name, {
         name: a.account_name,
+        // Read back so a full-snapshot save (serializeAccountForStorage() in
+        // dashboard/index.html) can round-trip it unchanged instead of
+        // silently reverting a pause/resume made via the Manage Customer
+        // Accounts modal (api/monitoring-lists.js) the next time this
+        // account's raw_data is saved from the dashboard.
+        monitoringStatus: lower(raw.monitoring_status || 'active'),
+        // Same round-trip rationale as monitoringStatus above -- without
+        // reading this back, a "Research Again" button can never actually
+        // display "Again": researchAccountByName() (dashboard/index.html)
+        // stamps this on successful research and serializeAccountForStorage()
+        // echoes it back into raw_data, but only if it was ever read in here
+        // to begin with.
+        lastResearchedAt: raw.last_researched_at || '',
         industry: a.industry || 'Saved Account',
         contactName: a.contact_name || '',
         contactEmail: a.contact_email || '',
@@ -339,7 +352,7 @@ export default async function handler(req, res){
     }
     for(const row of uniqueSignals || []){
       if(!byAccount.has(row.account_name)){
-        byAccount.set(row.account_name, {name: row.account_name, industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
+        byAccount.set(row.account_name, {name: row.account_name, monitoringStatus:'active', lastResearchedAt:'', industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
       }
       const acct = byAccount.get(row.account_name);
       acct.signals.push(rowToSignal(row));

@@ -90,30 +90,32 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // hand-counted -- extractFn()'s own signature check below is the final,
 // self-enforcing guarantee regardless.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2118, 2128, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2148, 2165, {async: true}),
-  extractFn('reportResearchRunOutcome', 2174, 2199, {async: true}),
-  extractFn('normalizeSavedAccount', 2315, 2370),
-  extractFn('accountCardFor', 3153, 3155),
-  extractFn('accountSignalsPanel', 3156, 3159),
-  extractFn('researchAccountByName', 3727, 3860, {async: true}),
-  extractFn('getAccountsForResearch', 3865, 3878),
-  extractFn('batchPayloadForAccounts', 3880, 3924),
-  extractFn('applyBusinessSignalAccountBoost', 3927, 3935),
-  extractFn('researchAccountsBatch', 3937, 4026, {async: true}),
-  extractFn('signalTopicKeyClient', 4028, 4036),
-  extractFn('dedupeSignalsClient', 4038, 4051),
-  extractFn('researchTopAccounts', 4053, 4183, {async: true}),
-  extractFn('refreshOpportunityViews', 4284, 4303),
-  extractFn('renderDetailedAccountViews', 5596, 5664),
-  extractFn('serializeAccountForStorage', 5674, 5716),
-  extractFn('performSaveCurrentUpload', 5726, 5826, {async: true}),
-  extractFn('saveCurrentUpload', 5835, 5839),
-  extractFn('toggleAccountMetadataEdit', 5847, 5853),
-  extractFn('saveAccountMetadataEdit', 5876, 5912, {async: true}),
-  extractRaw('delegatedClickListener', 5930, 5952, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 5965, 5981),
-  extractFn('escapeHtml', 6145, 6148)
+  extractFn('claimAutomaticResearchRun', 2161, 2171, {async: true}),
+  extractFn('heartbeatCurrentResearchRun', 2191, 2208, {async: true}),
+  extractFn('reportResearchRunOutcome', 2217, 2242, {async: true}),
+  extractFn('normalizeSavedAccount', 2358, 2415),
+  extractFn('accountCardFor', 3198, 3200),
+  extractFn('accountSignalsPanel', 3201, 3204),
+  extractFn('refreshCurrentUploadSnapshot', 3768, 3787, {async: true}),
+  extractFn('researchAccountFromManageModal', 3798, 3814, {async: true}),
+  extractFn('researchAccountByName', 3834, 3974, {async: true}),
+  extractFn('getAccountsForResearch', 3979, 3992),
+  extractFn('batchPayloadForAccounts', 3994, 4038),
+  extractFn('applyBusinessSignalAccountBoost', 4041, 4049),
+  extractFn('researchAccountsBatch', 4051, 4140, {async: true}),
+  extractFn('signalTopicKeyClient', 4142, 4150),
+  extractFn('dedupeSignalsClient', 4152, 4165),
+  extractFn('researchTopAccounts', 4167, 4297, {async: true}),
+  extractFn('refreshOpportunityViews', 4398, 4417),
+  extractFn('renderDetailedAccountViews', 5710, 5778),
+  extractFn('serializeAccountForStorage', 5788, 5847),
+  extractFn('performSaveCurrentUpload', 5857, 5957, {async: true}),
+  extractFn('saveCurrentUpload', 5966, 5970),
+  extractFn('toggleAccountMetadataEdit', 5978, 5984),
+  extractFn('saveAccountMetadataEdit', 6007, 6043, {async: true}),
+  extractRaw('delegatedClickListener', 6061, 6083, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 6096, 6112),
+  extractFn('escapeHtml', 6276, 6279)
 ].join('\n\n');
 
 // ===========================================================================
@@ -152,6 +154,7 @@ function isWarmAccount(account){ return true; }
 function extractEmailDomain(email){ return String(email || '').split('@')[1] || ''; }
 async function loadDashboardUsage(){ return null; }
 function getSavedLead(){ return null; }
+function defaultDashboardView(){ return 'my'; }
 `;
 
 // ===========================================================================
@@ -284,10 +287,12 @@ var currentResearchRunId = ${JSON.stringify(state.currentResearchRunId || null)}
 var currentResearchAttemptId = ${JSON.stringify(state.currentResearchAttemptId || null)};
 var researchInProgress = false;
 var autoResearchStarted = true;
+var currentDashboardData = ${JSON.stringify(state.currentDashboardData || null)};
+var dashboardViewMode = 'my';
 `;
 }
 
-function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl, domElements = {}, fakeDomRoot}){
+function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, currentDashboardData = null, fetchImpl, domElements = {}, fakeDomRoot}){
   const consoleLog = { warn: [], error: [], log: [] };
   // authHeadersAsync mirrors the real one's success path (always resolves
   // to a headers object, never null) -- these orchestration tests are
@@ -334,7 +339,7 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
     setTimeout, clearTimeout
   };
   vm.createContext(sandbox);
-  const initSource = buildInitSource({ currentLead: {email:'lead@example.com', name:'Test Lead', company:'Test Co'}, currentUploadId, currentResearchRunId, currentResearchAttemptId });
+  const initSource = buildInitSource({ currentLead: {email:'lead@example.com', name:'Test Lead', company:'Test Co'}, currentUploadId, currentResearchRunId, currentResearchAttemptId, currentDashboardData });
   const fullSource = `${initSource}\n${STUB_SOURCE}\n${REAL_SOURCE}\n`;
   new vm.Script(fullSource, {filename: 'dashboard-orchestration-extract.js'}).runInContext(sandbox);
   sandbox.__consoleLog = consoleLog;
@@ -873,6 +878,160 @@ async function testEditFormTargetsCorrectAccountUnderCollision(){
   assert(!!savedFirst && savedFirst.industry === 'First Industry', "k) collision-safe edit: the FIRST, colliding account was NOT modified by clicking the second card's Save button");
 }
 
+// ===========================================================================
+// Manage Customer Accounts modal / freshness-before-research.
+// researchAccountByName() persists the FULL window.accountRadarAccounts
+// snapshot on every save; the modal can pause/resume/delete accounts
+// directly against the database without updating that in-memory snapshot.
+// researchAccountFromManageModal() / refreshCurrentUploadSnapshot() (both
+// REAL, extracted above -- not reimplemented) must refresh from
+// /api/get-dashboard and re-find the account BEFORE ever claiming a run, so
+// a stale snapshot can never resurrect a deleted sibling or revert a
+// paused sibling's monitoring status in the very next snapshot save.
+// ===========================================================================
+function getDashboardCalls(calls){ return calls.filter(c => c.url.startsWith('/api/get-dashboard')); }
+function getDashboardResponse(uploadId, accounts){
+  return jsonResponse({
+    ok: true,
+    user: {email: 'lead@example.com'},
+    upload: {id: uploadId, upload_name: 'Test Upload'},
+    accounts,
+    signals: [],
+    newThisWeek: []
+  });
+}
+function minimalDashboardAccount(name, overrides = {}){
+  // intelligenceMode:'warm' pinned explicitly -- normalizeSavedAccount()
+  // (the REAL function, run on every /api/get-dashboard refresh) would
+  // otherwise derive 'historical' from orderCount>0, which routes
+  // researchAccountByName() to the (unmocked, here) /api/research-account
+  // endpoint instead of /api/research-batch. Every other fixture in this
+  // file relies on the STUBBED deriveAccountIntelligenceMode() always
+  // returning 'warm' -- that stub only applies when intelligenceMode is
+  // still unset, which normalizeSavedAccount() no longer leaves it as.
+  return {name, monitoringStatus:'active', lastResearchedAt:'', industry:'Test', revenue:1000, orderCount:1, intelligenceMode:'warm', futureOpportunities:[], ...overrides};
+}
+
+async function testModalResearchDropsDeletedSibling(){
+  // In-memory snapshot is STALE: it still has Beta, which was actually
+  // deleted via the modal (delete Beta) after this snapshot was loaded.
+  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta')];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      // Server truth: Beta no longer exists.
+      return getDashboardResponse('upload-1', [minimalDashboardAccount('Alpha')]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-modal-1', attemptId:'attempt-modal-1'});
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
+      return jsonResponse({ok:true});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      return jsonResponse({byAccount: {Alpha: [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok:true, uploadId:'upload-1', runStatus:'completed'});
+    }
+    throw new Error(`unexpected fetch in testModalResearchDropsDeletedSibling: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+
+  assert(result.ok === true, 'modal freshness 1: research succeeds for Alpha after refreshing');
+  const calls = fetchImpl.calls;
+  assert(getDashboardCalls(calls).length === 1, 'modal freshness 1: exactly one freshness refresh fetch happened before research');
+  assert(saveUploadCalls(calls).length === 1, 'modal freshness 1: exactly one save fired');
+  const savedNames = saveUploadCalls(calls)[0].body.accounts.map(a => a.name);
+  assert(!savedNames.includes('Beta'), 'modal freshness 1 (DELETE BETA, THEN RESEARCH ALPHA): Beta is NOT reintroduced in the submitted save snapshot');
+  assert(savedNames.includes('Alpha'), 'modal freshness 1: Alpha IS present in the submitted save snapshot');
+}
+
+async function testModalResearchPreservesPausedSibling(){
+  // In-memory snapshot is STALE: Beta shows as active, but was actually
+  // paused via the modal (pause Beta) after this snapshot was loaded.
+  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta', {monitoringStatus:'active'})];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      return getDashboardResponse('upload-1', [
+        minimalDashboardAccount('Alpha'),
+        minimalDashboardAccount('Beta', {monitoringStatus:'paused'})
+      ]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-modal-2', attemptId:'attempt-modal-2'});
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
+      return jsonResponse({ok:true});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      return jsonResponse({byAccount: {Alpha: [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok:true, uploadId:'upload-1', runStatus:'completed'});
+    }
+    throw new Error(`unexpected fetch in testModalResearchPreservesPausedSibling: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+
+  assert(result.ok === true, 'modal freshness 2: research succeeds for Alpha after refreshing');
+  const saved = saveUploadCalls(fetchImpl.calls)[0].body.accounts;
+  const savedBeta = saved.find(a => a.name === 'Beta');
+  assert(!!savedBeta, 'modal freshness 2: Beta is present in the submitted save snapshot');
+  assert(!!savedBeta && !!savedBeta.rawData && savedBeta.rawData.monitoring_status === 'paused', 'modal freshness 2 (PAUSE BETA, THEN RESEARCH ALPHA): Beta remains paused (monitoring_status="paused") in the submitted save snapshot');
+}
+
+async function testModalResearchAbortsIfAccountDeletedDuringRefresh(){
+  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta')];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      // Alpha itself was deleted between opening the modal and this click.
+      return getDashboardResponse('upload-1', [minimalDashboardAccount('Beta')]);
+    }
+    throw new Error(`unexpected fetch in testModalResearchAbortsIfAccountDeletedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+
+  assert(result.ok === false, 'modal freshness 3: research is refused when the account is gone from the refreshed snapshot');
+  const calls = fetchImpl.calls;
+  assert(getDashboardCalls(calls).length === 1, 'modal freshness 3: the freshness refresh itself still happened');
+  assert(claimCalls(calls).length === 0, 'modal freshness 3 (ALPHA DELETED BEFORE THE FRESHNESS CHECK COMPLETES): NO claim was sent once the account was found missing from the fresh snapshot');
+  assert(researchWorkCalls(calls).length === 0, 'modal freshness 3: NO provider-facing research request was sent');
+  assert(saveUploadCalls(calls).length === 0, 'modal freshness 3: NO save was sent');
+}
+
+async function testModalResearchAbortsIfUploadIdChangedDuringRefresh(){
+  const staleAccounts = [fixtureAccount('Alpha')];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      // The refreshed snapshot belongs to a DIFFERENT upload than the one
+      // this click targeted -- e.g. the account list was replaced mid-refresh.
+      return getDashboardResponse('upload-DIFFERENT', [minimalDashboardAccount('Alpha')]);
+    }
+    throw new Error(`unexpected fetch in testModalResearchAbortsIfUploadIdChangedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+
+  assert(result.ok === false, 'modal freshness 4 (REFRESHED upload_id NO LONGER EQUALS THE TARGET currentUploadId): research is refused');
+  assert(claimCalls(fetchImpl.calls).length === 0, 'modal freshness 4: NO claim was sent when the upload identity changed mid-refresh');
+  assert(researchWorkCalls(fetchImpl.calls).length === 0, 'modal freshness 4: NO provider-facing research request was sent');
+}
+
+async function testModalResearchRefusesCrossListWithoutAnyFetch(){
+  const accounts = [fixtureAccount('Alpha')];
+  const fetchImpl = makeFetch((call) => {
+    throw new Error(`researchAccountFromManageModal() must refuse a cross-list request before ever calling fetch; got ${call.url}`);
+  });
+  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('SomeOtherListAccount', 'upload-OTHER-LIST');
+
+  assert(result.ok === false && result.outOfScope === true, 'modal freshness 5 (cross-list research is explicitly out of scope for this patch): a request for an account belonging to a DIFFERENT upload than currentUploadId is refused immediately');
+  assert(fetchImpl.calls.length === 0, 'modal freshness 5: refusing a cross-list request never calls fetch at all -- not even the freshness refresh');
+}
+
 async function main(){
   await testStandaloneSuccess();
   await testBatchSuccess();
@@ -886,6 +1045,11 @@ async function main(){
   await testMarkupIdsNeverCollide();
   await testResearchButtonTargetsCorrectAccountUnderCollision();
   await testEditFormTargetsCorrectAccountUnderCollision();
+  await testModalResearchDropsDeletedSibling();
+  await testModalResearchPreservesPausedSibling();
+  await testModalResearchAbortsIfAccountDeletedDuringRefresh();
+  await testModalResearchAbortsIfUploadIdChangedDuringRefresh();
+  await testModalResearchRefusesCrossListWithoutAnyFetch();
 
   console.log(`\n${failures === 0 ? 'ALL DASHBOARD ORCHESTRATION TESTS PASSED' : `${failures} DASHBOARD ORCHESTRATION TEST(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
