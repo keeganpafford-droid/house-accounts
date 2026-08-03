@@ -64,6 +64,15 @@ async function resolveDashboardUser(req){
   if(!user) return {user:null, reason:'no-account'};
   return {user, reason:null};
 }
+// BACKLOG OBSERVATION (deliberately not changed by this patch): unlike
+// activeOrgUserIdsForUploadScope() below, this includes every org member
+// regardless of status, so aggregate Team View (?view=team, no uploadId=)
+// still surfaces inactive members' accounts/uploads today. Scoped
+// out of the get-dashboard authentication patch on purpose -- the
+// acceptance rule that prompted activeOrgUserIdsForUploadScope() was
+// specific to the uploadId= single-upload path; changing aggregate Team
+// View's status filtering is a separate, broader behavior change that
+// should go through its own review rather than ride along here.
 async function orgUserIds(user){
   if(user?.organization_id){
     const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id`);
@@ -74,6 +83,32 @@ async function orgUserIds(user){
 }
 function inFilter(ids){
   return `in.(${ids.map(id => encodeURIComponent(id)).join(',')})`;
+}
+
+// Used ONLY by the uploadId= single-upload-scoped branch below -- NOT by
+// orgUserIds() or the aggregate my/team paths, which are deliberately left
+// unchanged in this patch (aggregate Team View's own handling of inactive
+// org members is a separate, pre-existing behavior; see the backlog note
+// near the bottom of this file rather than a silent change here).
+//
+// Release blocker: orgUserIds() includes every ha_users row for the
+// organization regardless of status, so an owner/admin's uploadId= request
+// could resolve an upload owned by an INACTIVE org member. The stated
+// acceptance rule is "an ACTIVE user in their organization" -- this
+// resolves the same rows orgUserIds() would, but with status also
+// selected, and filters out status='inactive' before returning ids.
+// Missing/blank status still means active, matching the exact convention
+// already used for activeOrgUsers elsewhere in this file
+// (clean(u.status || 'active') !== 'inactive').
+async function activeOrgUserIdsForUploadScope(user){
+  if(!user?.organization_id) return user?.id ? [user.id] : [];
+  const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id,status`);
+  const ids = (Array.isArray(rows) ? rows : [])
+    .filter(u => lower(u.status || 'active') !== 'inactive')
+    .map(u => u.id)
+    .filter(Boolean);
+  if(ids.length) return ids;
+  return user?.id ? [user.id] : [];
 }
 
 function lower(v=''){ return clean(v).toLowerCase(); }
@@ -329,14 +364,16 @@ export default async function handler(req, res){
     // never consulted here at all.
     const requestedUploadId = clean(req.query?.uploadId || '');
     if(requestedUploadId){
-      const allOrgIds = await orgUserIds(user);
-      if(!allOrgIds.length) return json(res, 404, {error:'No dashboard user found.'});
       // Ownership/access check: the requested upload must belong to this
-      // user, or (owner/admin only) to any user in their org -- the exact
-      // same visibility rule the aggregate paths already use, just applied
-      // to one specific upload instead of "all of them".
+      // user, or (owner/admin only) to an ACTIVE user in their org --
+      // narrower than the aggregate paths' own org-wide scope (see
+      // activeOrgUserIdsForUploadScope()'s comment for why this is a
+      // scoped-branch-only helper, not a change to orgUserIds()). A member
+      // never needs an org query at all: their scope is always just their
+      // own id.
       const teamAllowedForScope = canViewTeam(user);
-      const scopeIds = teamAllowedForScope ? allOrgIds : [user.id].filter(Boolean);
+      const scopeIds = teamAllowedForScope ? await activeOrgUserIdsForUploadScope(user) : [user.id].filter(Boolean);
+      if(!scopeIds.length) return json(res, 404, {error:'Upload not found or not accessible.'});
       const scopeFilter = inFilter(scopeIds);
       const scopedUploadRows = await supabase(`ha_uploads?select=*&id=eq.${encodeURIComponent(requestedUploadId)}&user_id=${scopeFilter}&limit=1`);
       const scopedUpload = Array.isArray(scopedUploadRows) ? scopedUploadRows[0] : null;

@@ -61,11 +61,18 @@ const FIXTURES = {
   emailOwner: 'owner@example.com',
   orgId: 'org-1',
 
-  // Member C: belongs to org-1 (same org as Owner), role=member, owns
-  // upload-org.
+  // Member C: belongs to org-1 (same org as Owner), role=member, status
+  // active, owns upload-org.
   userIdC: 'user-c',
   emailC: 'c@example.com',
   uploadOrg: 'upload-org',
+
+  // Member D: belongs to org-1, role=member, status INACTIVE, owns
+  // upload-inactive. The owner/admin must NOT be able to reach this
+  // upload via uploadId= even though Member D is in the same org.
+  userIdD: 'user-d',
+  emailD: 'd@example.com',
+  uploadInactive: 'upload-inactive',
 
   // A token that authenticates (Supabase accepts it) but has no matching
   // ha_users row at all -- simulates a Supabase Auth user who never
@@ -78,7 +85,8 @@ const HA_USERS = [
   {id: FIXTURES.userIdA, auth_user_id: FIXTURES.authUserIdA, email: FIXTURES.emailA, app_role: 'member', organization_id: null},
   {id: FIXTURES.userIdB, auth_user_id: FIXTURES.authUserIdB, email: FIXTURES.emailB, app_role: 'member', organization_id: null},
   {id: FIXTURES.userIdOwner, auth_user_id: FIXTURES.authUserIdOwner, email: FIXTURES.emailOwner, app_role: 'owner', organization_id: FIXTURES.orgId, status: 'active'},
-  {id: FIXTURES.userIdC, auth_user_id: null, email: FIXTURES.emailC, app_role: 'member', organization_id: FIXTURES.orgId, status: 'active'}
+  {id: FIXTURES.userIdC, auth_user_id: null, email: FIXTURES.emailC, app_role: 'member', organization_id: FIXTURES.orgId, status: 'active'},
+  {id: FIXTURES.userIdD, auth_user_id: null, email: FIXTURES.emailD, app_role: 'member', organization_id: FIXTURES.orgId, status: 'inactive'}
 ];
 const AUTH_TOKEN_TO_AUTH_USER_ID = {
   [FIXTURES.authTokenA]: FIXTURES.authUserIdA,
@@ -89,17 +97,20 @@ const AUTH_TOKEN_TO_AUTH_USER_ID = {
 const HA_UPLOADS = [
   {id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, upload_name: 'Upload A', stage: 'researched', updated_at: '2026-08-01T00:00:00Z', summary: {}},
   {id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, upload_name: 'Upload B', stage: 'researched', updated_at: '2026-08-01T00:00:00Z', summary: {}},
-  {id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, upload_name: 'Upload Org', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}}
+  {id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, upload_name: 'Upload Org', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}},
+  {id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, upload_name: 'Upload Inactive Member', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}}
 ];
 const HA_ACCOUNTS = [
   {id: 'acct-a1', upload_id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, account_name: 'A Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'},
   {id: 'acct-b1', upload_id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, account_name: 'B Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'},
-  {id: 'acct-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'}
+  {id: 'acct-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'},
+  {id: 'acct-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'}
 ];
 const HA_SIGNALS = [
   {id: 'sig-a1', upload_id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, account_name: 'A Account', signal_type: 'Hiring', title: 'A signal', confidence: 70, first_seen_at: '2026-08-01T00:00:00Z', last_seen_at: '2026-08-01T00:00:00Z', payload: {}},
   {id: 'sig-b1', upload_id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, account_name: 'B Account', signal_type: 'Award', title: 'B signal', confidence: 70, first_seen_at: '2026-08-01T00:00:00Z', last_seen_at: '2026-08-01T00:00:00Z', payload: {}},
-  {id: 'sig-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', signal_type: 'Expansion', title: 'Org signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}}
+  {id: 'sig-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', signal_type: 'Expansion', title: 'Org signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}},
+  {id: 'sig-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', signal_type: 'Award', title: 'Inactive member signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}}
 ];
 
 // ===========================================================================
@@ -311,7 +322,7 @@ async function run(){
 
   // =========================================================================
   // 6. Authenticated owner/admin CAN access an authorized organization
-  //    upload (belonging to a different member of their own org).
+  //    upload (belonging to a different, ACTIVE member of their own org).
   // =========================================================================
   {
     const fetchImpl = createFetchMock();
@@ -319,9 +330,9 @@ async function run(){
     const req = fakeReq({token: FIXTURES.authTokenOwner, query: {uploadId: FIXTURES.uploadOrg}});
     const res = fakeRes();
     await handler(req, res);
-    assert(res._status === 200, `6) owner requesting an org member's upload: succeeds (got ${res._status}, body ${JSON.stringify(res._body)})`);
-    assert(res._body.upload && res._body.upload.id === FIXTURES.uploadOrg, '6) owner requesting an org member\'s upload: the correct upload is returned');
-    assert((res._body.accounts || []).some(a => a.name === 'Org Account'), '6) owner requesting an org member\'s upload: the org member\'s account is present');
+    assert(res._status === 200, `6) owner requesting an ACTIVE org member's upload: succeeds (got ${res._status}, body ${JSON.stringify(res._body)})`);
+    assert(res._body.upload && res._body.upload.id === FIXTURES.uploadOrg, '6) owner requesting an active org member\'s upload: the correct upload is returned');
+    assert((res._body.accounts || []).some(a => a.name === 'Org Account'), '6) owner requesting an active org member\'s upload: the org member\'s account is present');
   }
 
   // =========================================================================
@@ -369,6 +380,60 @@ async function run(){
     assert(res._status === 200, `9) aggregate Team View for an authenticated owner: succeeds (got ${res._status})`);
     assert(res._body.viewMode === 'team', '9) aggregate Team View: viewMode is "team"');
     assert((res._body.accounts || []).some(a => a.name === 'Org Account'), '9) aggregate Team View: an org member\'s account is present (organization-wide aggregation still works)');
+  }
+
+  // =========================================================================
+  // 10-13. Inactive organization-member access (uploadId= scope only).
+  // orgUserIds() (used by aggregate my/team) includes every org member
+  // regardless of status -- activeOrgUserIdsForUploadScope() (used ONLY by
+  // the uploadId= branch) must exclude status='inactive' members, so an
+  // owner/admin cannot reach an inactive member's upload via uploadId=
+  // even though they're in the same org.
+  // =========================================================================
+  {
+    // 10) Sanity re-confirmation: the SAME owner/admin requesting an ACTIVE
+    // org member's upload still gets 200 (already proven by Test 6 above;
+    // restated here explicitly as the paired positive case for 11-13).
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({token: FIXTURES.authTokenOwner, query: {uploadId: FIXTURES.uploadOrg}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 200, `10) owner requesting an ACTIVE org member's upload: still returns 200 (got ${res._status})`);
+  }
+  {
+    // 11) The same owner/admin requesting the INACTIVE member's upload ->
+    // 404, same non-leaking message as any other inaccessible upload.
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({token: FIXTURES.authTokenOwner, query: {uploadId: FIXTURES.uploadInactive}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 404, `11) owner requesting an INACTIVE org member's upload: returns 404 (got ${res._status})`);
+    assert(res._body && res._body.error === 'Upload not found or not accessible.', `11) owner requesting an INACTIVE org member's upload: uses the same non-leaking message (got ${JSON.stringify(res._body)})`);
+  }
+  {
+    // 12) No account or signal query for the inactive member's upload
+    // happens AFTER the authorization check fails.
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({token: FIXTURES.authTokenOwner, query: {uploadId: FIXTURES.uploadInactive}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(!fetchImpl.calls.some(c => c.url.includes('/rest/v1/ha_accounts') && c.url.includes(FIXTURES.uploadInactive)), '12) owner requesting an INACTIVE org member\'s upload: ha_accounts for that upload was never queried');
+    assert(!fetchImpl.calls.some(c => c.url.includes('/rest/v1/ha_signals') && c.url.includes(FIXTURES.uploadInactive)), '12) owner requesting an INACTIVE org member\'s upload: ha_signals for that upload was never queried');
+  }
+  {
+    // 13) An ordinary member (not owner/admin) still cannot access any
+    // other member's upload -- including the inactive member's, for
+    // completeness (Test 5 already covers member-vs-member with two
+    // active members).
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({token: FIXTURES.authTokenA, query: {uploadId: FIXTURES.uploadInactive}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 404, `13) ordinary member requesting the inactive member's upload: returns 404 (got ${res._status})`);
   }
 
   global.fetch = originalFetch;
