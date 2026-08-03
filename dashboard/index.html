@@ -2116,9 +2116,11 @@ let currentResearchAttemptId = null;
 // explicit, separately-authorized pathway (a real "Research Top Accounts"
 // button click) that asks the server to mint a genuinely new run identity.
 async function claimAutomaticResearchRun(runIntent){
+  const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+  if(!headers) return { ok:false, status:401, data:{ error:'Your session has expired. Please log in again.' } };
   const res = await fetch('/api/research-batch', {
     method:'POST',
-    headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+    headers,
     body: JSON.stringify({ researchRunAction:'claim', uploadId: currentUploadId, runIntent })
   });
   const data = await res.json().catch(() => ({}));
@@ -2147,9 +2149,14 @@ async function heartbeatCurrentResearchRun(context){
   const ctx = context || { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
   if(!currentUploadId || !ctx.researchRunId || !ctx.attemptId) return;
   try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    // No valid session -- authHeadersAsync() already redirected to login if
+    // one was truly obtainable-but-missing. This is a best-effort call, so
+    // just skip sending it rather than throwing.
+    if(!headers) return;
     await fetch('/api/research-batch', {
       method:'POST',
-      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      headers,
       body: JSON.stringify({ researchRunAction:'heartbeat', uploadId: currentUploadId, researchRunId: ctx.researchRunId, attemptId: ctx.attemptId })
     });
   }catch(err){
@@ -2168,9 +2175,14 @@ async function reportResearchRunOutcome(action, resultSummaryOrError, context){
   const ctx = context || { researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId };
   if(!ctx.researchRunId || !ctx.attemptId) return;
   try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    // Best-effort call -- see heartbeatCurrentResearchRun()'s identical
+    // comment above. authHeadersAsync() already redirected if the session
+    // is truly gone.
+    if(!headers) return;
     await fetch('/api/research-batch', {
       method:'POST',
-      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      headers,
       body: JSON.stringify({
         researchRunAction: action,
         uploadId: currentUploadId,
@@ -2208,8 +2220,10 @@ function dashboardUsageInfo(){
 }
 async function loadDashboardUsage(){
   try{
-    if(!(window.HouseAuth&&HouseAuth.authHeaders)) return null;
-    const res=await fetch('/api/usage',{headers:HouseAuth.authHeaders(),cache:'no-store'});
+    if(!(window.HouseAuth&&HouseAuth.authHeadersAsync)) return null;
+    const headers = await HouseAuth.authHeadersAsync();
+    if(!headers) return null; // authHeadersAsync() already redirected to login
+    const res=await fetch('/api/usage',{headers,cache:'no-store'});
     const data=await res.json().catch(()=>({}));
     if(res.ok){ dashboardUsage=data; if(!currentDashboardData){ dashboardViewMode = defaultDashboardView(); } renderDashboardUsage(); renderDashboardViewSwitcher(); return data; }
   }catch(e){ console.warn('Usage load failed',e); }
@@ -2690,7 +2704,9 @@ async function loadSavedDashboard(email){
   const banner = document.getElementById('savedDashboardBanner');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
   try{
-    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers:(window.HouseAuth&&HouseAuth.authHeaders)?HouseAuth.authHeaders():{}, cache:'no-store'});
+    const headers = (window.HouseAuth&&HouseAuth.authHeadersAsync)?await HouseAuth.authHeadersAsync():{};
+    if(!headers) return; // authHeadersAsync() already redirected to login
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
     currentDashboardData = data;
@@ -3759,9 +3775,11 @@ async function researchAccountByName(accountName, options = {}){
       categories: [...(account.categoryTypes || [])],
       projects: account.projects || []
     };
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) throw new Error('Your session has expired. Please log in again.');
     const res = await fetch(endpoint, {
       method:'POST',
-      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      headers,
       body: JSON.stringify(payload)
     });
     const data = await res.json();
@@ -3922,9 +3940,11 @@ async function researchAccountsBatch(accounts, options = {}){
   const auto = options && options.auto;
   if(btn){ btn.textContent = auto ? `Scanning ${accounts.length} accounts with AI...` : `Researching ${accounts.length} accounts with AI...`; }
   try{
+    const headers = window.HouseAuth&&HouseAuth.authHeadersAsync?await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}):{'Content-Type':'application/json'};
+    if(!headers) throw new Error('Your session has expired. Please log in again.');
     const res = await fetch('/api/research-batch', {
       method:'POST',
-      headers:(window.HouseAuth&&HouseAuth.authHeaders?HouseAuth.authHeaders({'Content-Type':'application/json'}):{'Content-Type':'application/json'}),
+      headers,
       body: JSON.stringify({
         mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
         // Log-correlation only -- see researchAccountByName()'s payload above
@@ -5733,21 +5753,26 @@ async function performSaveCurrentUpload(stage, attemptContext){
   };
   try{
     saveInProgress = true;
+    // Phase 2A implementation-review ROUND 7, item 2 -- api/save-upload.js
+    // requires a real, verified Bearer token for ANY save that targets an
+    // existing upload (uploadId present) or any stage other than
+    // "uploaded", and never trusts lead.email as identity for those.
+    //
+    // Release blocker (post-Phase-2A review): dashboard/index.html being a
+    // data-protected="true" page only guarantees a valid token AT PAGE
+    // LOAD (see auth-client.js's requireAuth()) -- it does NOT guarantee
+    // one is still valid by the time a request fires later in a long-lived
+    // session, once the access token's own TTL elapses. Every fetch on
+    // this page (this one included) now goes through
+    // HouseAuth.authHeadersAsync(), which refreshes the session first when
+    // needed and returns null (after redirecting to login) if no valid
+    // session is obtainable at all, instead of silently attaching a stale
+    // token and letting the server 401 it.
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) throw new Error('Your session has expired. Please log in again.');
     const res = await fetch('/api/save-upload', {
       method:'POST',
-      // Phase 2A implementation-review ROUND 7, item 2 -- api/save-upload.js
-      // now requires a real, verified Bearer token for ANY save that
-      // targets an existing upload (uploadId present) or any stage other
-      // than "uploaded", and never trusts lead.email as identity for those.
-      // This call was the one remaining place in the dashboard that sent
-      // save-upload requests WITHOUT HouseAuth.authHeaders() -- every other
-      // fetch to /api/research-batch already did (see
-      // claimAutomaticResearchRun()/heartbeatCurrentResearchRun()/
-      // reportResearchRunOutcome() above). dashboard/index.html is a
-      // data-protected="true" page (see auth-client.js's requireAuth()), so
-      // a real session token is always available here by the time any of
-      // this code runs.
-      headers:(window.HouseAuth && HouseAuth.authHeaders ? HouseAuth.authHeaders({'Content-Type':'application/json'}) : {'Content-Type':'application/json'}),
+      headers,
       body: JSON.stringify({
         lead,
         uploadId: currentUploadId,
@@ -6128,7 +6153,22 @@ function escapeHtml(text){
  const fmt=d=>{if(!d)return '—';const x=new Date(d);return Number.isNaN(x.getTime())?'—':x.toLocaleDateString()};
  const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
  let cachedLists=[];
- async function request(method,body){const r=await fetch('/api/monitoring-lists',{method,headers:{'Content-Type':'application/json',...(window.HouseAuth?.authHeaders?.()||{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Customer account request failed');return d}
+ // Release blocker (post-Phase-2A review): this used HouseAuth.authHeaders()
+ // -- a synchronous read of whatever token happened to be cached in
+ // localStorage, with no expiry check -- so once the access token expired
+ // during a long-lived dashboard session, every request here silently sent
+ // a stale Bearer token and the server correctly 401'd it. Now uses
+ // HouseAuth.authHeadersAsync(), which refreshes the session first if
+ // needed and returns null (after redirecting to login) if no valid
+ // session is obtainable, so a request is never sent unauthenticated.
+ async function request(method,body){
+   const headers = window.HouseAuth?.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+   if(!headers) throw new Error('Your session has expired. Please log in again.');
+   const r=await fetch('/api/monitoring-lists',{method,headers,body:body?JSON.stringify(body):undefined,cache:'no-store'});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok)throw new Error(d.error||'Customer account request failed');
+   return d;
+ }
  function accountRows(list){return (list.accounts||[]).map(a=>`<tr><td><strong>${esc(a.name)}</strong><div style="font-size:.78rem;color:var(--muted);">${esc(a.industry||'')}</div></td><td>${esc(list.name)}</td><td>${a.monitoringStatus==='paused'?'Paused':'Active'}</td><td>${a.lastResearchedAt?fmt(a.lastResearchedAt):'Not researched yet'}</td><td>${a.hasActionableAlert?'Yes':'No'}</td><td>${a.domain?esc(a.domain):'Not provided'}</td><td>${fmt(a.dateAdded)}</td><td><button data-account-act="${a.monitoringStatus==='paused'?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}">${a.monitoringStatus==='paused'?'Resume':'Stop Monitoring'}</button> <button class="danger" data-account-act="delete-account" data-account-id="${esc(a.id)}">Delete Account Data</button></td></tr>`).join('')}
  function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(list=>`<section style="margin:0 0 24px;"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">${esc(list.name)}</h3><div style="color:var(--muted);font-size:.85rem;">${list.companyCount} customer accounts · ${list.status==='paused'?'Monitoring paused':'Monitoring active'}</div></div><div><button data-list-act="${list.status==='paused'?'resume':'pause'}" data-list-id="${esc(list.id)}">${list.status==='paused'?'Resume List':'Pause List'}</button> <button class="danger" data-list-act="delete" data-list-id="${esc(list.id)}">Delete Uploaded List</button></div></div><div style="overflow:auto;margin-top:12px;"><table style="width:100%;border-collapse:collapse;font-size:.84rem;"><thead><tr><th>Customer</th><th>Source</th><th>Monitoring</th><th>Last researched</th><th>Alert</th><th>Domain</th><th>Added</th><th>Actions</th></tr></thead><tbody>${accountRows(list)||'<tr><td colspan="8">No customer accounts in this list.</td></tr>'}</tbody></table></div></section>`).join('')||'<p>No uploaded customer accounts found.</p>'}
  async function load(){try{const d=await request('GET');cachedLists=d.lists?.customer||[];renderManager()}catch(e){console.warn('Customer account management load failed',e)}}

@@ -82,31 +82,38 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // REAL escapeHtml() (previously a no-op stub here -- the security tests
 // below specifically need genuine HTML escaping, not a pass-through).
 // ===========================================================================
+// Line ranges updated for the client-authentication release-blocker fix
+// (dashboard/index.html now calls HouseAuth.authHeadersAsync() instead of
+// the synchronous HouseAuth.authHeaders() at every protected fetch site,
+// which shifted every subsequent line number). Re-derived by brace-depth
+// scanning from the current file and spot-verified by direct reads, not
+// hand-counted -- extractFn()'s own signature check below is the final,
+// self-enforcing guarantee regardless.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2118, 2126, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2146, 2158, {async: true}),
-  extractFn('reportResearchRunOutcome', 2167, 2187, {async: true}),
-  extractFn('normalizeSavedAccount', 2301, 2356),
-  extractFn('accountCardFor', 3137, 3139),
-  extractFn('accountSignalsPanel', 3140, 3143),
-  extractFn('researchAccountByName', 3711, 3842, {async: true}),
-  extractFn('getAccountsForResearch', 3847, 3860),
-  extractFn('batchPayloadForAccounts', 3862, 3906),
-  extractFn('applyBusinessSignalAccountBoost', 3909, 3917),
-  extractFn('researchAccountsBatch', 3919, 4006, {async: true}),
-  extractFn('signalTopicKeyClient', 4008, 4016),
-  extractFn('dedupeSignalsClient', 4018, 4031),
-  extractFn('researchTopAccounts', 4033, 4163, {async: true}),
-  extractFn('refreshOpportunityViews', 4264, 4283),
-  extractFn('renderDetailedAccountViews', 5576, 5644),
-  extractFn('serializeAccountForStorage', 5654, 5696),
-  extractFn('performSaveCurrentUpload', 5706, 5801, {async: true}),
-  extractFn('saveCurrentUpload', 5810, 5814),
-  extractFn('toggleAccountMetadataEdit', 5822, 5829),
-  extractFn('saveAccountMetadataEdit', 5851, 5888, {async: true}),
-  extractRaw('delegatedClickListener', 5905, 5927, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 5940, 5956),
-  extractFn('escapeHtml', 6120, 6123)
+  extractFn('claimAutomaticResearchRun', 2118, 2128, {async: true}),
+  extractFn('heartbeatCurrentResearchRun', 2148, 2165, {async: true}),
+  extractFn('reportResearchRunOutcome', 2174, 2199, {async: true}),
+  extractFn('normalizeSavedAccount', 2315, 2370),
+  extractFn('accountCardFor', 3153, 3155),
+  extractFn('accountSignalsPanel', 3156, 3159),
+  extractFn('researchAccountByName', 3727, 3860, {async: true}),
+  extractFn('getAccountsForResearch', 3865, 3878),
+  extractFn('batchPayloadForAccounts', 3880, 3924),
+  extractFn('applyBusinessSignalAccountBoost', 3927, 3935),
+  extractFn('researchAccountsBatch', 3937, 4026, {async: true}),
+  extractFn('signalTopicKeyClient', 4028, 4036),
+  extractFn('dedupeSignalsClient', 4038, 4051),
+  extractFn('researchTopAccounts', 4053, 4183, {async: true}),
+  extractFn('refreshOpportunityViews', 4284, 4303),
+  extractFn('renderDetailedAccountViews', 5596, 5664),
+  extractFn('serializeAccountForStorage', 5674, 5716),
+  extractFn('performSaveCurrentUpload', 5726, 5826, {async: true}),
+  extractFn('saveCurrentUpload', 5835, 5839),
+  extractFn('toggleAccountMetadataEdit', 5847, 5853),
+  extractFn('saveAccountMetadataEdit', 5876, 5912, {async: true}),
+  extractRaw('delegatedClickListener', 5930, 5952, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 5965, 5981),
+  extractFn('escapeHtml', 6145, 6148)
 ].join('\n\n');
 
 // ===========================================================================
@@ -282,7 +289,11 @@ var autoResearchStarted = true;
 
 function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchRunId = null, currentResearchAttemptId = null, fetchImpl, domElements = {}, fakeDomRoot}){
   const consoleLog = { warn: [], error: [], log: [] };
-  const houseAuth = { authHeaders: (h) => h || {} };
+  // authHeadersAsync mirrors the real one's success path (always resolves
+  // to a headers object, never null) -- these orchestration tests are
+  // about call COUNTS, not about auth-freshness behavior itself, which has
+  // its own dedicated coverage in scripts/test-dashboard-auth-headers.js.
+  const houseAuth = { authHeaders: (h) => h || {}, authHeadersAsync: async (h) => h || {} };
   // A fake #accountList element that just captures whatever
   // renderDetailedAccountViews() assigns to .innerHTML as a plain string --
   // used by the Part A markup-safety tests below, which inspect that raw
