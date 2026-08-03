@@ -50,14 +50,24 @@ declare
   v_run_id text := 'auto';
   v_count int;
   v_industry_check text;
+  -- Full-row, byte-for-byte / value-for-value snapshots -- not row counts
+  -- or single-column checks. Each captures every column the "unchanged"
+  -- proof needs, per table:
+  --   ha_accounts:      id, user_id, upload_id, account_name, industry,
+  --                      contact_name, contact_email, metrics, raw_data,
+  --                      created_at, updated_at (both uploads, every row)
+  --   ha_signals:        every column, for every fixture signal row
+  --   ha_uploads:        id, user_id, upload_name, stage, summary,
+  --                      source_page, created_at, updated_at (Upload A)
+  --   ha_research_runs: every column (the one fixture run row)
   v_before_accounts text;
   v_after_accounts text;
-  v_before_signals int;
-  v_after_signals int;
-  v_before_stage text;
-  v_after_stage text;
-  v_before_run_status text;
-  v_after_run_status text;
+  v_before_signals text;
+  v_after_signals text;
+  v_before_upload text;
+  v_after_upload text;
+  v_before_run text;
+  v_after_run text;
   v_pass int := 0;
   v_fail int := 0;
 begin
@@ -107,13 +117,16 @@ begin
   end;
 
   -- Snapshot everything the three rejected calls below must leave
-  -- untouched: both uploads' full account rows, Upload A's signal count,
-  -- Upload A's ha_uploads.stage, and the fixture run's status.
-  select coalesce(array_agg(row(upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at)::text order by upload_id, account_name), array[]::text[])::text
+  -- untouched: FULL rows, not row counts or single columns -- see the
+  -- declare block's comment for the exact column list per table.
+  select coalesce(array_agg(row(id, user_id, upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at, updated_at)::text order by upload_id, account_name), array[]::text[])::text
     into v_before_accounts from public.ha_accounts where upload_id in (v_upload_a, v_upload_b);
-  select count(*) into v_before_signals from public.ha_signals where upload_id = v_upload_a;
-  select stage into v_before_stage from public.ha_uploads where id = v_upload_a;
-  select status into v_before_run_status from public.ha_research_runs where upload_id = v_upload_a and research_run_id = v_run_id;
+  select coalesce(array_agg(row(id, user_id, upload_id, weekly_run_id, account_name, signal_hash, event_fingerprint, signal_type, title, why_reach_out, confidence, source_url, source_domain, published_at, payload, first_seen_at, last_seen_at)::text order by id), array[]::text[])::text
+    into v_before_signals from public.ha_signals where upload_id = v_upload_a;
+  select row(id, user_id, upload_name, stage, summary, source_page, created_at, updated_at)::text
+    into v_before_upload from public.ha_uploads where id = v_upload_a;
+  select row(id, research_run_id, user_id, upload_id, status, attempt_id, attempt_count, lease_expires_at, heartbeat_at, started_at, completed_at, result_summary, error_message, created_at)::text
+    into v_before_run from public.ha_research_runs where upload_id = v_upload_a and research_run_id = v_run_id;
 
   -- ---------------------------------------------------------------------
   -- Test 2: an ADDED, foreign (Upload B) account name -> HA005.
@@ -157,26 +170,30 @@ begin
   end;
 
   -- ---------------------------------------------------------------------
-  -- Prove all three rejections above changed NOTHING: accounts (both
-  -- uploads), signals, upload state, and run state.
+  -- Prove all three rejections above changed NOTHING: full-row,
+  -- value-for-value comparisons across accounts (both uploads), signals,
+  -- upload state, and run state -- not row counts or single columns.
   -- ---------------------------------------------------------------------
-  select coalesce(array_agg(row(upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at)::text order by upload_id, account_name), array[]::text[])::text
+  select coalesce(array_agg(row(id, user_id, upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at, updated_at)::text order by upload_id, account_name), array[]::text[])::text
     into v_after_accounts from public.ha_accounts where upload_id in (v_upload_a, v_upload_b);
-  select count(*) into v_after_signals from public.ha_signals where upload_id = v_upload_a;
-  select stage into v_after_stage from public.ha_uploads where id = v_upload_a;
-  select status into v_after_run_status from public.ha_research_runs where upload_id = v_upload_a and research_run_id = v_run_id;
+  select coalesce(array_agg(row(id, user_id, upload_id, weekly_run_id, account_name, signal_hash, event_fingerprint, signal_type, title, why_reach_out, confidence, source_url, source_domain, published_at, payload, first_seen_at, last_seen_at)::text order by id), array[]::text[])::text
+    into v_after_signals from public.ha_signals where upload_id = v_upload_a;
+  select row(id, user_id, upload_name, stage, summary, source_page, created_at, updated_at)::text
+    into v_after_upload from public.ha_uploads where id = v_upload_a;
+  select row(id, research_run_id, user_id, upload_id, status, attempt_id, attempt_count, lease_expires_at, heartbeat_at, started_at, completed_at, result_summary, error_message, created_at)::text
+    into v_after_run from public.ha_research_runs where upload_id = v_upload_a and research_run_id = v_run_id;
 
-  if v_after_accounts = v_before_accounts then v_pass := v_pass + 1; raise notice 'PASS: Test 5 -- ha_accounts (both uploads, every column including created_at) is byte-for-byte identical after all 3 rejected calls';
+  if v_after_accounts = v_before_accounts then v_pass := v_pass + 1; raise notice 'PASS: Test 5 -- ha_accounts (both uploads; id, user_id, upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at, updated_at) is byte-for-byte identical after all 3 rejected calls';
   else v_fail := v_fail + 1; raise notice 'FAIL: Test 5 -- ha_accounts changed. Before: % After: %', v_before_accounts, v_after_accounts; end if;
 
-  if v_after_signals = v_before_signals then v_pass := v_pass + 1; raise notice 'PASS: Test 6 -- ha_signals row count for Upload A is unchanged (% rows)', v_after_signals;
-  else v_fail := v_fail + 1; raise notice 'FAIL: Test 6 -- ha_signals count changed from % to %', v_before_signals, v_after_signals; end if;
+  if v_after_signals = v_before_signals then v_pass := v_pass + 1; raise notice 'PASS: Test 6 -- ha_signals (every column, every fixture signal row on Upload A) is value-for-value identical after all 3 rejected calls';
+  else v_fail := v_fail + 1; raise notice 'FAIL: Test 6 -- ha_signals changed. Before: % After: %', v_before_signals, v_after_signals; end if;
 
-  if v_after_stage = v_before_stage then v_pass := v_pass + 1; raise notice 'PASS: Test 7 -- ha_uploads.stage for Upload A is unchanged (%)', v_after_stage;
-  else v_fail := v_fail + 1; raise notice 'FAIL: Test 7 -- ha_uploads.stage changed from % to %', v_before_stage, v_after_stage; end if;
+  if v_after_upload = v_before_upload then v_pass := v_pass + 1; raise notice 'PASS: Test 7 -- ha_uploads (id, user_id, upload_name, stage, summary, source_page, created_at, updated_at) for Upload A is value-for-value identical after all 3 rejected calls';
+  else v_fail := v_fail + 1; raise notice 'FAIL: Test 7 -- ha_uploads changed. Before: % After: %', v_before_upload, v_after_upload; end if;
 
-  if v_after_run_status = v_before_run_status then v_pass := v_pass + 1; raise notice 'PASS: Test 8 -- ha_research_runs.status for the fixture run is unchanged (%) -- the attempt was never finalized as successfully persisted by any of the 3 rejected calls', v_after_run_status;
-  else v_fail := v_fail + 1; raise notice 'FAIL: Test 8 -- ha_research_runs.status changed from % to %', v_before_run_status, v_after_run_status; end if;
+  if v_after_run = v_before_run then v_pass := v_pass + 1; raise notice 'PASS: Test 8 -- ha_research_runs (the complete fixture row: status, attempt_id, attempt_count, lease_expires_at, heartbeat_at, started_at, completed_at, result_summary, error_message, created_at) is value-for-value identical after all 3 rejected calls -- the attempt was never finalized as successfully persisted';
+  else v_fail := v_fail + 1; raise notice 'FAIL: Test 8 -- ha_research_runs changed. Before: % After: %', v_before_run, v_after_run; end if;
 
   -- Bonus: duplicate-name dedup still works and does not false-positive
   -- HA005 (same check as the local suite's Test 63), confirming migration

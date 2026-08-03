@@ -1,5 +1,9 @@
-// Vercel Serverless Function: retrieve saved House Accounts dashboard by email.
-// Endpoint: GET /api/get-dashboard?email=user@example.com
+// Vercel Serverless Function: retrieve the saved House Accounts dashboard
+// for the authenticated caller. Endpoint: GET /api/get-dashboard
+// Requires a valid Supabase Auth Bearer token -- identity is resolved ONLY
+// from that token (see resolveDashboardUser() below), never from a query
+// parameter. An optional ?email= is accepted for backwards-compatible
+// request shape but has no effect on identity/authorization.
 
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
@@ -32,26 +36,33 @@ async function supabase(path, options={}){
   return data;
 }
 
+// Release blocker fix: this used to fall back to resolving ha_users
+// directly from the untrusted ?email= query parameter whenever the Bearer
+// token was missing or didn't resolve to a matching ha_users row -- a
+// request with NO token (or an invalid/expired one) could still retrieve
+// another user's dashboard data by supplying their email. authFetchUser()
+// now returns a distinguishable {ok, reason} result instead of a bare
+// user-or-null, and resolveDashboardUser() below never reads the email
+// query parameter at all -- identity comes ONLY from a verified Supabase
+// Auth Bearer token, exactly like api/monitoring-lists.js's authUser()/
+// context() already do.
 async function authFetchUser(req){
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if(!token) return null;
+  if(!token) return {ok:false, reason:'no-token'};
   const {url, key} = env();
   const resp = await fetch(`${url}/auth/v1/user`, {headers:{apikey:key, Authorization:`Bearer ${token}`}});
-  if(!resp.ok) return null;
-  return resp.json();
+  if(!resp.ok) return {ok:false, reason:'invalid-token'};
+  const authUser = await resp.json().catch(() => null);
+  if(!authUser?.id) return {ok:false, reason:'invalid-token'};
+  return {ok:true, authUser};
 }
-async function resolveDashboardUser(req, email){
-  const authUser = await authFetchUser(req);
-  if(authUser?.id){
-    const byAuth = await supabase(`ha_users?select=*&auth_user_id=eq.${encodeURIComponent(authUser.id)}&limit=1`);
-    const user = Array.isArray(byAuth) ? byAuth[0] : null;
-    if(user) return user;
-  }
-  if(email){
-    const users = await supabase(`ha_users?select=*&email=eq.${encodeURIComponent(email)}&limit=1`);
-    return Array.isArray(users) ? users[0] : null;
-  }
-  return null;
+async function resolveDashboardUser(req){
+  const auth = await authFetchUser(req);
+  if(!auth.ok) return {user:null, reason:auth.reason};
+  const byAuth = await supabase(`ha_users?select=*&auth_user_id=eq.${encodeURIComponent(auth.authUser.id)}&limit=1`);
+  const user = Array.isArray(byAuth) ? byAuth[0] : null;
+  if(!user) return {user:null, reason:'no-account'};
+  return {user, reason:null};
 }
 async function orgUserIds(user){
   if(user?.organization_id){
@@ -286,9 +297,16 @@ function buildAccountsFromRows(accountRows, signalRows){
 export default async function handler(req, res){
   if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
   try{
-    const email = clean(req.query?.email).toLowerCase();
-    const user = await resolveDashboardUser(req, email);
-    if(!user) return json(res, 404, {error:'No saved dashboard found for that user.'});
+    // req.query?.email is accepted (harmlessly ignored) for
+    // backwards-compatible request shape only -- it is NEVER used to
+    // resolve identity, ownership, organization scope, or authorization.
+    // See resolveDashboardUser()'s own comment above.
+    const resolved = await resolveDashboardUser(req);
+    if(!resolved.user){
+      if(resolved.reason === 'no-account') return json(res, 404, {error:'No House Accounts profile found for this login.'});
+      return json(res, 401, {error:'Authentication required.'});
+    }
+    const user = resolved.user;
     let organization = null;
     if(user.organization_id){
       try{
