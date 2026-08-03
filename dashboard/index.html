@@ -1799,6 +1799,24 @@
   .acct-mgr-row{grid-template-columns:1fr auto auto;row-gap:8px;}
   .acct-mgr-toggle span.acct-toggle-label{display:none;}
 }
+
+/* Manage Customer Accounts modal -- branded toast (reversible actions) and
+   destructive-confirmation dialog, replacing window.confirm(). */
+.ha-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.25);display:flex;align-items:center;gap:16px;font-size:.88rem;font-family:var(--body);z-index:10100;max-width:90vw;}
+.ha-toast-undo{background:none;border:none;color:#5eead4;font-weight:700;cursor:pointer;font-family:var(--body);font-size:.85rem;text-decoration:underline;padding:0;flex-shrink:0;}
+.ha-toast-undo:hover{color:#99f6e4;}
+.ha-toast-undo:focus-visible{outline:2px solid #5eead4;outline-offset:2px;}
+.ha-confirm-backdrop{position:fixed;inset:0;background:rgba(10,25,45,.55);z-index:10090;display:flex;align-items:center;justify-content:center;padding:20px;}
+.ha-confirm-dialog{background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.3);}
+.ha-confirm-title{margin:0 0 10px;font-family:var(--display);font-size:1.2rem;color:var(--ink);}
+.ha-confirm-body{margin:0;color:var(--ink);font-size:.92rem;line-height:1.5;}
+.ha-confirm-warning{margin:14px 0 20px;font-size:.8rem;color:var(--danger);font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+.ha-confirm-actions{display:flex;justify-content:flex-end;gap:10px;}
+.ha-confirm-cancel{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:9px 16px;font-size:.85rem;cursor:pointer;font-family:var(--body);}
+.ha-confirm-cancel:hover{border-color:var(--ink);}
+.ha-confirm-danger-btn{background:var(--danger);color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--body);}
+.ha-confirm-danger-btn:hover{background:#8f1c17;}
+.ha-confirm-cancel:focus-visible,.ha-confirm-danger-btn:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
 </style>
 <script src="/auth-client.js"></script>
 <link rel="stylesheet" href="/site-header.css">
@@ -2158,13 +2176,19 @@ let currentResearchAttemptId = null;
 // restarts research that already completed. runIntent 'manual-rerun' is the
 // explicit, separately-authorized pathway (a real "Research Top Accounts"
 // button click) that asks the server to mint a genuinely new run identity.
-async function claimAutomaticResearchRun(runIntent){
+//
+// explicitUploadId (optional) lets a caller with its own immutable,
+// captured upload context (researchAccountFromManageModal() below) claim
+// against that exact id without depending on the currentUploadId global --
+// existing callers that omit it keep claiming against currentUploadId
+// exactly as before.
+async function claimAutomaticResearchRun(runIntent, explicitUploadId){
   const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
   if(!headers) return { ok:false, status:401, data:{ error:'Your session has expired. Please log in again.' } };
   const res = await fetch('/api/research-batch', {
     method:'POST',
     headers,
-    body: JSON.stringify({ researchRunAction:'claim', uploadId: currentUploadId, runIntent })
+    body: JSON.stringify({ researchRunAction:'claim', uploadId: explicitUploadId || currentUploadId, runIntent })
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
@@ -3751,66 +3775,207 @@ function getResearchDiagnostics(){
 
 function renderResearchDiagnostics(){ const el=document.getElementById('researchDiagnosticsPanel'); if(el){el.hidden=true;el.style.display='none';el.innerHTML='';} }
 
-// Manage Customer Accounts modal / single-account research freshness fix.
-// researchAccountByName() persists the FULL window.accountRadarAccounts
-// snapshot on every save (see its own comments below). The modal can
-// pause/resume/delete accounts directly against the database
-// (api/monitoring-lists.js) without updating that in-memory snapshot, so
-// researching from the modal without refreshing first could silently
-// resurrect a just-deleted sibling account, or revert a just-paused
-// sibling's monitoring status, in the very next snapshot save. This runs
-// the SAME /api/get-dashboard fetch loadSavedDashboard() uses, but updates
-// only the two pieces of state researchAccountByName() actually reads
-// (window.accountRadarAccounts, currentUploadId) -- it intentionally does
-// not touch any dashboard DOM/banner/scroll state, since it can be invoked
-// while the Manage Customer Accounts modal is open on top of the page, and
-// loadSavedDashboard()'s full render path is not safe to run underneath it.
-async function refreshCurrentUploadSnapshot(){
+// ===========================================================================
+// Manage Customer Accounts modal / single-account research -- immutable,
+// upload-scoped context (release-blocker fix; see the cross-upload
+// corruption audit this responds to). A prior version of this flow
+// refreshed from /api/get-dashboard with no uploadId parameter at all
+// (that endpoint has NEVER been upload-scoped for its aggregate my/team
+// paths -- see api/get-dashboard.js) and then persisted from the shared
+// window.accountRadarAccounts global. In a live incident this silently
+// merged a 30-account unrelated upload into a 1-account upload's snapshot,
+// because the refresh's own upload_id check passed while its ACCOUNTS were
+// a cross-upload aggregate the whole time -- the upload_id label and the
+// accounts array were never actually tied to each other.
+//
+// This flow now threads ONE explicit context object through every step --
+// expectedUploadId, expectedUploadName, targetAccountName,
+// freshUploadScopedAccounts, researchRunId, attemptId -- captured once and
+// NEVER re-derived from currentUploadId, currentUploadName,
+// window.accountRadarAccounts, or dashboardViewMode at any later step, not
+// even temporarily. api/get-dashboard.js's uploadId= path (see its own
+// comments) is structurally incapable of returning another upload's
+// accounts; this flow additionally re-verifies that guarantee itself
+// (every account.uploadId must equal expectedUploadId) rather than trusting
+// the server unconditionally. Migration 8's server-side HA005 check is the
+// independent backstop if this ever regresses anyway.
+// ===========================================================================
+
+// Fetches exactly one upload's accounts, scoped server-side by
+// upload_id=eq.<expectedUploadId> (api/get-dashboard.js's uploadId= branch)
+// -- never the my/team aggregate paths. Returns a plain value; does NOT
+// assign to window.accountRadarAccounts or currentUploadId. Those globals
+// remain reserved for the main dashboard's own legitimate "everything I
+// own" view and are never written by this operation.
+async function fetchUploadScopedSnapshot(expectedUploadId){
   const email = currentDashboardData?.user?.email || currentLead?.email || (typeof getSavedLead === 'function' ? getSavedLead()?.email : '') || '';
   const e = String(email || '').trim().toLowerCase();
-  if(!e || !currentUploadId) return {ok:false, error:'No active account list to refresh.'};
+  if(!e || !expectedUploadId) return {ok:false, error:'No active account list to refresh.'};
   const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : {};
   if(!headers) return {ok:false, error:'Your session has expired. Please log in again.'};
   let data;
   try{
-    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
+    const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&uploadId=${encodeURIComponent(expectedUploadId)}`, {headers, cache:'no-store'});
     data = await res.json().catch(() => ({}));
-    if(!res.ok) throw new Error(data.error || 'Could not refresh account list.');
+    if(!res.ok) throw new Error(data.error || 'Could not load this upload.');
   }catch(err){
-    return {ok:false, error: (err && err.message) || 'Could not refresh account list.'};
+    return {ok:false, error: (err && err.message) || 'Could not load this upload.'};
   }
-  const refreshedUploadId = data.upload?.id || null;
-  const accounts = (data.accounts || []).map(normalizeSavedAccount);
-  window.accountRadarAccounts = accounts;
-  if(refreshedUploadId) currentUploadId = refreshedUploadId;
-  return {ok:true, uploadId: currentUploadId, accounts};
+  if(!data.upload || data.upload.id !== expectedUploadId){
+    return {ok:false, error:'The server did not return the expected upload. Aborting before any research or save.'};
+  }
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  if(accounts.some(a => a.uploadId !== expectedUploadId)){
+    return {ok:false, error:'The server response contained accounts outside this upload. Aborting before any research or save.'};
+  }
+  return {ok:true, uploadId: data.upload.id, uploadName: data.upload.upload_name || '', accounts: accounts.map(normalizeSavedAccount)};
+}
+
+// Terminal save for the scoped flow. Deliberately takes uploadId and
+// accounts as EXPLICIT parameters and reads nothing else global-ish besides
+// the current lead identity (not upload/account state) -- mirrors
+// performSaveCurrentUpload()'s tracked-research request shape exactly, but
+// every upload/account value is this function's own argument, never
+// currentUploadId / currentUploadName / window.accountRadarAccounts.
+async function persistScopedResearchResult({uploadId, uploadName, accounts, researchRunId, attemptId}){
+  const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+  if(!headers) return {ok:false, error:'Your session has expired. Please log in again.'};
+  const futureOpportunities = accounts.flatMap(a => a.futureOpportunities || []);
+  const summary = {
+    accountCount: accounts.length,
+    reasonsToReachOut: futureOpportunities.length,
+    highConfidenceAccounts: new Set(futureOpportunities.filter(o => Number(o.confidence || 0) >= 70).map(o => o.account)).size,
+    businessSignals: futureOpportunities.filter(o => o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity).length,
+    followUpSignals: futureOpportunities.filter(o => o.signalLayerType === 'Follow-Up Signal').length,
+    repeatPatternSignals: futureOpportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').length,
+    savedAt: new Date().toISOString()
+  };
+  try{
+    const res = await fetch('/api/save-upload', {
+      method:'POST',
+      headers,
+      body: JSON.stringify({
+        lead: currentLead || (typeof getSavedLead === 'function' ? getSavedLead() : null),
+        uploadId,
+        uploadName: uploadName || 'Uploaded account list',
+        stage: 'researched',
+        page: window.location.href,
+        summary,
+        researchRunId,
+        attemptId,
+        accounts: accounts.map(a => serializeAccountForStorage(a, {includeSignals:true}))
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok){
+      if(res.status === 409 && data && (data.staleAttempt || data.snapshotMismatch)){
+        // Expected, not a bug: the attempt was reclaimed/superseded (stale
+        // attempt), or migration 8's HA005 guard caught a mismatch between
+        // what was submitted and this upload's own account set. Either way
+        // nothing was written -- see api/save-upload.js's HA001/HA005
+        // handling and supabase-schema-migration-8-tracked-research-identity-guard.sql.
+        return {ok:false, error: data.error || 'This research result could not be saved.', staleAttempt: !!data.staleAttempt, snapshotMismatch: !!data.snapshotMismatch};
+      }
+      throw new Error(data.error || 'Save failed');
+    }
+    return {ok:true, data};
+  }catch(err){
+    return {ok:false, error: (err && err.message) || 'Save failed'};
+  }
 }
 
 // Entry point the Manage Customer Accounts modal calls for its "Research" /
-// "Research Again" row action. Refuses cross-list research outright (the
-// modal can list accounts from OTHER uploaded lists that were never loaded
-// into window.accountRadarAccounts -- see the audit this responds to), then
-// re-fetches this exact upload's snapshot fresh from the server BEFORE ever
-// claiming a run or calling a provider, and re-finds the account in that
-// fresh snapshot rather than trusting the (possibly stale) modal row. If the
-// upload identity changed mid-refresh, or the account is gone from the fresh
-// snapshot, this stops before any claim/provider request is sent.
+// "Research Again" row action. Deliberately does NOT call
+// researchAccountByName() -- that function's terminal save
+// (saveCurrentUpload() -> performSaveCurrentUpload()) reads
+// window.accountRadarAccounts/currentUploadId directly, which is exactly
+// the dependency this flow exists to remove for this one operation. This
+// function claims, calls the provider, and persists using only its own
+// locally-captured context; the account-card version of "Research" /
+// "Research Again" continues to use researchAccountByName() unchanged.
 async function researchAccountFromManageModal(accountName, listId){
   if(listId !== currentUploadId){
     return {ok:false, outOfScope:true, error:'Open this list on the dashboard to research this account.'};
   }
-  const targetUploadId = currentUploadId;
-  const refreshed = await refreshCurrentUploadSnapshot();
-  if(!refreshed.ok) return {ok:false, error: refreshed.error || 'Could not refresh account list.'};
-  if(refreshed.uploadId !== targetUploadId){
-    return {ok:false, error:'This account list changed while refreshing. Please reopen Manage Customer Accounts and try again.'};
-  }
-  const freshAccount = (window.accountRadarAccounts || []).find(a => a.name === accountName);
-  if(!freshAccount){
+  // Context captured ONCE, here. Everything below uses these two constants
+  // and whatever fetchUploadScopedSnapshot() returns from them -- never
+  // currentUploadId/currentUploadName/window.accountRadarAccounts again.
+  const expectedUploadId = listId;
+  const targetAccountName = accountName;
+
+  const snapshot = await fetchUploadScopedSnapshot(expectedUploadId);
+  if(!snapshot.ok) return {ok:false, error: snapshot.error};
+  const expectedUploadName = snapshot.uploadName;
+  const freshUploadScopedAccounts = snapshot.accounts;
+
+  const account = freshUploadScopedAccounts.find(a => a.name === targetAccountName);
+  if(!account){
     return {ok:false, error:'This account no longer exists in this list.'};
   }
-  await researchAccountByName(freshAccount.name);
-  return {ok:true};
+
+  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
+  const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
+  if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
+    return {ok:false, error:'Another research run is currently active for this list. Please wait for it to finish before researching an individual account.'};
+  }
+  const researchRunId = claim.data.researchRunId;
+  const attemptId = claim.data.attemptId;
+
+  try{
+    const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
+    const endpoint = enhancedPublicMode ? '/api/research-batch' : '/api/research-account';
+    const payload = enhancedPublicMode ? {
+      mode:'warm-account',
+      researchRunId,
+      attemptId,
+      uploadId: expectedUploadId,
+      // Only the ONE selected account is ever sent to the provider -- same
+      // scoping guarantee researchAccountByName() already had; this flow
+      // changes WHERE the upload/account identity comes from, not the
+      // provider-call scope itself.
+      accounts: batchPayloadForAccounts([account])
+    } : {
+      accountName: account.name,
+      industry: account.industry,
+      cityState: account.purchases?.[0]?.location || account.location || '',
+      emailDomain: extractEmailDomain(account.contactEmail),
+      website: account.website || '',
+      contactName: account.contactName || '',
+      contacts: account.contacts || [],
+      intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account),
+      notes: account.notes || '',
+      employees: account.employees || '',
+      categories: [...(account.categoryTypes || [])],
+      projects: account.projects || []
+    };
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) throw new Error('Your session has expired. Please log in again.');
+    const res = await fetch(endpoint, {method:'POST', headers, body: JSON.stringify(payload)});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Research failed');
+    account.signals = enhancedPublicMode
+      ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
+      : (Array.isArray(data.signals) ? data.signals : []);
+    account.lastResearchedAt = new Date().toISOString();
+
+    // Persist using the EXPLICIT expectedUploadId and the EXPLICIT
+    // freshUploadScopedAccounts array -- this is the exact call the audit's
+    // corruption flowed through last time; it now cannot read
+    // window.accountRadarAccounts/currentUploadId even by accident.
+    const saveResult = await persistScopedResearchResult({
+      uploadId: expectedUploadId,
+      uploadName: expectedUploadName,
+      accounts: freshUploadScopedAccounts,
+      researchRunId,
+      attemptId
+    });
+    if(!saveResult.ok){
+      return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
+    }
+    return {ok:true, account};
+  }catch(err){
+    return {ok:false, error: (err && err.message) || 'Research failed. Please try again.'};
+  }
 }
 
 // Phase 2A implementation-review ROUND 4, item 2 — a request bound to an
@@ -6333,15 +6498,15 @@ function escapeHtml(text){
         <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
         <div class="acct-mgr-meta">${metaParts.join(' · ')}</div>
       </div>
-      <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
+      <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
       <button type="button" class="acct-mgr-action${inScope?'':' acct-mgr-action-secondary'}" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${inScope?'':' disabled title="Open this list on the dashboard to research this account."'}>${inScope?researchLabel:'Open this list to research'}</button>
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
-          <button type="button" role="menuitem" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}">${paused?'Resume monitoring':'Pause monitoring'}</button>
-          <button type="button" role="menuitem" class="acct-mgr-danger-item" data-account-act="delete-account" data-account-id="${esc(a.id)}">Delete Account Data</button>
+          <button type="button" role="menuitem" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}">${paused?'Resume monitoring':'Pause monitoring'}</button>
+          <button type="button" role="menuitem" class="acct-mgr-danger-item" data-account-act="delete-account" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}">Delete Account Data</button>
         </div>
       </div>
       <div class="acct-mgr-status-line" data-row-status hidden></div>
@@ -6356,13 +6521,13 @@ function escapeHtml(text){
           <div class="acct-mgr-list-meta"><span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span>${list.companyCount} customer account${list.companyCount===1?'':'s'} · ${paused?'Monitoring paused':'Monitoring active'}</div>
         </div>
         <div class="acct-mgr-list-actions">
-          <button type="button" class="acct-mgr-toggle" data-list-act="${paused?'resume':'pause'}" data-list-id="${esc(list.id)}" aria-label="${paused?'Resume monitoring for '+esc(list.name):'Pause monitoring for '+esc(list.name)}">
+          <button type="button" class="acct-mgr-toggle" data-list-act="${paused?'resume':'pause'}" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}" aria-label="${paused?'Resume monitoring for '+esc(list.name):'Pause monitoring for '+esc(list.name)}">
             <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Resume List':'Pause List'}</span>
           </button>
           <div class="acct-mgr-menu-wrap">
             <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(list.name)}">⋯</button>
             <div class="acct-mgr-menu" role="menu">
-              <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}">Delete Uploaded List</button>
+              <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}">Delete Uploaded List</button>
             </div>
           </div>
         </div>
@@ -6446,7 +6611,11 @@ function escapeHtml(text){
        btn.textContent = originalLabel;
        return;
      }
-     const fresh = (window.accountRadarAccounts||[]).find(x => x.name === accountName);
+     // researchAccountFromManageModal() deliberately never touches
+     // window.accountRadarAccounts (see its own comments) -- the researched
+     // account (with its fresh .signals/.lastResearchedAt) comes back
+     // directly in result.account instead.
+     const fresh = result.account || null;
      const signalCount = fresh && Array.isArray(fresh.signals) ? fresh.signals.length : 0;
      // Patch this modal's own cached row in place (rather than a full
      // load()/re-render) so the row correctly shows "Research Again" and a
@@ -6467,6 +6636,86 @@ function escapeHtml(text){
    }
  }
 
+ // Branded toast (reversible pause/resume) -- replaces window.confirm() for
+ // these actions entirely. Only one toast is ever active: a new call
+ // removes any existing one first. Auto-dismisses; Undo re-issues the
+ // inverse PATCH through the same authenticated request() helper everything
+ // else in this modal uses.
+ let activeToastTimer = null;
+ function showToast(message, undoFn){
+   const existing = document.getElementById('haToast');
+   if(existing) existing.remove();
+   if(activeToastTimer){ clearTimeout(activeToastTimer); activeToastTimer = null; }
+   const el = document.createElement('div');
+   el.id = 'haToast';
+   el.className = 'ha-toast';
+   el.setAttribute('role','status');
+   el.setAttribute('aria-live','polite');
+   const text = document.createElement('span');
+   text.textContent = message;
+   el.appendChild(text);
+   if(undoFn){
+     const btn = document.createElement('button');
+     btn.type = 'button';
+     btn.className = 'ha-toast-undo';
+     btn.textContent = 'Undo';
+     btn.addEventListener('click', async () => {
+       el.remove();
+       if(activeToastTimer){ clearTimeout(activeToastTimer); activeToastTimer = null; }
+       await undoFn();
+     });
+     el.appendChild(btn);
+   }
+   document.body.appendChild(el);
+   activeToastTimer = setTimeout(() => { el.remove(); activeToastTimer = null; }, 5000);
+ }
+
+ // Branded destructive-confirmation dialog -- replaces window.confirm() for
+ // Delete Account Data / Delete Uploaded List. Promise-based (resolves
+ // true/false). Traps Tab within the two buttons, closes and restores
+ // focus to the triggering element on Escape/backdrop-click/Cancel.
+ function showDestructiveConfirm({title, bodyHtml, confirmLabel}){
+   return new Promise(resolve => {
+     const triggerEl = document.activeElement;
+     const backdrop = document.createElement('div');
+     backdrop.className = 'ha-confirm-backdrop';
+     backdrop.innerHTML = `
+       <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haConfirmTitle" aria-describedby="haConfirmBody">
+         <h3 class="ha-confirm-title" id="haConfirmTitle">${esc(title)}</h3>
+         <p class="ha-confirm-body" id="haConfirmBody">${bodyHtml}</p>
+         <div class="ha-confirm-warning">This cannot be undone</div>
+         <div class="ha-confirm-actions">
+           <button type="button" class="ha-confirm-cancel">Cancel</button>
+           <button type="button" class="ha-confirm-danger-btn">${esc(confirmLabel || 'Delete')}</button>
+         </div>
+       </div>`;
+     document.body.appendChild(backdrop);
+     const cancelBtn = backdrop.querySelector('.ha-confirm-cancel');
+     const confirmBtn = backdrop.querySelector('.ha-confirm-danger-btn');
+     const focusable = [cancelBtn, confirmBtn];
+
+     function close(result){
+       document.removeEventListener('keydown', onKeydown, true);
+       backdrop.remove();
+       if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+       resolve(result);
+     }
+     function onKeydown(e){
+       if(e.key === 'Escape'){ e.preventDefault(); close(false); return; }
+       if(e.key === 'Tab'){
+         const idx = focusable.indexOf(document.activeElement);
+         if(e.shiftKey && idx <= 0){ e.preventDefault(); focusable[focusable.length - 1].focus(); }
+         else if(!e.shiftKey && idx === focusable.length - 1){ e.preventDefault(); focusable[0].focus(); }
+       }
+     }
+     cancelBtn.addEventListener('click', () => close(false));
+     confirmBtn.addEventListener('click', () => close(true));
+     backdrop.addEventListener('click', e => { if(e.target === backdrop) close(false); });
+     document.addEventListener('keydown', onKeydown, true);
+     confirmBtn.focus();
+   });
+ }
+
  document.addEventListener('click',async e=>{
    if(e.target.id==='manageCustomerAccountsBtn')return open();
    if(e.target.id==='closeAccountManagerBtn'||e.target.id==='accountManagerModal')return close();
@@ -6485,26 +6734,57 @@ function escapeHtml(text){
    const ab=e.target.closest('[data-account-act]');
    if(ab){
      closeAllMenus();
-     const action=ab.dataset.accountAct,id=ab.dataset.accountId;
-     const destructive=action==='delete-account';
-     if(!confirm(destructive?'Delete this account data and its saved signals? This cannot be undone. Use Pause Monitoring instead to preserve history.':'Change monitoring status for this customer account?'))return;
-     try{await request('PATCH',{type:'account',id,action});await load()}catch(err){alert(err.message)}
+     const action=ab.dataset.accountAct, id=ab.dataset.accountId, name=ab.dataset.accountName || 'this account';
+     if(action==='delete-account'){
+       const confirmed = await showDestructiveConfirm({
+         title:'Delete Account Data',
+         bodyHtml:`This permanently removes <strong>${esc(name)}</strong>'s saved account data and verified signals. Use Pause Monitoring instead if you want to keep this account's history.`,
+         confirmLabel:'Delete Account Data'
+       });
+       if(!confirmed) return;
+       try{ await request('PATCH',{type:'account',id,action}); await load(); }
+       catch(err){ alert(err.message); }
+       return;
+     }
+     // pause-account / resume-account: reversible -- no confirm(), a
+     // branded toast with Undo instead.
+     const resuming = action==='resume-account';
+     try{
+       await request('PATCH',{type:'account',id,action});
+       await load();
+       showToast(resuming ? `Monitoring resumed for ${name}.` : `Monitoring paused for ${name}.`, async () => {
+         try{ await request('PATCH',{type:'account',id,action: resuming ? 'pause-account' : 'resume-account'}); await load(); }
+         catch(err){ alert(err.message); }
+       });
+     }catch(err){ alert(err.message); }
      return;
    }
 
    const b=e.target.closest('[data-list-act]');
    if(b){
      closeAllMenus();
-     const action=b.dataset.listAct,id=b.dataset.listId;
+     const action=b.dataset.listAct, id=b.dataset.listId, name=b.dataset.listName || 'this list';
+     if(action==='delete'){
+       const confirmed = await showDestructiveConfirm({
+         title:'Delete Uploaded List',
+         bodyHtml:`This permanently removes the entire <strong>${esc(name)}</strong> list, every customer account in it, and their signals.`,
+         confirmLabel:'Delete Uploaded List'
+       });
+       if(!confirmed) return;
+       try{ await request('DELETE',{type:'customer',id}); await load(); }
+       catch(err){ alert(err.message); }
+       return;
+     }
+     // pause / resume: reversible -- no confirm(), a branded toast with Undo.
+     const resuming = action==='resume';
      try{
-       if(action==='delete'){
-         if(!confirm('Delete this entire uploaded list, all customer account data, and associated signals? This cannot be undone.'))return;
-         await request('DELETE',{type:'customer',id});
-       }else{
-         await request('PATCH',{type:'customer',id,action});
-       }
+       await request('PATCH',{type:'customer',id,action});
        await load();
-     }catch(err){alert(err.message)}
+       showToast(resuming ? `Monitoring resumed for ${name}.` : `Monitoring paused for ${name}.`, async () => {
+         try{ await request('PATCH',{type:'customer',id,action: resuming ? 'pause' : 'resume'}); await load(); }
+         catch(err){ alert(err.message); }
+       });
+     }catch(err){ alert(err.message); }
      return;
    }
 

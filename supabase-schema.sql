@@ -117,6 +117,35 @@ begin
       raise exception 'replace_ha_accounts_snapshot: attempt % for run % is no longer the active attempt for upload % (reclaimed, completed, failed, or its lease had already expired)', p_attempt_id, p_research_run_id, p_upload_id
         using errcode = 'HA001';
     end if;
+
+    -- Migration 8 (HA005): a tracked-research save must submit EXACTLY the
+    -- account_name set this upload already has -- research persists
+    -- signals/metrics/raw_data for existing accounts, it never legitimately
+    -- adds, removes, or renames one, and it must never be able to introduce
+    -- account names that actually belong to a different upload. Checked
+    -- BEFORE the delete/insert below, so a mismatch changes nothing.
+    if jsonb_typeof(p_accounts) is distinct from 'array' then
+      raise exception 'replace_ha_accounts_snapshot: p_accounts must be a JSON array (got %)', coalesce(jsonb_typeof(p_accounts), 'null')
+        using errcode = '22023';
+    end if;
+
+    select coalesce(array_agg(distinct account_name order by account_name), array[]::text[])
+      into v_existing_names
+      from public.ha_accounts
+      where upload_id = p_upload_id;
+
+    select coalesce(array_agg(distinct name order by name), array[]::text[])
+      into v_incoming_names
+      from (
+        select nullif(btrim(elem->>'account_name'), '') as name
+        from jsonb_array_elements(p_accounts) as elem
+      ) t
+      where name is not null;
+
+    if v_existing_names is distinct from v_incoming_names then
+      raise exception 'replace_ha_accounts_snapshot: tracked-research snapshot mismatch for upload % -- a research save must submit exactly the account_name set the upload already has, never an added, removed, renamed, or foreign-upload account (existing names %, incoming names %)', p_upload_id, v_existing_names, v_incoming_names
+        using errcode = 'HA005';
+    end if;
   else
     if p_research_run_id is not null or p_attempt_id is not null then
       raise exception 'replace_ha_accounts_snapshot: p_research_run_id/p_attempt_id may only be supplied for p_mode=tracked_research'

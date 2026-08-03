@@ -452,6 +452,13 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round3-persistence@example.com', 'Round 3 Persistence') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 3 persistence test upload', 'uploaded') returning id into v_upload;
+  -- Migration 8 (HA005): a tracked_research write must match the upload's
+  -- EXISTING account_name set. Seed it first via initial_upload (exactly
+  -- how a real upload always gets its accounts before research ever runs)
+  -- so the "current attempt writes successfully" assertion below is
+  -- testing what it says it's testing (the attempt/lease guard), not
+  -- incidentally exercising the unrelated HA005 identity guard.
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Current Attempt Write"}]'::jsonb, 'initial_upload');
 
   v_claim_a := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
   -- Simulate attempt A's lease expiring, then attempt B reclaiming (exactly
@@ -525,6 +532,9 @@ begin
 
   raise notice '--- Test 28: correct owner, current attempt -- accounts + signals + upload-state all persist together, on a fresh upload/run ---';
   insert into public.ha_uploads (user_id, upload_name, stage, summary) values (v_user_a, 'Phase 2A round 4 test 28 upload', 'uploaded', '{"seed":true}'::jsonb) returning id into v_upload_a;
+  -- Migration 8 (HA005): seed via initial_upload first so the tracked-research
+  -- write below matches the upload's existing account set.
+  perform public.replace_ha_accounts_snapshot(v_upload_a, v_user_a, '[{"account_name":"Acme Co"}]'::jsonb, 'initial_upload');
   v_claim_a := public.claim_ha_research_run(v_user_a, v_upload_a, 'auto', 300);
   v_result := public.persist_ha_research_output(
     v_upload_a, v_user_a, 'auto', (v_claim_a->'run'->>'attempt_id')::uuid,
@@ -569,6 +579,11 @@ begin
 
   raise notice '--- Tests 32-33 setup: claim attempt A, expire it, reclaim as attempt B, on their own fresh independent upload ---';
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user_a, 'Phase 2A round 4 tests 32-33 upload', 'uploaded') returning id into v_upload_d;
+  -- Migration 8 (HA005): seed via initial_upload first so Test 33's
+  -- tracked-research write ("Current Attempt Write") matches this upload's
+  -- existing account set, exactly as a real upload always has accounts
+  -- before research ever runs against it.
+  perform public.replace_ha_accounts_snapshot(v_upload_d, v_user_a, '[{"account_name":"Current Attempt Write"}]'::jsonb, 'initial_upload');
   v_claim_d1 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- attempt A
   update public.ha_research_runs set lease_expires_at = now() - interval '1 minute' where upload_id = v_upload_d and research_run_id = 'auto';
   v_claim_d2 := public.claim_ha_research_run(v_user_a, v_upload_d, 'auto', 300); -- reclaims -- attempt B
@@ -700,6 +715,9 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round5-finalize@example.com', 'Round 5 Finalize') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 5 finalize test upload', 'uploaded') returning id into v_upload;
+  -- Migration 8 (HA005): seed via initial_upload first so the tracked-research
+  -- writes below (Tests 36 and 39) match the upload's existing account set.
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Finalize Test Co"}]'::jsonb, 'initial_upload');
 
   raise notice '--- Test 36: persistence succeeds and the run becomes completed in the SAME transaction ---';
   v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
@@ -740,11 +758,14 @@ begin
   raise notice '--- Test 39: explicit manual rerun after completion remains authorized ---';
   v_claim2 := public.claim_ha_research_run(v_user, v_upload, 'manual-rerun-after-finalize', 300);
   if v_claim2->>'outcome' = 'claimed-new' then
+    -- Migration 8 (HA005): a manual rerun re-persists the SAME account_name
+    -- set the upload already has (exactly like a real "Research Again"
+    -- click does) -- it does not introduce a new/different account name.
     v_result := public.persist_ha_research_output(
       v_upload, v_user, 'manual-rerun-after-finalize', (v_claim2->'run'->>'attempt_id')::uuid,
-      '[{"account_name":"Manual Rerun Persisted"}]'::jsonb, null, null, null
+      '[{"account_name":"Finalize Test Co","industry":"Re-researched"}]'::jsonb, null, null, null
     );
-    if v_result->>'status' = 'completed' and exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Manual Rerun Persisted') then
+    if v_result->>'status' = 'completed' and exists (select 1 from public.ha_accounts where upload_id = v_upload and account_name = 'Finalize Test Co' and industry = 'Re-researched') then
       raise notice 'PASS: an explicit manual-rerun attempt claims, persists, AND finalizes successfully after the original run already completed';
     else raise notice 'FAIL: the manual rerun did not persist/finalize as expected: %', v_result; end if;
   else raise notice 'FAIL: expected the manual rerun to claim successfully, got %', v_claim2; end if;
@@ -898,6 +919,9 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round7-initial-reuse@example.com', 'Round 7 Initial Reuse') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 initial-upload reuse test', 'uploaded') returning id into v_upload;
+  -- Migration 8 (HA005): seed via initial_upload first so the tracked-research
+  -- write below matches the upload's existing account set.
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Original Account"}]'::jsonb, 'initial_upload');
   v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
   perform public.persist_ha_research_output(
     v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
@@ -969,6 +993,9 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round7-maintenance-completed@example.com', 'Round 7 Maintenance Completed') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 maintenance-after-completion test', 'uploaded') returning id into v_upload;
+  -- Migration 8 (HA005): seed via initial_upload first so the tracked-research
+  -- write below matches the upload's existing account set.
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Stable Co"}]'::jsonb, 'initial_upload');
   v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
   perform public.persist_ha_research_output(
     v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
@@ -1011,6 +1038,9 @@ declare
 begin
   insert into public.ha_users (email, name) values ('phase2a-round7-identity-lock@example.com', 'Round 7 Identity Lock') returning id into v_user;
   insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 2A round 7 identity lock test', 'uploaded') returning id into v_upload;
+  -- Migration 8 (HA005): seed via initial_upload first so the tracked-research
+  -- write below matches the upload's existing account set.
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Alpha Co"},{"account_name":"Beta Co"}]'::jsonb, 'initial_upload');
   v_claim := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
   perform public.persist_ha_research_output(
     v_upload, v_user, 'auto', (v_claim->'run'->>'attempt_id')::uuid,
@@ -1424,4 +1454,168 @@ begin
   delete from public.ha_uploads where id = v_upload;
   delete from public.ha_users where id = v_user;
   raise notice '--- Test 58 cleanup complete ---';
+end $$;
+
+-- ===========================================================================
+-- Migration 8 (HA005) — tracked-research account-identity guard.
+-- Tests 59-66.
+--
+-- Reproduces the exact real-world corruption the audit traced: Upload A
+-- ("QA Preview", one real account) and Upload B ("Phase 1", several
+-- unrelated accounts), both owned by the same user. Before this migration,
+-- replace_ha_accounts_snapshot()'s p_mode='tracked_research' branch (the
+-- ONLY path persist_ha_research_output() uses) had no check that a
+-- submitted account_name set actually matched the target upload's own
+-- accounts -- a client bug that built its snapshot from a cross-upload
+-- aggregate could silently copy Upload B's accounts into Upload A. These
+-- tests prove the new HA005 check closes that at the database layer,
+-- independent of whatever the client does.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload_a uuid;
+  v_upload_b uuid;
+  v_upload_c uuid;
+  v_claim jsonb;
+  v_run_id text := 'auto';
+  v_attempt_id uuid;
+  v_before_snapshot text;
+  v_after_snapshot text;
+  v_before_signals_count int;
+  v_after_signals_count int;
+  v_industry_check text;
+  v_count int;
+  v_first_claim jsonb;
+begin
+  insert into public.ha_users (email, name) values ('phase2a-migration8-owner@example.com', 'Migration 8 Test Owner') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'QA Preview', 'uploaded') returning id into v_upload_a;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Phase 1', 'uploaded') returning id into v_upload_b;
+
+  -- Seed Upload A with its one real account (initial_upload, matching how a
+  -- fresh upload is actually created) and Upload B with 3 unrelated
+  -- accounts (a small stand-in for "30 unrelated accounts" -- the
+  -- set-equality check under test does not care about count).
+  perform public.replace_ha_accounts_snapshot(v_upload_a, v_user, '[{"account_name":"QA Preview Alpha","industry":"Test"}]'::jsonb, 'initial_upload');
+  perform public.replace_ha_accounts_snapshot(v_upload_b, v_user, '[{"account_name":"Beta One"},{"account_name":"Beta Two"},{"account_name":"Beta Three"}]'::jsonb, 'initial_upload');
+
+  v_claim := public.claim_ha_research_run(v_user, v_upload_a, v_run_id, 300);
+  v_attempt_id := (v_claim->'run'->>'attempt_id')::uuid;
+
+  raise notice '--- Test 59: tracked research with the EXACT existing account-name set succeeds ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user,
+      '[{"account_name":"QA Preview Alpha","industry":"Test","raw_data":{"last_researched_at":"2026-08-03T00:00:00Z"}}]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    select count(*) into v_count from public.ha_accounts where upload_id = v_upload_a;
+    if v_count = 1 then raise notice 'PASS: Test 59: exact-match tracked-research save succeeds; upload A still has exactly 1 account';
+    else raise notice 'FAIL: Test 59: expected 1 account after exact-match save, got %', v_count; end if;
+  exception when others then
+    raise notice 'FAIL: Test 59: exact-match tracked-research save unexpectedly raised % (%)', sqlstate, sqlerrm;
+  end;
+
+  -- Snapshot both uploads' accounts (full row content, not just counts) and
+  -- total signal count for the "byte-for-byte unchanged after every
+  -- rejected mismatch" check performed after Tests 60-62 below.
+  select coalesce(array_agg(row(upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at)::text order by upload_id, account_name), array[]::text[])::text
+    into v_before_snapshot
+    from public.ha_accounts where upload_id in (v_upload_a, v_upload_b);
+  select count(*) into v_before_signals_count from public.ha_signals where upload_id in (v_upload_a, v_upload_b);
+
+  raise notice '--- Test 60: an ADDITIONAL foreign account name (copied from Upload B) returns HA005 and changes nothing ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user,
+      '[{"account_name":"QA Preview Alpha"},{"account_name":"Beta One"}]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    raise notice 'FAIL: Test 60: a foreign account name was accepted into upload A -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA005' then raise notice 'PASS: Test 60: adding a foreign (Upload B) account name via tracked_research is rejected with HA005';
+    else raise notice 'FAIL: Test 60: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 61: a MISSING account name (empty submission) returns HA005 and changes nothing ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user, '[]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    raise notice 'FAIL: Test 61: an empty account submission was accepted for an upload with an existing account -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA005' then raise notice 'PASS: Test 61: submitting zero accounts (removing the existing one) via tracked_research is rejected with HA005';
+    else raise notice 'FAIL: Test 61: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 62: a RENAMED account returns HA005 and changes nothing ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user,
+      '[{"account_name":"QA Preview Alpha Renamed"}]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    raise notice 'FAIL: Test 62: a renamed account name was accepted via tracked_research -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA005' then raise notice 'PASS: Test 62: renaming the account via tracked_research is rejected with HA005';
+    else raise notice 'FAIL: Test 62: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 66 (checked here, immediately after 60-62): the account and signal snapshot is byte-for-byte unchanged after all three rejected mismatches ---';
+  select coalesce(array_agg(row(upload_id, account_name, industry, contact_name, contact_email, metrics, raw_data, created_at)::text order by upload_id, account_name), array[]::text[])::text
+    into v_after_snapshot
+    from public.ha_accounts where upload_id in (v_upload_a, v_upload_b);
+  select count(*) into v_after_signals_count from public.ha_signals where upload_id in (v_upload_a, v_upload_b);
+  if v_after_snapshot = v_before_snapshot then raise notice 'PASS: Test 66: ha_accounts (both uploads, every column including created_at) is byte-for-byte identical after Tests 60-62''s three rejected calls';
+  else raise notice 'FAIL: Test 66: ha_accounts snapshot changed after a rejected call. Before: % After: %', v_before_snapshot, v_after_snapshot; end if;
+  if v_after_signals_count = v_before_signals_count then raise notice 'PASS: Test 66: ha_signals row count for both uploads is unchanged after Tests 60-62''s three rejected calls (% rows)', v_after_signals_count;
+  else raise notice 'FAIL: Test 66: ha_signals count changed from % to % after a rejected call', v_before_signals_count, v_after_signals_count; end if;
+
+  raise notice '--- Test 63: duplicate incoming names are deduplicated consistently before comparison (no false-positive HA005) ---';
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user,
+      '[{"account_name":"QA Preview Alpha","industry":"First"},{"account_name":"QA Preview Alpha","industry":"Second (wins)"}]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    select industry into v_industry_check from public.ha_accounts where upload_id = v_upload_a and account_name = 'QA Preview Alpha';
+    if v_industry_check = 'Second (wins)' then raise notice 'PASS: Test 63: two incoming rows for the SAME existing account name are deduplicated (last occurrence wins, matching the write path''s own dedup rule) before the identity comparison, so they correctly compare equal to the existing 1-name set -- no false-positive HA005, and the existing "last wins" write behavior is preserved';
+    else raise notice 'FAIL: Test 63: expected industry ''Second (wins)'' after dedup, got %', v_industry_check; end if;
+  exception when others then
+    raise notice 'FAIL: Test 63: a duplicate-name submission for an EXISTING account unexpectedly raised % (%)', sqlstate, sqlerrm;
+  end;
+
+  raise notice '--- Test 64: a STALE attempt is still rejected (HA001) before the new HA005 identity check ever runs, even with an otherwise-matching account set ---';
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload_a and research_run_id = v_run_id and attempt_id = v_attempt_id;
+  begin
+    perform public.replace_ha_accounts_snapshot(
+      v_upload_a, v_user,
+      '[{"account_name":"QA Preview Alpha"}]'::jsonb,
+      'tracked_research', v_run_id, v_attempt_id
+    );
+    raise notice 'FAIL: Test 64: a stale (expired-lease) attempt was accepted -- no exception raised';
+  exception when others then
+    if sqlstate = 'HA001' then raise notice 'PASS: Test 64: a stale attempt is rejected with HA001 -- the pre-existing attempt/lease check still runs, and still wins, BEFORE the new HA005 identity check ever has a chance to evaluate';
+    else raise notice 'FAIL: Test 64: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  raise notice '--- Test 65: an ACTIVE CONFLICTING run is still handled per the existing, unmodified 55P03 contract (claim_ha_research_run itself, not touched by migration 8) ---';
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Migration 8 conflicting-run test upload', 'uploaded') returning id into v_upload_c;
+  v_first_claim := public.claim_ha_research_run(v_user, v_upload_c, 'first-run', 300);
+  begin
+    perform public.claim_ha_research_run(v_user, v_upload_c, 'second-run', 300);
+    raise notice 'FAIL: Test 65: a second, different research_run_id claimed successfully while the first was still actively leased -- no exception raised';
+  exception when others then
+    if sqlstate = '55P03' then raise notice 'PASS: Test 65: claiming a different research_run_id while another is actively leased for the same upload is still rejected with 55P03, exactly as before migration 8 -- unrelated function, unrelated behavior, unchanged';
+    else raise notice 'FAIL: Test 65: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+  end;
+
+  delete from public.ha_accounts where upload_id in (v_upload_a, v_upload_b, v_upload_c);
+  delete from public.ha_signals where upload_id in (v_upload_a, v_upload_b, v_upload_c);
+  delete from public.ha_research_runs where upload_id in (v_upload_a, v_upload_b, v_upload_c);
+  delete from public.ha_uploads where id in (v_upload_a, v_upload_b, v_upload_c);
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 59-66 cleanup complete ---';
 end $$;

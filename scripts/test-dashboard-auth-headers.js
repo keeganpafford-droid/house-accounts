@@ -100,11 +100,11 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
   return slice;
 }
 const EXTRACTED = {
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2161, 2171, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2191, 2208, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2217, 2242, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2264, 2274, {async: true}),
-  request: extractFn('request', 6295, 6302, {async: true})
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2185, 2195, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2215, 2232, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2241, 2266, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2288, 2298, {async: true}),
+  request: extractFn('request', 6460, 6467, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

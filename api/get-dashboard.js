@@ -201,6 +201,88 @@ function signalToOpportunity(row){
   };
 }
 
+// Shared by both the aggregate (my/team view) path and the single-upload
+// (uploadId=) path below -- the SAME account-shaping logic, fed rows that
+// are ALREADY scoped by whatever query built accountRows/signalRows. This
+// function does no additional scoping itself: it is structurally incapable
+// of introducing an account from an upload that wasn't already present in
+// its inputs, because it has no way to fetch anything on its own -- it only
+// maps rows it's handed. uploadId is carried on every returned account
+// object (from the account row directly, or from the matching signal row
+// for a signals-only entry) so a caller that must prove single-upload
+// scoping (see api/get-dashboard.js's uploadId= branch and
+// researchAccountFromManageModal() in dashboard/index.html) can verify it
+// account-by-account, not just via the top-level upload field.
+function buildAccountsFromRows(accountRows, signalRows){
+  const byAccount = new Map();
+  for(const a of accountRows || []){
+    const raw = a.raw_data || {};
+    const historicalProjects = Array.isArray(raw.historicalProjects) ? raw.historicalProjects : [];
+    const purchases = Array.isArray(raw.purchases) && raw.purchases.length ? raw.purchases : historicalProjects.map(p => ({
+      project: p.project || p.name || p.description || p.orderName || 'Historical order',
+      category: p.category || p.productCategory || p.type || '',
+      revenue: Number(p.revenue || p.amount || p.total || 0) || 0,
+      dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '',
+      status: p.status || 'Historical'
+    }));
+    const storedOpps = [
+      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals : []),
+      ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
+    ];
+    byAccount.set(a.account_name, {
+      name: a.account_name,
+      uploadId: a.upload_id,
+      monitoringStatus: lower(raw.monitoring_status || 'active'),
+      lastResearchedAt: raw.last_researched_at || '',
+      industry: a.industry || 'Saved Account',
+      contactName: a.contact_name || '',
+      contactEmail: a.contact_email || '',
+      contactTitle: raw.contactTitle || raw.contact_title || '',
+      contactDepartment: raw.contactDepartment || raw.contact_department || '',
+      contactPhone: raw.contactPhone || raw.contact_phone || '',
+      contacts: Array.isArray(raw.contacts) ? raw.contacts : [],
+      website: raw.website || '',
+      location: raw.location || '',
+      assignedRep: raw.assignedRep || raw.assigned_rep || '',
+      intelligenceMode: raw.intelligenceMode || raw.intelligence_mode || (Number(a.metrics?.orderCount || 0) > 0 ? 'historical' : 'warm'),
+      allRecords: Array.isArray(raw.records) ? raw.records : [],
+      revenue: Number(a.metrics?.revenue || 0),
+      orderCount: Number(a.metrics?.orderCount || 0),
+      confidence: Number(a.metrics?.confidence || a.metrics?.quickWinScore || 0),
+      relationshipStrength: Number(a.metrics?.relationshipStrength || 0),
+      mostRecentDate: a.metrics?.mostRecentDate || 'Unknown',
+      activePipelineValue: Number(a.metrics?.activePipelineValue || 0),
+      activePipelineCount: Number(a.metrics?.activePipelineCount || 0),
+      subscores: a.metrics?.subscores || {revenue:0, frequency:0, recency:0, diversity:0},
+      purchases,
+      projects: historicalProjects,
+      allProjects: Array.isArray(raw.allProjects) ? raw.allProjects : historicalProjects,
+      activePipeline: Array.isArray(raw.activePipeline) ? raw.activePipeline : [],
+      categoryTypes: Array.isArray(raw.historicalCategories) ? raw.historicalCategories : [],
+      signals: [],
+      futureOpportunities: storedOpps
+    });
+  }
+  const uniqueSignals = uniqueSignalRows(signalRows || []);
+  for(const row of uniqueSignals || []){
+    if(!byAccount.has(row.account_name)){
+      byAccount.set(row.account_name, {name: row.account_name, uploadId: row.upload_id, monitoringStatus:'active', lastResearchedAt:'', industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
+    }
+    const acct = byAccount.get(row.account_name);
+    acct.signals.push(rowToSignal(row));
+    acct.futureOpportunities.push(signalToOpportunity(row));
+  }
+  return {
+    accountList: Array.from(byAccount.values()).map(a => {
+      if(a.futureOpportunities.length){
+        a.confidence = Math.max(a.confidence || 0, ...a.futureOpportunities.map(o => Number(o.confidence || 0)));
+      }
+      return a;
+    }),
+    uniqueSignals
+  };
+}
+
 export default async function handler(req, res){
   if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
   try{
@@ -213,6 +295,56 @@ export default async function handler(req, res){
         const orgRows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`);
         organization = Array.isArray(orgRows) ? orgRows[0] : null;
       }catch{}
+    }
+
+    // Single-upload-scoped path (release blocker fix, see the audit this
+    // responds to): the aggregate my/team logic below has NEVER been
+    // upload-scoped -- both branches return every account across every
+    // upload the user (or, in team view, the org) owns. That is correct
+    // and intentional for the main dashboard's own "everything I have"
+    // view, but it is NOT safe to use as the snapshot for an operation that
+    // must touch exactly one upload and nothing else (single-account
+    // research from the Manage Customer Accounts modal). This branch is
+    // structurally incapable of returning another upload's accounts: both
+    // queries below are filtered by upload_id=eq.<requestedUploadId>
+    // directly, not by user_id/org_id, and viewMode/team aggregation is
+    // never consulted here at all.
+    const requestedUploadId = clean(req.query?.uploadId || '');
+    if(requestedUploadId){
+      const allOrgIds = await orgUserIds(user);
+      if(!allOrgIds.length) return json(res, 404, {error:'No dashboard user found.'});
+      // Ownership/access check: the requested upload must belong to this
+      // user, or (owner/admin only) to any user in their org -- the exact
+      // same visibility rule the aggregate paths already use, just applied
+      // to one specific upload instead of "all of them".
+      const teamAllowedForScope = canViewTeam(user);
+      const scopeIds = teamAllowedForScope ? allOrgIds : [user.id].filter(Boolean);
+      const scopeFilter = inFilter(scopeIds);
+      const scopedUploadRows = await supabase(`ha_uploads?select=*&id=eq.${encodeURIComponent(requestedUploadId)}&user_id=${scopeFilter}&limit=1`);
+      const scopedUpload = Array.isArray(scopedUploadRows) ? scopedUploadRows[0] : null;
+      if(!scopedUpload) return json(res, 404, {error:'Upload not found or not accessible.'});
+
+      const scopedAccountRows = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(requestedUploadId)}&order=account_name.asc&limit=2500`);
+      const scopedSignalRows = await supabase(`ha_signals?select=*&upload_id=eq.${encodeURIComponent(requestedUploadId)}&order=first_seen_at.desc&limit=1000`);
+      const {accountList: scopedAccountList, uniqueSignals: scopedUniqueSignals} = buildAccountsFromRows(scopedAccountRows, scopedSignalRows);
+
+      return json(res, 200, {
+        ok:true,
+        user,
+        organization,
+        upload: scopedUpload,
+        summary: scopedUpload?.summary || {},
+        accounts: scopedAccountList,
+        signals: (scopedUniqueSignals || []).map(rowToSignal),
+        weeklyRuns: [],
+        newThisWeek: [],
+        dashboardScope:'upload',
+        viewMode:'upload',
+        canViewTeam: teamAllowedForScope,
+        userRole: appRole(user),
+        organizationSnapshot: null,
+        existingCustomerAccountCount: scopedAccountList.length
+      });
     }
 
     const requestedView = clean(req.query?.view || '').toLowerCase();
@@ -290,80 +422,7 @@ export default async function handler(req, res){
       return json(res, 404, {error:'No existing customer dashboard data found yet.'});
     }
 
-    const uniqueSignals = uniqueSignalRows(signals || []);
-    const byAccount = new Map();
-    for(const a of accounts || []){
-      const raw = a.raw_data || {};
-      const historicalProjects = Array.isArray(raw.historicalProjects) ? raw.historicalProjects : [];
-      const purchases = Array.isArray(raw.purchases) && raw.purchases.length ? raw.purchases : historicalProjects.map(p => ({
-        project: p.project || p.name || p.description || p.orderName || 'Historical order',
-        category: p.category || p.productCategory || p.type || '',
-        revenue: Number(p.revenue || p.amount || p.total || 0) || 0,
-        dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '',
-        status: p.status || 'Historical'
-      }));
-      const storedOpps = [
-        ...(Array.isArray(raw.existingSignals) ? raw.existingSignals : []),
-        ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
-      ];
-      byAccount.set(a.account_name, {
-        name: a.account_name,
-        // Read back so a full-snapshot save (serializeAccountForStorage() in
-        // dashboard/index.html) can round-trip it unchanged instead of
-        // silently reverting a pause/resume made via the Manage Customer
-        // Accounts modal (api/monitoring-lists.js) the next time this
-        // account's raw_data is saved from the dashboard.
-        monitoringStatus: lower(raw.monitoring_status || 'active'),
-        // Same round-trip rationale as monitoringStatus above -- without
-        // reading this back, a "Research Again" button can never actually
-        // display "Again": researchAccountByName() (dashboard/index.html)
-        // stamps this on successful research and serializeAccountForStorage()
-        // echoes it back into raw_data, but only if it was ever read in here
-        // to begin with.
-        lastResearchedAt: raw.last_researched_at || '',
-        industry: a.industry || 'Saved Account',
-        contactName: a.contact_name || '',
-        contactEmail: a.contact_email || '',
-        contactTitle: raw.contactTitle || raw.contact_title || '',
-        contactDepartment: raw.contactDepartment || raw.contact_department || '',
-        contactPhone: raw.contactPhone || raw.contact_phone || '',
-        contacts: Array.isArray(raw.contacts) ? raw.contacts : [],
-        website: raw.website || '',
-        location: raw.location || '',
-        assignedRep: raw.assignedRep || raw.assigned_rep || '',
-        intelligenceMode: raw.intelligenceMode || raw.intelligence_mode || (Number(a.metrics?.orderCount || 0) > 0 ? 'historical' : 'warm'),
-        allRecords: Array.isArray(raw.records) ? raw.records : [],
-        revenue: Number(a.metrics?.revenue || 0),
-        orderCount: Number(a.metrics?.orderCount || 0),
-        confidence: Number(a.metrics?.confidence || a.metrics?.quickWinScore || 0),
-        relationshipStrength: Number(a.metrics?.relationshipStrength || 0),
-        mostRecentDate: a.metrics?.mostRecentDate || 'Unknown',
-        activePipelineValue: Number(a.metrics?.activePipelineValue || 0),
-        activePipelineCount: Number(a.metrics?.activePipelineCount || 0),
-        subscores: a.metrics?.subscores || {revenue:0, frequency:0, recency:0, diversity:0},
-        purchases,
-        projects: historicalProjects,
-        allProjects: Array.isArray(raw.allProjects) ? raw.allProjects : historicalProjects,
-        activePipeline: Array.isArray(raw.activePipeline) ? raw.activePipeline : [],
-        categoryTypes: Array.isArray(raw.historicalCategories) ? raw.historicalCategories : [],
-        signals: [],
-        futureOpportunities: storedOpps
-      });
-    }
-    for(const row of uniqueSignals || []){
-      if(!byAccount.has(row.account_name)){
-        byAccount.set(row.account_name, {name: row.account_name, monitoringStatus:'active', lastResearchedAt:'', industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
-      }
-      const acct = byAccount.get(row.account_name);
-      acct.signals.push(rowToSignal(row));
-      acct.futureOpportunities.push(signalToOpportunity(row));
-    }
-    const accountList = Array.from(byAccount.values()).map(a => {
-      if(a.futureOpportunities.length){
-        a.confidence = Math.max(a.confidence || 0, ...a.futureOpportunities.map(o => Number(o.confidence || 0)));
-      }
-      return a;
-    });
+    const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals);
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
     const newThisWeek = (uniqueSignals || []).filter(s => {

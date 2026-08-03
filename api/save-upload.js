@@ -596,6 +596,15 @@ export default async function handler(req, res){
       if(err.code === 'HA001'){
         return json(res, 409, {error:'This research attempt is no longer active; nothing was saved.', staleAttempt:true});
       }
+      // Migration 8: the submitted account snapshot does not match this
+      // upload's own existing account_name set (an added, removed,
+      // renamed, or foreign-upload account) -- see
+      // supabase-schema-migration-8-tracked-research-identity-guard.sql.
+      // Nothing was written; surfaced distinctly so the client can tell
+      // this apart from a generic failure and from a stale-attempt 409.
+      if(err.code === 'HA005'){
+        return json(res, 409, {error:'This research save does not match the upload it targeted; nothing was saved.', snapshotMismatch:true});
+      }
       if(err.code === '42501'){
         return json(res, 403, {error:'You do not have access to this upload.'});
       }

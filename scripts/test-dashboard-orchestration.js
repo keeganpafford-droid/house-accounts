@@ -90,32 +90,33 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // hand-counted -- extractFn()'s own signature check below is the final,
 // self-enforcing guarantee regardless.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2161, 2171, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2191, 2208, {async: true}),
-  extractFn('reportResearchRunOutcome', 2217, 2242, {async: true}),
-  extractFn('normalizeSavedAccount', 2358, 2415),
-  extractFn('accountCardFor', 3198, 3200),
-  extractFn('accountSignalsPanel', 3201, 3204),
-  extractFn('refreshCurrentUploadSnapshot', 3768, 3787, {async: true}),
-  extractFn('researchAccountFromManageModal', 3798, 3814, {async: true}),
-  extractFn('researchAccountByName', 3834, 3974, {async: true}),
-  extractFn('getAccountsForResearch', 3979, 3992),
-  extractFn('batchPayloadForAccounts', 3994, 4038),
-  extractFn('applyBusinessSignalAccountBoost', 4041, 4049),
-  extractFn('researchAccountsBatch', 4051, 4140, {async: true}),
-  extractFn('signalTopicKeyClient', 4142, 4150),
-  extractFn('dedupeSignalsClient', 4152, 4165),
-  extractFn('researchTopAccounts', 4167, 4297, {async: true}),
-  extractFn('refreshOpportunityViews', 4398, 4417),
-  extractFn('renderDetailedAccountViews', 5710, 5778),
-  extractFn('serializeAccountForStorage', 5788, 5847),
-  extractFn('performSaveCurrentUpload', 5857, 5957, {async: true}),
-  extractFn('saveCurrentUpload', 5966, 5970),
-  extractFn('toggleAccountMetadataEdit', 5978, 5984),
-  extractFn('saveAccountMetadataEdit', 6007, 6043, {async: true}),
-  extractRaw('delegatedClickListener', 6061, 6083, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 6096, 6112),
-  extractFn('escapeHtml', 6276, 6279)
+  extractFn('claimAutomaticResearchRun', 2185, 2195, {async: true}),
+  extractFn('heartbeatCurrentResearchRun', 2215, 2232, {async: true}),
+  extractFn('reportResearchRunOutcome', 2241, 2266, {async: true}),
+  extractFn('normalizeSavedAccount', 2382, 2439),
+  extractFn('accountCardFor', 3222, 3224),
+  extractFn('accountSignalsPanel', 3225, 3228),
+  extractFn('fetchUploadScopedSnapshot', 3810, 3832, {async: true}),
+  extractFn('persistScopedResearchResult', 3840, 3885, {async: true}),
+  extractFn('researchAccountFromManageModal', 3896, 3979, {async: true}),
+  extractFn('researchAccountByName', 3999, 4139, {async: true}),
+  extractFn('getAccountsForResearch', 4144, 4157),
+  extractFn('batchPayloadForAccounts', 4159, 4203),
+  extractFn('applyBusinessSignalAccountBoost', 4206, 4214),
+  extractFn('researchAccountsBatch', 4216, 4305, {async: true}),
+  extractFn('signalTopicKeyClient', 4307, 4315),
+  extractFn('dedupeSignalsClient', 4317, 4330),
+  extractFn('researchTopAccounts', 4332, 4462, {async: true}),
+  extractFn('refreshOpportunityViews', 4563, 4582),
+  extractFn('renderDetailedAccountViews', 5875, 5943),
+  extractFn('serializeAccountForStorage', 5953, 6012),
+  extractFn('performSaveCurrentUpload', 6022, 6122, {async: true}),
+  extractFn('saveCurrentUpload', 6131, 6135),
+  extractFn('toggleAccountMetadataEdit', 6143, 6149),
+  extractFn('saveAccountMetadataEdit', 6172, 6208, {async: true}),
+  extractRaw('delegatedClickListener', 6226, 6248, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 6261, 6277),
+  extractFn('escapeHtml', 6441, 6444)
 ].join('\n\n');
 
 // ===========================================================================
@@ -879,157 +880,260 @@ async function testEditFormTargetsCorrectAccountUnderCollision(){
 }
 
 // ===========================================================================
-// Manage Customer Accounts modal / freshness-before-research.
-// researchAccountByName() persists the FULL window.accountRadarAccounts
-// snapshot on every save; the modal can pause/resume/delete accounts
-// directly against the database without updating that in-memory snapshot.
-// researchAccountFromManageModal() / refreshCurrentUploadSnapshot() (both
-// REAL, extracted above -- not reimplemented) must refresh from
-// /api/get-dashboard and re-find the account BEFORE ever claiming a run, so
-// a stale snapshot can never resurrect a deleted sibling or revert a
-// paused sibling's monitoring status in the very next snapshot save.
+// Manage Customer Accounts modal / immutable upload-scoped research context
+// (release-blocker fix; see the cross-upload corruption audit this
+// responds to). A prior version of this flow refreshed via
+// /api/get-dashboard with NO uploadId parameter and persisted from the
+// shared window.accountRadarAccounts global -- in a live incident this
+// silently merged an unrelated 30-account upload into a 1-account upload's
+// research-save snapshot, because the refresh's own upload_id check passed
+// while its ACCOUNTS were a cross-upload aggregate the whole time.
+// fetchUploadScopedSnapshot(), persistScopedResearchResult(), and
+// researchAccountFromManageModal() (all REAL, extracted above -- not
+// reimplemented) now carry ONE explicit context
+// (expectedUploadId/expectedUploadName/targetAccountName/
+// freshUploadScopedAccounts/researchRunId/attemptId) end to end and never
+// read currentUploadId/currentUploadName/window.accountRadarAccounts/
+// dashboardViewMode when constructing the final save -- not even
+// temporarily. Two fixture uploads mirror the exact real-world incident:
+// Upload A ("QA Preview", one real account) and Upload B ("Phase 1",
+// several unrelated accounts), both owned by the same user.
 // ===========================================================================
 function getDashboardCalls(calls){ return calls.filter(c => c.url.startsWith('/api/get-dashboard')); }
-function getDashboardResponse(uploadId, accounts){
+function getDashboardResponse(uploadId, uploadName, accounts){
   return jsonResponse({
     ok: true,
     user: {email: 'lead@example.com'},
-    upload: {id: uploadId, upload_name: 'Test Upload'},
+    upload: {id: uploadId, upload_name: uploadName},
     accounts,
     signals: [],
     newThisWeek: []
   });
 }
-function minimalDashboardAccount(name, overrides = {}){
+function scopedAccount(name, uploadId, overrides = {}){
   // intelligenceMode:'warm' pinned explicitly -- normalizeSavedAccount()
-  // (the REAL function, run on every /api/get-dashboard refresh) would
-  // otherwise derive 'historical' from orderCount>0, which routes
-  // researchAccountByName() to the (unmocked, here) /api/research-account
-  // endpoint instead of /api/research-batch. Every other fixture in this
-  // file relies on the STUBBED deriveAccountIntelligenceMode() always
-  // returning 'warm' -- that stub only applies when intelligenceMode is
-  // still unset, which normalizeSavedAccount() no longer leaves it as.
-  return {name, monitoringStatus:'active', lastResearchedAt:'', industry:'Test', revenue:1000, orderCount:1, intelligenceMode:'warm', futureOpportunities:[], ...overrides};
+  // (the REAL function, run on every scoped refresh) would otherwise derive
+  // 'historical' from orderCount>0, which routes researchAccountFromManageModal()
+  // to the (unmocked, here) /api/research-account endpoint instead of
+  // /api/research-batch. uploadId is the field
+  // api/get-dashboard.js's uploadId= branch carries on every returned
+  // account (see buildAccountsFromRows() there) -- fetchUploadScopedSnapshot()
+  // verifies every account's uploadId against expectedUploadId before
+  // trusting any of them.
+  return {name, uploadId, monitoringStatus:'active', lastResearchedAt:'', industry:'Test', revenue:0, orderCount:0, intelligenceMode:'warm', futureOpportunities:[], ...overrides};
 }
+const UPLOAD_A = 'upload-a';
+const UPLOAD_A_NAME = 'QA Preview';
+const UPLOAD_B = 'upload-b';
+const UPLOAD_B_ACCOUNT_NAMES = ['Beta One', 'Beta Two', 'Beta Three'];
+function uploadBAccounts(){ return UPLOAD_B_ACCOUNT_NAMES.map(n => scopedAccount(n, UPLOAD_B)); }
 
-async function testModalResearchDropsDeletedSibling(){
-  // In-memory snapshot is STALE: it still has Beta, which was actually
-  // deleted via the modal (delete Beta) after this snapshot was loaded.
-  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta')];
+async function testScopedResearchTargetsExactUploadOnly(){
+  // The in-memory global is STALE and WRONG on purpose -- it mixes in
+  // Upload B's accounts, exactly mirroring the corrupted state a prior
+  // version of this flow would have persisted from. The scoped flow must
+  // never look at this at all.
+  const staleGlobalAccounts = [scopedAccount('QA Preview Alpha', UPLOAD_A), ...uploadBAccounts()];
   const fetchImpl = makeFetch((call) => {
     if(call.url.startsWith('/api/get-dashboard')){
-      // Server truth: Beta no longer exists.
-      return getDashboardResponse('upload-1', [minimalDashboardAccount('Alpha')]);
+      assert(call.url.includes(`uploadId=${UPLOAD_A}`), 'scoped 1: the refresh request explicitly includes uploadId=upload-a');
+      assert(!call.url.includes('view='), 'scoped 1 (TEAM VIEW AGGREGATION CANNOT BE USED): the refresh request never includes a view= (my/team aggregation) parameter at all');
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, [scopedAccount('QA Preview Alpha', UPLOAD_A)]);
     }
     if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
-      return jsonResponse({outcome:'claimed-new', researchRunId:'run-modal-1', attemptId:'attempt-modal-1'});
-    }
-    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
-      return jsonResponse({ok:true});
+      assert(call.body.uploadId === UPLOAD_A, 'scoped 1: the claim targets upload-a explicitly');
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-a', attemptId:'attempt-a'});
     }
     if(call.url === '/api/research-batch' && !call.body.researchRunAction){
-      return jsonResponse({byAccount: {Alpha: [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+      assert(call.body.uploadId === UPLOAD_A, 'scoped 1: the provider request targets upload-a explicitly');
+      assert(call.body.accounts.length === 1 && call.body.accounts[0].name === 'QA Preview Alpha', 'scoped 1: only the ONE selected account is ever sent to the provider');
+      return jsonResponse({byAccount: {'QA Preview Alpha': [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
     }
     if(call.url === '/api/save-upload'){
-      return jsonResponse({ok:true, uploadId:'upload-1', runStatus:'completed'});
+      return jsonResponse({ok:true, uploadId:UPLOAD_A, runStatus:'completed'});
     }
-    throw new Error(`unexpected fetch in testModalResearchDropsDeletedSibling: ${call.url} ${JSON.stringify(call.body)}`);
+    throw new Error(`unexpected fetch in testScopedResearchTargetsExactUploadOnly: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+  const sandbox = createSandbox({accounts: staleGlobalAccounts, currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
 
-  assert(result.ok === true, 'modal freshness 1: research succeeds for Alpha after refreshing');
-  const calls = fetchImpl.calls;
-  assert(getDashboardCalls(calls).length === 1, 'modal freshness 1: exactly one freshness refresh fetch happened before research');
-  assert(saveUploadCalls(calls).length === 1, 'modal freshness 1: exactly one save fired');
-  const savedNames = saveUploadCalls(calls)[0].body.accounts.map(a => a.name);
-  assert(!savedNames.includes('Beta'), 'modal freshness 1 (DELETE BETA, THEN RESEARCH ALPHA): Beta is NOT reintroduced in the submitted save snapshot');
-  assert(savedNames.includes('Alpha'), 'modal freshness 1: Alpha IS present in the submitted save snapshot');
+  assert(result.ok === true, 'scoped 1: the scoped research operation succeeds');
+  const save = saveUploadCalls(fetchImpl.calls)[0];
+  assert(!!save, 'scoped 1: exactly one save fired');
+  assert(save.body.uploadId === UPLOAD_A, 'scoped 1: the final save targets upload-a explicitly');
+  assert(save.body.accounts.length === 1, 'scoped 1: the final save contains exactly ONE account');
+  assert(save.body.accounts[0].name === 'QA Preview Alpha', 'scoped 1: the final save\'s one account is QA Preview Alpha');
+  const savedJson = JSON.stringify(save.body);
+  for(const betaName of UPLOAD_B_ACCOUNT_NAMES){
+    assert(!savedJson.includes(betaName), `scoped 1: Upload B account "${betaName}" (name/id/timestamp/metadata/raw_data) never appears anywhere in the save payload, despite being present in the stale in-memory global`);
+  }
+  assert(sandbox.window.accountRadarAccounts === staleGlobalAccounts, 'scoped 1: window.accountRadarAccounts is untouched by this operation (still the exact original stale array reference) -- the scoped flow never assigns to it');
+  assert(sandbox.currentUploadId === UPLOAD_A, 'scoped 1: currentUploadId is untouched by this operation');
 }
 
-async function testModalResearchPreservesPausedSibling(){
-  // In-memory snapshot is STALE: Beta shows as active, but was actually
-  // paused via the modal (pause Beta) after this snapshot was loaded.
-  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta', {monitoringStatus:'active'})];
+async function testScopedResearchAbortsOnMixedUploadResponse(){
+  // Simulates a server-side regression (e.g. api/get-dashboard.js's
+  // uploadId= scoping breaking) that returns one foreign account alongside
+  // the real one. The top-level upload.id still matches -- only an
+  // account-level check can catch this.
   const fetchImpl = makeFetch((call) => {
     if(call.url.startsWith('/api/get-dashboard')){
-      return getDashboardResponse('upload-1', [
-        minimalDashboardAccount('Alpha'),
-        minimalDashboardAccount('Beta', {monitoringStatus:'paused'})
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, [
+        scopedAccount('QA Preview Alpha', UPLOAD_A),
+        scopedAccount('Beta One', UPLOAD_B) // foreign upload, mixed in
       ]);
     }
-    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
-      return jsonResponse({outcome:'claimed-new', researchRunId:'run-modal-2', attemptId:'attempt-modal-2'});
-    }
-    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
-      return jsonResponse({ok:true});
-    }
-    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
-      return jsonResponse({byAccount: {Alpha: [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
-    }
-    if(call.url === '/api/save-upload'){
-      return jsonResponse({ok:true, uploadId:'upload-1', runStatus:'completed'});
-    }
-    throw new Error(`unexpected fetch in testModalResearchPreservesPausedSibling: ${call.url} ${JSON.stringify(call.body)}`);
+    throw new Error(`unexpected fetch in testScopedResearchAbortsOnMixedUploadResponse: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
 
-  assert(result.ok === true, 'modal freshness 2: research succeeds for Alpha after refreshing');
-  const saved = saveUploadCalls(fetchImpl.calls)[0].body.accounts;
-  const savedBeta = saved.find(a => a.name === 'Beta');
-  assert(!!savedBeta, 'modal freshness 2: Beta is present in the submitted save snapshot');
-  assert(!!savedBeta && !!savedBeta.rawData && savedBeta.rawData.monitoring_status === 'paused', 'modal freshness 2 (PAUSE BETA, THEN RESEARCH ALPHA): Beta remains paused (monitoring_status="paused") in the submitted save snapshot');
+  assert(result.ok === false, 'scoped 2 (MIXED-UPLOAD RESPONSE): the operation aborts when the refreshed response contains an account from a different upload');
+  const calls = fetchImpl.calls;
+  assert(claimCalls(calls).length === 0, 'scoped 2: NO claim was sent once a foreign-upload account was detected in the response');
+  assert(researchWorkCalls(calls).length === 0, 'scoped 2: NO provider-facing research request was sent');
+  assert(saveUploadCalls(calls).length === 0, 'scoped 2: NO save was sent');
 }
 
-async function testModalResearchAbortsIfAccountDeletedDuringRefresh(){
-  const staleAccounts = [fixtureAccount('Alpha'), fixtureAccount('Beta')];
+async function testScopedResearchIgnoresGlobalMutationDuringProviderCall(){
+  // A concurrent action (another tab, a background dashboard refresh)
+  // reassigns currentUploadId/currentUploadName/window.accountRadarAccounts
+  // WHILE this operation's provider call is in flight. The final save must
+  // still target the ORIGINALLY-captured context, unaffected.
   const fetchImpl = makeFetch((call) => {
     if(call.url.startsWith('/api/get-dashboard')){
-      // Alpha itself was deleted between opening the modal and this click.
-      return getDashboardResponse('upload-1', [minimalDashboardAccount('Beta')]);
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, [scopedAccount('QA Preview Alpha', UPLOAD_A)]);
     }
-    throw new Error(`unexpected fetch in testModalResearchAbortsIfAccountDeletedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-mutate', attemptId:'attempt-mutate'});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      // Simulate a concurrent mutation happening WHILE this provider call is
+      // "in flight" (i.e. before this mocked response resolves).
+      sandbox.currentUploadId = 'evil-hijacked-upload';
+      sandbox.currentUploadName = 'Hijacked';
+      sandbox.window.accountRadarAccounts = [scopedAccount('Totally Different Account', 'evil-hijacked-upload')];
+      return jsonResponse({byAccount: {'QA Preview Alpha': [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok:true, uploadId:UPLOAD_A, runStatus:'completed'});
+    }
+    throw new Error(`unexpected fetch in testScopedResearchIgnoresGlobalMutationDuringProviderCall: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
 
-  assert(result.ok === false, 'modal freshness 3: research is refused when the account is gone from the refreshed snapshot');
-  const calls = fetchImpl.calls;
-  assert(getDashboardCalls(calls).length === 1, 'modal freshness 3: the freshness refresh itself still happened');
-  assert(claimCalls(calls).length === 0, 'modal freshness 3 (ALPHA DELETED BEFORE THE FRESHNESS CHECK COMPLETES): NO claim was sent once the account was found missing from the fresh snapshot');
-  assert(researchWorkCalls(calls).length === 0, 'modal freshness 3: NO provider-facing research request was sent');
-  assert(saveUploadCalls(calls).length === 0, 'modal freshness 3: NO save was sent');
+  assert(result.ok === true, 'scoped 3: the operation still succeeds despite the concurrent global mutation');
+  const save = saveUploadCalls(fetchImpl.calls)[0];
+  assert(!!save && save.body.uploadId === UPLOAD_A, 'scoped 3 (MUTATING currentUploadId DURING THE PROVIDER CALL CANNOT REDIRECT THE SAVE): the final save still targets upload-a, not the hijacked upload id written to the global mid-flight');
+  assert(save.body.accounts.length === 1 && save.body.accounts[0].name === 'QA Preview Alpha', 'scoped 3 (REPLACING window.accountRadarAccounts DURING THE PROVIDER CALL HAS NO EFFECT): the final save still contains only QA Preview Alpha, not the account written to the global mid-flight');
+  assert(sandbox.currentUploadId === 'evil-hijacked-upload', 'scoped 3: sanity check -- the mutation actually happened (the global really was overwritten), so the assertions above are not vacuous');
 }
 
-async function testModalResearchAbortsIfUploadIdChangedDuringRefresh(){
-  const staleAccounts = [fixtureAccount('Alpha')];
+async function testScopedResearchAbortsIfAccountDeletedDuringRefresh(){
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      // QA Preview Alpha itself was deleted between opening the modal and
+      // this click -- the refreshed upload now has zero accounts.
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, []);
+    }
+    throw new Error(`unexpected fetch in testScopedResearchAbortsIfAccountDeletedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
+
+  assert(result.ok === false, 'scoped 4: research is refused when the account is gone from the refreshed snapshot');
+  const calls = fetchImpl.calls;
+  assert(getDashboardCalls(calls).length === 1, 'scoped 4: the freshness refresh itself still happened');
+  assert(claimCalls(calls).length === 0, 'scoped 4 (ALPHA DELETED BEFORE THE FRESHNESS CHECK COMPLETES): NO claim was sent once the account was found missing from the fresh snapshot');
+  assert(researchWorkCalls(calls).length === 0, 'scoped 4: NO provider-facing research request was sent');
+  assert(saveUploadCalls(calls).length === 0, 'scoped 4: NO save was sent');
+}
+
+async function testScopedResearchAbortsIfUploadIdChangedDuringRefresh(){
   const fetchImpl = makeFetch((call) => {
     if(call.url.startsWith('/api/get-dashboard')){
       // The refreshed snapshot belongs to a DIFFERENT upload than the one
       // this click targeted -- e.g. the account list was replaced mid-refresh.
-      return getDashboardResponse('upload-DIFFERENT', [minimalDashboardAccount('Alpha')]);
+      return getDashboardResponse('upload-DIFFERENT', 'Some Other List', [scopedAccount('QA Preview Alpha', 'upload-DIFFERENT')]);
     }
-    throw new Error(`unexpected fetch in testModalResearchAbortsIfUploadIdChangedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
+    throw new Error(`unexpected fetch in testScopedResearchAbortsIfUploadIdChangedDuringRefresh: ${call.url} ${JSON.stringify(call.body)}`);
   });
-  const sandbox = createSandbox({accounts: staleAccounts, currentUploadId:'upload-1', fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('Alpha', 'upload-1');
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
 
-  assert(result.ok === false, 'modal freshness 4 (REFRESHED upload_id NO LONGER EQUALS THE TARGET currentUploadId): research is refused');
-  assert(claimCalls(fetchImpl.calls).length === 0, 'modal freshness 4: NO claim was sent when the upload identity changed mid-refresh');
-  assert(researchWorkCalls(fetchImpl.calls).length === 0, 'modal freshness 4: NO provider-facing research request was sent');
+  assert(result.ok === false, 'scoped 5 (REFRESHED upload_id NO LONGER EQUALS THE EXPECTED expectedUploadId): research is refused');
+  assert(claimCalls(fetchImpl.calls).length === 0, 'scoped 5: NO claim was sent when the upload identity changed mid-refresh');
+  assert(researchWorkCalls(fetchImpl.calls).length === 0, 'scoped 5: NO provider-facing research request was sent');
 }
 
-async function testModalResearchRefusesCrossListWithoutAnyFetch(){
-  const accounts = [fixtureAccount('Alpha')];
+async function testScopedResearchRefusesCrossListWithoutAnyFetch(){
   const fetchImpl = makeFetch((call) => {
     throw new Error(`researchAccountFromManageModal() must refuse a cross-list request before ever calling fetch; got ${call.url}`);
   });
-  const sandbox = createSandbox({accounts, currentUploadId:'upload-1', fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('SomeOtherListAccount', 'upload-OTHER-LIST');
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('SomeOtherListAccount', UPLOAD_B);
 
-  assert(result.ok === false && result.outOfScope === true, 'modal freshness 5 (cross-list research is explicitly out of scope for this patch): a request for an account belonging to a DIFFERENT upload than currentUploadId is refused immediately');
-  assert(fetchImpl.calls.length === 0, 'modal freshness 5: refusing a cross-list request never calls fetch at all -- not even the freshness refresh');
+  assert(result.ok === false && result.outOfScope === true, 'scoped 6 (cross-list research is explicitly out of scope for this patch): a request for an account belonging to a DIFFERENT upload than currentUploadId is refused immediately');
+  assert(fetchImpl.calls.length === 0, 'scoped 6: refusing a cross-list request never calls fetch at all -- not even the freshness refresh');
+}
+
+async function testScopedResearchStaleAttemptRejectedAtSave(){
+  // The attempt is claimed successfully, but by the time persistence runs
+  // the server has already reclaimed/superseded it (another tab, a lease
+  // expiry) -- api/save-upload.js maps this to a 409 with staleAttempt:true
+  // (see its HA001 handling). The operation must surface this distinctly,
+  // not throw, and not report success.
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, [scopedAccount('QA Preview Alpha', UPLOAD_A)]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-stale', attemptId:'attempt-stale'});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      return jsonResponse({byAccount: {'QA Preview Alpha': [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({error:'This research attempt is no longer active; nothing was saved.', staleAttempt:true}, {ok:false, status:409});
+    }
+    throw new Error(`unexpected fetch in testScopedResearchStaleAttemptRejectedAtSave: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
+
+  assert(result.ok === false, 'scoped 7 (STALE ATTEMPT REMAINS REJECTED): the operation reports failure, not success, when the attempt is stale at save time');
+  assert(result.staleAttempt === true, 'scoped 7: the failure is specifically flagged staleAttempt, distinguishable from a generic error');
+}
+
+async function testScopedResearchSnapshotMismatchSurfacedFromServer(){
+  // Migration 8's HA005 guard is proven independently at the database
+  // layer in scripts/phase2a-rpc-authorization-tests.sql (Tests 59-66).
+  // This test proves the CLIENT correctly surfaces that rejection if it
+  // were ever reached (api/save-upload.js maps HA005 to 409
+  // snapshotMismatch:true) -- i.e. even if this client-side fix were
+  // somehow bypassed or regressed, the resulting server rejection is
+  // still handled as a failure, not misread as success.
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      return getDashboardResponse(UPLOAD_A, UPLOAD_A_NAME, [scopedAccount('QA Preview Alpha', UPLOAD_A)]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-mismatch', attemptId:'attempt-mismatch'});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      return jsonResponse({byAccount: {'QA Preview Alpha': [{isReal:true, sourceUrl:'https://example.com/a', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({error:'This research save does not match the upload it targeted; nothing was saved.', snapshotMismatch:true}, {ok:false, status:409});
+    }
+    throw new Error(`unexpected fetch in testScopedResearchSnapshotMismatchSurfacedFromServer: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
+  const result = await sandbox.researchAccountFromManageModal('QA Preview Alpha', UPLOAD_A);
+
+  assert(result.ok === false, 'scoped 8 (MIGRATION 8 REJECTION SURFACED CORRECTLY): a server-side HA005/snapshotMismatch rejection is reported as a failure, not success');
+  assert(result.snapshotMismatch === true, 'scoped 8: the failure is specifically flagged snapshotMismatch, distinguishable from a generic error or a stale attempt');
 }
 
 async function main(){
@@ -1045,11 +1149,14 @@ async function main(){
   await testMarkupIdsNeverCollide();
   await testResearchButtonTargetsCorrectAccountUnderCollision();
   await testEditFormTargetsCorrectAccountUnderCollision();
-  await testModalResearchDropsDeletedSibling();
-  await testModalResearchPreservesPausedSibling();
-  await testModalResearchAbortsIfAccountDeletedDuringRefresh();
-  await testModalResearchAbortsIfUploadIdChangedDuringRefresh();
-  await testModalResearchRefusesCrossListWithoutAnyFetch();
+  await testScopedResearchTargetsExactUploadOnly();
+  await testScopedResearchAbortsOnMixedUploadResponse();
+  await testScopedResearchIgnoresGlobalMutationDuringProviderCall();
+  await testScopedResearchAbortsIfAccountDeletedDuringRefresh();
+  await testScopedResearchAbortsIfUploadIdChangedDuringRefresh();
+  await testScopedResearchRefusesCrossListWithoutAnyFetch();
+  await testScopedResearchStaleAttemptRejectedAtSave();
+  await testScopedResearchSnapshotMismatchSurfacedFromServer();
 
   console.log(`\n${failures === 0 ? 'ALL DASHBOARD ORCHESTRATION TESTS PASSED' : `${failures} DASHBOARD ORCHESTRATION TEST(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
