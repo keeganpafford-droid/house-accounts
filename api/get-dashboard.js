@@ -5,6 +5,14 @@
 // parameter. An optional ?email= is accepted for backwards-compatible
 // request shape but has no effect on identity/authorization.
 
+// QA round 2, item 1: this is the single canonical read boundary where every
+// signal row -- fresh or legacy -- gets its actionability metadata
+// normalized (see rowToSignal() below), before it ever reaches the
+// dashboard client. classifyLegacySignalActionability() is a pure function:
+// it never mutates the stored row, and it returns fresh signals' own
+// metadata unchanged.
+import { classifyLegacySignalActionability } from './research-batch.js';
+
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
 function env(){
@@ -153,7 +161,14 @@ function confidenceWord(score){
   return 'Low';
 }
 function rowToSignal(row){
-  const payload = row.payload || {};
+  const rawPayload = row.payload || {};
+  // QA round 2, item 1: normalize actionability ONCE, here, for every signal
+  // this endpoint ever returns. classifyLegacySignalActionability() passes
+  // trustworthy fresh metadata through untouched and only computes fresh
+  // classification for legacy rows that lack it -- the merge below never
+  // mutates rawPayload/row itself (row.payload is left exactly as stored).
+  const legacyFields = classifyLegacySignalActionability(rawPayload);
+  const payload = { ...rawPayload, ...legacyFields };
   const sourceUrl = clean(row.source_url || payload.sourceUrl || '');
   const confidence = Number(row.confidence || payload.confidenceScore || payload.confidence || 0) || 0;
   return {
@@ -217,6 +232,17 @@ function signalToOpportunity(row){
     cleanSourceName: s.cleanSourceName,
     signalDate: s.publishedDate || s.firstSeenAt || s.lastSeenAt || new Date().toISOString(),
     firstSeenAt: s.firstSeenAt,
+    // QA round 2, item 1/5: carry the (normalized-if-legacy) actionability
+    // fields through so the dashboard's priorities filter and the "Date/
+    // actionability" line on the card and Verified Opportunity section see
+    // the same classification rowToSignal() already computed above.
+    actionabilityStatus: s.actionabilityStatus,
+    eventCategory: s.eventCategory,
+    eventDate: s.eventDate || '',
+    event_date: s.eventDate || s.event_date || '',
+    eventDateConfidence: s.eventDateConfidence,
+    isUpcoming: s.isUpcoming,
+    publicationDate: s.publicationDate || s.publishedDate || '',
     whyNow: s.whyNow || s.whyItMattersForPromo || s.signalDetail,
     reasonToReachOut: s.whyItMattersForPromo || s.whyNow || s.signalDetail,
     conversationStarter: s.conversationStarter || s.suggestedOpener || `Ask whether ${row.account_name} has anything worth planning around based on this recent business activity.`,
@@ -480,17 +506,20 @@ export default async function handler(req, res){
     const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals);
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
-    // Reconciliation item 1: "Newly Detected" is an ACTIONABLE count, not
-    // merely a discovery-recency count -- a stale/undated event-like signal
-    // or an ongoing signal past the recency ceiling (see computeActionability()
-    // in api/research-batch.js, persisted verbatim into payload.actionabilityStatus)
-    // is retained in ha_signals for Research Details/account history, but
-    // must not inflate this badge. isPriorityEligible defaults true only for
-    // legacy rows persisted before this field existed.
+    // Reconciliation item 1 / QA round 2 item 1: "Newly Detected" is an
+    // ACTIONABLE count, not merely a discovery-recency count -- a
+    // stale/undated event-like signal or an ongoing signal past the recency
+    // ceiling is retained in ha_signals for Research Details/account
+    // history, but must not inflate this badge. Legacy rows (no trustworthy
+    // stored actionabilityStatus) are classified fresh via
+    // classifyLegacySignalActionability() -- the SAME canonical normalizer
+    // rowToSignal()/signalToOpportunity() use below -- rather than being
+    // defaulted to eligible just because the field is missing.
     const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
-      const eligible = s.payload?.actionabilityStatus?.isPriorityEligible !== false;
-      return Number.isFinite(t) && t >= sevenDaysAgo && eligible;
+      if(!Number.isFinite(t) || t < sevenDaysAgo) return false;
+      const { actionabilityStatus } = classifyLegacySignalActionability(s.payload || {});
+      return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);
 
     return json(res, 200, {

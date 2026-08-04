@@ -1860,7 +1860,12 @@
       <h2 id="mvpDashboardTitle">House Accounts</h2>
       <p>Who should I contact next, and why?</p>
     </div>
-    <button class="btn" type="button" onclick="openLightweightCustomerUpload()">Add Customer Data</button>
+    <!-- QA round 2, item 8: the page-level "Add Customer Data" button here was
+         a second entry point alongside the nav's own "Add Customer Data" link
+         (site-header.js), which already opens this same upload flow via the
+         #add-customer-data hash handler (see handleMvpDashboardRoute() below).
+         The nav entry is now the single primary entry point; the underlying
+         openLightweightCustomerUpload() flow is unchanged and unremoved. -->
   </section>
   <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
 
@@ -2639,17 +2644,155 @@ function opportunityDedupeKey(opp){
   return `${id.account}|${id.type}|${id.department}|${id.category}|${id.buyer}|${id.topic}|${source}`;
 }
 
+// QA round 2, item 2: event-level dedup for real, sourced business-activity
+// signals -- the opportunityDedupeKey() above is keyed on AI-inferred
+// department/category/buyer/topic wording, which varies across independent
+// generation passes even when they describe the SAME real-world initiative
+// (e.g. multiple L.L.Bean flagship-reopening variants: "Multi-Year
+// Investment in Flagship Store" / "investing more than $50 million to
+// reimagine the flagship store" / "Flagship Store Reopening in Freeport").
+// This is a second, more conservative pass applied ONLY to business-activity
+// (real, sourced) opportunities, using company + related-event-type +
+// significant title-token overlap + date/source proximity -- never simple
+// title equality alone -- so those variants collapse into one card while a
+// genuinely different event at the same company stays separate.
+const OPPORTUNITY_TITLE_STOPWORDS = new Set([
+  'the','and','for','with','from','into','that','this','company','announced','announces',
+  'recently','business','store','more','than','million','significant','their','which','will',
+  'have','has','been','also','after','before','over','about','said','says'
+]);
+function significantTitleTokens(text){
+  return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ')
+    .filter(w => w.length > 3 && !OPPORTUNITY_TITLE_STOPWORDS.has(w)));
+}
+function titleTokenOverlapRatio(a, b){
+  const ta = significantTitleTokens(a);
+  const tb = significantTitleTokens(b);
+  if(!ta.size || !tb.size) return 0;
+  let overlap = 0;
+  ta.forEach(w => { if(tb.has(w)) overlap++; });
+  return overlap / Math.min(ta.size, tb.size);
+}
+// The location/renovation cluster is one conceptual "ribbon cutting" family
+// -- research-batch.js's EVENT_LIKE_TYPES groups them the same way -- so two
+// passes tagging the same real event under different members of this
+// cluster (RENOVATION_COMPLETION vs LOCATION_REOPENING vs
+// NEW_LOCATION_OPENING) must not be treated as different event types.
+const RELATED_EVENT_TYPE_CLUSTERS = [
+  new Set(['NEW_LOCATION_OPENING','LOCATION_REOPENING','RENOVATION_COMPLETION','LOCATION_EVENT_UNSPECIFIED'])
+];
+function relatedEventTypes(typeA, typeB){
+  if(!typeA || !typeB) return true; // unknown type on either side never blocks a match
+  if(typeA === typeB) return true;
+  return RELATED_EVENT_TYPE_CLUSTERS.some(cluster => cluster.has(typeA) && cluster.has(typeB));
+}
+function opportunityTitleText(opp){
+  return `${opp?.signalTitle || ''} ${opp?.title || ''} ${opp?.signalSummary || opp?.signalDetail || ''}`;
+}
+function opportunitiesLikelySameInitiative(a, b){
+  const accA = String(a?.account || a?.accountName || '').trim().toLowerCase();
+  const accB = String(b?.account || b?.accountName || '').trim().toLowerCase();
+  if(!accA || accA !== accB) return false;
+  // Scoped to real, sourced business-activity signals only -- historical/
+  // repeat-pattern opportunities are untouched by this pass.
+  if(!isBusinessOpportunity(a) || !isBusinessOpportunity(b)) return false;
+  const typeA = a?.opportunityType || a?.canonicalEventType || '';
+  const typeB = b?.opportunityType || b?.canonicalEventType || '';
+  if(!relatedEventTypes(typeA, typeB)) return false;
+  const domainA = sourceDomain(a?.sourceUrl || '');
+  const domainB = sourceDomain(b?.sourceUrl || '');
+  const sameSource = Boolean(domainA) && domainA === domainB;
+  const overlap = titleTokenOverlapRatio(opportunityTitleText(a), opportunityTitleText(b));
+  const dateA = parseMaybeDate(a?.eventDate || a?.publishedDate || a?.signalDate);
+  const dateB = parseMaybeDate(b?.eventDate || b?.publishedDate || b?.signalDate);
+  const closeDate = Boolean(dateA && dateB) && Math.abs(dateA.getTime() - dateB.getTime()) <= 45 * 86400000;
+  // Positive-agreement requirement, same spirit as the server-side event
+  // resolver: the same publisher/source alone is enough (e.g. "multiple
+  // Press Herald results with the same source/date"); otherwise a strong
+  // title-token overlap plus either a close date or an even stronger
+  // overlap is required. Simple title equality alone is never sufficient by
+  // itself -- it must combine with the account+type+source/date evidence
+  // above.
+  if(sameSource) return true;
+  if(overlap >= 0.7) return true;
+  if(overlap >= 0.5 && closeDate) return true;
+  return false;
+}
+function clusterBusinessSignalOpportunities(items){
+  const groups = [];
+  for(const item of items){
+    const group = groups.find(g => g.some(existing => opportunitiesLikelySameInitiative(existing, item)));
+    if(group) group.push(item); else groups.push([item]);
+  }
+  return groups;
+}
+function sourceStrengthScore(opp){
+  const domain = sourceDomain(opp?.sourceUrl || '');
+  if(!domain) return 0;
+  if(/\.gov$|\.edu$/.test(domain)) return 3;
+  if(/reuters|apnews|bloomberg|wsj\.com|forbes|businesswire|prnewswire|marketwatch/.test(domain)) return 2;
+  return 1;
+}
+// Priority order per the sprint's explicit ranking: strongest source, most
+// specific factual description, explicit event/publication date, highest
+// confidence, most useful outreach context -- compared lexicographically
+// (each tier only breaks ties left by the one before it), not as a single
+// blended score.
+function initiativeCandidateRank(opp){
+  const descLength = Math.min(String(opp?.signalSummary || opp?.signalDetail || opp?.whatChanged || '').length, 400);
+  const hasDate = (opp?.eventDate || opp?.event_date || opp?.publicationDate || opp?.publishedDate) ? 1 : 0;
+  const confidence = Number(opp?.confidence || opp?.confidenceScore || 0);
+  const outreachUsefulness = (opp?.conversationStarter ? 1 : 0) + (Array.isArray(opp?.recommendedBuyingTeam) && opp.recommendedBuyingTeam.length ? 1 : 0);
+  return [sourceStrengthScore(opp), descLength, hasDate, confidence, outreachUsefulness];
+}
+function compareInitiativeCandidates(a, b){
+  const ra = initiativeCandidateRank(a);
+  const rb = initiativeCandidateRank(b);
+  for(let i = 0; i < ra.length; i++){
+    if(rb[i] !== ra[i]) return rb[i] - ra[i];
+  }
+  return 0;
+}
+function mergeBusinessSignalInitiatives(items){
+  return clusterBusinessSignalOpportunities(items).map(group => {
+    if(group.length === 1) return group[0];
+    const ranked = [...group].sort(compareInitiativeCandidates);
+    const winner = { ...ranked[0] };
+    const seenDomains = new Set([sourceDomain(winner.sourceUrl || '')].filter(Boolean));
+    const extraSources = Array.isArray(winner.additionalSources) ? [...winner.additionalSources] : [];
+    let mergedEvidence = Array.isArray(winner.evidence) ? [...winner.evidence] : (winner.evidence ? [winner.evidence] : []);
+    ranked.slice(1).forEach(other => {
+      const domain = sourceDomain(other.sourceUrl || '');
+      if(other.sourceUrl && domain && !seenDomains.has(domain)){
+        extraSources.push({ name: other.cleanSourceName || domain, url: other.sourceUrl });
+        seenDomains.add(domain);
+      }
+      if(Array.isArray(other.evidence)) mergedEvidence = [...new Set([...mergedEvidence, ...other.evidence])];
+    });
+    if(extraSources.length) winner.additionalSources = extraSources;
+    if(mergedEvidence.length) winner.evidence = mergedEvidence;
+    winner.mergedDuplicateCount = group.length - 1;
+    return winner;
+  });
+}
+
 function dedupeOpportunities(items){
-  const map = new Map();
+  const businessSignals = [];
+  const others = [];
   for(const item of (items || [])){
     if(!item) continue;
+    if(isBusinessOpportunity(item)) businessSignals.push(item); else others.push(item);
+  }
+  const mergedBusinessSignals = mergeBusinessSignalInitiatives(businessSignals);
+  const map = new Map();
+  for(const item of others){
     const key = opportunityDedupeKey(item);
     const existing = map.get(key);
     if(!existing || getOpportunityScore(item) > getOpportunityScore(existing)){
       map.set(key, item);
     }
   }
-  return Array.from(map.values());
+  return [...mergedBusinessSignals, ...Array.from(map.values())];
 }
 
 function verifiedSignalDedupeKey(signal){
@@ -3645,22 +3788,29 @@ function formatShortDate(value){
 // api/research-batch.js) rather than re-deriving anything, so the label
 // can never say "Upcoming" unless the signal itself was confidently dated
 // in the future.
+// QA round 2, item 5: exactly 5 honest, user-facing states -- Upcoming
+// (verified event date), Recent event (date + follow-up language), Ongoing
+// business change (source publication date, never mislabeled as an event
+// date), Date unavailable, No longer current. Never fabricates a date, never
+// substitutes House Accounts' own discovery time for freshness. Legacy
+// signals reach this function with the exact same normalized
+// opp.actionabilityStatus shape (see classifyLegacySignalActionability() in
+// api/research-batch.js) as fresh ones, so they render identically here --
+// no separate legacy-only branch needed.
 function signalDateAndActionabilityLine(opp){
   const status = opp.actionabilityStatus || {};
   const eventDate = opp.eventDate || opp.event_date || '';
   const pubDate = opp.publicationDate || opp.publishedDate || '';
-  // Reconciliation item 2: an ongoing signal whose publication date is past
-  // the recency ceiling (or missing/untrustworthy) is retained but must
-  // read as no longer current, never as a plain "Source published ..." line
-  // indistinguishable from a fresh one.
-  if(status.status === 'ongoing-stale') return pubDate ? `Source published ${formatShortDate(pubDate)} — no longer current` : 'No longer current';
-  if(status.status === 'ongoing-undated') return 'Publication date unknown';
-  if(status.usesPublicationDate) return pubDate ? `Source published ${formatShortDate(pubDate)}` : '';
-  if(status.status === 'upcoming') return eventDate ? `Upcoming — ${formatShortDate(eventDate)}` : 'Upcoming';
-  if(status.status === 'recent-past') return eventDate ? `Recent — ${formatShortDate(eventDate)} (follow up)` : 'Recent (follow up)';
-  if(status.status === 'stale') return eventDate ? `Past event — ${formatShortDate(eventDate)}` : 'Past event';
-  if(status.status === 'unknown-date') return 'Event date unknown';
-  return pubDate ? `Source published ${formatShortDate(pubDate)}` : '';
+  switch(status.status){
+    case 'upcoming': return eventDate ? `Upcoming — ${formatShortDate(eventDate)}` : 'Upcoming';
+    case 'recent-past': return eventDate ? `Recent event — ${formatShortDate(eventDate)} (follow up)` : 'Recent event (follow up)';
+    case 'ongoing': return pubDate ? `Ongoing business change — published ${formatShortDate(pubDate)}` : 'Ongoing business change';
+    case 'stale': return 'No longer current';
+    case 'ongoing-stale': return 'No longer current';
+    case 'unknown-date': return 'Date unavailable';
+    case 'ongoing-undated': return 'Date unavailable';
+    default: return pubDate ? `Ongoing business change — published ${formatShortDate(pubDate)}` : '';
+  }
 }
 
 // Priority 4: a compact "recommended person or department" line for the
@@ -3741,6 +3891,21 @@ function renderVerifiedOpportunitySection(opp){
 // categories (realPriorCategories(), never the inferred/suggested list),
 // cadence, uploaded contacts, and account notes. Supersedes the narrow
 // warm-account-only note that used to occupy this spot in the modal.
+// QA round 2, item 6: Account Context must accurately reflect which data is
+// actually present -- it must never claim uploaded contact information is
+// being used when no usable uploaded contact exists. Called only when the
+// rows above are ALL empty, which (by construction: a real uploaded contact
+// or real order history each push their own row) means neither a usable
+// uploaded contact nor order history exists here -- the remaining
+// distinction is whether a public contact was at least discovered.
+function accountContextFallbackMessage(account, opp){
+  const publicContactName = opp?.suggestedContactDetails?.name || opp?.suggested_contact_details?.name || '';
+  if(publicContactName){
+    return 'This account is in your uploaded customer list, but no order history or usable contact was included in the upload. This recommendation relies on the public business signal and a publicly discovered contact.';
+  }
+  return 'This account is in your uploaded customer list, but no order history or usable contact was included. This recommendation relies on the public business signal and a suggested department.';
+}
+
 function renderAccountContextSection(opp){
   const account = findAccountForOpp(opp);
   if(!account) return '';
@@ -3757,12 +3922,7 @@ function renderAccountContextSection(opp){
   if(contacts.length) rows.push(`<div class="sales-play-detail-item"><strong>Uploaded contacts</strong>${escapeHtml(contacts.slice(0,3).map(c=>c.name||c.email).join(', '))}</div>`);
   if(notes) rows.push(`<div class="sales-play-detail-item"><strong>Account notes</strong>${escapeHtml(shortText(notes,180))}</div>`);
   if(!rows.length){
-    if(isWarmAccount(account)){
-      const contactCount = (account.contacts||[]).length;
-      const contactPhrase = contactCount ? `${contactCount} contact${contactCount===1?'':'s'} on file` : 'a relationship on file';
-      return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div>You already have ${escapeHtml(contactPhrase)} here. There's no order history yet, so this play leans on public signals and the contact info from your upload.</div></div>`;
-    }
-    return '';
+    return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div>${escapeHtml(accountContextFallbackMessage(account, opp))}</div></div>`;
   }
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div class="sales-play-detail-grid">${rows.join('')}</div></div>`;
 }
@@ -3965,6 +4125,20 @@ function addSignalDerivedOpportunities(account, signals){
     opp.affectedDepartment = signal.affectedDepartment || (opp.likelyBuyers[0] || '');
     opp.department = likelyDepartmentFromOpportunity(opp);
     opp.buyingCategory = primaryCategoryFromOpportunity(opp);
+    // QA round 2, item 1/5: the actionability/date fields rowToSignal() (or,
+    // for legacy rows, classifyLegacySignalActionability()) already computed
+    // must reach the actual rendered opportunity object, not just the raw
+    // signal -- otherwise renderRepOpportunityCard()/renderVerifiedOpportunitySection()
+    // never see a status to display, and the priorities feed's own
+    // isPriorityEligible filter silently defaults every signal-derived
+    // opportunity to eligible regardless of the signal it came from.
+    opp.actionabilityStatus = signal.actionabilityStatus || null;
+    opp.eventCategory = signal.eventCategory || '';
+    opp.eventDate = signal.eventDate || signal.event_date || '';
+    opp.event_date = opp.eventDate;
+    opp.eventDateConfidence = signal.eventDateConfidence || 'unknown';
+    opp.isUpcoming = signal.actionabilityStatus?.status === 'upcoming';
+    opp.publicationDate = signal.publicationDate || signal.publishedDate || '';
     opp.evidence = [
       `Source: ${signal.cleanSourceName || sourceDomain(signal.sourceUrl) || 'public source'}`,
       cleanBusinessText(signal.signalDetail || signal.shortSummary || signal.signalSnippet) || 'External business activity detected',
@@ -5292,6 +5466,15 @@ function salesPlayModeFromOpp(opp){
   return 'Cold';
 }
 
+// QA round 2, item 7: the old "Cold" + " Play" badge text read as internal
+// jargon -- a rep reading it has no relationship with the account yet, so
+// "First Contact" plainly names that state. Warm/Lukewarm read fine as-is
+// and are left unchanged.
+function salesPlayModeLabel(mode){
+  if(mode === 'Cold') return 'First Contact';
+  return `${mode} Play`;
+}
+
 function createOpportunity(account, name, contactTitle, products, evidenceCats=[], baseConfidence=55, signalBased=false){
   const value = estimateFutureValue(account, name);
   const relationshipStrength = getRelationshipStrength(account);
@@ -5675,6 +5858,34 @@ function trimToWords(text, maxWords){
   return words.slice(0, maxWords).join(' ').replace(/[,.!?;:]+$/, '') + '...';
 }
 
+// QA round 2, item 3: recommended department/contact must come from the
+// REAL initiative -- opp.recommendedBuyingTeam/likelyBuyers (the same
+// server-computed evidence the card's own "Recommended contact" already
+// correctly uses) -- never from an inferred merchandise category
+// (primaryCategoryFromOpportunity/pickPrimaryPromoCategory). Only when none
+// of that real evidence exists does this return '', so callers can fall back
+// to an honest, generic "the right person" phrasing instead of a
+// category-flavored guess.
+function groundedDepartmentForOpportunity(opp){
+  const candidates = [
+    ...(Array.isArray(opp?.recommendedBuyingTeam) ? opp.recommendedBuyingTeam : []),
+    ...(Array.isArray(opp?.likelyBuyers) ? opp.likelyBuyers : []),
+    opp?.affectedDepartment,
+    opp?.department,
+    opp?.suggestedContactDetails?.title,
+    opp?.suggested_contact_details?.title
+  ].filter(Boolean).map(String);
+  const named = candidates.find(c => c.trim() && !/^(relevant department lead|unknown department)$/i.test(c.trim()));
+  return named ? named.trim() : '';
+}
+
+// QA round 2, item 3/4: the exact surfaced initiative -- the real signal
+// title/trigger -- not a bucketed generic phrase like "an upcoming event or
+// campaign" that says nothing about what actually happened.
+function groundedInitiativeTitle(opp){
+  return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '');
+}
+
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp, opts){
   opts = opts || {};
@@ -5688,6 +5899,14 @@ window.createSalesPlayPanel = function(opp, opts){
   const sourceLabel = opp.sourceUrl ? 'verified public signal' : 'account history';
   const category = pickPrimaryPromoCategory(opp);
   const signalType = inferSalesPlaySignalType(opp, reasonTitle, whyNow, category);
+  // QA round 2, item 3/4: ground Best Next Move / email / call script /
+  // Questions to Ask in the ACTUAL initiative and the real recommended
+  // department -- never in the inferred merchandise category.
+  const department = groundedDepartmentForOpportunity(opp);
+  const initiativeTitle = groundedInitiativeTitle(opp) || reasonTitle;
+  const isUpcoming = opp.actionabilityStatus?.status === 'upcoming';
+  const actionabilityTense = opp.actionabilityStatus?.tense || '';
+  const hasKnownContact = Boolean(likelyKnownBuyer(opp) || opp.suggestedContactDetails?.name || opp.suggested_contact_details?.name);
 
   const play = buildConciseSalesPlay({
     account,
@@ -5698,7 +5917,12 @@ window.createSalesPlayPanel = function(opp, opts){
     relationshipStrength,
     sourceLabel,
     category,
-    signalType
+    signalType,
+    department,
+    initiativeTitle,
+    isUpcoming,
+    actionabilityTense,
+    hasKnownContact
   });
 
   const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode);
@@ -5708,7 +5932,7 @@ window.createSalesPlayPanel = function(opp, opts){
         <div class="sales-play-header">
           <div>
             <h2>Prepare for Call</h2>
-            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(mode)} Play</span></div>
+            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(salesPlayModeLabel(mode))}</span></div>
           </div>
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
@@ -5812,21 +6036,69 @@ window.createSalesPlayPanel = function(opp, opts){
   }
 }
 
+// QA round 2, item 3/4: field-selling outreach model -- mention the factual
+// signal, ask a natural question about the initiative, connect plausible
+// merch applications only as a secondary/tentative idea (never the ask
+// itself), offer a small amount of help, ask for the responsible person when
+// unknown, keep the first ask low pressure. Every template below is grounded
+// in ctx.initiativeTitle/ctx.department (the real surfaced initiative and
+// the real recommended buying team -- see groundedInitiativeTitle()/
+// groundedDepartmentForOpportunity() above), never in ctx.category (the
+// inferred merchandise category), and never asserts "upcoming" unless
+// ctx.isUpcoming is true.
+function ownerPhraseForSignal(ctx){
+  if(ctx.signalType === 'hiring') return 'onboarding or recruiting merch';
+  if(ctx.signalType === 'event') return 'event merch or giveaways';
+  if(ctx.signalType === 'expansion') return 'launch materials or team gear';
+  if(ctx.signalType === 'repeat') return 'repeat orders or upcoming merch needs';
+  return ctx.category || 'branded merch';
+}
+
+function triggerPhraseForSignal(ctx){
+  if(ctx.initiativeTitle) return ctx.initiativeTitle;
+  if(ctx.whyNow) return ctx.whyNow.replace(/[.]+$/,'');
+  return 'a timely account signal';
+}
+
+// The lead-in sentence fragment used across every outreach surface --
+// references the exact initiative, and only claims "coming up" when the
+// actionability state actually supports it.
+function initiativeLeadIn(ctx){
+  const title = triggerPhraseForSignal(ctx);
+  return ctx.isUpcoming ? `${title} coming up` : title;
+}
+
+// Never derived from a promo category -- only from the real recommended
+// department/buying-team evidence (ctx.department). Falls back to an
+// honest, referral-focused generic ask (not a category guess) when no
+// department is known at all.
+function ownerAskPhrase(ctx){
+  if(ctx.department) return `who's leading that on the ${ctx.department} side`;
+  return `who would be the right person to ask about that`;
+}
+
+// Category is mentioned only as a possible, tentative idea -- never as the
+// ask itself, and never claiming the account already needs it.
+function ideaOfferPhrase(ctx){
+  const cat = ctx.category && ctx.category !== 'promo' ? ctx.category : '';
+  return cat ? `a few ${cat}-related ideas` : 'a few relevant ideas';
+}
+
 function buildConciseSalesPlay(ctx){
   const isWarm = ctx.mode === 'Warm';
-  const isHiring = ctx.signalType === 'hiring';
-  const ownerPhrase = ownerPhraseForSignal(ctx);
-  const triggerPhrase = triggerPhraseForSignal(ctx);
+  const lead = initiativeLeadIn(ctx);
+  const ask = ownerAskPhrase(ctx);
+  const offer = ideaOfferPhrase(ctx);
 
   const opportunitySummary = [
-    `${triggerPhrase} creates a timely reason to reach out.`,
+    `${lead} creates a timely reason to reach out.`,
     isWarm ? 'Existing relationship can be used as a bridge.' : 'A specific business reason keeps this from feeling like a cold pitch.',
     'Goal is to earn a reply or referral before selling.'
   ];
 
   const bestNextMove = isWarm
-    ? `Call or email ${ctx.firstName}. Mention ${triggerPhrase.toLowerCase()}. Ask who owns ${ownerPhrase}. Offer to send a few simple ideas if relevant.`
-    : `Lead with ${triggerPhrase.toLowerCase()}. Ask for the person responsible for ${ownerPhrase}. Keep the ask small and referral-focused.`;
+    ? `Call or email ${ctx.firstName}. Mention ${lead.toLowerCase()}. Ask ${ask}. Offer ${offer} if it's welcome.`
+    : `Lead with ${lead.toLowerCase()}. Ask ${ask}. Keep the first ask small and referral-focused${ctx.hasKnownContact ? '' : ' since there is no confirmed contact yet'}.`;
 
   const emailSubject = conciseSubject(ctx);
   const outreachEmail = trimToWords(buildReplyFirstEmail(ctx), 120);
@@ -5871,59 +6143,46 @@ function linkedinMessageForOpp(opp){
 }
 
 function buildReplyFirstEmail(ctx){
-  const ownerPhrase = ownerPhraseForSignal(ctx);
-  const trigger = triggerPhraseForSignal(ctx);
+  const lead = initiativeLeadIn(ctx);
+  const ask = ownerAskPhrase(ctx);
+  const offer = ideaOfferPhrase(ctx);
 
   if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account} and thought of you.\n\nQuick question — does your team handle ${ownerPhrase}, or does that sit with someone else internally?\n\nIf there is a better person to ask, would you be open to pointing me in the right direction?\n\nIf helpful, I can send over a few simple ideas.\n\nBest,\n[Rep Name]`;
+    return `Hey ${ctx.firstName},\n\nSaw ${lead.toLowerCase()} at ${ctx.account} and thought of you.\n\nDoes that sit with your team, or do you know ${ask}?\n\nHappy to send over ${offer} if it would help -- no pressure either way.\n\nBest,\n[Rep Name]`;
   }
   if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName},\n\nIt has been a bit, but ${trigger.toLowerCase()} felt like a relevant reason to reconnect.\n\nDo you know who usually owns ${ownerPhrase} at ${ctx.account}?\n\nI am not trying to force a pitch — just trying to see whether there is a useful conversation to have.\n\nHappy to send a few simple ideas if helpful.\n\nBest,\n[Rep Name]`;
+    return `Hey ${ctx.firstName},\n\nIt has been a bit, but ${lead.toLowerCase()} at ${ctx.account} felt like a good reason to reconnect.\n\nDo you know ${ask}?\n\nCan send over ${offer} if useful -- just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
   }
-  return `Hi ${ctx.firstName},\n\nSaw ${trigger.toLowerCase()} at ${ctx.account}.\n\nDo you know who would be the best person to ask about ${ownerPhrase}?\n\nI work on branded merchandise programs and thought there may be a timely conversation, but I want to start with the right person.\n\nWould you be open to pointing me in the right direction?\n\nBest,\n[Rep Name]`;
+  return `Hi ${ctx.firstName},\n\nSaw ${lead.toLowerCase()} at ${ctx.account}.\n\nDo you know ${ask}? Not trying to jump straight to a pitch -- just want to start with the right person.\n\nIf it's useful, happy to share ${offer} once I know more.\n\nBest,\n[Rep Name]`;
 }
 
 function buildNaturalCallScript(ctx){
-  const ownerPhrase = ownerPhraseForSignal(ctx);
-  const trigger = triggerPhraseForSignal(ctx).toLowerCase();
+  const lead = initiativeLeadIn(ctx).toLowerCase();
+  const ask = ownerAskPhrase(ctx);
   return [
-    `<strong>Open:</strong> “Hey ${ctx.firstName}, quick question based on ${trigger}.”`,
-    `<strong>Reason:</strong> “I wanted to understand whether ${ownerPhrase} is handled by your team or someone else.”`,
-    `<strong>Ask:</strong> “Are you the best person to ask, or is there someone else I should connect with?”`
+    `<strong>Open:</strong> “Hey ${ctx.firstName}, saw ${lead} at ${ctx.account} -- quick question.”`,
+    `<strong>Reason:</strong> “Wanted to check ${ask}, or whether that's something your team handles.”`,
+    `<strong>Ask:</strong> “No pitch yet -- just trying to find the right person. Is that you, or should I talk to someone else?”`
   ];
 }
 
 function questionsForSignal(ctx){
-  const ownerPhrase = ownerPhraseForSignal(ctx);
-  if(ctx.signalType === 'hiring'){
-    return [
-      'Who owns onboarding or recruiting merch?',
-      'Is that handled centrally or by different teams?',
-      'Would a few simple ideas be helpful right now?'
-    ];
-  }
-  if(ctx.signalType === 'event'){
-    return [
-      'Who is responsible for event merch or attendee giveaways?',
-      'What timing should vendors know about?',
-      'Would it help to see a few simple ideas before planning gets too far along?'
-    ];
-  }
-  if(ctx.signalType === 'expansion'){
-    return [
-      'Who coordinates branded materials for new locations or teams?',
-      'Is there a launch date or internal milestone to support?',
-      'Would a short idea list be useful for the planning team?'
-    ];
-  }
+  const ask = ownerAskPhrase(ctx);
+  const statusQuestion = ctx.isUpcoming
+    ? 'What is the timing on that?'
+    : ctx.actionabilityTense === 'past'
+      ? 'How did that go, and what is next for it?'
+      : 'What is the current status of that?';
   return [
-    `Who usually owns ${ownerPhrase}?`,
-    'Is that handled by one team or different departments?',
-    'Would a few simple ideas be helpful right now?'
+    `Do you know ${ask}?`,
+    statusQuestion,
+    'Would a few relevant ideas be useful once things take shape?'
   ];
 }
 
 function conciseSubject(ctx){
+  const specific = shortText(ctx.initiativeTitle || '', 40);
+  if(specific && specific.length > 8) return `Question about ${specific}`;
   if(ctx.signalType === 'hiring') return ctx.mode === 'Warm' ? `Hiring at ${ctx.account}?` : 'Quick question on onboarding';
   if(ctx.signalType === 'event') return ctx.reasonTitle && ctx.reasonTitle.length < 35 ? `Question about ${ctx.reasonTitle}` : 'Question about the event';
   if(ctx.signalType === 'expansion') return 'Saw the expansion';
@@ -5932,28 +6191,12 @@ function conciseSubject(ctx){
 }
 
 function subjectRationale(ctx, subject){
+  if(ctx.initiativeTitle) return 'It names the exact business signal, so it reads as a specific, relevant note instead of a generic check-in.';
   if(ctx.signalType === 'hiring') return 'It references a recent hiring trigger and opens the door to a quick conversation without pitching.';
   if(ctx.signalType === 'event') return 'It ties the note to timing and gives the recipient a clear reason to open it.';
   if(ctx.signalType === 'expansion') return 'It uses the business news as context while keeping the ask simple.';
   if(ctx.signalType === 'repeat') return 'It feels personal and works well when the account has prior order history.';
   return 'It is specific enough to avoid sounding like a generic account check-in.';
-}
-
-function ownerPhraseForSignal(ctx){
-  if(ctx.signalType === 'hiring') return 'onboarding or recruiting merch';
-  if(ctx.signalType === 'event') return 'event merch or giveaways';
-  if(ctx.signalType === 'expansion') return 'launch materials or team gear';
-  if(ctx.signalType === 'repeat') return 'repeat orders or upcoming merch needs';
-  return ctx.category || 'branded merch';
-}
-
-function triggerPhraseForSignal(ctx){
-  if(ctx.signalType === 'hiring') return 'recent hiring activity';
-  if(ctx.signalType === 'event') return 'an upcoming event or campaign';
-  if(ctx.signalType === 'expansion') return 'recent expansion news';
-  if(ctx.signalType === 'repeat') return 'past ordering activity';
-  if(ctx.whyNow) return ctx.whyNow.replace(/[.]+$/,'');
-  return 'a timely account signal';
 }
 
 function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
@@ -5967,7 +6210,7 @@ function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
 
 function formatSalesPlayClipboard(play, account, reasonTitle, mode){
   return [
-    `SALES PLAY: ${account} · ${reasonTitle} · ${mode} Play`,
+    `SALES PLAY: ${account} · ${reasonTitle} · ${salesPlayModeLabel(mode)}`,
     '',
     'OPPORTUNITY SUMMARY',
     ...play.opportunitySummary.map(item => `- ${item}`),

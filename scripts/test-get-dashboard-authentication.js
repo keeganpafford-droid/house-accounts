@@ -78,7 +78,17 @@ const FIXTURES = {
   // ha_users row at all -- simulates a Supabase Auth user who never
   // completed House Accounts account setup.
   authTokenOrphan: 'valid-token-orphan',
-  authUserIdOrphan: 'auth-user-orphan'
+  authUserIdOrphan: 'auth-user-orphan',
+
+  // QA round 2, item 1: a dedicated user/upload carrying one genuinely
+  // legacy signal (persisted before actionabilityStatus/eventCategory
+  // existed), kept separate from Member A's fixtures above so this signal
+  // can never affect Test 7's exact-count assertions on Upload A.
+  authTokenLegacy: 'valid-token-legacy',
+  authUserIdLegacy: 'auth-user-legacy',
+  userIdLegacy: 'user-legacy',
+  emailLegacy: 'legacy@example.com',
+  uploadLegacy: 'upload-legacy'
 };
 
 const HA_USERS = [
@@ -86,31 +96,62 @@ const HA_USERS = [
   {id: FIXTURES.userIdB, auth_user_id: FIXTURES.authUserIdB, email: FIXTURES.emailB, app_role: 'member', organization_id: null},
   {id: FIXTURES.userIdOwner, auth_user_id: FIXTURES.authUserIdOwner, email: FIXTURES.emailOwner, app_role: 'owner', organization_id: FIXTURES.orgId, status: 'active'},
   {id: FIXTURES.userIdC, auth_user_id: null, email: FIXTURES.emailC, app_role: 'member', organization_id: FIXTURES.orgId, status: 'active'},
-  {id: FIXTURES.userIdD, auth_user_id: null, email: FIXTURES.emailD, app_role: 'member', organization_id: FIXTURES.orgId, status: 'inactive'}
+  {id: FIXTURES.userIdD, auth_user_id: null, email: FIXTURES.emailD, app_role: 'member', organization_id: FIXTURES.orgId, status: 'inactive'},
+  {id: FIXTURES.userIdLegacy, auth_user_id: FIXTURES.authUserIdLegacy, email: FIXTURES.emailLegacy, app_role: 'member', organization_id: null}
 ];
 const AUTH_TOKEN_TO_AUTH_USER_ID = {
   [FIXTURES.authTokenA]: FIXTURES.authUserIdA,
   [FIXTURES.authTokenB]: FIXTURES.authUserIdB,
   [FIXTURES.authTokenOwner]: FIXTURES.authUserIdOwner,
-  [FIXTURES.authTokenOrphan]: FIXTURES.authUserIdOrphan
+  [FIXTURES.authTokenOrphan]: FIXTURES.authUserIdOrphan,
+  [FIXTURES.authTokenLegacy]: FIXTURES.authUserIdLegacy
 };
 const HA_UPLOADS = [
   {id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, upload_name: 'Upload A', stage: 'researched', updated_at: '2026-08-01T00:00:00Z', summary: {}},
   {id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, upload_name: 'Upload B', stage: 'researched', updated_at: '2026-08-01T00:00:00Z', summary: {}},
   {id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, upload_name: 'Upload Org', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}},
-  {id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, upload_name: 'Upload Inactive Member', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}}
+  {id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, upload_name: 'Upload Inactive Member', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}},
+  {id: FIXTURES.uploadLegacy, user_id: FIXTURES.userIdLegacy, upload_name: 'Upload Legacy', stage: 'researched', updated_at: '2026-08-02T00:00:00Z', summary: {}}
 ];
 const HA_ACCOUNTS = [
   {id: 'acct-a1', upload_id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, account_name: 'A Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'},
   {id: 'acct-b1', upload_id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, account_name: 'B Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'},
   {id: 'acct-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'},
-  {id: 'acct-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'}
+  {id: 'acct-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'},
+  {id: 'acct-legacy1', upload_id: FIXTURES.uploadLegacy, user_id: FIXTURES.userIdLegacy, account_name: 'New Hope Network', industry: 'Test', raw_data: {}, metrics: {}, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'}
 ];
 const HA_SIGNALS = [
   {id: 'sig-a1', upload_id: FIXTURES.uploadA, user_id: FIXTURES.userIdA, account_name: 'A Account', signal_type: 'Hiring', title: 'A signal', confidence: 70, first_seen_at: '2026-08-01T00:00:00Z', last_seen_at: '2026-08-01T00:00:00Z', payload: {}},
   {id: 'sig-b1', upload_id: FIXTURES.uploadB, user_id: FIXTURES.userIdB, account_name: 'B Account', signal_type: 'Award', title: 'B signal', confidence: 70, first_seen_at: '2026-08-01T00:00:00Z', last_seen_at: '2026-08-01T00:00:00Z', payload: {}},
   {id: 'sig-org1', upload_id: FIXTURES.uploadOrg, user_id: FIXTURES.userIdC, account_name: 'Org Account', signal_type: 'Expansion', title: 'Org signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}},
-  {id: 'sig-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', signal_type: 'Award', title: 'Inactive member signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}}
+  {id: 'sig-inactive1', upload_id: FIXTURES.uploadInactive, user_id: FIXTURES.userIdD, account_name: 'Inactive Member Account', signal_type: 'Award', title: 'Inactive member signal', confidence: 70, first_seen_at: '2026-08-02T00:00:00Z', last_seen_at: '2026-08-02T00:00:00Z', payload: {}},
+  // QA round 2, item 1: a genuinely legacy row -- exactly the New Hope
+  // Network "Natural Products Expo West 2023" shape -- persisted before
+  // actionabilityStatus/eventCategory existed. first_seen_at is deliberately
+  // "now" (well inside the 7-day Newly Detected window) so this test proves
+  // the exclusion comes from actionability classification, not merely from
+  // being old.
+  {
+    id: 'sig-legacy1', upload_id: FIXTURES.uploadLegacy, user_id: FIXTURES.userIdLegacy, account_name: 'New Hope Network',
+    signal_type: 'Event', title: 'Natural Products Expo West 2023', confidence: 85,
+    first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
+    payload: {
+      accountName: 'New Hope Network',
+      signalTitle: 'Natural Products Expo West 2023',
+      title: 'Natural Products Expo West 2023',
+      concreteTrigger: 'Natural Products Expo West 2023 exhibitor booth',
+      concrete_trigger: 'Natural Products Expo West 2023 exhibitor booth',
+      canonicalEventType: 'EVENT_TRADE_SHOW',
+      businessContext: 'New Hope Network exhibited at Natural Products Expo West 2023.',
+      eventDate: '2023-03-10',
+      event_date: '2023-03-10',
+      publishedDate: '2023-03-10',
+      publicationDate: '2023-03-10',
+      sourceUrl: 'https://example.com/expo-west-2023'
+      // Deliberately NO actionabilityStatus/eventCategory -- the exact
+      // legacy shape.
+    }
+  }
 ];
 
 // ===========================================================================
@@ -434,6 +475,28 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     assert(res._status === 404, `13) ordinary member requesting the inactive member's upload: returns 404 (got ${res._status})`);
+  }
+
+  // =========================================================================
+  // 14) QA round 2, item 1: a legacy signal (no stored actionabilityStatus)
+  //     is retained/visible in the signals list, is absent from
+  //     "Newly Detected" despite a first_seen_at inside the 7-day window,
+  //     and carries a freshly-computed stale classification.
+  // =========================================================================
+  {
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({token: FIXTURES.authTokenLegacy, query: {}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 200, `14) legacy-signal user's dashboard request succeeds (got ${res._status})`);
+    const signals = res._body.signals || [];
+    const legacySignal = signals.find(s => (s.title || s.signalTitle) === 'Natural Products Expo West 2023');
+    assert(!!legacySignal, '14) the legacy Expo West 2023 signal is retained/visible in the signals list (Research Details/account history)');
+    assert(legacySignal?.actionabilityStatus?.status === 'stale', `14) the legacy signal is freshly classified as stale, evaluated in the current year (got status "${legacySignal?.actionabilityStatus?.status}")`);
+    assert(legacySignal?.actionabilityStatus?.isPriorityEligible === false, '14) the legacy signal is classified not priority-eligible');
+    const newThisWeekTitles = (res._body.newThisWeek || []).map(o => o.signalTitle || o.signalSummary);
+    assert(!newThisWeekTitles.includes('Natural Products Expo West 2023'), `14) the legacy signal is absent from "Newly Detected" despite a first_seen_at inside the 7-day window -- exclusion comes from actionability, not recency (got: ${JSON.stringify(newThisWeekTitles)})`);
   }
 
   global.fetch = originalFetch;

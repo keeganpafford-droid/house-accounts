@@ -1388,6 +1388,11 @@ function parseTrustworthyPublicationDate(dateText = '') {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// QA round 2, item 5: label text is the single canonical source for the 5
+// honest, user-facing actionability states -- Upcoming / Recent event /
+// Ongoing business change / Date unavailable / No longer current. The
+// dashboard's signalDateAndActionabilityLine() appends the actual date onto
+// this label rather than inventing separate wording.
 function computeActionability({ eventCategory = 'ongoing', eventDate = null, dateConfidence = 'unknown', publicationDate = '', now = new Date() } = {}) {
   if (eventCategory === 'event-like') {
     if (eventDate && dateConfidence !== 'unknown') {
@@ -1398,22 +1403,86 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
           return { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
         }
         if (diffDays >= -FOLLOW_UP_WINDOW_DAYS) {
-          return { status: 'recent-past', tense: 'past', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Recent — follow up' };
+          return { status: 'recent-past', tense: 'past', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Recent event' };
         }
-        return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Past event' };
+        return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'No longer current' };
       }
     }
-    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unknown' };
+    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unavailable' };
   }
   const parsedPub = parseTrustworthyPublicationDate(publicationDate);
   if (!parsedPub) {
-    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Publication date unknown' };
+    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Date unavailable' };
   }
   const ageDays = Math.round((now.getTime() - parsedPub.getTime()) / 86400000);
   if (ageDays <= ONGOING_RECENCY_CEILING_DAYS) {
-    return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Recent activity' };
+    return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Ongoing business change' };
   }
-  return { status: 'ongoing-stale', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Older activity — not current' };
+  return { status: 'ongoing-stale', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'No longer current' };
+}
+
+// QA round 2, item 1: single canonical legacy-signal normalizer. A "legacy"
+// signal is one persisted before actionabilityStatus/eventCategory existed
+// (or with only a partial/untrustworthy version of them) -- most notably
+// signals from before this whole signal-date-truth workstream, whose
+// eventDate/event_date field may itself be the OLD bug's publication-date
+// fallback rather than a real event date. This function is the ONLY place
+// that re-derives actionability for such a signal; every reader (dashboard
+// priorities feed, "Newly Detected", weekly digest eligibility, Prepare for
+// Call) consumes its output rather than re-implementing any of this logic
+// itself. It never mutates the stored row -- callers apply it to an
+// in-memory copy at read time.
+function hasTrustworthyActionabilityMetadata(payload = {}) {
+  const status = payload.actionabilityStatus;
+  return Boolean(
+    status && typeof status === 'object' &&
+    typeof status.status === 'string' && status.status &&
+    typeof status.isPriorityEligible === 'boolean' &&
+    payload.eventCategory
+  );
+}
+
+function classifyLegacySignalActionability(payload = {}) {
+  if (hasTrustworthyActionabilityMetadata(payload)) {
+    // Correctly-processed fresh signals are returned unchanged -- never
+    // reclassified or overridden.
+    return {
+      eventCategory: payload.eventCategory,
+      actionabilityStatus: payload.actionabilityStatus,
+      eventDate: payload.eventDate || payload.event_date || '',
+      eventDateConfidence: payload.eventDateConfidence || 'unknown',
+      isUpcoming: payload.actionabilityStatus.status === 'upcoming'
+    };
+  }
+  const title = clean(payload.title || payload.signalTitle || '');
+  const concreteTrigger = clean(payload.concreteTrigger || payload.concrete_trigger || '');
+  const businessContext = clean(payload.businessContext || payload.companyContext || payload.signalDetail || payload.whatChanged || '');
+  const canonicalEventType = clean(payload.canonicalEventType || payload.opportunityType || '') ||
+    resolveCanonicalEventType({
+      concrete_trigger: concreteTrigger, signalTitle: title,
+      whatChanged: businessContext, business_context: businessContext
+    }).eventType;
+  const eventCategory = signalEventCategory(canonicalEventType);
+  const publicationDate = clean(payload.publicationDate || payload.publishedDate || '');
+  // The legacy eventDate/event_date field is only trusted when it is NOT
+  // identical to the publication date -- that exact equality is the
+  // fingerprint of the old bug (makeSignal() used to fall back to
+  // publicationDate/publishedDate/date whenever a real event date was
+  // absent). A genuinely distinct legacy event date is still parsed and
+  // trusted, same as any other evidence text.
+  const legacyEventField = payload.event_date || payload.eventDate || '';
+  const trustworthyLegacyField = (legacyEventField && legacyEventField === publicationDate) ? '' : legacyEventField;
+  const { eventDate, dateConfidence } = resolveSignalEventDate(
+    { event_date: trustworthyLegacyField }, concreteTrigger, title, businessContext, eventCategory
+  );
+  const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
+  return {
+    eventCategory,
+    actionabilityStatus,
+    eventDate: eventDate || '',
+    eventDateConfidence: dateConfidence,
+    isUpcoming: actionabilityStatus.status === 'upcoming'
+  };
 }
 
 function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '', ground = {}) {
@@ -2452,5 +2521,6 @@ export {
   makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic,
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
-  salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES
+  salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES,
+  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability
 };

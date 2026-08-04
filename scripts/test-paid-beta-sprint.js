@@ -17,7 +17,8 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import {
   signalEventCategory, resolveSignalEventDate, computeActionability,
-  oneHistoricalOrderFact, salesReadyOpener, salesReadyWhy, makeSignal, EVENT_LIKE_TYPES
+  oneHistoricalOrderFact, salesReadyOpener, salesReadyWhy, makeSignal, EVENT_LIKE_TYPES,
+  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability
 } from '../api/research-batch.js';
 
 let failures = 0;
@@ -202,6 +203,73 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(madeSignal.eventDate === '' || madeSignal.eventDate !== madeSignal.publishedDate, 'event date is never silently set to the publication date merely because no real event date exists -- the two remain genuinely distinct fields');
 }
 
+// ---------------------------------------------------------------------------
+// QA round 2, item 1: classifyLegacySignalActionability() -- the single
+// canonical, backward-compatible normalizer for signals persisted before
+// actionabilityStatus/eventCategory existed. Required coverage items 1, 7,
+// 8, 9.
+// ---------------------------------------------------------------------------
+{
+  // Required coverage 1: the exact New Hope Network "Natural Products Expo
+  // West 2023" shape -- old-style payload with NO actionabilityStatus, and
+  // eventDate identical to publishedDate (the old publication-date-fallback
+  // bug) -- evaluated in the current year, must classify stale.
+  const legacyExpoWest = {
+    accountName: 'New Hope Network', signalTitle: 'Natural Products Expo West 2023', title: 'Natural Products Expo West 2023',
+    concreteTrigger: 'Natural Products Expo West 2023 exhibitor booth', concrete_trigger: 'Natural Products Expo West 2023 exhibitor booth',
+    canonicalEventType: 'EVENT_TRADE_SHOW',
+    businessContext: 'New Hope Network exhibited at Natural Products Expo West 2023.',
+    eventDate: '2023-03-10', event_date: '2023-03-10', publishedDate: '2023-03-10', publicationDate: '2023-03-10',
+    sourceUrl: 'https://example.com/expo-west-2023'
+  };
+  assert(hasTrustworthyActionabilityMetadata(legacyExpoWest) === false, 'a payload with no actionabilityStatus at all is correctly identified as legacy');
+  const result = classifyLegacySignalActionability(legacyExpoWest);
+  assert(result.eventCategory === 'event-like', 'required coverage 1: the legacy Expo West signal is classified event-like from its canonicalEventType');
+  assert(result.actionabilityStatus.status === 'stale', `required coverage 1: the legacy Expo West signal, evaluated in the current year, is classified stale (got "${result.actionabilityStatus.status}")`);
+  assert(result.actionabilityStatus.isPriorityEligible === false && result.actionabilityStatus.excludeFromPriorities === true, 'required coverage 1: the legacy Expo West signal is excluded from priority/digest eligibility');
+  assert(result.isUpcoming === false, 'required coverage 1: the legacy Expo West signal is never flagged isUpcoming');
+}
+{
+  // Required coverage 7: a legacy undated webinar -- Date unavailable,
+  // detail-only, never stale and never upcoming.
+  const legacyWebinar = {
+    accountName: 'HPGR', signalTitle: 'HPGR HRCe product webinar', title: 'HPGR HRCe product webinar',
+    concreteTrigger: 'HPGR HRCe product webinar', canonicalEventType: 'EVENT_CONFERENCE',
+    businessContext: 'HPGR is promoting a product webinar, no date visible.',
+    sourceUrl: 'https://example.com/hpgr-webinar'
+  };
+  const result = classifyLegacySignalActionability(legacyWebinar);
+  assert(result.actionabilityStatus.status === 'unknown-date', `required coverage 7: a legacy undated webinar is classified "unknown-date"/Date unavailable, not stale (got "${result.actionabilityStatus.status}")`);
+  assert(result.actionabilityStatus.isPriorityEligible === false, 'required coverage 7: a legacy undated webinar is not priority eligible');
+  assert(result.actionabilityStatus.label === 'Date unavailable', 'required coverage 7: the label reads "Date unavailable"');
+}
+{
+  // Required coverage 8: a legacy ongoing signal published more than 180
+  // days ago is detail-only.
+  const oldPublished = new Date(Date.now() - 400 * 86400000).toISOString();
+  const legacyOldHiring = {
+    accountName: 'Acme Corp', signalTitle: 'Acme is hiring field marketing coordinators', title: 'Acme is hiring field marketing coordinators',
+    concreteTrigger: 'hiring field marketing coordinators', canonicalEventType: 'HIRING_ACTIVITY',
+    businessContext: 'Acme is actively hiring for its marketing team.',
+    publishedDate: oldPublished, publicationDate: oldPublished, eventDate: oldPublished, event_date: oldPublished,
+    sourceUrl: 'https://example.com/acme-hiring'
+  };
+  const result = classifyLegacySignalActionability(legacyOldHiring);
+  assert(result.eventCategory === 'ongoing', 'required coverage 8: hiring is classified ongoing');
+  assert(result.actionabilityStatus.status === 'ongoing-stale', `required coverage 8: a legacy hiring signal published >180 days ago is classified "ongoing-stale" (got "${result.actionabilityStatus.status}")`);
+  assert(result.actionabilityStatus.isPriorityEligible === false, 'required coverage 8: the old legacy hiring signal is not priority eligible');
+}
+{
+  // Required coverage 9: a fresh signal with valid, trustworthy new
+  // metadata is passed through unchanged -- never reclassified.
+  const freshStatus = { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
+  const freshSignal = { eventCategory: 'event-like', actionabilityStatus: freshStatus, eventDate: '2027-01-01', eventDateConfidence: 'exact' };
+  assert(hasTrustworthyActionabilityMetadata(freshSignal) === true, 'required coverage 9: a signal with a complete actionabilityStatus/eventCategory is recognized as trustworthy, not legacy');
+  const result = classifyLegacySignalActionability(freshSignal);
+  assert(result.actionabilityStatus === freshStatus, 'required coverage 9: a fresh signal\'s own actionabilityStatus object is returned verbatim, never recomputed/overridden');
+  assert(result.eventDate === '2027-01-01' && result.eventDateConfidence === 'exact', 'required coverage 9: a fresh signal\'s own eventDate/eventDateConfidence are preserved unchanged');
+}
+
 // ===========================================================================
 // Section A2 — Priority 2: grounded outreach (real research-batch.js exports)
 // ===========================================================================
@@ -274,14 +342,34 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // evidenceSourceLabel, findAccountForOpp, realPriorCategories,
 // structuredEvidenceRows, formatShortDate, signalDateAndActionabilityLine,
 // renderSuggestedContactCompact/Primary/Meta,
-// renderVerifiedOpportunitySection, renderAccountContextSection,
-// renderSupportingResearchDetails, renderRepOpportunityCard,
-// renderSingleVerifiedSignal, renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3294, 3921, 'function confidenceLabel(');
+// renderVerifiedOpportunitySection, accountContextFallbackMessage,
+// renderAccountContextSection, renderSupportingResearchDetails,
+// renderRepOpportunityCard, renderSingleVerifiedSignal,
+// renderVerifiedSignals, isSignalPriorityEligible.
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3437, 4081, 'function confidenceLabel(');
 
-// Covers: verifiedSignalDedupeKey, dedupeVerifiedSignals -- dependency of
-// renderVerifiedSignals() in CARD_AND_MODAL_BLOCK above.
-const VERIFIED_SIGNALS_DEDUPE_BLOCK = extractBlock('verified-signals-dedupe', 2655, 2674, 'function verifiedSignalDedupeKey(');
+// QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
+// departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
+// likelySuggestedContact, likelyKnownBuyer, opportunityDedupeKey, the new
+// event-level dedup helpers (significantTitleTokens, titleTokenOverlapRatio,
+// relatedEventTypes, opportunitiesLikelySameInitiative,
+// clusterBusinessSignalOpportunities, sourceStrengthScore,
+// initiativeCandidateRank, compareInitiativeCandidates,
+// mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
+// dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
+// buyingConversationLabel, suggestedIntroductionPath.
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2821, 'function cleanOpportunityToken(');
+
+// QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
+// cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
+// groundedDepartmentForOpportunity, groundedInitiativeTitle,
+// window.createSalesPlayPanel (defined but never invoked by these tests --
+// its own further dependencies are irrelevant as inert, uncalled code),
+// initiativeLeadIn, ownerAskPhrase, ideaOfferPhrase, linkedinMessageForOpp,
+// buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
+// ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
+// questionsForSignal, subjectRationale, inferSalesPlaySignalType.
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5461, 6209, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -289,15 +377,14 @@ const VERIFIED_SIGNALS_DEDUPE_BLOCK = extractBlock('verified-signals-dedupe', 26
 // calculateOpportunityScore, assignOpportunityScore, getOpportunityScore,
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
-// prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary,
-// renderWeeklyPrioritiesFeed.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6083, 6521, 'function normalizeSignalLayerType(');
+// prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6326, 6764, 'function normalizeSignalLayerType(');
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2370, 2375, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2593, 2596, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7089, 7092, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5202, 5204, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5207, 5209, 'function clampScore(');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7332, 7335, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5376, 5378, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5381, 5383, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -334,8 +421,9 @@ function makeSandbox(){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
-    VERIFIED_SIGNALS_DEDUPE_BLOCK,
+    DEDUPE_AND_IDENTITY_BLOCK,
     CARD_AND_MODAL_BLOCK,
+    SALES_PLAY_BLOCK,
     SCORING_AND_TIMEBOX_BLOCK
   ].join('\n\n');
   new vm.Script(fullSource, { filename: 'dashboard-paid-beta-extract.js' }).runInContext(sandbox);
@@ -586,6 +674,214 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
 
   const researchDetailsHtml = sandbox.renderSupportingResearchDetails(opp);
   assert(/Suggested merchandise categories/.test(researchDetailsHtml) && researchDetailsHtml.includes('Executive Gifts'), 'reconciliation item 5: Suggested merchandise categories remains visible in Research Details, clearly labeled as inferred, independent of whether real order history exists');
+}
+
+// ---------------------------------------------------------------------------
+// QA round 2, item 2 (required coverage 10-12): event-level dedup collapses
+// the L.L.Bean flagship-store variants into one initiative, retains useful
+// supporting evidence, and leaves a genuinely distinct event untouched.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const variants = [
+    {
+      account: 'L.L.Bean', isVerifiedSignalOpportunity: true, opportunityType: 'RENOVATION_COMPLETION',
+      signalTitle: 'Multi-Year Investment in Flagship Store', signalSummary: 'L.L.Bean completes a multi-year investment in its flagship store.',
+      sourceUrl: 'https://www.pressherald.com/llbean-flagship-1', cleanSourceName: 'Press Herald',
+      publishedDate: '2026-06-01', confidenceScore: 70
+    },
+    {
+      account: 'L.L.Bean', isVerifiedSignalOpportunity: true, opportunityType: 'RENOVATION_COMPLETION',
+      signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store',
+      signalSummary: 'L.L.Bean is investing more than $50 million to reimagine the flagship store in Freeport, with new employee and customer experiences planned.',
+      sourceUrl: 'https://www.pressherald.com/llbean-flagship-1', cleanSourceName: 'Press Herald',
+      publishedDate: '2026-06-01', confidenceScore: 88, conversationStarter: 'Saw the $50M+ Freeport flagship investment.',
+      recommendedBuyingTeam: ['Marketing']
+    },
+    {
+      account: 'L.L.Bean', isVerifiedSignalOpportunity: true, opportunityType: 'LOCATION_REOPENING',
+      signalTitle: 'Flagship Store Reopening in Freeport', signalSummary: 'L.L.Bean flagship store reopening after a significant renovation in Freeport, Maine.',
+      sourceUrl: 'https://www.pressherald.com/llbean-flagship-2', cleanSourceName: 'Press Herald',
+      publishedDate: '2026-06-03', confidenceScore: 75
+    },
+    {
+      account: 'L.L.Bean', isVerifiedSignalOpportunity: true, opportunityType: 'LOCATION_REOPENING',
+      signalTitle: 'L.L.Bean flagship reopening after a significant renovation',
+      signalSummary: 'The flagship store reopened after a significant renovation, part of the broader Freeport investment.',
+      sourceUrl: 'https://www.bangordailynews.com/llbean-flagship-reopens', cleanSourceName: 'Bangor Daily News',
+      publishedDate: '2026-06-05', confidenceScore: 65
+    }
+  ];
+  const distinctEvent = {
+    account: 'L.L.Bean', isVerifiedSignalOpportunity: true, opportunityType: 'HIRING_ACTIVITY',
+    signalTitle: 'L.L.Bean is hiring seasonal warehouse staff', signalSummary: 'L.L.Bean posted openings for seasonal warehouse staff.',
+    sourceUrl: 'https://www.example.com/llbean-hiring', cleanSourceName: 'Example News',
+    publishedDate: '2026-01-15', confidenceScore: 60
+  };
+
+  const deduped = sandbox.dedupeOpportunities([...variants, distinctEvent]);
+  const llbeanFlagshipCards = deduped.filter(o => o.account === 'L.L.Bean' && /flagship|investment|renovation|reopening/i.test(`${o.signalTitle} ${o.signalSummary}`));
+  assert(llbeanFlagshipCards.length === 1, `required coverage 10: only one L.L.Bean flagship renovation/reopening initiative is rendered, not one per AI-worded variant (got ${llbeanFlagshipCards.length}: ${JSON.stringify(llbeanFlagshipCards.map(o=>o.signalTitle))})`);
+
+  const winner = llbeanFlagshipCards[0];
+  assert(winner.signalTitle === 'L.L.Bean investing more than $50 million to reimagine the flagship store', `required coverage 10: the surviving candidate is the strongest one (most specific description, real conversationStarter/recommendedBuyingTeam) (got: "${winner.signalTitle}")`);
+  assert(Array.isArray(winner.additionalSources) && winner.additionalSources.length >= 1, `required coverage 11: supporting evidence from the merged-away variants survives as additionalSources on the winner (got: ${JSON.stringify(winner.additionalSources)})`);
+  assert(winner.additionalSources.some(s => /bangordailynews/i.test(s.url || '')), 'required coverage 11: the distinct-domain Bangor Daily News source specifically survives dedup, merged onto the winner');
+  assert(winner.mergedDuplicateCount === 3, `required coverage 10: the winner records how many duplicate variants were merged away (got ${winner.mergedDuplicateCount})`);
+
+  const distinctCard = deduped.find(o => o.account === 'L.L.Bean' && o.signalTitle === 'L.L.Bean is hiring seasonal warehouse staff');
+  assert(!!distinctCard, 'required coverage 12: a genuinely unrelated L.L.Bean event (a hiring signal, different type/source/date) remains a separate opportunity, not collapsed into the flagship initiative');
+  assert(deduped.filter(o => o.account === 'L.L.Bean').length === 2, `required coverage 12: exactly two distinct L.L.Bean opportunities remain overall -- the merged flagship initiative and the unrelated hiring signal (got ${deduped.filter(o => o.account === 'L.L.Bean').length})`);
+}
+{
+  // Simple title equality alone must never be the ONLY duplicate check --
+  // two DIFFERENT companies with coincidentally similar titles must never
+  // merge into each other.
+  const sandbox = makeSandbox();
+  const a = { account: 'Acme Corp', isVerifiedSignalOpportunity: true, opportunityType: 'RENOVATION_COMPLETION', signalTitle: 'Flagship store reopening', sourceUrl: 'https://example.com/acme-reopen', publishedDate: '2026-06-01', confidenceScore: 70 };
+  const b = { account: 'Beta Retail', isVerifiedSignalOpportunity: true, opportunityType: 'RENOVATION_COMPLETION', signalTitle: 'Flagship store reopening', sourceUrl: 'https://example.com/beta-reopen', publishedDate: '2026-06-01', confidenceScore: 70 };
+  const deduped = sandbox.dedupeOpportunities([a, b]);
+  assert(deduped.length === 2, 'different accounts with identical titles are never merged -- account identity is always required, title equality alone is never sufficient');
+}
+
+// ---------------------------------------------------------------------------
+// QA round 2, item 3 (required coverage 13-14): recommended department/Best
+// Next Move/Questions to Ask reflect the real initiative and recommended
+// buying team -- never the inferred merchandise category.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // recommendedBuyingTeam says Marketing; the only promo-category evidence
+  // is "Apparel" -- department must come from the former, never the latter.
+  const opp = {
+    account: 'L.L.Bean', signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store',
+    recommendedBuyingTeam: ['Marketing'], commonPromoCategories: ['Apparel'], suggestedProducts: ['Apparel']
+  };
+  const department = sandbox.groundedDepartmentForOpportunity(opp);
+  assert(department === 'Marketing', `required coverage 13: groundedDepartmentForOpportunity() returns the real recommendedBuyingTeam ("Marketing"), never the inferred "Apparel" category (got: "${department}")`);
+  assert(department !== 'Apparel', 'required coverage 13: "Apparel" (an inferred merchandise category) never becomes the assumed responsible department');
+
+  const initiativeTitle = sandbox.groundedInitiativeTitle(opp);
+  assert(initiativeTitle.includes('$50 million') && initiativeTitle.includes('flagship'), `required coverage 14: groundedInitiativeTitle() returns the exact surfaced initiative (got: "${initiativeTitle}")`);
+
+  const play = sandbox.buildConciseSalesPlay({
+    account: 'L.L.Bean', firstName: 'there', mode: 'Cold', reasonTitle: initiativeTitle, whyNow: '',
+    category: 'apparel', signalType: 'expansion', department, initiativeTitle, isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false
+  });
+  assert(play.bestNextMove.includes('Marketing'), `required coverage 14: Best Next Move references the real department ("Marketing"), not the category (got: "${play.bestNextMove}")`);
+  assert(!/apparel/i.test(play.bestNextMove), `required coverage 14: Best Next Move never asks about "apparel" as if it were the responsible department (got: "${play.bestNextMove}")`);
+  assert(play.bestNextMove.includes('flagship') || play.bestNextMove.includes('$50 million'), `required coverage 14: Best Next Move references the exact initiative (got: "${play.bestNextMove}")`);
+  assert(play.questionsToAsk.some(q => q.includes('Marketing')), `required coverage 14: Questions to Ask reference the real department (got: ${JSON.stringify(play.questionsToAsk)})`);
+}
+{
+  // Separate event types produce appropriately different contact guidance --
+  // a hiring signal's department/question differs from an expansion
+  // signal's, each grounded in ITS OWN recommendedBuyingTeam.
+  const sandbox = makeSandbox();
+  const hiringOpp = { account: 'Acme Corp', signalTitle: 'Acme is hiring field marketing coordinators', recommendedBuyingTeam: ['HR / People'] };
+  const expansionOpp = { account: 'Acme Corp', signalTitle: 'Acme opens new Richmond distribution center', recommendedBuyingTeam: ['Operations'] };
+  const hiringDept = sandbox.groundedDepartmentForOpportunity(hiringOpp);
+  const expansionDept = sandbox.groundedDepartmentForOpportunity(expansionOpp);
+  assert(hiringDept === 'HR / People' && expansionDept === 'Operations', `required coverage 14: different signal types produce genuinely different, correctly-grounded department guidance (got hiring:"${hiringDept}", expansion:"${expansionDept}")`);
+}
+
+// ---------------------------------------------------------------------------
+// QA round 2, item 4 (required coverage 15): outreach remains low pressure,
+// references the exact initiative, and never invents needs or urgency.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const ctxA = { account: 'L.L.Bean', firstName: 'there', mode: 'Cold', category: 'apparel', signalType: 'expansion', department: 'Marketing', initiativeTitle: 'investing more than $50 million to reimagine the flagship store', isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false };
+  const ctxB = { account: 'Acme Manufacturing', firstName: 'there', mode: 'Cold', category: 'uniforms', signalType: 'hiring', department: 'HR / People', initiativeTitle: 'hiring field marketing coordinators', isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false };
+  const emailA = sandbox.buildReplyFirstEmail(ctxA);
+  const emailB = sandbox.buildReplyFirstEmail(ctxB);
+  assert(emailA !== emailB, 'required coverage 15: two different companies/signals receive meaningfully distinct outreach copy');
+  assert(emailA.includes('flagship') || emailA.includes('$50 million'), `required coverage 15: the L.L.Bean email references the exact initiative (got: "${emailA}")`);
+  assert(emailB.includes('hiring field marketing coordinators'), `required coverage 15: the Acme email references its own exact initiative (got: "${emailB}")`);
+  assert(!/discussing promotional products/i.test(emailA) && !/discussing promotional products/i.test(emailB), 'required coverage 15: outreach never defaults to "discussing promotional products" as the first ask');
+  assert(!/some event or community activity/i.test(emailA), 'required coverage 15: the exact ungrounded legacy phrase never appears');
+  assert(!/already need|already planning to buy|need to order/i.test(emailA), 'required coverage 15: outreach never claims the company already needs merchandise');
+  assert(!/\bupcoming\b/i.test(emailA), 'required coverage 15: outreach never says "upcoming" when the actionability state (ongoing, not upcoming) does not support it');
+
+  const upcomingCtx = { ...ctxA, isUpcoming: true };
+  const upcomingEmail = sandbox.buildReplyFirstEmail(upcomingCtx);
+  assert(/coming up/i.test(upcomingEmail), 'required coverage 15: "coming up" phrasing IS used when the actionability state genuinely supports it (isUpcoming:true)');
+
+  const staleCtx = { account: 'New Hope Network', firstName: 'there', mode: 'Cold', category: '', signalType: 'event', department: '', initiativeTitle: 'Natural Products Expo West 2023', isUpcoming: false, actionabilityTense: 'past', hasKnownContact: false };
+  const staleEmail = sandbox.buildReplyFirstEmail(staleCtx);
+  assert(!/\bupcoming\b/i.test(staleEmail) && !/coming up/i.test(staleEmail), `required coverage 15: a stale signal (isUpcoming:false) never produces upcoming-tense language (got: "${staleEmail}")`);
+
+  const callScript = sandbox.buildNaturalCallScript(ctxA);
+  assert(callScript.join(' ').includes('No pitch yet'), 'required coverage 15: the call script keeps the first ask low pressure, explicitly deferring the pitch');
+}
+
+// ---------------------------------------------------------------------------
+// QA round 2, item 5 (required coverage): all 5 honest actionability/date
+// states render with the correct label and date/tense treatment.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const cases = [
+    { status: { status: 'upcoming' }, eventDate: '2026-09-15', expectSubstr: 'Upcoming' },
+    { status: { status: 'recent-past' }, eventDate: '2026-07-01', expectSubstr: 'Recent event' },
+    { status: { status: 'ongoing', usesPublicationDate: true }, publicationDate: '2026-07-20', expectSubstr: 'Ongoing business change' },
+    { status: { status: 'unknown-date' }, expectSubstr: 'Date unavailable' },
+    { status: { status: 'ongoing-undated', usesPublicationDate: true }, expectSubstr: 'Date unavailable' },
+    { status: { status: 'stale' }, expectSubstr: 'No longer current' },
+    { status: { status: 'ongoing-stale', usesPublicationDate: true }, expectSubstr: 'No longer current' }
+  ];
+  for(const c of cases){
+    const opp = { actionabilityStatus: c.status, eventDate: c.eventDate || '', publicationDate: c.publicationDate || '' };
+    const line = sandbox.signalDateAndActionabilityLine(opp);
+    assert(line.includes(c.expectSubstr), `status "${c.status.status}" renders with the expected honest label (expected to include "${c.expectSubstr}", got "${line}")`);
+  }
+  // Never fabricates a date, never labels a publication date as an event
+  // date, never uses discovery time for freshness.
+  const noDateOpp = { actionabilityStatus: { status: 'upcoming' }, eventDate: '' };
+  assert(sandbox.signalDateAndActionabilityLine(noDateOpp) === 'Upcoming', 'an upcoming signal with no real date string still never fabricates one -- shows the bare label only');
+  const ongoingOpp = { actionabilityStatus: { status: 'ongoing', usesPublicationDate: true }, eventDate: '2026-01-01', publicationDate: '2026-07-20' };
+  assert(!sandbox.signalDateAndActionabilityLine(ongoingOpp).includes('Upcoming'), 'an ongoing business-change signal is never labeled as having an event date -- only its publication date is shown');
+}
+
+// ---------------------------------------------------------------------------
+// QA round 2, item 6 (required coverage 16): Account Context never claims
+// uploaded contact data when none exists, and correctly distinguishes all 4
+// required states.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // State: no order history, no usable uploaded contact, no public contact.
+  sandbox.window.accountRadarAccounts = [{ name: 'No History No Contact Co', categoryTypes: new Set(), contacts: [] }];
+  const opp1 = { account: 'No History No Contact Co' };
+  const html1 = sandbox.renderAccountContextSection(opp1);
+  assert(!/you already have/i.test(html1), `required coverage 16: never claims "you already have" a relationship/contact when none exists (got: "${html1}")`);
+  assert(/no order history or usable contact/i.test(html1) && /suggested department/i.test(html1), `state (no history/no contact): honest department-only fallback message (got: "${html1}")`);
+
+  // State: no order history, no usable uploaded contact, but a public
+  // contact WAS discovered.
+  const opp1b = { account: 'No History No Contact Co', suggestedContactDetails: { name: 'Jamie Rivera' } };
+  const html1b = sandbox.renderAccountContextSection(opp1b);
+  assert(/publicly discovered contact/i.test(html1b), `state (no history/no contact, public contact found): honest message names the public contact source (got: "${html1b}")`);
+
+  // State: no order history, but a real usable uploaded contact exists.
+  sandbox.window.accountRadarAccounts = [{ name: 'Contact No History Co', categoryTypes: new Set(), contacts: [{ name: 'Jordan Lee', email: 'jordan@example.com' }] }];
+  const opp2 = { account: 'Contact No History Co' };
+  const html2 = sandbox.renderAccountContextSection(opp2);
+  assert(html2.includes('Jordan Lee'), `state (contact/no history): the real uploaded contact is shown (got: "${html2}")`);
+  assert(!/no order history or usable contact/i.test(html2), 'state (contact/no history): does not fall into the no-contact fallback message when a real contact exists');
+
+  // State: real order history, no usable uploaded contact.
+  sandbox.window.accountRadarAccounts = [{ name: 'History No Contact Co', categoryTypes: new Set(['Apparel']), orderCount: 3, contacts: [] }];
+  const opp3 = { account: 'History No Contact Co' };
+  const html3 = sandbox.renderAccountContextSection(opp3);
+  assert(/3 orders on file/.test(html3), `state (history/no contact): real order history is shown (got: "${html3}")`);
+  assert(!/Uploaded contacts/.test(html3), 'state (history/no contact): no contact row is fabricated when none exists');
+
+  // State: both real order history and a real usable uploaded contact.
+  sandbox.window.accountRadarAccounts = [{ name: 'Full History Co', categoryTypes: new Set(['Apparel']), orderCount: 5, contacts: [{ name: 'Sam Patel', email: 'sam@example.com' }] }];
+  const opp4 = { account: 'Full History Co' };
+  const html4 = sandbox.renderAccountContextSection(opp4);
+  assert(/5 orders on file/.test(html4) && html4.includes('Sam Patel'), `state (history and contact): both real order history and the real contact are shown (got: "${html4}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
