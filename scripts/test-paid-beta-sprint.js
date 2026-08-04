@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3539, 4304, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3552, 4324, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -462,7 +462,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3539, 4304, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2898, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2911, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5693, 6568, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5713, 6588, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5693, 6568, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6685, 7151, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6705, 7171, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7719, 7722, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5608, 5610, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5613, 5615, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7739, 7742, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5628, 5630, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5633, 5635, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2493, 2498, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2500, 2513, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2932, 2934, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2936, 2954, 'function renderCustomerDashboard(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2945, 2947, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2949, 2967, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -1867,6 +1867,222 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const summaryCount = match ? Number(match[1]) : -1;
   assert(summaryCount === result.displayedOpportunities.length, `acceptance 13: the displayed summary count exactly equals the number of rendered eligible cards (summary: ${summaryCount}, rendered: ${result.displayedOpportunities.length})`);
   assert(summaryCount === 1, `acceptance 13: only Sandwich Stampede (Recent event) is counted -- Aileen Graf's undated open house never inflates the summary (got ${summaryCount})`);
+}
+
+
+// ===========================================================================
+// Section F — Fifth QA correction round (narrow): complete absorption of
+// merged-cluster members whose SPECIFIC classification differs even though
+// they belong to the same RELATED_EVENT_TYPE_CLUSTERS family, and the
+// remaining ungated Conversation Starter surface (Research Details' "likely
+// conversations" preview, read directly from signal.conversationStarter
+// without going through getSuggestedOpener()/isGroundedOpener()).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// root cause 1: three real L.L.Bean flagship article titles, EACH one's
+// canonicalEventType computed by the actual production classifier
+// (resolveCanonicalEventType(), not hand-set) -- proving they land on three
+// DIFFERENT specific types (RENOVATION_COMPLETION / LOCATION_REOPENING /
+// LOCATION_EVENT_UNSPECIFIED) despite describing the same real initiative.
+// Before this round's fix, opportunitiesLikelySameInitiative()'s last branch
+// required an EXACT type match on top of 50%+ title-token overlap, so any
+// pairing among these three that lacked a shared source domain or a close
+// date (the investment article carries no event date at all) never merged.
+// ---------------------------------------------------------------------------
+{
+  const investmentType = resolveCanonicalEventType({ signalTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store' });
+  const reopeningType = resolveCanonicalEventType({ signalTitle: 'L.L.Bean flagship store to reopen this fall' });
+  const grandOpeningType = resolveCanonicalEventType({ signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026' });
+  assert(investmentType.eventType === 'RENOVATION_COMPLETION', `root cause 1: the investment article classifies RENOVATION_COMPLETION (got "${investmentType.eventType}")`);
+  assert(reopeningType.eventType === 'LOCATION_REOPENING', `root cause 1: the reopening article classifies LOCATION_REOPENING (got "${reopeningType.eventType}")`);
+  assert(grandOpeningType.eventType === 'LOCATION_EVENT_UNSPECIFIED', `root cause 1: the ambiguous "grand opening" article classifies LOCATION_EVENT_UNSPECIFIED (got "${grandOpeningType.eventType}")`);
+  assert(investmentType.eventType !== reopeningType.eventType && reopeningType.eventType !== grandOpeningType.eventType, 'root cause 1: confirms all three real articles land on three DIFFERENT specific types -- the exact-type-match requirement this round removes was the actual clustering gap');
+}
+
+// ---------------------------------------------------------------------------
+// acceptance test: rendered-output regression using these exact three
+// variants (real titles, real computed classification, no shared source
+// domain, no close/shared dates between the investment article and the
+// others) -- proving one flagship opportunity exists, it is Upcoming with
+// the September 18-20, 2026 date, it carries the investment/renovation/
+// reopening facts, and no absorbed variant remains under Additional
+// Opportunities.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const account = 'L.L.Bean';
+  const investment = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: resolveCanonicalEventType({ signalTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store' }).eventType,
+    opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store',
+    signalSummary: 'L.L.Bean is investing more than $50 million to reimagine the flagship store in Freeport, Maine',
+    sourceUrl: 'https://example.com/llbean-50-million-investment', cleanSourceName: 'Example Business News',
+    recommendedBuyingTeam: ['Marketing'], confidence: 78,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, label: 'Ongoing business change' }
+  };
+  const reopening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: resolveCanonicalEventType({ signalTitle: 'L.L.Bean flagship store to reopen this fall' }).eventType,
+    opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: 'L.L.Bean flagship store to reopen this fall',
+    signalSummary: 'L.L.Bean flagship store in Freeport, Maine to reopen this fall',
+    sourceUrl: 'https://www.bangordailynews.com/llbean-flagship-reopens-fall', cleanSourceName: 'Bangor Daily News',
+    confidence: 74,
+    actionabilityStatus: { status: 'unknown-date', isPriorityEligible: false, excludeFromPriorities: true, label: 'Date unavailable' }
+  };
+  const grandOpening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: resolveCanonicalEventType({ signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026' }).eventType,
+    opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    signalSummary: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026 in Freeport, Maine',
+    sourceUrl: 'https://example.com/llbean-grand-opening-sept-2026', cleanSourceName: 'Portland Press Herald',
+    confidence: 88, eventDate: '2026-09-18', event_date: '2026-09-18', eventDateDisplay: 'September 18–20, 2026', eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' }
+  };
+  const deduped = sandbox.dedupeOpportunities([investment, reopening, grandOpening]);
+  assert(deduped.length === 1, `acceptance: the investment/reopening/grand-opening articles (three different specific types, same related-cluster family) merge into exactly one opportunity (got ${deduped.length})`);
+  const winner = deduped[0];
+  assert(winner.actionabilityStatus?.status === 'upcoming', `acceptance: the merged flagship opportunity is Upcoming, inheriting the grand-opening variant's real date (got "${winner.actionabilityStatus?.status}")`);
+  assert(winner.eventDateDisplay === 'September 18–20, 2026', `acceptance: the merged opportunity carries the September 18-20, 2026 date range (got "${winner.eventDateDisplay}")`);
+  const evidenceText = JSON.stringify(winner.evidence || []);
+  assert(evidenceText.includes('50 million') || evidenceText.includes('investing'), `acceptance: the merged opportunity retains the $50 million investment fact (got: ${evidenceText})`);
+  assert(evidenceText.includes('reopen'), `acceptance: the merged opportunity retains the reopening fact (got: ${evidenceText})`);
+  assert(evidenceText.includes('grand opening') || evidenceText.includes('September'), `acceptance: the merged opportunity retains the grand-opening/September fact (got: ${evidenceText})`);
+  const investmentStillSeparate = deduped.some(o => o !== winner && /50 million/i.test(o.signalTitle || ''));
+  assert(!investmentStillSeparate, 'acceptance: the $50 million investment variant does not survive as a separate Additional Opportunity');
+  assert(winner.mergedDuplicateCount === 2, `acceptance: the winner records exactly 2 absorbed variants (got ${winner.mergedDuplicateCount})`);
+
+  // Distinct, genuinely unrelated L.L.Bean initiatives must remain separate
+  // even with this looser type-family matching -- a hiring signal shares
+  // neither the type family nor meaningful title overlap.
+  const unrelatedHiring = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: 'HIRING_ACTIVITY', opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: 'L.L.Bean is hiring seasonal warehouse staff', signalSummary: 'L.L.Bean is hiring seasonal warehouse staff',
+    sourceUrl: 'https://example.com/llbean-hiring-3', cleanSourceName: 'Different Source', confidence: 60,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, label: 'Ongoing business change' }
+  };
+  const dedupedWithUnrelated = sandbox.dedupeOpportunities([investment, reopening, grandOpening, unrelatedHiring]);
+  assert(dedupedWithUnrelated.length === 2, `acceptance: the unrelated hiring signal remains a separate opportunity, not folded into the flagship initiative (got ${dedupedWithUnrelated.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// root cause 2 / acceptance: Research Details' "likely conversations"
+// preview (renderSingleVerifiedSignal(), part of renderVerifiedSignals())
+// read signal.conversationStarter directly, bypassing getSuggestedOpener()/
+// isGroundedOpener() entirely -- so pitchy, truncated, or duplicate-account
+// legacy copy could still surface there even after the dashboard card and
+// Prepare for Call panel were both correctly gated in the prior round. Fixed
+// by routing it through the SAME shared selector, getSuggestedOpener().
+// Every exact phrase reported in Preview is proven rejected end-to-end
+// through the real render function, not just through isGroundedOpener()
+// directly.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const badPhrases = [
+    'Anything coming up that we should be thinking about?',
+    'Would you be interested in discussing promotional products for your upcoming event?',
+    'Would you be interested in discussing custom merchandise options with your team?',
+    'Can we discuss this further?',
+    'Can we chat about this?',
+    'Saw L.L.Bean is investing in the flagship store, coming up at L.L.Bean.',
+    'Saw L.L.Bean is reopening with a grand....'
+  ];
+  for(const phrase of badPhrases){
+    const signal = {
+      account: 'L.L.Bean', isReal: true, sourceUrl: 'https://example.com/llbean-legacy',
+      signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+      signalDetail: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+      conversationStarter: phrase, confidenceScore: 80, confidence: 80
+    };
+    const html = sandbox.renderSingleVerifiedSignal(signal);
+    assert(!html.includes(phrase), `root cause 2: renderSingleVerifiedSignal() never renders the ungated legacy phrase verbatim (checked: "${phrase}")`);
+  }
+  // Sanity: a strong, grounded, low-pressure persisted starter IS preserved
+  // through this same render path (the gate rejects bad copy, not all
+  // legacy copy).
+  const groundedSignal = {
+    account: 'L.L.Bean', isReal: true, sourceUrl: 'https://example.com/llbean-legacy-good',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    signalDetail: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    conversationStarter: 'Saw the Freeport flagship reopening is scheduled for September. Do you know who is leading it?',
+    confidenceScore: 80, confidence: 80
+  };
+  const goodHtml = sandbox.renderSingleVerifiedSignal(groundedSignal);
+  assert(goodHtml.includes('Do you know who is leading it?'), `root cause 2: a genuinely grounded, low-pressure persisted starter is still preserved through the same render path (got: "${goodHtml}")`);
+}
+
+// ---------------------------------------------------------------------------
+// proof: the same fixes apply to a FRESH, newly-researched signal -- built
+// with makeSignal(), the real production-bound function api/research-batch.js
+// calls after every provider run (and that api/weekly-scan.js's automated
+// scans call too), not a hand-shaped legacy fixture. Proves canonical
+// classification, initiative deduplication, actionability/priority
+// eligibility, and the render-time quality gate all apply identically to
+// output that has never touched a database row.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const account = { name: 'L.L.Bean', contacts: [] };
+
+  // Simulates two DIFFERENT provider results for the SAME real-world
+  // initiative, exactly as a live search might return -- one with an
+  // AI-declared "suggested_opener" that would still read as pitchy under
+  // this round's expanded gate.
+  const freshInvestment = makeSignal({
+    accountName: 'L.L.Bean',
+    signalTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store',
+    whatChanged: 'L.L.Bean is investing more than $50 million to reimagine the flagship store in Freeport, Maine.',
+    sourceUrl: 'https://example.com/fresh-llbean-investment',
+    suggested_opener: 'Would you be interested in discussing promotional products for your upcoming event?'
+  }, account);
+  const freshGrandOpening = makeSignal({
+    accountName: 'L.L.Bean',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    whatChanged: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026 in Freeport, Maine.',
+    sourceUrl: 'https://example.com/fresh-llbean-grand-opening'
+  }, account);
+
+  assert(!!freshInvestment && !!freshGrandOpening, 'proof: makeSignal() (the real production new-research path) returns both fresh signals');
+  assert(freshInvestment.canonicalEventType !== 'ACQUISITION', `proof: the fresh investment signal is never classified Acquisition (got "${freshInvestment.canonicalEventType}")`);
+  assert(freshGrandOpening.actionabilityStatus.status === 'upcoming', `proof: the fresh grand-opening signal is correctly Upcoming (got "${freshGrandOpening.actionabilityStatus.status}")`);
+  assert(freshGrandOpening.actionabilityStatus.isPriorityEligible === true, 'proof: the fresh Upcoming signal is priority-eligible');
+
+  // Shape both fresh signals the way signalToOpportunity() (api/get-dashboard.js)
+  // does, then run them through the SAME production dedupe/classification/
+  // quality-gate functions used above for legacy rows.
+  const toOpp = (s) => ({
+    account: s.accountName, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: s.canonicalEventType, opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: s.signalTitle || s.title, signalSummary: s.signalDetail,
+    sourceUrl: s.sourceUrl, cleanSourceName: s.cleanSourceName,
+    confidence: s.confidenceScore, recommendedBuyingTeam: s.recommendedBuyingTeam,
+    eventDate: s.eventDate, event_date: s.event_date, eventDateDisplay: s.eventDateDisplay, eventDateConfidence: s.eventDateConfidence,
+    actionabilityStatus: s.actionabilityStatus, conversationStarter: s.conversationStarter
+  });
+  const freshDeduped = sandbox.dedupeOpportunities([toOpp(freshInvestment), toOpp(freshGrandOpening)]);
+  assert(freshDeduped.length === 1, `proof: initiative deduplication merges the two fresh provider results into one opportunity, exactly as it does for legacy data (got ${freshDeduped.length})`);
+  assert(freshDeduped[0].actionabilityStatus?.status === 'upcoming', `proof: the fresh merged opportunity is Upcoming (got "${freshDeduped[0].actionabilityStatus?.status}")`);
+
+  // The fresh signal's OWN pitchy AI-declared opener is rejected by the
+  // SAME render-time gate that protects legacy rows -- the deterministic
+  // grounded fallback is used instead.
+  const freshOpener = sandbox.getSuggestedOpener(toOpp(freshInvestment));
+  assert(freshOpener !== freshInvestment.conversationStarter, 'proof: the fresh signal\'s pitchy persisted opener is rejected at render time, not trusted merely because it is brand new');
+  assert(sandbox.isGroundedOpener(freshOpener, toOpp(freshInvestment)) === true, 'proof: the deterministic fallback used for the fresh signal itself passes the quality gate');
+
+  // Legacy read path retained: classifyLegacySignalActionability() still
+  // protects an OLDER, already-persisted row the same way (see acceptance
+  // test 1 above for the full L.L.Bean legacy-boundary proof; re-verified
+  // here with a second account to confirm it is not case-specific).
+  const legacyProof = classifyLegacySignalActionability({
+    signalTitle: 'Reading Symphony received a $15,000 grant', whatChanged: 'Reading Symphony was awarded a $15,000 grant from the NEA'
+  });
+  assert(legacyProof.canonicalEventType === 'EVENT_AWARD', `proof: the legacy read path still protects older rows identically (got "${legacyProof.canonicalEventType}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

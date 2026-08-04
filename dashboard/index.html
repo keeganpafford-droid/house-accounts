@@ -2722,18 +2722,22 @@ function opportunitiesLikelySameInitiative(a, b){
   if(sameSource) return true;
   if(overlap >= 0.7) return true;
   if(overlap >= 0.5 && closeDate) return true;
-  // QA final round, item 4: an EXACT (not merely cluster-related) event-type
-  // match plus 50%+ title-token overlap is treated as the same initiative
-  // even without a close/parseable date on both sides -- this is what lets
-  // a vaguer "$50 million investment to reimagine the flagship store"
-  // article (often undated in its own right) merge with a later, more
-  // specific "grand opening scheduled for September 18-20, 2026" article
-  // about the SAME renovation. Requiring the exact type (not just cluster
-  // membership) plus real token overlap keeps this from merging two
-  // genuinely different same-type initiatives at the same account (e.g. two
-  // different store renovations), which would share the account/type but
-  // not the location-specific tokens driving the overlap.
-  if(overlap >= 0.5 && typeA && typeA === typeB) return true;
+  // Round 5 correction, item 1: 50%+ title-token overlap is treated as the
+  // same initiative even without a close/parseable date, as long as the
+  // types are already confirmed related (the relatedEventTypes() gate above
+  // -- exact match OR same RELATED_EVENT_TYPE_CLUSTERS family). Previously
+  // this branch additionally required typeA === typeB EXACTLY, which meant
+  // three genuinely-the-same L.L.Bean flagship articles classified under
+  // different specific labels within the SAME location-event family (e.g.
+  // RENOVATION_COMPLETION for the "$50 million investment" article vs
+  // LOCATION_EVENT_UNSPECIFIED for the ambiguously-worded "grand opening"
+  // article) never merged, even though relatedEventTypes() already
+  // establishes they describe the same conceptual "ribbon cutting" class of
+  // event. The account+type-family gate above, combined with 50%+ shared
+  // title tokens, is still enough to keep two genuinely different
+  // same-family initiatives (which would not share half their significant
+  // wording) apart.
+  if(overlap >= 0.5) return true;
   return false;
 }
 function clusterBusinessSignalOpportunities(items){
@@ -2788,6 +2792,15 @@ function mergeBusinessSignalInitiatives(items){
     const seenDomains = new Set([sourceDomain(winner.sourceUrl || '')].filter(Boolean));
     const extraSources = Array.isArray(winner.additionalSources) ? [...winner.additionalSources] : [];
     let mergedEvidence = Array.isArray(winner.evidence) ? [...winner.evidence] : (winner.evidence ? [winner.evidence] : []);
+    // Round 5 correction, item 1: seed the WINNER's own distinguishing fact
+    // too, not just every OTHER variant's -- previously only the loop below
+    // (over the absorbed variants) ever pushed a signalSummary/signalDetail/
+    // signalTitle fact into mergedEvidence, so a winner with no pre-existing
+    // opp.evidence array of its own (uncommon in production, where
+    // addSignalDerivedOpportunities() already seeds it, but not guaranteed)
+    // could complete the merge having silently dropped its own fact.
+    const winnerFact = cleanBusinessText(winner.signalSummary || winner.signalDetail || winner.signalTitle || '');
+    if(winnerFact && !mergedEvidence.some(e => String(e).includes(winnerFact))) mergedEvidence.push(winnerFact);
     let bestDateVariant = winner;
     let bestDateRank = MERGE_ACTIONABILITY_RANK[winner.actionabilityStatus?.status] ?? -1;
     let bestDeptVariant = (Array.isArray(winner.recommendedBuyingTeam) && winner.recommendedBuyingTeam.length) ? winner : null;
@@ -4257,9 +4270,16 @@ function renderRepOpportunityCard(opp){
 function renderSingleVerifiedSignal(signal){
   const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
   const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
+  // Round 5 correction, item 2: this "likely conversations" fallback used to
+  // read signal.conversationStarter directly -- Research Details' per-signal
+  // preview is a displayed Conversation Starter surface just like the card
+  // and Prepare for Call, so it must go through the SAME shared selector
+  // (getSuggestedOpener(), which validates via isGroundedOpener() and falls
+  // back to the grounded deterministic generator) rather than trusting
+  // whatever legacy text happens to be stored.
   const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
     ? signal.likelyConversations
-    : [signal.opportunityCategory || signal.conversationStarter || signal.whyNow || 'Relevant account conversation'];
+    : [signal.opportunityCategory || getSuggestedOpener(signal) || signal.whyNow || 'Relevant account conversation'];
   return `
     <div class="verified-signal-simple">
       <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
