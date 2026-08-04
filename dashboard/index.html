@@ -3649,6 +3649,12 @@ function signalDateAndActionabilityLine(opp){
   const status = opp.actionabilityStatus || {};
   const eventDate = opp.eventDate || opp.event_date || '';
   const pubDate = opp.publicationDate || opp.publishedDate || '';
+  // Reconciliation item 2: an ongoing signal whose publication date is past
+  // the recency ceiling (or missing/untrustworthy) is retained but must
+  // read as no longer current, never as a plain "Source published ..." line
+  // indistinguishable from a fresh one.
+  if(status.status === 'ongoing-stale') return pubDate ? `Source published ${formatShortDate(pubDate)} — no longer current` : 'No longer current';
+  if(status.status === 'ongoing-undated') return 'Publication date unknown';
   if(status.usesPublicationDate) return pubDate ? `Source published ${formatShortDate(pubDate)}` : '';
   if(status.status === 'upcoming') return eventDate ? `Upcoming — ${formatShortDate(eventDate)}` : 'Upcoming';
   if(status.status === 'recent-past') return eventDate ? `Recent — ${formatShortDate(eventDate)} (follow up)` : 'Recent (follow up)';
@@ -3877,6 +3883,7 @@ function renderSingleVerifiedSignal(signal){
       <div class="verified-signal-meta">
         ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
       </div>
+      ${!isSignalPriorityEligible(signal) ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
       <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
       <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
@@ -3905,9 +3912,17 @@ function renderVerifiedSignals(signals){
   return primaryHtml + lowerHtml;
 }
 
+// Reconciliation item 1/2: a signal that is retained (not deleted) but is
+// stale, undated, or past the ongoing-recency ceiling must not become a
+// priority opportunity card -- isPriorityEligible defaults true only for
+// legacy signals persisted before actionabilityStatus existed.
+function isSignalPriorityEligible(signal){
+  return signal?.actionabilityStatus?.isPriorityEligible !== false;
+}
+
 function addSignalDerivedOpportunities(account, signals){
   const existing = new Set((account.futureOpportunities || []).map(o => `${o.signalLayerType || ''}|${o.signalType || ''}|${String(o.signalTitle || o.opportunity || '').toLowerCase().slice(0,80)}`));
-  (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl).forEach(signal => {
+  (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl && isSignalPriorityEligible(signal)).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
     const products = Array.isArray(signal.likelyProducts) && signal.likelyProducts.length
@@ -6411,22 +6426,34 @@ function setActiveTimebox(timebox){
   refreshOpportunityViews();
 }
 
+// Reconciliation item 1/2: a shared, defensive filter applied at every entry
+// point into the priorities feed (This Week/Month/Quarter/Year AND the "View
+// All Opportunities" toggle), regardless of which code path constructed the
+// opportunity object -- so a stale/undated event-like signal or an
+// ongoing signal past its recency ceiling can never surface here even if it
+// arrived via a persisted-snapshot path that bypassed
+// addSignalDerivedOpportunities' own gate. It remains reachable only through
+// Research Details/account history (renderVerifiedSignals).
+function priorityEligibleOpportunities(opps){
+  return (opps || []).filter(opp => opp?.actionabilityStatus?.isPriorityEligible !== false);
+}
+
 function prepareTimeboxReasons(opps, timebox=activeTimebox){
   const config = TIMEBOX_CONFIG[timebox] || TIMEBOX_CONFIG.week;
-  const collapsed = collapseDuplicateFollowUps(opps || []);
+  const collapsed = collapseDuplicateFollowUps(priorityEligibleOpportunities(opps));
   const filtered = collapsed.filter(opp => opportunityMatchesTimebox(opp, timebox));
   const ranked = limitReasonsPerAccount(sortDailyReasons(filtered), 1);
   return ranked.slice(0, config.limit);
 }
 
 function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
-  const collapsed = collapseDuplicateFollowUps(opps || []);
+  const collapsed = collapseDuplicateFollowUps(priorityEligibleOpportunities(opps));
   const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 1);
   return ranked.slice(0, limit);
 }
 
 function prepareAllOpportunities(opps){
-  return limitReasonsPerAccount(sortDailyReasons(collapseDuplicateFollowUps(opps || [])), 1);
+  return limitReasonsPerAccount(sortDailyReasons(collapseDuplicateFollowUps(priorityEligibleOpportunities(opps))), 1);
 }
 
 function toggleWeeklyPrioritiesView(showAll){

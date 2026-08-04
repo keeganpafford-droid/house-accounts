@@ -33,8 +33,11 @@ function assert(condition, message){
 const NOW = new Date('2026-08-04T00:00:00Z');
 
 {
-  // Required test 1: Natural Products Expo West 2023 discovered in 2026 --
-  // excluded from current priorities.
+  // Required test 1 (reconciliation item 1, revised): Natural Products Expo
+  // West 2023 discovered in 2026 -- RETAINED as research history, excluded
+  // from current priorities. A valid, sourced stale signal is never deleted
+  // solely for being stale; only its actionability metadata marks it
+  // non-priority.
   const cat = signalEventCategory('EVENT_TRADE_SHOW');
   const resolved = resolveSignalEventDate(
     {}, 'Natural Products Expo West 2023 exhibitor booth', 'Natural Products Expo West 2023', 'New Hope Network exhibitor list', cat
@@ -44,11 +47,29 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(resolved.eventDate === '2023-06-15' && resolved.dateConfidence === 'approximate', 'the bare year embedded in "Expo West 2023" resolves to an approximate 2023 date, not left unknown');
   assert(actionability.status === 'stale' && actionability.excludeFromPriorities === true, 'required test 1: a trade show whose name embeds year 2023, evaluated in 2026, is excluded from current priorities');
 
-  // The full makeSignal() pipeline discards it entirely -- proven via a
-  // real raw AI-signal shape through the actual production function.
+  // The full makeSignal() pipeline -- proven via a real raw AI-signal shape
+  // through the actual production function -- RETAINS the signal (item 1)
+  // rather than discarding it, but flags it so it never surfaces as a
+  // priority or in the "Newly Detected"/digest counts.
   const raw = { accountName: 'New Hope Network', signalTitle: 'Natural Products Expo West 2023', concrete_trigger: 'Natural Products Expo West 2023 exhibitor booth', business_context: 'New Hope Network exhibited at Natural Products Expo West 2023.', sourceUrl: 'https://example.com/expo-west-2023', confidence: 85 };
   const madeSignal = makeSignal(raw, {});
-  assert(madeSignal === null, 'required test 1 (end-to-end): makeSignal() itself returns null for the stale Expo West 2023 signal -- it never becomes a displayable priority');
+  assert(madeSignal !== null, 'reconciliation item 1, sub-test 1: makeSignal() RETAINS the stale Expo West 2023 signal instead of discarding it -- a valid, sourced signal is never deleted solely for being stale');
+  assert(madeSignal.isReal === true && madeSignal.accountName === 'New Hope Network' && madeSignal.sourceUrl === 'https://example.com/expo-west-2023', 'reconciliation item 1, sub-test 4: the retained stale signal keeps its real evidence (source, account) so it remains available to Research Details/account history');
+  assert(madeSignal.actionabilityStatus.status === 'stale', 'reconciliation item 1, sub-test 1: the retained signal carries status:stale');
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false && madeSignal.actionabilityStatus.excludeFromPriorities === true, 'reconciliation item 1, sub-test 2: the retained stale signal is flagged non-priority-eligible so it is absent from This Week/Month/Quarter/Year priorities and "Newly Detected"');
+  assert(madeSignal.isUpcoming === false, 'the retained stale signal is never flagged isUpcoming');
+}
+
+{
+  // Reconciliation item 1, sub-test 5: an unknown-date webinar behaves like
+  // the stale case (retained, non-priority-eligible) but is labeled
+  // "date unknown", never "stale" and never "upcoming".
+  const raw = { accountName: 'HPGR', signalTitle: 'HPGR HRCe product webinar', concrete_trigger: 'HPGR HRCe product webinar', business_context: 'HPGR is promoting a product webinar, no date visible on the page.', sourceUrl: 'https://example.com/hpgr-webinar', confidence: 80 };
+  const madeSignal = makeSignal(raw, {});
+  assert(madeSignal !== null, 'reconciliation item 1, sub-test 5: makeSignal() retains an undated event-like signal as research detail rather than discarding it');
+  assert(madeSignal.actionabilityStatus.status === 'unknown-date', `reconciliation item 1, sub-test 5: the retained undated webinar is labeled "unknown-date", not "stale" (got: "${madeSignal.actionabilityStatus.status}")`);
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false, 'reconciliation item 1, sub-test 5: the undated webinar is not priority-eligible');
+  assert(madeSignal.isUpcoming === false, 'reconciliation item 1, sub-test 5: the undated webinar is never flagged isUpcoming');
 }
 
 {
@@ -99,13 +120,18 @@ const NOW = new Date('2026-08-04T00:00:00Z');
 }
 
 {
-  // Required test 6: a recent hiring announcement with no separate event
-  // date -- may remain actionable using publication recency.
+  // Required test 6 (reconciliation item 2, revised): a recent hiring
+  // announcement -- published within the 180-day recency ceiling -- remains
+  // actionable using publication recency. An ongoing signal's eligibility
+  // now depends on that ceiling, not merely on lacking an event date, so
+  // this test supplies a fresh publicationDate (30 days old, matching the
+  // reconciliation's own "hiring article 30 days old: eligible" scenario).
   const cat = signalEventCategory('HIRING_ACTIVITY');
   assert(cat === 'ongoing', 'hiring is classified as an ongoing business-change signal, not event-like');
   const resolved = resolveSignalEventDate({}, 'hiring initiative for field marketing coordinators', 'Acme is hiring', '', cat);
-  const actionability = computeActionability({ eventCategory: cat, eventDate: resolved.eventDate, dateConfidence: resolved.dateConfidence, now: NOW });
-  assert(actionability.status === 'ongoing' && actionability.isPriorityEligible === true, 'required test 6: a hiring signal with no event date remains actionable');
+  const recentPubDate = new Date(NOW.getTime() - 30 * 86400000).toISOString();
+  const actionability = computeActionability({ eventCategory: cat, eventDate: resolved.eventDate, dateConfidence: resolved.dateConfidence, publicationDate: recentPubDate, now: NOW });
+  assert(actionability.status === 'ongoing' && actionability.isPriorityEligible === true, 'required test 6: a hiring signal published 30 days ago remains actionable');
   assert(actionability.usesPublicationDate === true, 'required test 6: an ongoing signal is explicitly flagged as using publication-date recency, not an event date, so the UI never mislabels it');
 
   // Full makeSignal() pipeline: a recent hiring announcement is NOT
@@ -114,6 +140,56 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   const madeSignal = makeSignal(raw, {});
   assert(madeSignal !== null, 'required test 6 (end-to-end): a recent hiring signal survives makeSignal() -- ongoing signals are never excluded for lacking an event date');
   assert(madeSignal.eventCategory === 'ongoing' && madeSignal.actionabilityStatus.status === 'ongoing', 'required test 6 (end-to-end): the persisted signal carries eventCategory:ongoing and actionabilityStatus.status:ongoing');
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation item 2: a conservative 180-day recency ceiling for ongoing
+// (non-event-like) signals -- hiring, expansion, rebrand, leadership change,
+// new location, sustained growth -- so an old article can no longer surface
+// as if it were current, and discoveredAt/first_seen_at is never substituted
+// for the real source publication date.
+// ---------------------------------------------------------------------------
+{
+  // hiring article 30 days old: eligible.
+  const cat = signalEventCategory('HIRING_ACTIVITY');
+  const pub30 = new Date(NOW.getTime() - 30 * 86400000).toISOString();
+  const actionability = computeActionability({ eventCategory: cat, publicationDate: pub30, now: NOW });
+  assert(actionability.status === 'ongoing' && actionability.isPriorityEligible === true && actionability.excludeFromPriorities === false, 'reconciliation item 2: a hiring article published 30 days ago is priority eligible');
+}
+{
+  // hiring article 240 days old: retained but not priority eligible.
+  const cat = signalEventCategory('HIRING_ACTIVITY');
+  const pub240 = new Date(NOW.getTime() - 240 * 86400000).toISOString();
+  const actionability = computeActionability({ eventCategory: cat, publicationDate: pub240, now: NOW });
+  assert(actionability.status === 'ongoing-stale' && actionability.isPriorityEligible === false && actionability.excludeFromPriorities === true, `reconciliation item 2: a hiring article published 240 days ago is retained (research detail) but NOT priority eligible (got status "${actionability.status}")`);
+
+  const raw = { accountName: 'Acme Corp', signalTitle: 'Acme hired a new VP of Operations', concrete_trigger: 'hired a new VP of Operations', business_context: 'Acme announced a new VP of Operations.', sourceUrl: 'https://example.com/acme-vp-hire', confidence: 80, publicationDate: pub240 };
+  const madeSignal = makeSignal(raw, {});
+  assert(madeSignal !== null, 'reconciliation item 2: makeSignal() retains a 240-day-old ongoing signal instead of discarding it');
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false, 'reconciliation item 2: the retained 240-day-old ongoing signal is not priority eligible end-to-end');
+}
+{
+  // ongoing signal with no publication date: detail only.
+  const cat = signalEventCategory('EXPANSION_ACTIVITY');
+  const actionability = computeActionability({ eventCategory: cat, publicationDate: '', now: NOW });
+  assert(actionability.status === 'ongoing-undated' && actionability.isPriorityEligible === false, `reconciliation item 2: an ongoing signal with no publication date is detail-only, not priority eligible (got status "${actionability.status}")`);
+}
+{
+  // House Accounts discovery date cannot make an old ongoing signal current
+  // -- discoveredAt/dateFound/first_seen_at must never be substituted for
+  // the source's own publication date.
+  const cat = signalEventCategory('HIRING_ACTIVITY');
+  const oldPub = new Date(NOW.getTime() - 400 * 86400000).toISOString();
+  const actionability = computeActionability({
+    eventCategory: cat,
+    publicationDate: oldPub,
+    // A fresh discoveredAt is intentionally irrelevant input here --
+    // computeActionability() takes no discoveredAt/dateFound parameter at
+    // all, so there is no code path by which it could substitute for
+    // publicationDate.
+    now: NOW
+  });
+  assert(actionability.status === 'ongoing-stale' && actionability.isPriorityEligible === false, 'reconciliation item 2: an old publication date stays non-eligible regardless of how recently House Accounts discovered the signal');
 }
 
 {
@@ -190,16 +266,22 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-// Covers: signalLayerLabel, isRecentAccountActivity, sourceDomain, shortText,
-// parseMaybeDate, formatSignalAge, cleanBusinessText, businessSignalKind,
-// businessSuggestedOpener, getRepFriendlyWhy, isGroundedOpener,
-// getSuggestedOpener, mailtoHref, opportunityHeadline, whyThisMattersText,
-// extractHistoricalOrderCount, evidenceSourceLabel, findAccountForOpp,
-// realPriorCategories, structuredEvidenceRows, formatShortDate,
-// signalDateAndActionabilityLine, renderSuggestedContactCompact/Primary/Meta,
+// Covers: confidenceLabel, signalLayerLabel, isRecentAccountActivity,
+// sourceDomain, shortText, parseMaybeDate, formatSignalAge,
+// cleanBusinessText, businessSignalKind, businessSuggestedOpener,
+// getRepFriendlyWhy, isGroundedOpener, getSuggestedOpener, mailtoHref,
+// opportunityHeadline, whyThisMattersText, extractHistoricalOrderCount,
+// evidenceSourceLabel, findAccountForOpp, realPriorCategories,
+// structuredEvidenceRows, formatShortDate, signalDateAndActionabilityLine,
+// renderSuggestedContactCompact/Primary/Meta,
 // renderVerifiedOpportunitySection, renderAccountContextSection,
-// renderSupportingResearchDetails, renderRepOpportunityCard.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3301, 3866, 'function signalLayerLabel(');
+// renderSupportingResearchDetails, renderRepOpportunityCard,
+// renderSingleVerifiedSignal, renderVerifiedSignals, isSignalPriorityEligible.
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3294, 3921, 'function confidenceLabel(');
+
+// Covers: verifiedSignalDedupeKey, dedupeVerifiedSignals -- dependency of
+// renderVerifiedSignals() in CARD_AND_MODAL_BLOCK above.
+const VERIFIED_SIGNALS_DEDUPE_BLOCK = extractBlock('verified-signals-dedupe', 2655, 2674, 'function verifiedSignalDedupeKey(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -209,13 +291,13 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3301, 3866, 
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary,
 // renderWeeklyPrioritiesFeed.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6068, 6494, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6083, 6521, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2370, 2375, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2593, 2596, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7062, 7065, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5187, 5189, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5192, 5194, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7089, 7092, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5202, 5204, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5207, 5209, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -252,6 +334,7 @@ function makeSandbox(){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
+    VERIFIED_SIGNALS_DEDUPE_BLOCK,
     CARD_AND_MODAL_BLOCK,
     SCORING_AND_TIMEBOX_BLOCK
   ].join('\n\n');
@@ -439,6 +522,70 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
 
   const verifiedHtml = sandbox.renderVerifiedOpportunitySection(opp);
   assert(verifiedHtml.includes('Acme Corp opens new Richmond distribution center'), 'required test 13: the exact signal is preserved and shown in Verified Opportunity');
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation item 1, sub-tests 2 and 4 (dashboard side): a retained
+// non-priority-eligible signal is absent from This Week/Month/Quarter/Year
+// priorities (including the "View All Opportunities" toggle) but remains
+// visible in Research Details/account history (renderVerifiedSignals),
+// clearly labeled.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const staleOpp = {
+    account: 'New Hope Network', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/expo-west-2023',
+    signalTitle: 'Natural Products Expo West 2023', title: 'Natural Products Expo West 2023', signalDetail: 'Natural Products Expo West 2023', signalType: 'Event', isReal: true,
+    actionabilityStatus: { status: 'stale', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Past event' },
+    eventDate: '2023-06-15'
+  };
+  const eligibleOpp = {
+    account: 'Acme Corp', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/acme-hiring',
+    signalTitle: 'Acme is hiring field marketing coordinators', signalType: 'Hiring', isReal: true,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Recent activity' },
+    publishedDate: new Date(NOW.getTime() - 5 * 86400000).toISOString(), publicationDate: new Date(NOW.getTime() - 5 * 86400000).toISOString()
+  };
+
+  const allOpps = sandbox.prepareAllOpportunities([staleOpp, eligibleOpp]);
+  assert(!allOpps.some(o => o.account === 'New Hope Network'), 'reconciliation item 1, sub-test 2: a retained stale signal is absent from prepareAllOpportunities() -- including the "View All Opportunities" listing, not just the default priority view');
+  assert(allOpps.some(o => o.account === 'Acme Corp'), 'sanity: the priority-eligible signal is still present in prepareAllOpportunities()');
+
+  sandbox.__setActiveTimebox('week');
+  sandbox.__setShowAllWeeklyPriorities(false);
+  const grid = sandbox.document.getElementById('opportunitiesGrid');
+  sandbox.renderWeeklyPrioritiesFeed([staleOpp, eligibleOpp], [{ name: 'New Hope Network' }, { name: 'Acme Corp' }]);
+  assert(!grid.innerHTML.includes('Natural Products Expo West 2023'), 'reconciliation item 1, sub-test 2: the retained stale signal never renders as a priority card in the weekly priorities feed');
+
+  // Still reachable via Research Details/account history, clearly labeled.
+  const historyHtml = sandbox.renderVerifiedSignals([staleOpp, eligibleOpp]);
+  assert(historyHtml.includes('Natural Products Expo West 2023'), 'reconciliation item 1, sub-test 4: the retained stale signal remains visible in Research Details/account history (renderVerifiedSignals)');
+  assert(/no longer current|past event/i.test(historyHtml), `reconciliation item 1, sub-test 4: the retained stale signal is clearly labeled as no longer current in account history (got: "${historyHtml.slice(0, 400)}")`);
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation item 5: prove account.categoryTypes provenance -- Prior
+// Categories stays hidden when there is no real order history even though
+// AI-inferred "suggested" categories exist for the same opportunity, and
+// Suggested merchandise categories remains visible in Research Details.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // Real order-history categories are EMPTY for this account -- only
+  // inferred/suggested categories exist on the opportunity object.
+  sandbox.window.accountRadarAccounts = [
+    { name: 'Fresh Prospect Co', categoryTypes: new Set() }
+  ];
+  const opp = {
+    account: 'Fresh Prospect Co', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/fresh-prospect',
+    commonPromoCategories: ['Executive Gifts', 'Launch Kits'], recommendedBuyingTeam: ['Marketing']
+  };
+
+  assert(sandbox.realPriorCategories(opp).length === 0, 'reconciliation item 5: realPriorCategories() is empty -- it never reads commonPromoCategories/suggestedProducts as a fallback');
+  const rows = sandbox.structuredEvidenceRows(opp);
+  assert(!rows.some(r => r.label.includes('Prior categories')), 'reconciliation item 5: Prior Categories row is hidden entirely -- no real historical categories exist for this account');
+
+  const researchDetailsHtml = sandbox.renderSupportingResearchDetails(opp);
+  assert(/Suggested merchandise categories/.test(researchDetailsHtml) && researchDetailsHtml.includes('Executive Gifts'), 'reconciliation item 5: Suggested merchandise categories remains visible in Research Details, clearly labeled as inferred, independent of whether real order history exists');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

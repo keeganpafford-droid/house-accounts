@@ -1103,5 +1103,68 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
   assert(!res.body?.digest?.length, 'the response reports no digest entries for a user with zero new signals (Priority 6 test 16)');
 }
 
+// ---------------------------------------------------------------------------
+// Reconciliation item 1/2 for the paid-beta sprint: a genuinely NEW signal
+// that is retained/persisted (not discarded by makeSignal()'s actionability
+// gate -- see api/research-batch.js) but is stale/undated/past the ongoing
+// recency ceiling must still be excluded from weekly digest delivery, even
+// though it counts as a real, newly-inserted ha_signals row.
+// ---------------------------------------------------------------------------
+{
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userId = 'user-digest-3';
+  const uploadRow = { id: 'upload-digest-stale', user_id: userId, upload_name: 'Stale Signal List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'stalerep@example.com', name: 'Stale Rep', company: '' } };
+  const accounts = [{ id: 'acct-stale-1', account_name: 'Old Expo Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  const emailCalls = [];
+  const insertedRows = [];
+  const patchCalls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadRow]);
+    if (u.includes('/rest/v1/ha_accounts')) return jsonResponse(accounts);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') return jsonResponse([{ id: 'run-stale-1', ...JSON.parse(options.body)[0] }]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') { patchCalls.push(JSON.parse(options.body)); return jsonResponse([{ id: 'run-patched', ...JSON.parse(options.body) }]); }
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') {
+      // The row genuinely gets persisted -- research/discovery succeeded and
+      // the signal is retained for Research Details/account history -- it
+      // is only excluded from the DIGEST, never from ha_signals itself.
+      const rows = JSON.parse(options.body);
+      insertedRows.push(...rows);
+      return jsonResponse(rows);
+    }
+    if (u.includes('/api/research-batch')) {
+      return jsonResponse({
+        signals: [{
+          accountName: 'Old Expo Co', signalType: 'Event', signalTitle: 'Old Expo Co exhibited at Trade Show 2023',
+          whatChanged: 'Old Expo Co exhibited at Trade Show 2023', whyItMattersForPromo: 'Past event, no longer current',
+          sourceUrl: 'https://example.com/old-expo-co-2023', confidenceScore: 85,
+          eventCategory: 'event-like',
+          actionabilityStatus: { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Past event' }
+        }],
+        diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
+      });
+    }
+    if (u === 'https://api.resend.com/emails') { emailCalls.push(JSON.parse(options.body)); return jsonResponse({ id: 'should-not-be-called' }); }
+    throw new Error(`Unhandled fetch in stale-signal digest test mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetch; }
+  assert(res.statusCode === 200, 'reconciliation item 1/2: an invocation whose only new signal is non-priority-eligible still returns 200');
+  assert(insertedRows.length === 1, 'reconciliation item 1/2: the stale/non-eligible signal IS genuinely persisted to ha_signals -- retained, not discarded');
+  assert(insertedRows[0]?.payload?.actionabilityStatus?.isPriorityEligible === false, 'reconciliation item 1/2: the persisted row carries isPriorityEligible:false so downstream readers (dashboard, digest) can filter it');
+  assert(patchCalls.some(p => p.status === 'complete'), 'reconciliation item 1/2: the research run still finalizes as complete -- persisting a non-eligible signal is not a failure');
+  assert(emailCalls.length === 0, 'reconciliation item 1/2 (weekly digest delivery exclusion): no digest email is sent when the only new signal this invocation is not priority-eligible');
+  assert(!res.body?.digest?.length, 'reconciliation item 1/2: the response reports no digest entries when the only new signal is non-eligible');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exitCode = failures === 0 ? 0 : 1;

@@ -1347,9 +1347,9 @@ function resolveSignalEventDate(raw = {}, concreteTrigger = '', title = '', busi
   return result;
 }
 
-// Conservative paid-beta actionability rules (Priority 1). Event-like
-// signals require a confidently parsed event date to be treated as a
-// current priority at all:
+// Conservative paid-beta actionability rules (Priority 1, reconciliation
+// items 1 and 2). Event-like signals require a confidently parsed event
+// date to be treated as a current priority at all:
 //   - future date            -> upcoming, fully actionable
 //   - up to 45 days in the past -> still actionable, but as a follow-up,
 //                                   and any generated copy must use past
@@ -1359,12 +1359,36 @@ function resolveSignalEventDate(raw = {}, concreteTrigger = '', title = '', busi
 //                                   research detail, but is never eligible
 //                                   to be shown as a priority and must never
 //                                   be labeled "upcoming"
-// Ongoing business-change signals have no single event date to require --
-// they remain actionable based on how recently the source was published,
-// and the UI must label that recency as the source/publication date, not an
-// event date.
+// Ongoing business-change signals have no single event date to require, but
+// they DO require a conservative recency ceiling on the source/publication
+// date (reconciliation item 2) -- otherwise an old hiring/expansion/rebrand
+// article can surface as if it were current:
+//   - published within the last 180 days -> priority eligible
+//   - published more than 180 days ago    -> research detail only
+//   - no trustworthy publication date      -> research detail only
+// discoveredAt/first_seen_at (when House Accounts' own pipeline found the
+// signal) is never substituted for the source's own publication date here.
+// In every branch, excludeFromPriorities is exactly !isPriorityEligible --
+// a single flag downstream code can rely on to keep a signal out of
+// priorities/"Newly Detected"/the weekly digest WITHOUT deleting it: the
+// caller (makeSignal()) persists every non-null signal regardless of this
+// flag, and only uses it to filter what's actionable.
 const FOLLOW_UP_WINDOW_DAYS = 45;
-function computeActionability({ eventCategory = 'ongoing', eventDate = null, dateConfidence = 'unknown', now = new Date() } = {}) {
+const ONGOING_RECENCY_CEILING_DAYS = 180;
+
+// Deliberately stricter than parseSignalDate() (which allows a bare-year
+// fallback for event-date extraction from free text): a publication
+// timestamp is only "trustworthy" here when it carries at least a real
+// month/day, not just a bare 4-digit year, since a bare year gives no way
+// to tell a signal published 179 days ago from one published 900 days ago.
+function parseTrustworthyPublicationDate(dateText = '') {
+  const t = clean(dateText);
+  if (!t || /^20\d{2}$/.test(t)) return null;
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function computeActionability({ eventCategory = 'ongoing', eventDate = null, dateConfidence = 'unknown', publicationDate = '', now = new Date() } = {}) {
   if (eventCategory === 'event-like') {
     if (eventDate && dateConfidence !== 'unknown') {
       const parsed = parseSignalDate(eventDate);
@@ -1379,9 +1403,17 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
         return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Past event' };
       }
     }
-    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: false, usesPublicationDate: false, label: 'Date unknown' };
+    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unknown' };
   }
-  return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Recent activity' };
+  const parsedPub = parseTrustworthyPublicationDate(publicationDate);
+  if (!parsedPub) {
+    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Publication date unknown' };
+  }
+  const ageDays = Math.round((now.getTime() - parsedPub.getTime()) / 86400000);
+  if (ageDays <= ONGOING_RECENCY_CEILING_DAYS) {
+    return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Recent activity' };
+  }
+  return { status: 'ongoing-stale', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Older activity — not current' };
 }
 
 function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '', ground = {}) {
@@ -1436,12 +1468,18 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const eventCategory = signalEventCategory(canonicalType.eventType);
   const { eventDate: resolvedEventDate, dateConfidence: eventDateConfidence } = resolveSignalEventDate(raw, concreteTrigger, title, businessContext, eventCategory);
   const publicationDate = clean(raw.publicationDate || raw.publishedDate || raw.date || '');
-  const actionabilityStatus = computeActionability({ eventCategory, eventDate: resolvedEventDate, dateConfidence: eventDateConfidence });
-  // A stale event-like signal (more than 45 days in the past, per the
-  // conservative paid-beta rule) is excluded from current priorities
-  // entirely -- the same discard mechanism already used above for
-  // low-confidence/duplicate signals.
-  if (actionabilityStatus.excludeFromPriorities) return null;
+  const actionabilityStatus = computeActionability({ eventCategory, eventDate: resolvedEventDate, dateConfidence: eventDateConfidence, publicationDate });
+  // Reconciliation item 1: a stale or undated event-like signal, or an
+  // ongoing signal whose source is older than the recency ceiling (or has
+  // no trustworthy publication date), is NOT discarded here. A valid,
+  // sourced signal is never deleted solely because it's no longer
+  // actionable -- it is still returned (and persisted) below, carrying
+  // actionabilityStatus.excludeFromPriorities so the priorities feed,
+  // "Newly Detected" counts, and the weekly digest can filter it out while
+  // Research Details/account history keeps it visible, clearly labeled.
+  // The unconditional discards above (missing account name, prospect kill
+  // rule, low confidence with no meaningful signal) are unrelated to date
+  // freshness and are unchanged.
 
   // Recommended department/contact role is computed before the opener/why
   // text below so both can reference it (Priority 2: grounded outreach).

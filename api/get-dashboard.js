@@ -480,9 +480,17 @@ export default async function handler(req, res){
     const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals);
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
+    // Reconciliation item 1: "Newly Detected" is an ACTIONABLE count, not
+    // merely a discovery-recency count -- a stale/undated event-like signal
+    // or an ongoing signal past the recency ceiling (see computeActionability()
+    // in api/research-batch.js, persisted verbatim into payload.actionabilityStatus)
+    // is retained in ha_signals for Research Details/account history, but
+    // must not inflate this badge. isPriorityEligible defaults true only for
+    // legacy rows persisted before this field existed.
     const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
-      return Number.isFinite(t) && t >= sevenDaysAgo;
+      const eligible = s.payload?.actionabilityStatus?.isPriorityEligible !== false;
+      return Number.isFinite(t) && t >= sevenDaysAgo && eligible;
     }).map(signalToOpportunity);
 
     return json(res, 200, {

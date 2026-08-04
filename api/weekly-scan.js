@@ -467,6 +467,21 @@ export default async function handler(req, res){
     // upload processed in this invocation, keyed by user id, so a user with
     // multiple uploads gets exactly one consolidated digest email instead
     // of one email per upload. Drained after the per-upload loop below.
+    //
+    // Reconciliation item 3 -- known beta limitation, intentionally not
+    // closed in this pass (would require a migration): this Map is
+    // per-invocation, in-memory state, not a persisted
+    // one-digest-per-user-per-delivery-period guarantee. The event-fingerprint
+    // unique constraint on ha_signals means a second invocation within the
+    // same delivery period never re-emails about the SAME event (its insert
+    // is silently ignore-duplicated, so it never lands in newSignalRows
+    // again) -- but if a second invocation genuinely discovers different new
+    // events for the same user within that period (e.g. a retry, a manual
+    // re-trigger, or a cron double-fire), that invocation independently
+    // sends its own additional digest. There is no persisted "already sent
+    // user X a digest for period Y" record to prevent that. Tracked as
+    // backlog, not fixed here per this reconciliation's explicit no-migration
+    // constraint.
     const perUserDigest = new Map();
 
     for(const upload of uploads || []){
@@ -709,9 +724,20 @@ export default async function handler(req, res){
           // This is unchanged for run tracking/dedup: ha_weekly_runs still
           // gets one row per upload, the event-fingerprint dedup and the
           // partial-unique-index concurrency guard are untouched.
-          if(newSignalRows.length){
+          //
+          // Reconciliation item 1: newSignalRows itself (used just below for
+          // the run's own newSignals count) still reflects EVERY genuinely
+          // new row persisted this run, including stale/undated/ceiling-past
+          // signals that are correctly retained for Research Details/account
+          // history. The digest, however, is an actionability notification,
+          // not a persistence report -- only rows whose
+          // payload.actionabilityStatus.isPriorityEligible is not explicitly
+          // false are accumulated into the user's digest bucket, so a user
+          // with only non-actionable new rows this run gets no email.
+          const digestEligibleRows = newSignalRows.filter(row => row.payload?.actionabilityStatus?.isPriorityEligible !== false);
+          if(digestEligibleRows.length){
             const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };
-            bucket.newSignalRows.push(...newSignalRows);
+            bucket.newSignalRows.push(...digestEligibleRows);
             bucket.accountsMonitored += accountPayloads.length;
             perUserDigest.set(user.id, bucket);
           }
