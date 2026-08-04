@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3552, 4324, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3575, 4364, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -462,7 +462,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3552, 4324, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2911, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2934, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5713, 6588, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5753, 6655, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5713, 6588, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6705, 7171, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6772, 7238, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7739, 7742, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5628, 5630, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5633, 5635, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7806, 7809, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5668, 5670, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5673, 5675, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2493, 2498, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2500, 2513, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2945, 2947, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2949, 2967, 'function renderCustomerDashboard(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2968, 2970, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2972, 2990, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -2083,6 +2083,156 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
     signalTitle: 'Reading Symphony received a $15,000 grant', whatChanged: 'Reading Symphony was awarded a $15,000 grant from the NEA'
   });
   assert(legacyProof.canonicalEventType === 'EVENT_AWARD', `proof: the legacy read path still protects older rows identically (got "${legacyProof.canonicalEventType}")`);
+}
+
+// ===========================================================================
+// Section G — Sixth QA correction round: the real end-to-end Preview
+// research run disproved two synthetic assumptions. Fixtures below use the
+// EXACT text quoted from the real Preview run's UI report (Supabase read
+// access was not available in this session; the exact rendered/quoted text
+// the user captured from the live run is the ground truth used here, per
+// the round's own instruction to use the real shape rather than guess it).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// root cause (clustering): the REAL investment/reopening article pair share
+// only ~29% of their significant title tokens (2 of 7: the account's own
+// name, which is trivially present in nearly every article about the
+// account, plus "flagship") -- well under the 50% bar every previous round's
+// fix still required. Confirmed the two real titles classify to the SAME
+// exact canonicalEventType (RENOVATION_COMPLETION), so this was never an
+// exact-type-match problem; it was the overlap ratio itself.
+// ---------------------------------------------------------------------------
+{
+  const investmentTitle = 'L.L.Bean is investing over $50 million to reimagine its flagship store and retail campus in Freeport.';
+  const reopeningTitle = 'L.L.Bean is reopening its flagship store after a significant renovation, with a grand opening scheduled for September 18-20, 2026.';
+  const investmentType = resolveCanonicalEventType({ signalTitle: investmentTitle });
+  const reopeningType = resolveCanonicalEventType({ signalTitle: reopeningTitle });
+  assert(investmentType.eventType === reopeningType.eventType, `root cause: the real investment/reopening titles classify to the SAME type (got "${investmentType.eventType}" vs "${reopeningType.eventType}") -- the previous merge gap was the title-overlap ratio, not classification`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 1-3 / 8: the real fresh signal shapes (exact quoted text)
+// merge into one initiative, the absorbed variant never remains in
+// Additional Opportunities, the survivor retains both facts and every
+// source, and the same behavior holds for a second, unrelated company with
+// an equivalent investment/reopening signal shape (proving the fix is
+// generic, not L.L.Bean-specific).
+// ---------------------------------------------------------------------------
+function realFlagshipMergeCase(sandbox, account, investmentUrl, reopeningUrl){
+  const investment = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: resolveCanonicalEventType({ signalTitle: `${account} is investing over $50 million to reimagine its flagship store and retail campus in Freeport.` }).eventType,
+    opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: `${account} is investing over $50 million to reimagine its flagship store and retail campus in Freeport.`,
+    signalSummary: `${account} is investing over $50 million to reimagine its flagship store and retail campus in Freeport.`,
+    sourceUrl: investmentUrl, cleanSourceName: 'Example Business News',
+    recommendedBuyingTeam: ['Marketing'], confidence: 78,
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' },
+    eventDate: '2026-09-18', event_date: '2026-09-18', eventDateDisplay: 'September 18–20, 2026', eventDateConfidence: 'exact'
+  };
+  const reopening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    canonicalEventType: resolveCanonicalEventType({ signalTitle: `${account} is reopening its flagship store after a significant renovation, with a grand opening scheduled for September 18-20, 2026.` }).eventType,
+    opportunityType: 'SIGNAL-DRIVEN',
+    signalTitle: `${account} is reopening its flagship store after a significant renovation, with a grand opening scheduled for September 18-20, 2026.`,
+    signalSummary: `${account} is reopening its flagship store after a significant renovation, with a grand opening scheduled for September 18-20, 2026.`,
+    sourceUrl: reopeningUrl, cleanSourceName: 'Bangor Daily News', confidence: 74,
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' }
+  };
+  return sandbox.dedupeOpportunities([investment, reopening]);
+}
+{
+  const sandbox = makeSandbox();
+  const deduped = realFlagshipMergeCase(sandbox, 'L.L.Bean', 'https://example.com/llbean-investment-real', 'https://www.bangordailynews.com/llbean-flagship-reopens-real');
+  assert(deduped.length === 1, `acceptance 1: the real two-signal shape (exact quoted titles) merges into exactly one opportunity (got ${deduped.length})`);
+  const winner = deduped[0];
+  assert(winner.mergedDuplicateCount === 1, `acceptance 2: the winner records exactly 1 absorbed variant (got ${winner.mergedDuplicateCount})`);
+  const evidenceText = JSON.stringify(winner.evidence || []);
+  assert(evidenceText.includes('50 million') || evidenceText.includes('investing'), `acceptance 3: the survivor retains the $50 million investment fact (got: ${evidenceText})`);
+  assert(evidenceText.includes('reopening') || evidenceText.includes('renovation'), `acceptance 3: the survivor retains the reopening/renovation fact (got: ${evidenceText})`);
+  const sourceNames = JSON.stringify(winner.additionalSources || []);
+  assert(sourceNames.includes('Bangor') || sourceNames.includes('Example'), `acceptance 3: the absorbed variant's distinct source survives as an additionalSource (got: ${sourceNames})`);
+
+  // acceptance 8: a second, unrelated company with the EXACT SAME signal
+  // shape (only the account name changes) proves the fix is generic.
+  const dedupedFarmers = realFlagshipMergeCase(sandbox, 'Farmers Mercantile', 'https://example.com/farmers-investment-real', 'https://example.com/farmers-flagship-reopens-real');
+  assert(dedupedFarmers.length === 1, `acceptance 8: the identical signal shape merges correctly for a different company (Farmers Mercantile), proving the fix is not L.L.Bean-specific (got ${dedupedFarmers.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 4-6: the truncation-artifact starter (real quoted text,
+// with the source excerpt's own trailing "...." clip) is rejected/cleaned,
+// the rendered starter is specific/complete/referral-focused, and no
+// duplicate account phrase is produced -- reproduced through the actual
+// getSuggestedOpener()/leadWithAccountContext() production functions, using
+// an account name whose punctuation differs from how the source text writes
+// it (the real "L.L.Bean" vs. a source correctly writing "L.L. Bean").
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const truncatedOpp = {
+    account: 'L.L.Bean',
+    signalTitle: 'L.L.Bean is investing over $50 million to reimagine its flagship store and retail campus....',
+    signalDetail: 'L.L.Bean is investing over $50 million to reimagine its flagship store and retail campus....',
+    opportunity: 'Business Activity', signalLayerType: 'Business Activity Signal',
+    canonicalEventType: 'RENOVATION_COMPLETION', opportunityType: 'SIGNAL-DRIVEN'
+  };
+  const starter = sandbox.getSuggestedOpener(truncatedOpp);
+  assert(!starter.includes('....'), `acceptance 4: the rendered Conversation Starter never contains the source excerpt's raw "...." truncation artifact (got: "${starter}")`);
+  assert(!/…/.test(starter), `acceptance 4: the rendered Conversation Starter never contains an unresolved unicode ellipsis either (got: "${starter}")`);
+  assert(/campus\. /.test(starter) || /campus,/.test(starter), `acceptance 5: the starter reads as a complete clause ending the fact cleanly before the next sentence (got: "${starter}")`);
+  assert(/is that|do you know|who|leading/i.test(starter), `acceptance 5: the starter still asks a referral-focused question (got: "${starter}")`);
+
+  // acceptance 6: leadWithAccountContext() with a source-text account
+  // reference that differs in punctuation/spacing from the stored account
+  // name ("L.L. Bean" with a space vs. the stored "L.L.Bean").
+  const ctx = {
+    account: 'L.L.Bean', firstName: 'there', mode: 'Cold',
+    initiativeTitle: 'L.L. Bean is investing more than $50 million in its Freeport flagship',
+    isUpcoming: false, department: 'Retail Operations', canonicalKind: 'expansion'
+  };
+  const email = sandbox.buildReplyFirstEmail(ctx);
+  assert(!/L\.?L\.?\s?Bean.*at L\.?L\.?\s?Bean/i.test(email), `acceptance 6: no duplicated account phrase even when the source text's spacing/punctuation differs from the stored account name (got: "${email}")`);
+  assert(sandbox.leadAlreadyNamesAccount(ctx.initiativeTitle, ctx.account) === true, 'acceptance 6: leadAlreadyNamesAccount() recognizes "L.L. Bean" (with a space) as already naming the stored account "L.L.Bean" (no space)');
+}
+
+// ---------------------------------------------------------------------------
+// acceptance test 7: inferred apparel does not drive the first-contact
+// offer for a flagship renovation/reopening -- the offer must derive from
+// the grounded canonicalKind, never the inferred commonPromoCategories.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const ctx = {
+    account: 'L.L.Bean', firstName: 'there', mode: 'Cold',
+    initiativeTitle: 'L.L.Bean is investing over $50 million to reimagine its flagship store',
+    isUpcoming: true, department: 'Retail Operations', canonicalKind: 'expansion',
+    category: 'apparel' // inferred merch category -- must NOT drive the offer
+  };
+  const email = sandbox.buildReplyFirstEmail(ctx);
+  assert(!/apparel/i.test(email), `acceptance 7: the first-contact email never mentions "apparel" merely because it is an inferred category (got: "${email}")`);
+  const offer = sandbox.ideaOfferPhrase(ctx);
+  assert(offer !== 'a few apparel-related ideas', `acceptance 7: ideaOfferPhrase() does not use the inferred apparel category for a renovation/reopening initiative (got: "${offer}")`);
+  assert(offer === 'a few launch-related ideas', `acceptance 7: a reopening/renovation ("expansion" kind) offers grounded launch-related ideas instead (got: "${offer}")`);
+
+  // An unclassified/generic kind still falls back to a neutral offer, never
+  // forcing any category.
+  const genericCtx = { ...ctx, canonicalKind: '', category: 'apparel' };
+  assert(sandbox.ideaOfferPhrase(genericCtx) === 'a few relevant ideas', `acceptance 7: with no grounded kind, the offer is neutral, not the inferred category (got: "${sandbox.ideaOfferPhrase(genericCtx)}")`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance test 9: legacy compatibility remains green -- re-verified via
+// classifyLegacySignalActionability() (the same read-time boundary earlier
+// rounds fixed) using a third, distinct account, confirming this round's
+// changes did not regress the legacy read path.
+// ---------------------------------------------------------------------------
+{
+  const legacy = classifyLegacySignalActionability({
+    signalTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio.'
+  });
+  assert(legacy.canonicalEventType === 'ACQUISITION', `acceptance 9: legacy read-time classification remains correct after this round's changes (got "${legacy.canonicalEventType}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

@@ -2681,6 +2681,18 @@ function titleTokenOverlapRatio(a, b){
 const RELATED_EVENT_TYPE_CLUSTERS = [
   new Set(['NEW_LOCATION_OPENING','LOCATION_REOPENING','RENOVATION_COMPLETION','LOCATION_EVENT_UNSPECIFIED'])
 ];
+// Round 6 correction, item 1: words the classifier itself uses to detect the
+// location/renovation event-type family (see resolveEventType()'s location
+// branch in api/signal-intelligence.js) -- every article covering ANY event
+// in this family uses some of this vocabulary regardless of which specific
+// location/project it describes, so a shared occurrence of one of these
+// carries no distinguishing "same initiative" signal on its own.
+const LOCATION_EVENT_GENERIC_WORDS = new Set([
+  'renovation','renovating','renovated','renovate','remodel','remodeling','remodeled',
+  'reimagine','reimagined','reimagining','reopening','reopens','reopened','reopen',
+  'relaunch','relaunched','ribbon','cutting','grand','opening','opens','opened','scheduled',
+  'expansion','expanding','expanded','location','facility','branch','office','campus'
+]);
 function relatedEventTypes(typeA, typeB){
   if(!typeA || !typeB) return true; // unknown type on either side never blocks a match
   if(typeA === typeB) return true;
@@ -2725,19 +2737,30 @@ function opportunitiesLikelySameInitiative(a, b){
   // Round 5 correction, item 1: 50%+ title-token overlap is treated as the
   // same initiative even without a close/parseable date, as long as the
   // types are already confirmed related (the relatedEventTypes() gate above
-  // -- exact match OR same RELATED_EVENT_TYPE_CLUSTERS family). Previously
-  // this branch additionally required typeA === typeB EXACTLY, which meant
-  // three genuinely-the-same L.L.Bean flagship articles classified under
-  // different specific labels within the SAME location-event family (e.g.
-  // RENOVATION_COMPLETION for the "$50 million investment" article vs
-  // LOCATION_EVENT_UNSPECIFIED for the ambiguously-worded "grand opening"
-  // article) never merged, even though relatedEventTypes() already
-  // establishes they describe the same conceptual "ribbon cutting" class of
-  // event. The account+type-family gate above, combined with 50%+ shared
-  // title tokens, is still enough to keep two genuinely different
-  // same-family initiatives (which would not share half their significant
-  // wording) apart.
+  // -- exact match OR same RELATED_EVENT_TYPE_CLUSTERS family).
   if(overlap >= 0.5) return true;
+  // Round 6 correction, item 1: real, independently-published articles about
+  // the SAME event routinely emphasize different facts -- a "$50 million
+  // investment" story and a "grand opening after renovation" story about the
+  // identical Freeport flagship share only ~29% of their significant title
+  // tokens (2 of 7: the account's own name, which is trivially present in
+  // nearly every article about the account and carries no distinguishing
+  // signal, plus "flagship"). Within the already-narrow account + related-
+  // event-type-family scope established above, a single substantial (6+
+  // letter) SHARED token that is neither a restatement of the account's own
+  // name nor one of the generic words the classifier itself already uses to
+  // detect this event-type family (which every article in the family uses
+  // regardless of which specific location/project it covers, so they carry
+  // no distinguishing power) is still strong evidence of the same physical
+  // initiative -- two genuinely different renovation projects at the same
+  // company essentially never coincidentally share a specific place/asset
+  // noun like "flagship" or a shared location name.
+  const accountTokens = significantTitleTokens(accA);
+  const sharedTokens = [...significantTitleTokens(opportunityTitleText(a))]
+    .filter(t => significantTitleTokens(opportunityTitleText(b)).has(t));
+  const hasDistinguishingSharedToken = sharedTokens.some(t =>
+    t.length >= 6 && !accountTokens.has(t) && !LOCATION_EVENT_GENERIC_WORDS.has(t));
+  if(overlap >= 0.2 && hasDistinguishingSharedToken) return true;
   return false;
 }
 function clusterBusinessSignalOpportunities(items){
@@ -3612,6 +3635,18 @@ function formatSignalAge(opp){
 }
 
 
+// Round 6 correction, item 3: raw provider/source text (article teasers,
+// meta descriptions) is routinely pre-truncated by the SOURCE site itself
+// with a trailing ellipsis or a run of periods -- "...reimagine its flagship
+// store and retail campus...." is not something House Accounts' own
+// templates produced; it is the source excerpt's own clipped ending, faithfully
+// carried through into signalTitle/signalDetail. Stripping it here (the one
+// shared low-level text-cleaning entry point most outreach text passes
+// through) prevents every downstream sentence built from this text from
+// embedding an incomplete, truncated clause.
+function stripTrailingTruncation(text){
+  return String(text || '').replace(/[.\s]*(?:\.{2,}|…)\s*$/, '').trim();
+}
 function cleanBusinessText(text){
   let t = String(text || '').replace(/\s+/g,' ').trim();
   t = t.replace(/[-–—>\s]*You have JavaScript disabled or are viewing the site on a device that does not support[^.]*\.?/ig, ' ');
@@ -3620,7 +3655,7 @@ function cleanBusinessText(text){
   t = t.replace(/\bMap Contact Saved\b/ig, ' ');
   t = t.replace(/\s+/g,' ').trim();
   if(/javascript disabled|unsupported browser|does not support|saved saved|captcha|access denied/i.test(t)) return '';
-  return t;
+  return stripTrailingTruncation(t);
 }
 
 // QA round 3, item 2: canonical business-event classification, shared by
@@ -3832,6 +3867,11 @@ function isGroundedOpener(text, opp){
   // silently rewritten; it is simply rejected here.
   if(/\.\.(?!\.)/.test(t)) return false;
   if(/-\s+-/.test(t)) return false;
+  // Round 6 correction, item 3: a trailing unicode ellipsis character is a
+  // separate codepoint from "..", so the doubled-period check above never
+  // catches it -- this is the same clipped-source-excerpt artifact class
+  // (see stripTrailingTruncation()), just a different character.
+  if(/…\s*$/.test(t)) return false;
   const account = String(opp?.account || opp?.accountName || '').trim();
   if(account && account.length > 2){
     const escaped = account.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -6083,10 +6123,10 @@ function getPriorityTier(opp){
 }
 
 function cleanSalesPlayText(value){
-  return String(value || '')
+  return stripTrailingTruncation(String(value || '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim());
 }
 
 function pickPrimaryPromoCategory(opp){
@@ -6372,10 +6412,22 @@ function initiativeLeadIn(ctx){
 // "at <account>" produces a duplicated, run-on construction ("...expanding
 // its portfolio. at New Hope Network."). Only append it when the account
 // isn't already named.
+// Round 6 correction, item 4: the account is often stored without the
+// punctuation/spacing real source text uses for the same company (e.g. the
+// account record "L.L.Bean" vs. a scraped article correctly writing the
+// company's actual name "L.L. Bean", with a space) -- a plain substring
+// check on the raw strings misses that match entirely, so the duplicate-
+// account guard silently failed to recognize the account was already named
+// and appended it a second time. Comparing the alphanumeric-only form of
+// both sides makes the match robust to punctuation/spacing differences
+// without being specific to any one company's name.
+function normalizeAccountNameForMatch(value){
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
 function leadAlreadyNamesAccount(lead, account){
-  const a = String(account || '').trim().toLowerCase();
+  const a = normalizeAccountNameForMatch(account);
   if(!a) return false;
-  return String(lead || '').toLowerCase().includes(a);
+  return normalizeAccountNameForMatch(lead).includes(a);
 }
 function leadWithAccountContext(ctx){
   const lead = initiativeLeadIn(ctx);
@@ -6396,10 +6448,25 @@ function ownerAskPhrase(ctx){
   return `who would be the right person to ask about that`;
 }
 
-// Category is mentioned only as a possible, tentative idea -- never as the
-// ask itself, and never claiming the account already needs it.
+// Round 6 correction, item 5: ctx.category is an INFERRED merchandise
+// category (commonPromoCategories/suggestedProducts) -- a guess at what
+// products might eventually be relevant, not evidence of what the initiative
+// itself is. Using it directly here previously let an inferred "apparel"
+// category drive the first-contact offer on a major flagship renovation/
+// reopening, which has nothing to do with apparel. The offer must instead
+// come only from the GROUNDED classification (ctx.canonicalKind, the same
+// server-computed event type the headline/dedup/Best-Next-Move already
+// agree on) -- inferred categories remain visible under Research Details as
+// ideas, they just never automatically control outreach copy. Falls back to
+// a neutral, ungrounded-safe "a few relevant ideas" whenever the kind has no
+// natural offer category (e.g. acquisition, leadership, or an unclassified
+// signal) rather than forcing one.
+const GROUNDED_OFFER_BY_KIND = {
+  event: 'event', hiring: 'onboarding', launch: 'launch',
+  expansion: 'launch', recognition: 'employee', leadership: 'employee'
+};
 function ideaOfferPhrase(ctx){
-  const cat = ctx.category && ctx.category !== 'promo' ? ctx.category : '';
+  const cat = GROUNDED_OFFER_BY_KIND[ctx.canonicalKind] || '';
   return cat ? `a few ${cat}-related ideas` : 'a few relevant ideas';
 }
 
