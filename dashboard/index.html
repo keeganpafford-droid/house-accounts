@@ -1962,7 +1962,13 @@
   </section>
 
   <section id="customerMonitoringWorkspace" class="monitoring-workspace">
-    <div class="workspace-toolbar"><div><div class="upload-eyebrow">Monitoring workspace</div><h2>Existing Customer Lists</h2></div><button class="btn" id="addCustomerListBtn" type="button">Add Customer Data</button></div>
+    <!-- Priority 3 item 10 (paid-beta dashboard integrity): removed a duplicate
+         "Add Customer Data" button here. This whole workspace section is
+         already unreachable in the live MVP build (hidden by the .ha-mvp CSS
+         rule), so this was dead markup, but it was still a second copy of
+         the control in the source -- the single primary entry point is now
+         the button in .mvp-dashboard-heading above. -->
+    <div class="workspace-toolbar"><div><div class="upload-eyebrow">Monitoring workspace</div><h2>Existing Customer Lists</h2></div></div>
     <div class="workspace-summary">
       <div class="workspace-card"><strong id="wsActiveCustomers">0</strong><span>Active customers</span></div>
       <div class="workspace-card"><strong id="wsPausedCustomers">0</strong><span>Paused customers</span></div>
@@ -2077,13 +2083,16 @@
           <div class="customer-dashboard-subtitle" id="customerDashboardSubtitle">Your customer accounts are checked for timely reasons to reconnect.</div>
         </div>
         <div class="customer-dashboard-actions">
-          <button class="btn btn-secondary" type="button" onclick="scrollToUploadForNewList()">Add Customer Data</button>
+          <!-- Priority 3 item 10: removed the second duplicate "Add Customer
+               Data" button here -- with this and the workspace-toolbar copy
+               gone, the always-visible button in .mvp-dashboard-heading
+               (top of page) is the single primary entry point. -->
           <button class="btn btn-secondary" id="manageCustomerAccountsBtn" type="button">Manage Customer Accounts</button>
           <button class="btn" type="button" onclick="manualDashboardRefresh()">Refresh Dashboard</button>
         </div>
       </div>
       <div class="dashboard-mini-grid">
-        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashNewThisWeek">0</div><div class="dashboard-mini-label">New This Week</div></div>
+        <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashNewThisWeek">0</div><div class="dashboard-mini-label">Newly Detected</div></div>
         <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashSavedAccounts">0</div><div class="dashboard-mini-label">Saved Accounts</div></div>
         <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashSavedSignals">0</div><div class="dashboard-mini-label">Saved Signals</div></div>
         <div class="dashboard-mini-card"><div class="dashboard-mini-value" id="dashLastScan">—</div><div class="dashboard-mini-label">Last Weekly Scan</div></div>
@@ -2861,7 +2870,7 @@ async function loadSavedDashboard(email){
     const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     if(banner){
       const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
-      banner.innerHTML = `<strong>You're all set.</strong> Watching ${escapeHtml(accounts.length)} account${accounts.length===1?'':'s'} · ${escapeHtml((data.signals || []).length)} reason${(data.signals || []).length===1?'':'s'} to reach out · ${escapeHtml(newCount)} new this week.`;
+      banner.innerHTML = `<strong>You're all set.</strong> Watching ${escapeHtml(accounts.length)} account${accounts.length===1?'':'s'} · ${escapeHtml((data.signals || []).length)} reason${(data.signals || []).length===1?'':'s'} to reach out · ${escapeHtml(newCount)} newly detected.`;
     }
     renderCustomerDashboard(data);
     refreshOpportunityViews();
@@ -3381,16 +3390,30 @@ function businessSignalPlainSummary(opp){
   return `Recent public activity gives a timely reason to reconnect with ${account}.`;
 }
 
+// Paid-beta grounded outreach (Priority 2): this is the LAST-RESORT
+// deterministic fallback used only when the signal carries no grounded
+// opp.conversationStarter of its own (see getSuggestedOpener() below). It
+// must reference the actual signal detail, not a category-generic phrase --
+// "saw some event or community activity" is exactly the ungrounded copy
+// this replaces. When there truly isn't enough signal detail to be
+// specific, it says so plainly (a transparent limited state) instead of
+// inventing urgency or implying a merch program that doesn't exist.
 function businessSuggestedOpener(opp){
   const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
   const kind = businessSignalKind(opp);
-  if(kind === 'hiring') return `Hey ${contact} — noticed some hiring activity on your end. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
-  if(kind === 'event') return `Hey ${contact} — noticed some event or community activity on your end. Is there anything coming up where it would help to think through merch, attendee gifts, or staff gear?`;
-  if(kind === 'expansion') return `Hey ${contact} — saw some growth activity on your end. Is that creating any internal or customer-facing needs we should be thinking about?`;
-  if(kind === 'recognition') return `Hey ${contact} — saw some recognition activity around the team. Anything coming up where employee or customer appreciation would be useful?`;
-  if(kind === 'leadership') return `Hey ${contact} — noticed some team or leadership activity. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
-  if(kind === 'launch') return `Hey ${contact} — noticed some launch activity on your end. Is there anything customer-facing or sales-team related that would be worth planning around?`;
-  return `Hey ${contact} — saw some recent activity on your end and thought it was worth checking in. Anything coming up that we should be thinking about?`;
+  const account = opp.account || 'this account';
+  const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
+  if(!detail || detail.length < 8){
+    return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
+  }
+  const specific = shortText(detail, 90);
+  if(kind === 'hiring') return `Hey ${contact} — saw ${specific}. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
+  if(kind === 'event') return `Hey ${contact} — saw ${specific}. Is there anything coming up where it would help to think through merch, attendee gifts, or staff gear?`;
+  if(kind === 'expansion') return `Hey ${contact} — saw ${specific}. Is that creating any internal or customer-facing needs we should be thinking about?`;
+  if(kind === 'recognition') return `Hey ${contact} — saw ${specific}. Anything coming up where employee or customer appreciation would be useful?`;
+  if(kind === 'leadership') return `Hey ${contact} — saw ${specific}. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
+  if(kind === 'launch') return `Hey ${contact} — saw ${specific}. Is there anything customer-facing or sales-team related that would be worth planning around?`;
+  return `Hey ${contact} — saw ${specific}. Anything coming up that we should be thinking about?`;
 }
 
 function getRepFriendlyWhy(opp){
@@ -3449,7 +3472,30 @@ function getRepEvidenceBullets(opp){
   return out.filter(Boolean).slice(0,3);
 }
 
+// Paid-beta grounded outreach (Priority 2): opp.conversationStarter is the
+// server-generated opener (makeSignal() in api/research-batch.js) -- it is
+// already grounded in the exact signal, event date/temporal state, source,
+// department, and any real order history. It was previously computed and
+// stored but never read here; this function silently regenerated a
+// separate, less-specific opener from scratch every time. isGroundedOpener()
+// guards only against the handful of pre-fix generic strings that may still
+// exist on already-persisted signals, so those fall through to the
+// (now also grounded) layer-based templates below instead of surfacing
+// stale ungrounded copy.
+function isGroundedOpener(text){
+  const t = String(text || '').trim();
+  if(!t) return false;
+  const UNGROUNDED_LEGACY_PATTERNS = [
+    /noticed some event or community activity/i,
+    /saw some recent (company )?activity/i,
+    /noticed some (hiring|launch|team or leadership) activity on your end/i,
+    /had a quick question — who would be best to ask/i
+  ];
+  return !UNGROUNDED_LEGACY_PATTERNS.some(p => p.test(t));
+}
+
 function getSuggestedOpener(opp){
+  if(isGroundedOpener(opp.conversationStarter)) return opp.conversationStarter;
   const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
   const layer = signalLayerLabel(opp);
   const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
@@ -3502,7 +3548,15 @@ function opportunityHeadline(opp){
   if(type === 'Reorder Due' || type === 'Annual Buying Pattern') return 'Repeat buying window detected';
   if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
   if(kind === 'hiring' || /hiring|recruit|onboarding|new hire/.test(text)) return 'Recent hiring creates a timely reason to reconnect';
-  if(kind === 'event' || /event|conference|trade show|expo/.test(text)) return 'Upcoming activity creates a relevant opening';
+  if(kind === 'event' || /event|conference|trade show|expo/.test(text)){
+    // Priority 1: "upcoming" is never displayed unless a confidently parsed
+    // event date is actually in the future -- opp.actionabilityStatus is
+    // set by makeSignal() in api/research-batch.js for exactly this check.
+    const status = opp.actionabilityStatus?.status;
+    if(status === 'upcoming') return 'Upcoming activity creates a relevant opening';
+    if(status === 'recent-past') return 'Recent activity creates a relevant opening for a follow-up';
+    return 'Event activity creates a relevant opening';
+  }
   if(kind === 'expansion' || /expansion|new location|growth/.test(text)) return 'Growth activity creates a reason to reach out';
   if(layer === 'Follow-Up Signal') return 'Past order history suggests a follow-up opportunity';
   if(layer === 'Repeat / Pattern Signal') return 'Historical timing suggests a repeat opportunity';
@@ -3536,6 +3590,31 @@ function evidenceSourceLabel(opp){
   return '';
 }
 
+// Priority 3 (paid-beta dashboard integrity): looks up the real account
+// record backing an opportunity/signal, so real order-history fields
+// (categoryTypes, orderCount, revenue, contacts, notes) can be told apart
+// from the AI/rules-suggested fields that live on the opportunity object
+// itself (commonPromoCategories/suggestedProducts).
+function findAccountForOpp(opp){
+  const name = String(opp?.account || opp?.accountName || '').trim().toLowerCase();
+  if(!name) return null;
+  return (window.accountRadarAccounts||[]).find(a => String(a?.name||'').trim().toLowerCase() === name) || null;
+}
+
+// Priority 3 item 6/7: "Prior categories" must use ONLY genuine order-derived
+// history (account.categoryTypes, populated from real uploaded order rows --
+// see processData()/normalizeSavedAccount() -- never
+// opp.commonPromoCategories/suggestedProducts, which are AI or rules-based
+// suggestions and were the exact source of the "Prior Categories" mislabel
+// this fixes). Returns [] (never a guess) when no real order history exists,
+// so the caller can hide the row entirely rather than show empty/invented data.
+function realPriorCategories(opp){
+  const account = findAccountForOpp(opp);
+  const set = account?.categoryTypes;
+  if(!set || typeof set.size !== 'number' || !set.size) return [];
+  return [...set].filter(Boolean).slice(0,4);
+}
+
 function structuredEvidenceRows(opp){
   const rows = [];
   const orders = extractHistoricalOrderCount(opp);
@@ -3543,12 +3622,50 @@ function structuredEvidenceRows(opp){
   const age = formatSignalAge(opp);
   if(age) rows.push({label:'Last signal', value:age});
   const source = evidenceSourceLabel(opp);
-  if(source) rows.push({label:'Source', value:source});
-  const cats = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
-  if(cats.length) rows.push({label:'Prior categories', value:cats.join(', ')});
+  if(source) rows.push({label:'Event source', value:source});
+  const priorCategories = realPriorCategories(opp);
+  if(priorCategories.length) rows.push({label:'Prior categories (actual orders)', value:priorCategories.join(', ')});
   const revenue = Number(opp.accountRevenue || opp.historicalRevenue || 0);
   if(revenue > 0) rows.push({label:'Historical revenue', value:fmtMoney(revenue)});
-  return rows.slice(0,5);
+  return rows.slice(0,6);
+}
+
+// Priority 1 support: a short, human date string for either an event date
+// or a publication date -- never blends the two, never claims a date it
+// doesn't have.
+function formatShortDate(value){
+  const d = parseMaybeDate(value);
+  if(!d) return '';
+  return d.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'});
+}
+
+// Priority 4 (dashboard card item 3): "Event/publication date and
+// actionability status" as its own short, explicit line -- reads
+// opp.actionabilityStatus (set server-side by makeSignal() in
+// api/research-batch.js) rather than re-deriving anything, so the label
+// can never say "Upcoming" unless the signal itself was confidently dated
+// in the future.
+function signalDateAndActionabilityLine(opp){
+  const status = opp.actionabilityStatus || {};
+  const eventDate = opp.eventDate || opp.event_date || '';
+  const pubDate = opp.publicationDate || opp.publishedDate || '';
+  if(status.usesPublicationDate) return pubDate ? `Source published ${formatShortDate(pubDate)}` : '';
+  if(status.status === 'upcoming') return eventDate ? `Upcoming — ${formatShortDate(eventDate)}` : 'Upcoming';
+  if(status.status === 'recent-past') return eventDate ? `Recent — ${formatShortDate(eventDate)} (follow up)` : 'Recent (follow up)';
+  if(status.status === 'stale') return eventDate ? `Past event — ${formatShortDate(eventDate)}` : 'Past event';
+  if(status.status === 'unknown-date') return 'Event date unknown';
+  return pubDate ? `Source published ${formatShortDate(pubDate)}` : '';
+}
+
+// Priority 4: a compact "recommended person or department" line for the
+// card -- name/title only, no link list or "why this person" detail (that
+// full detail moved to Prepare for Call's Call Plan group, via
+// renderSuggestedContactPrimary()).
+function renderSuggestedContactCompact(opp){
+  const raw = opp.suggestedContactDetails || opp.suggested_contact_details || {};
+  const name = String(raw.name || '').trim();
+  const title = String(raw.title || opp.suggestedContact || opp.contactTitle || (opp.recommendedBuyingTeam || opp.likelyBuyers || [])[0] || 'Relevant department lead').trim();
+  return `<div class="opp-section"><div class="opp-label">Recommended contact</div><div class="opp-content">${name ? `<strong>${escapeHtml(name)}</strong>${title ? ` — ${escapeHtml(title)}` : ''}` : escapeHtml(title)}</div></div>`;
 }
 
 function renderSuggestedContactPrimary(opp){
@@ -3575,7 +3692,13 @@ function renderSuggestedContactMeta(opp){
   if(imported){
     return `<div class="opp-section meta-section"><div class="opp-label">Contact Fit</div><div class="opp-content meta">${escapeHtml(raw.researchConfidence==='High'?'Strong fit':'Possible fit')}</div></div>`;
   }
-  return `<div class="opp-section meta-section"><div class="opp-label">Verified From</div><div class="opp-content meta">${sourceLinks || 'No independent source found for this contact.'}</div></div>`;
+  // Priority 3 item 9: relabeled from the ambiguous "Verified From" -- this
+  // section is specifically about whether the SUGGESTED CONTACT PERSON has
+  // independent public corroboration, which is a different concept from the
+  // signal/event's own source (see "Event source" in Evidence/Verified
+  // Opportunity below). The old shared label made the two easy to conflate
+  // when both appeared on the same card.
+  return `<div class="opp-section meta-section"><div class="opp-label">Contact verification</div><div class="opp-content meta">${sourceLinks || 'No independent source found for this contact.'}</div></div>`;
 }
 
 function accountOpportunityCluster(opp){
@@ -3591,6 +3714,51 @@ function sameOpportunity(a,b){
 
 function additionalOpportunitiesFor(opp){
   return accountOpportunityCluster(opp).filter(item=>!sameOpportunity(item,opp));
+}
+
+// Priority 5 (Prepare for Call restructure): "Verified Opportunity" -- the
+// exact signal, its event/publication date and actionability state (see
+// Priority 1), and a source link, together at the top of the modal.
+function renderVerifiedOpportunitySection(opp){
+  const dateLine = signalDateAndActionabilityLine(opp);
+  const source = opp.sourceUrl
+    ? `<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName || sourceDomain(opp.sourceUrl) || 'View source')}</a>`
+    : escapeHtml(evidenceSourceLabel(opp) || 'Account history');
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Verified Opportunity</h3><div class="sales-play-detail-grid">
+    <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
+    ${dateLine ? `<div class="sales-play-detail-item"><strong>Date</strong>${escapeHtml(dateLine)}</div>` : ''}
+    <div class="sales-play-detail-item"><strong>Event source</strong>${source}</div>
+  </div></div>`;
+}
+
+// Priority 5: real order history only -- previous orders, actual historical
+// categories (realPriorCategories(), never the inferred/suggested list),
+// cadence, uploaded contacts, and account notes. Supersedes the narrow
+// warm-account-only note that used to occupy this spot in the modal.
+function renderAccountContextSection(opp){
+  const account = findAccountForOpp(opp);
+  if(!account) return '';
+  const orderCount = Number(account.orderCount || 0);
+  const revenue = Number(account.totalRevenue || account.revenue || 0);
+  const categories = realPriorCategories(opp);
+  const mostRecent = account.mostRecentDate ? formatShortDate(account.mostRecentDate) : '';
+  const contacts = Array.isArray(account.contacts) ? account.contacts.filter(c => c && (c.name || c.email)) : [];
+  const notes = String(account.notes || '').trim();
+  const rows = [];
+  if(orderCount) rows.push(`<div class="sales-play-detail-item"><strong>Previous orders</strong>${orderCount} order${orderCount===1?'':'s'} on file${revenue ? ` · ${escapeHtml(fmtMoney(revenue))} historical revenue` : ''}</div>`);
+  if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Historical categories</strong>${escapeHtml(categories.join(', '))}</div>`);
+  if(mostRecent) rows.push(`<div class="sales-play-detail-item"><strong>Cadence</strong>Most recent order ${escapeHtml(mostRecent)}</div>`);
+  if(contacts.length) rows.push(`<div class="sales-play-detail-item"><strong>Uploaded contacts</strong>${escapeHtml(contacts.slice(0,3).map(c=>c.name||c.email).join(', '))}</div>`);
+  if(notes) rows.push(`<div class="sales-play-detail-item"><strong>Account notes</strong>${escapeHtml(shortText(notes,180))}</div>`);
+  if(!rows.length){
+    if(isWarmAccount(account)){
+      const contactCount = (account.contacts||[]).length;
+      const contactPhrase = contactCount ? `${contactCount} contact${contactCount===1?'':'s'} on file` : 'a relationship on file';
+      return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div>You already have ${escapeHtml(contactPhrase)} here. There's no order history yet, so this play leans on public signals and the contact info from your upload.</div></div>`;
+    }
+    return '';
+  }
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Account Context</h3><div class="sales-play-detail-grid">${rows.join('')}</div></div>`;
 }
 
 function renderAccountContextNote(opp){
@@ -3628,9 +3796,9 @@ function renderSupportingResearchDetails(opp){
   const cats=(opp.commonPromoCategories||opp.suggestedProducts||[]).filter(Boolean).slice(0,5);
   const source=opp.sourceUrl?`<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName||sourceDomain(opp.sourceUrl)||'View source')}</a>`:escapeHtml(evidenceSourceLabel(opp)||'Account history');
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Evidence</h3><div class="sales-play-detail-grid">
-    <div class="sales-play-detail-item"><strong>Source</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
+    <div class="sales-play-detail-item"><strong>Event source</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
     <div class="sales-play-detail-item"><strong>Recommended buying team</strong>${escapeHtml(teams.join(', ')||'Relevant department lead')}</div>
-    <div class="sales-play-detail-item"><strong>Promo categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')}</div>
+    <div class="sales-play-detail-item"><strong>Suggested merchandise categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')} <span class="opp-inferred-note">(inferred, not purchase history)</span></div>
   </div></div>`;
 }
 
@@ -3657,20 +3825,33 @@ function renderRepOpportunityCard(opp){
   }
   const recBadge = recommendationBadgeMeta(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
-  const evidenceRows = structuredEvidenceRows(opp);
-  const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).filter(Boolean).slice(0,4);
+  // Priority 4 (paid-beta card simplification): the card now shows only the
+  // 7-item hierarchy the sprint specifies -- account, exact signal, event/
+  // publication date + actionability, why it matters, recommended contact,
+  // opener, Prepare for Call. Supporting Research, the full Evidence block,
+  // buying-team tags, promo-category tags, the detailed contact-verification
+  // explanation, and additional-signal details all moved into Prepare for
+  // Call's Research Details group (still the same underlying data -- see
+  // renderSupportingResearchDetails()/renderSuggestedContactMeta() there --
+  // nothing was deleted, only relocated off the at-a-glance card).
+  const dateLine = signalDateAndActionabilityLine(opp);
   return `
     <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
       <div class="opp-card-header">
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
         <div class="opp-section">
-          <div class="opp-label">Why now</div>
-          <div class="opp-content"><strong>${escapeHtml(opportunityHeadline(opp))}.</strong> ${escapeHtml(whyThisMattersText(opp))}</div>
+          <div class="opp-label">Signal</div>
+          <div class="opp-content"><strong>${escapeHtml(opportunityHeadline(opp))}</strong></div>
+        </div>
+        ${dateLine ? `<div class="opp-section signal-date-line"><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>` : ''}
+        <div class="opp-section">
+          <div class="opp-label">Why it matters</div>
+          <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
         </div>
       </div>
 
-      ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
+      ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactCompact(opp) : ''}
 
       <div class="opp-section opener-card">
         <div class="opp-label">Conversation starter</div>
@@ -3680,15 +3861,6 @@ function renderRepOpportunityCard(opp){
       <div class="opp-card-actions">
         ${opp._locked ? `<div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
-      </div>
-
-      <div class="opp-card-footer">
-        <div class="opp-card-footer-label">Supporting research</div>
-        ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactMeta(opp) : ''}
-        ${opp.isVerifiedSignalOpportunity && (opp.recommendedBuyingTeam||opp.likelyBuyers||[]).length ? `<div class="opp-section"><div class="opp-label">Recommended Buying Team</div><div class="opp-products">${(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).slice(0,3).map(t=>`<span class="product-badge">${escapeHtml(t)}</span>`).join('')}</div></div>` : ''}
-        ${evidenceRows.length ? `<div class="opp-section evidence-card"><div class="opp-label">Evidence</div><div class="evidence-list">${evidenceRows.map(row=>`<div class="evidence-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join('')}</div></div>` : ''}
-        ${categories.length ? `<div class="opp-section"><div class="opp-label">Common promo categories</div><div class="opp-products">${categories.map(p=>`<span class="product-badge">${escapeHtml(p)}</span>`).join('')}</div></div>` : ''}
-        ${additionalOpportunitiesFor(opp).length ? `<button class="additional-signal-link" type="button" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")}, {focus:"additional"})'>+${additionalOpportunitiesFor(opp).length} additional signal${additionalOpportunitiesFor(opp).length===1?'':'s'}</button>` : ''}
       </div>
     </div>`;
 }
@@ -5527,14 +5699,20 @@ window.createSalesPlayPanel = function(opp, opts){
         </div>
         <div class="sales-play-output">
 
+          <!-- Priority 5: Verified Opportunity -- exact signal, event/publication date, actionability, source. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">Call prep</div>
-            ${renderCallPrepOpportunity(opp)}
+            <div class="sales-play-group-label">Verified Opportunity</div>
+            ${renderVerifiedOpportunitySection(opp)}
+          </div>
+
+          <!-- Priority 5: Call Plan -- who, why, the specific opener, and one combined Best Next Move (Coaching Note merged in). -->
+          <div class="sales-play-group">
+            <div class="sales-play-group-label">Call Plan</div>
             ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
             <div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Conversation Starter</h3><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
             <div class="sales-play-card emphasis">
               <h3><span class="section-icon">☆</span> Best Next Move</h3>
-              <div class="section-content">${escapeHtml(play.bestNextMove)}</div>
+              <div class="section-content">${escapeHtml(play.bestNextMoveCombined)}</div>
             </div>
           </div>
 
@@ -5567,6 +5745,13 @@ window.createSalesPlayPanel = function(opp, opts){
                   <div class="section-content"><ul class="sales-play-list check-list">${play.questionsToAsk.map(q=>`<li>${escapeHtml(q)}</li>`).join('')}</ul></div>
                 </div>
               </div>
+              ${linkedinMessageForOpp(opp) ? `<div class="sales-play-section">
+                <div class="sales-play-card">
+                  <h3><span class="section-icon">in</span> LinkedIn Message</h3>
+                  <div class="section-content">${escapeHtml(linkedinMessageForOpp(opp))}</div>
+                  <div style="margin-top:14px; text-align:right;"><button class="copy-mini" data-copy-sales-play="linkedin">Copy Message</button></div>
+                </div>
+              </div>` : ''}
               <div class="sales-play-section full">
                 <div class="sales-play-card">
                   <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
@@ -5576,22 +5761,23 @@ window.createSalesPlayPanel = function(opp, opts){
             </div>
           </div>
 
-          <div class="sales-play-group supporting">
-            <div class="sales-play-group-label">Supporting research</div>
+          <!-- Priority 5: Account Context -- real previous orders, real historical categories, cadence, uploaded contacts, notes. -->
+          <div class="sales-play-group">
+            <div class="sales-play-group-label">Account Context</div>
+            ${renderAccountContextSection(opp)}
+          </div>
+
+          <!-- Priority 5: Research Details -- collapsed by default. Evidence, alternate/additional sources, classification detail, inferred merchandise categories. Nothing here was deleted from Priority 4's card simplification, only relocated. -->
+          <details class="sales-play-group supporting">
+            <summary class="sales-play-group-label" style="cursor:pointer;">Research Details</summary>
             ${renderAdditionalOpportunitiesForSalesPlay(opp)}
             ${renderSupportingResearchDetails(opp)}
+            ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactMeta(opp) : ''}
             <div class="sales-play-card" style="margin-bottom:16px">
               <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
               <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
             </div>
-            <div class="sales-play-card coaching-card" style="margin-bottom:16px">
-              <h3><span class="section-icon">♢</span> Coaching Note</h3>
-              <div class="coaching-content">
-                <div class="section-content">${escapeHtml(play.coachingNote)}</div>
-              </div>
-            </div>
-            ${renderAccountContextNote(opp)}
-          </div>
+          </details>
 
         </div>
       </div>
@@ -5601,7 +5787,7 @@ window.createSalesPlayPanel = function(opp, opts){
   modal.querySelectorAll('[data-copy-sales-play]').forEach(btn => {
     btn.addEventListener('click', () => {
       const field = btn.dataset.copySalesPlay;
-      const text = field === 'subject' ? play.emailSubject : play.outreachEmail;
+      const text = field === 'subject' ? play.emailSubject : field === 'linkedin' ? linkedinMessageForOpp(opp) : play.outreachEmail;
       copySalesPlayField(btn, text);
     });
   });
@@ -5635,10 +5821,19 @@ function buildConciseSalesPlay(ctx){
   const coachingNote = isWarm
     ? 'You already have a relationship in the account. This approach asks for direction instead of business, which lowers resistance.'
     : 'Do not lead with product ideas yet. Use the signal to find the right person, then ask permission to follow up.';
+  // Priority 2 (product decision 6 / sprint requirement): Coaching Note and
+  // Best Next Move are merged into a single user-facing field -- the two
+  // were generated from the same warm/cold branch and read as saying the
+  // same thing twice. bestNextMove/coachingNote are both still returned
+  // separately (nothing computed here was deleted) so any other caller, and
+  // the account-context reasoning itself, is preserved -- only the display
+  // in Prepare for Call's Call Plan group uses the combined field.
+  const bestNextMoveCombined = `${bestNextMove} ${coachingNote}`;
 
   return {
     opportunitySummary,
     bestNextMove,
+    bestNextMoveCombined,
     emailSubject,
     subjectRationale: subjectRationale(ctx, emailSubject),
     outreachEmail,
@@ -5647,6 +5842,17 @@ function buildConciseSalesPlay(ctx){
     successLooksLike,
     coachingNote
   };
+}
+
+// Priority 5 ("LinkedIn message where appropriate"): a short LinkedIn note,
+// shown only when the suggested contact actually has a LinkedIn profile on
+// file -- reuses the already-grounded conversation opener rather than
+// standing up a separate generator, per the sprint's instruction not to
+// perform a broad outreach-module refactor.
+function linkedinMessageForOpp(opp){
+  const raw = opp.suggestedContactDetails || opp.suggested_contact_details || {};
+  if(!raw.linkedin) return '';
+  return trimToWords(getSuggestedOpener(opp), 40);
 }
 
 function buildReplyFirstEmail(ctx){
@@ -5915,7 +6121,16 @@ function getRecommendationType(opp){
   if(isRelationshipExpansionOpportunity(opp) || /category expansion|wallet|adjacent|never purchased|expansion opportunity|account expansion|multi-department/.test(text)) return 'Relationship Expansion';
   if(/annual|seasonal|same time|repeat|coming up again|ordered .* times|purchase history spans/.test(text)) return 'Annual Buying Pattern';
   if(/recent order|recent project|delivered|completed|check in/.test(text) || layer === 'Follow-Up Signal') return 'Recent Project Follow-Up';
-  if(revenue >= 10000 && orders > 0 && recent < 35) return 'Dormant High-Value Account';
+  // Priority 3 item 5 (paid-beta dashboard integrity fix): accountRecencyScore
+  // is always a 0-1 fraction (see line ~6217: Number(account.subscores?.recency
+  // ?? ...) -- itself computed elsewhere as max(1 - daysSinceLast/365, 0)),
+  // never a 0-100 score. Comparing it against 35 was therefore always true
+  // for any account with revenue and orders, regardless of how recently they
+  // ordered -- "Dormant" silently meant nothing more than "has revenue and
+  // orders." 0.35 on the same 0-1 scale preserves the threshold's original
+  // intent (roughly: no order in the last ~235 days) while actually gating
+  // on staleness.
+  if(revenue >= 10000 && orders > 0 && recent < 0.35) return 'Dormant High-Value Account';
   return layer === 'Repeat / Pattern Signal' ? 'Reorder Due' : 'Reason To Reach Out';
 }
 
@@ -6219,6 +6434,14 @@ function toggleWeeklyPrioritiesView(showAll){
   refreshOpportunityViews();
 }
 
+// Priority 3 (paid-beta dashboard integrity): singular/plural label helper --
+// "1 business trigger" vs "21 business triggers", never a bare unpluralized
+// noun regardless of count.
+function pluralize(n, singular, plural){
+  const count = Number(n) || 0;
+  return `${count} ${count === 1 ? singular : (plural || `${singular}s`)}`;
+}
+
 function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
@@ -6232,14 +6455,24 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
   const priorityOpportunities = prepareTimeboxReasons(opportunities || [], activeTimebox);
   const displayedOpportunities = showAllWeeklyPriorities ? allOpportunities : priorityOpportunities;
   const accountCount = (accounts || []).length;
+  // Priority 3 item 1: the previous "X of Y" construction compared two lists
+  // built with different filter/dedup orderings (timebox-then-dedup vs
+  // dedup-then-timebox), so X was not guaranteed to be a subset of Y --
+  // that mismatch is exactly what could render as "21 of 7". The count
+  // shown is now just what's actually being displayed, with no implied
+  // comparison to a second, differently-computed total.
   const showingLabel = showAllWeeklyPriorities
-    ? `All ${displayedOpportunities.length} ${config.label.toLowerCase()} accounts worth calling`
-    : `${displayedOpportunities.length} of ${allOpportunities.length} ${config.label.toLowerCase()} accounts worth calling first`;
+    ? `All ${pluralize(displayedOpportunities.length, `${config.label.toLowerCase()} account`)} worth calling`
+    : `${pluralize(displayedOpportunities.length, 'account')} worth reviewing ${config.label.toLowerCase()}`;
   if(resultCount){
-    resultCount.innerHTML = `<span>${showingLabel} · from ${accountCount} accounts you're watching · ${feedSummary(displayedOpportunities)}</span>`;
+    resultCount.innerHTML = `<span>${showingLabel} · From ${pluralize(accountCount, 'monitored account')} · ${feedSummary(displayedOpportunities)}</span>`;
   }
   if(grid){
-    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || `<div class="no-signals-message">Nothing urgent this week. Upload or refresh your account list to check for new reasons to reach out.</div>`) : '';
+    // Priority 3 item 3: the empty-state copy now reflects the active tab
+    // (This Week/Month/Quarter/Year) instead of always saying "this week"
+    // regardless of which timeframe is actually empty.
+    const defaultEmptyMessage = `<div class="no-signals-message">No additional opportunities surfaced ${config.label.toLowerCase()}. Upload or refresh your account list to check for new reasons to reach out.</div>`;
+    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || defaultEmptyMessage) : '';
     const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
@@ -6248,12 +6481,16 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }
 
+// Priority 3 item 2: proper singular/plural for every category, and relabeled
+// to match the sprint's preferred copy ("business triggers" / "reorder
+// opportunities" / "follow-ups") instead of the old fixed "X business
+// activity" (which was always singular even at count 21).
 function feedSummary(opps){
   const items = opps || [];
   const follow = items.filter(o => signalLayerLabel(o) === 'Follow-Up Signal').length;
   const repeat = items.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal').length;
   const business = items.filter(o => signalLayerLabel(o) === 'Business Activity Signal').length;
-  return `${follow} follow-up · ${repeat} repeat/pattern · ${business} business activity`;
+  return `${pluralize(business, 'business trigger')} · ${pluralize(repeat, 'reorder opportunity', 'reorder opportunities')} · ${pluralize(follow, 'follow-up')}`;
 }
 
 function renderDetailedAccountViews(accounts){

@@ -13,7 +13,12 @@
     oneOffResearch:false,
     managementDashboard:false,
     revenueContext:false,
-    importGuidesNavigation:false,
+    // Priority 3 item 11 (paid-beta sprint): re-enabled. The audit found real,
+    // well-built per-platform guides at /export-guides/ with no in-app nav
+    // entry to reach them -- the only path in was one small inline link
+    // shown solely while the upload dropzone was visible. This was the
+    // single biggest cause of "confused about how to get data in."
+    importGuidesNavigation:true,
     customerSuccessNavigation:false,
     comingSoonNavigation:false,
     betaProgramNavigation:false,
@@ -31,7 +36,8 @@
 
   const appLinks=[
     {label:'House Accounts',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Add Customer Data',href:'/dashboard/#add-customer-data',group:'workflow',match:[]}
+    {label:'Add Customer Data',href:'/dashboard/#add-customer-data',group:'workflow',match:[]},
+    {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']}
   ];
 
   function read(key){

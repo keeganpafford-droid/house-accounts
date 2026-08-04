@@ -13,7 +13,8 @@ import {
   validateOpportunity,
   dedupeOpportunities,
   resolveEventType,
-  displayLabelForEventType
+  displayLabelForEventType,
+  extractEventDate
 } from './signal-intelligence.js';
 import { createHash, timingSafeEqual } from 'crypto';
 
@@ -798,22 +799,36 @@ function buildBusinessContext(raw = {}, type = '', summary = '', accountName = '
   return compact(summary || 'Recent public business activity creates a timely reason to learn what is changing inside the company.', 240);
 }
 
-function contextToPromoWhy(context = '', type = '') {
+function contextToPromoWhy(context = '', type = '', ground = {}) {
   const c = clean(context);
-  if (!c) return 'Recent public business activity creates a timely reason to start a conversation.';
+  const accountName = clean(ground.accountName || '');
+  if (!c) return accountName ? `Recent public activity from ${accountName} creates a timely reason to start a conversation.` : 'Recent public business activity creates a timely reason to start a conversation.';
   if (/specific growth driver is not yet clear/i.test(c)) return 'Hiring creates a practical reason to ask who owns onboarding, recruiting, and employee engagement support.';
   return compact(`${c} That creates a practical reason to ask about onboarding, employee engagement, events, apparel, recognition, or brand support tied to the change.`, 280);
 }
 
-function contextToOpener(context = '', type = '') {
+// Paid-beta grounded outreach (Priority 2): when there isn't enough factual
+// context to name a specific reason to reach out, this is a transparent
+// limited state -- it says plainly that the detail is thin -- rather than
+// inventing urgency or implying a merch program that doesn't exist.
+function honestLimitedOpener(accountName = '') {
+  return accountName
+    ? `We found public activity for ${accountName}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in to see what's changing internally.`
+    : "We found public activity for this account, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in to see what's changing internally.";
+}
+
+function contextToOpener(context = '', type = '', ground = {}) {
   const c = clean(context);
+  const accountName = clean(ground.accountName || '');
+  const who = accountName ? `${accountName} is` : "you're";
   if (/specific growth driver is not yet clear/i.test(c) || /hiring/i.test(type)) {
-    return "I noticed you're growing your team recently. Is anything changing internally that your team is planning around?";
+    return `I noticed ${who} growing the team recently. Is anything changing internally that your team is planning around?`;
   }
-  if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return 'Saw the event activity and had a quick question — who handles branded materials or attendee follow-up?';
-  if (/funding|capital|investment|growth/i.test(c)) return 'Saw the recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?';
-  if (/facility|location|distribution center|production capacity/i.test(c)) return 'Saw the expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?';
-  return 'Saw some recent company activity and had a quick question — who would be best to ask about related internal or brand needs?';
+  if (!c) return honestLimitedOpener(accountName);
+  if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return `Saw ${accountName || 'the'} event activity and had a quick question — who handles branded materials or attendee follow-up?`;
+  if (/funding|capital|investment|growth/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?`;
+  if (/facility|location|distribution center|production capacity/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?`;
+  return honestLimitedOpener(accountName);
 }
 
 function buildConcreteTrigger(raw = {}, type = '', accountName = '') {
@@ -851,29 +866,60 @@ function promoCategoriesForMoment(moment = '', type = '', context = '') {
   return ['Employee Apparel','Event Kits','Customer Appreciation','Recognition Gifts'];
 }
 
-function salesReadyWhy(trigger = '', context = '', moment = '', type = '') {
-  const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.';
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return 'Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.';
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return 'Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.';
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return 'Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.';
-  if (/product launch|launch|rollout|unveil/.test(t)) return 'Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.';
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return 'Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.';
-  if (/contract|partnership|customer win/.test(t)) return 'Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.';
-  return contextToPromoWhy(context, type);
+// Grounds the "why this matters" text in the department the signal already
+// points at and one real historical-order fact, when either is available --
+// without inventing a merch program or claiming anything is already planned.
+function groundedWhySuffix(ground = {}) {
+  const dept = clean((ground.recommendedBuyingTeam || [])[0] || '');
+  const historical = clean(ground.historicalFact || '');
+  if (historical) return ` ${dept ? `${dept} ` : ''}may already be worth a note, since ${historical}.`;
+  if (dept) return ` ${dept} is the most likely owner of a need like this.`;
+  return '';
 }
 
-function salesReadyOpener(trigger = '', context = '', moment = '', type = '') {
-  const specific = compact(trigger || moment || 'the recent activity', 90);
+function salesReadyWhy(trigger = '', context = '', moment = '', type = '', ground = {}) {
+  const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
+  const suffix = groundedWhySuffix(ground);
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
+  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.${suffix}`;
+  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.${suffix}`;
+  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.${suffix}`;
+  if (/product launch|launch|rollout|unveil/.test(t)) return `Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.${suffix}`;
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.${suffix}`;
+  if (/contract|partnership|customer win/.test(t)) return `Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.${suffix}`;
+  return contextToPromoWhy(context, type, ground);
+}
+
+// Builds the opener's lead sentence with an accurate tense: "coming up" only
+// for a genuinely future, confidently-dated event; "recently had" (past
+// tense) for an event-like signal within the 45-day follow-up window;
+// tense-neutral possessive for ongoing business-change signals (which use
+// publication recency, not an event date) and for anything with no
+// actionability info supplied at all.
+function leadSentence(accountName = '', specific = '', actionability = {}) {
+  if (!accountName) return `Saw ${specific}.`;
+  if (actionability.status === 'upcoming') return `Saw ${accountName} has ${specific} coming up.`;
+  if (actionability.status === 'recent-past') return `Saw ${accountName} recently had ${specific}.`;
+  return `Saw ${accountName}'s ${specific}.`;
+}
+
+function salesReadyOpener(trigger = '', context = '', moment = '', type = '', ground = {}) {
+  const specific = compact(trigger || moment || '', 90);
+  const accountName = clean(ground.accountName || '');
+  if (!specific) return honestLimitedOpener(accountName);
+  const lead = leadSentence(accountName, specific, ground.actionability || {});
+  const dept = clean((ground.recommendedBuyingTeam || [])[0] || '');
+  const deptAsk = dept ? ` Is ${dept} the right team to ask about that?` : '';
+  const historicalNote = ground.historicalFact ? ` Since ${ground.historicalFact}, this seems worth a quick note.` : '';
   const t = clean(`${specific} ${context} ${moment} ${type}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Saw ${specific}. Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts. Want me to send over a few ideas that could fit?`;
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Saw ${specific}. For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts. I had a few practical ideas around apparel and launch kits — worth sending over?`;
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Saw ${specific}. Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items. Want me to send over a few ideas?`;
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Saw ${specific}. When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely. Is there someone I should ask about that?`;
-  if (/product launch|launch|rollout|unveil/.test(t)) return `Saw ${specific}. Launches usually need internal hype, sales support, and customer-facing branded items. I had a few simple launch-kit ideas — worth sending over?`;
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Saw ${specific}. Moments like that are a good chance to recognize employees or thank customers. Would a few branded celebration or recognition ideas be useful?`;
-  if (/contract|partnership|customer win/.test(t)) return `Saw ${specific}. Wins like that often create internal and customer-facing communication needs. I had a few ideas around team apparel and thank-you kits — worth sending over?`;
-  return contextToOpener(context, type);
+  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `${lead} Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts.${historicalNote} Want me to send over a few ideas that could fit?${deptAsk}`;
+  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `${lead} For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts.${historicalNote} I had a few practical ideas around apparel and launch kits — worth sending over?${deptAsk}`;
+  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `${lead} Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items.${historicalNote} Want me to send over a few ideas?${deptAsk}`;
+  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `${lead} When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely.${historicalNote}${deptAsk || ' Is there someone I should ask about that?'}`;
+  if (/product launch|launch|rollout|unveil/.test(t)) return `${lead} Launches usually need internal hype, sales support, and customer-facing branded items.${historicalNote} I had a few simple launch-kit ideas — worth sending over?${deptAsk}`;
+  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `${lead} Moments like that are a good chance to recognize employees or thank customers.${historicalNote} Would a few branded celebration or recognition ideas be useful?${deptAsk}`;
+  if (/contract|partnership|customer win/.test(t)) return `${lead} Wins like that often create internal and customer-facing communication needs.${historicalNote} I had a few ideas around team apparel and thank-you kits — worth sending over?${deptAsk}`;
+  return contextToOpener(context, type, ground);
 }
 
 
@@ -1242,11 +1288,122 @@ function resolveCanonicalEventType(raw = {}) {
   return { eventType: primaryType, label: displayLabelForEventType(primaryType) };
 }
 
-function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '') {
+// Paid-beta signal-date-truth (Priority 1): canonical types that describe a
+// discrete, date-stamped occurrence -- something that either has a scheduled
+// date or already happened on a specific day -- as opposed to an ongoing
+// business state or trend that has no single event date to speak of.
+// PRODUCT_LAUNCH is included because the review's "event-like" list names
+// "launch event" specifically; the location-opening cluster
+// (NEW_LOCATION_OPENING/LOCATION_REOPENING/RENOVATION_COMPLETION/
+// LOCATION_EVENT_UNSPECIFIED) is included because those are exactly the
+// "ribbon cutting" ceremony class. Everything else (hiring, facility
+// expansion, rebrand, leadership change, acquisition, partnership, and any
+// generic BUSINESS_ACTIVITY_* family) is treated as an ongoing business
+// change and is never required to carry an event date.
+const EVENT_LIKE_TYPES = new Set([
+  'EVENT_TRADE_SHOW', 'EVENT_CONFERENCE', 'EVENT_AWARD', 'EVENT_COMMUNITY', 'PRODUCT_LAUNCH',
+  'NEW_LOCATION_OPENING', 'LOCATION_REOPENING', 'RENOVATION_COMPLETION', 'LOCATION_EVENT_UNSPECIFIED'
+]);
+
+function signalEventCategory(canonicalEventType = '') {
+  return EVENT_LIKE_TYPES.has(canonicalEventType) ? 'event-like' : 'ongoing';
+}
+
+// Resolves the signal's own event date -- distinct from publicationDate
+// (the source article's date) and from discoveredAt/dateFound (when House
+// Accounts' own pipeline first saw it) -- using the same extractEventDate()
+// parser signal-intelligence.js's resolveEvents() already relies on, so a
+// date is only ever assigned when the evidence text actually describes when
+// the event happened or will happen. Publication date is never substituted.
+function resolveSignalEventDate(raw = {}, concreteTrigger = '', title = '', businessContext = '', eventCategory = 'ongoing') {
+  const directField = clean(raw.event_date || raw.eventDate || '');
+  let result = extractEventDate(directField);
+  if (result.dateConfidence === 'unknown') {
+    result = extractEventDate(clean(`${concreteTrigger} ${title} ${businessContext} ${directField}`));
+  }
+  if (result.dateConfidence === 'unknown' && eventCategory === 'event-like') {
+    // Trade show / conference / award names very commonly embed only a bare
+    // year ("Natural Products Expo West 2023") with no month, so
+    // extractEventDate() (which requires at least a month) never assigns a
+    // date. This is a deliberately narrow, event-like-only fallback: a bare
+    // year found in the signal's own title/trigger text (never in the wider
+    // business-context prose, to avoid matching an unrelated nearby year) is
+    // treated as an approximate mid-year date -- but ONLY when that year is
+    // strictly in the past. A bare mention of the current (or a future)
+    // year carries no real month information ("2026 Annual Golf
+    // Tournament" could be any month of 2026, including one still ahead of
+    // today), and guessing a mid-year date for it can wrongly push a
+    // same-year event outside the 45-day follow-up window into "stale" --
+    // exactly the regression this guard prevents. A definitively past year
+    // has no such ambiguity: no month within it can still be upcoming.
+    const yearMatch = clean(`${concreteTrigger} ${title}`).match(/\b(20[0-9]{2})\b/);
+    if (yearMatch) {
+      const year = Number(yearMatch[1]);
+      if (year < new Date().getUTCFullYear()) {
+        result = { eventDate: `${year}-06-15`, dateConfidence: 'approximate', year };
+      }
+    }
+  }
+  return result;
+}
+
+// Conservative paid-beta actionability rules (Priority 1). Event-like
+// signals require a confidently parsed event date to be treated as a
+// current priority at all:
+//   - future date            -> upcoming, fully actionable
+//   - up to 45 days in the past -> still actionable, but as a follow-up,
+//                                   and any generated copy must use past
+//                                   tense (never "is hosting")
+//   - more than 45 days past -> excluded from current priorities entirely
+//   - date unknown            -> may still exist as a lower-confidence
+//                                   research detail, but is never eligible
+//                                   to be shown as a priority and must never
+//                                   be labeled "upcoming"
+// Ongoing business-change signals have no single event date to require --
+// they remain actionable based on how recently the source was published,
+// and the UI must label that recency as the source/publication date, not an
+// event date.
+const FOLLOW_UP_WINDOW_DAYS = 45;
+function computeActionability({ eventCategory = 'ongoing', eventDate = null, dateConfidence = 'unknown', now = new Date() } = {}) {
+  if (eventCategory === 'event-like') {
+    if (eventDate && dateConfidence !== 'unknown') {
+      const parsed = parseSignalDate(eventDate);
+      if (parsed) {
+        const diffDays = Math.round((parsed.getTime() - now.getTime()) / 86400000);
+        if (diffDays > 0) {
+          return { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
+        }
+        if (diffDays >= -FOLLOW_UP_WINDOW_DAYS) {
+          return { status: 'recent-past', tense: 'past', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Recent — follow up' };
+        }
+        return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Past event' };
+      }
+    }
+    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: false, usesPublicationDate: false, label: 'Date unknown' };
+  }
+  return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Recent activity' };
+}
+
+function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '', ground = {}) {
   const supplied = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || '', 300);
   const norm = value => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const repeated = supplied && [trigger, context, raw.signalTitle, raw.title].some(v => norm(v) && (norm(supplied) === norm(v) || norm(supplied).includes(norm(v)) && norm(supplied).length <= norm(v).length + 12));
-  return supplied && !repeated ? supplied : compact(salesReadyWhy(trigger, context, buyingMoment, type), 300);
+  return supplied && !repeated ? supplied : compact(salesReadyWhy(trigger, context, buyingMoment, type, ground), 300);
+}
+
+// Paid-beta grounded outreach (Priority 2): one real, specific historical
+// order fact for this account, when the upload actually has one -- never
+// invented. Consumed by the opener/why fallback templates so they can
+// reference real order history instead of staying generic.
+function oneHistoricalOrderFact(account = {}) {
+  const orderCount = Number(account.orderCount || 0);
+  const categories = Array.isArray(account.categories) ? account.categories.filter(Boolean) : [];
+  if (categories.length && orderCount) {
+    return `you've ordered ${categories[0]} for them before (${orderCount} order${orderCount === 1 ? '' : 's'} on file)`;
+  }
+  if (categories.length) return `you've ordered ${categories[0]} for them before`;
+  if (orderCount) return `you have ${orderCount} order${orderCount === 1 ? '' : 's'} on file with them`;
+  return '';
 }
 
 function makeSignal(raw = {}, account = {}, options = {}) {
@@ -1271,12 +1428,32 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const leadershipAdjustment = leadershipVerificationAdjustment(raw, type, summary, businessContext, sourceUrl);
   const confidencePct = Math.max(0, Math.min(100, abd.score + leadershipAdjustment));
   if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
-  const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment);
-  const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type), 280);
+
+  // Paid-beta signal-date truth (Priority 1). eventDate is resolved ONLY from
+  // parseable evidence text (via extractEventDate()) -- it never falls back
+  // to the source's publication date merely because the true event date is
+  // absent, and publicationDate/discoveredAt stay separate fields throughout.
+  const eventCategory = signalEventCategory(canonicalType.eventType);
+  const { eventDate: resolvedEventDate, dateConfidence: eventDateConfidence } = resolveSignalEventDate(raw, concreteTrigger, title, businessContext, eventCategory);
+  const publicationDate = clean(raw.publicationDate || raw.publishedDate || raw.date || '');
+  const actionabilityStatus = computeActionability({ eventCategory, eventDate: resolvedEventDate, dateConfidence: eventDateConfidence });
+  // A stale event-like signal (more than 45 days in the past, per the
+  // conservative paid-beta rule) is excluded from current priorities
+  // entirely -- the same discard mechanism already used above for
+  // low-confidence/duplicate signals.
+  if (actionabilityStatus.excludeFromPriorities) return null;
+
+  // Recommended department/contact role is computed before the opener/why
+  // text below so both can reference it (Priority 2: grounded outreach).
+  const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, `${summary} ${buyingMoment} ${concreteTrigger}`, raw);
+  const historicalFact = oneHistoricalOrderFact(account);
+  const ground = { accountName, actionability: actionabilityStatus, recommendedBuyingTeam, historicalFact };
+
+  const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment, ground);
+  const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type, ground), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.promo_categories || raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories || promoCategoriesForMoment(buyingMoment, type, businessContext), 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);
-  const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, `${summary} ${buyingMoment} ${concreteTrigger}`, raw);
   const uploadedContacts = selectUploadedContactsForTeam(account.contacts || raw.uploadedContacts || [], recommendedBuyingTeam, 2);
   const publicContacts = normalizePotentialContacts(raw.potential_contacts || raw.potentialContacts || raw.contacts || raw.recommendedContacts || raw.suggestedPeople, 2);
   const potentialContacts = mergePotentialContacts(uploadedContacts, publicContacts, 2);
@@ -1303,8 +1480,18 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     concrete_trigger: concreteTrigger,
     buyingMoment,
     buying_moment: buyingMoment,
-    eventDate: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
-    event_date: clean(raw.event_date || raw.eventDate || raw.publicationDate || raw.publishedDate || raw.date || ''),
+    // Priority 1: eventDate is only ever set from resolveSignalEventDate()'s
+    // parse of the actual evidence text -- never from publicationDate/date
+    // merely because a true event date wasn't found. eventCategory and
+    // actionabilityStatus (upcoming / recent-past / stale / unknown-date /
+    // ongoing) are the fields the dashboard must consult before ever
+    // printing "Upcoming" or excluding/downranking a signal.
+    eventDate: resolvedEventDate || '',
+    event_date: resolvedEventDate || '',
+    eventDateConfidence,
+    eventCategory,
+    actionabilityStatus,
+    isUpcoming: actionabilityStatus.status === 'upcoming',
     location: clean(raw.location || raw.eventLocation || raw.cityState || ''),
     opportunityType: canonicalType.eventType,
     title,
@@ -1322,7 +1509,8 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     sourceAuthority: clean(raw.sourceType || raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || 'Public source'),
     cleanSourceName: clean(raw.sourceName || sourceDomain(sourceUrl) || sources[0]?.name || ''),
     sources,
-    publishedDate: clean(raw.publicationDate || raw.publishedDate || raw.date || ''),
+    publishedDate: publicationDate,
+    publicationDate,
     dateFound: new Date().toISOString(),
     detectedAt: new Date().toISOString(),
     confidence: confidencePct / 100,
@@ -2222,4 +2410,9 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
 
 // Named exports for testability (Phase 2A / B3 classification tests, and
 // Phase 2A implementation-review round 2's run-claim/lease tests).
-export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual };
+export {
+  makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic,
+  completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
+  signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
+  salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES
+};

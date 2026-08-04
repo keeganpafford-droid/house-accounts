@@ -957,5 +957,151 @@ function failureReasonFromFinalPatch(patchCalls){
   }
 }
 
+// ---------------------------------------------------------------------------
+// Paid-beta sprint Priority 6: weekly digest corrections (required tests
+// 14-16). A custom fetch mock is used here rather than runHandlerScenario()
+// since these scenarios need TWO uploads for the SAME user (a shape the
+// shared single-upload mock doesn't model) and a real Resend mock (the
+// shared mock deliberately unsets RESEND_API_KEY so sendEmail() short-
+// circuits before ever calling fetch).
+// ---------------------------------------------------------------------------
+
+function twoUploadSameUserMock({ resendBehavior } = {}){
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userId = 'user-digest-1';
+  const uploadA = { id: 'upload-digest-a', user_id: userId, upload_name: 'List A', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'rep@example.com', name: 'Rep One', company: '' } };
+  const uploadB = { id: 'upload-digest-b', user_id: userId, upload_name: 'List B', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'rep@example.com', name: 'Rep One', company: '' } };
+  const accountsByUpload = {
+    'upload-digest-a': [{ id: 'acct-a1', account_name: 'Alpha Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    'upload-digest-b': [{ id: 'acct-b1', account_name: 'Beta Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+  };
+
+  const emailCalls = [];
+  const patchCalls = [];
+  let runIdCounter = 0;
+
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadA, uploadB]);
+    if (u.includes('/rest/v1/ha_accounts')) {
+      const match = u.match(/upload_id=eq\.([^&]+)/);
+      const uploadId = match ? decodeURIComponent(match[1]) : '';
+      return jsonResponse(accountsByUpload[uploadId] || []);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]); // nothing stale/active
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') {
+      runIdCounter += 1;
+      const body = JSON.parse(options.body)[0];
+      return jsonResponse([{ id: `run-${runIdCounter}`, ...body }]);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      patchCalls.push({ url: u, body });
+      return jsonResponse([{ id: 'run-patched', ...body }]);
+    }
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') {
+      // Real signals, one distinct row per upload's account, so the digest
+      // aggregation step is proven to genuinely combine two DIFFERENT
+      // result sets rather than coincidentally deduping identical ones.
+      const rows = JSON.parse(options.body);
+      return jsonResponse(rows);
+    }
+    if (u.includes('/api/research-batch')) {
+      const body = JSON.parse(options.body);
+      const accountName = body.accounts?.[0]?.name || 'Unknown';
+      return jsonResponse({
+        signals: [{
+          accountName, signalType: 'Business Activity', signalTitle: `${accountName} business update`,
+          whatChanged: `${accountName} had a business update`, whyItMattersForPromo: 'Timely reason to reach out',
+          sourceUrl: `https://example.com/${accountName.toLowerCase().replace(/\s+/g, '-')}`, confidenceScore: 80
+        }],
+        diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
+      });
+    }
+    if (u === 'https://api.resend.com/emails' && method === 'POST') {
+      const body = JSON.parse(options.body);
+      emailCalls.push(body);
+      if (resendBehavior) return resendBehavior(body);
+      return jsonResponse({ id: 'resend-id-1' });
+    }
+    throw new Error(`Unhandled fetch in digest test mock: ${method} ${u}`);
+  };
+
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  return { req, res, emailCalls, patchCalls, restoreFetch: () => { global.fetch = realFetch; } };
+}
+
+{
+  // Hotfix/Priority 6 required test 14: one digest per user across multiple
+  // uploads.
+  const { req, res, emailCalls, restoreFetch } = twoUploadSameUserMock();
+  try { await handler(req, res); } finally { restoreFetch(); }
+  assert(res.statusCode === 200, 'the multi-upload-same-user invocation returns 200 (Priority 6 test 14)');
+  assert(emailCalls.length === 1, `exactly one consolidated digest email is sent for a user with two uploads processed in the same invocation, not one email per upload (Priority 6 test 14; got ${emailCalls.length} email(s))`);
+  if (emailCalls.length === 1) {
+    assert(emailCalls[0].to === 'rep@example.com', 'the single digest email is addressed to the correct user (Priority 6 test 14)');
+    assert(/2 new reasons/i.test(emailCalls[0].subject), `the consolidated digest subject reflects BOTH uploads' new signals combined, not just one upload's (Priority 6 test 14; got subject: "${emailCalls[0].subject}")`);
+    assert(emailCalls[0].html.includes('Alpha Co') && emailCalls[0].html.includes('Beta Co'), 'the consolidated digest body includes signals from both uploads (Priority 6 test 14)');
+  }
+  assert(res.body?.digest?.length === 1 && res.body.digest[0].emailSent === true, 'the response reports exactly one successful digest entry for this user (Priority 6 test 14)');
+}
+
+{
+  // Hotfix/Priority 6 required test 15: email failure does not fail
+  // successful research.
+  const { req, res, patchCalls, emailCalls, restoreFetch } = twoUploadSameUserMock({
+    resendBehavior: () => jsonResponse({ message: 'Resend simulated outage' }, false, 502)
+  });
+  try { await handler(req, res); } finally { restoreFetch(); }
+  assert(res.statusCode === 200, 'the invocation still returns 200 even though the digest email delivery failed (Priority 6 test 15)');
+  const finalPatches = patchCalls.filter(p => p.body.status);
+  assert(finalPatches.length === 2, 'both uploads still reach a final status PATCH despite the later email failure (Priority 6 test 15)');
+  assert(finalPatches.every(p => p.body.status === 'complete'), `every upload's run status reflects its REAL research outcome (complete), never overwritten to 'failed' by the unrelated email failure (Priority 6 test 15; got: ${finalPatches.map(p => p.body.status).join(', ')})`);
+  assert(emailCalls.length === 1, 'the email delivery was genuinely attempted once (Priority 6 test 15)');
+  assert(res.body?.digest?.[0]?.emailSent === false && !!res.body?.digest?.[0]?.emailError, 'the response transparently reports the digest email failure without hiding it, while runs/status remain correct (Priority 6 test 15)');
+}
+
+{
+  // Hotfix/Priority 6 required test 16: no email for zero new signals.
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userId = 'user-digest-2';
+  const uploadRow = { id: 'upload-digest-empty', user_id: userId, upload_name: 'Empty List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'quiet@example.com', name: 'Quiet Rep', company: '' } };
+  const accounts = [{ id: 'acct-quiet-1', account_name: 'Quiet Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  const emailCalls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadRow]);
+    if (u.includes('/rest/v1/ha_accounts')) return jsonResponse(accounts);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') return jsonResponse([{ id: 'run-quiet-1', ...JSON.parse(options.body)[0] }]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') return jsonResponse([{ id: 'run-patched', ...JSON.parse(options.body) }]);
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse([]); // zero new signals inserted
+    if (u.includes('/api/research-batch')) return jsonResponse({ signals: [], diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } } });
+    if (u === 'https://api.resend.com/emails') { emailCalls.push(JSON.parse(options.body)); return jsonResponse({ id: 'should-not-be-called' }); }
+    throw new Error(`Unhandled fetch in zero-signal digest test mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetch; }
+  assert(res.statusCode === 200, 'a zero-new-signal invocation still returns 200 (Priority 6 test 16)');
+  assert(emailCalls.length === 0, 'no digest email is sent when the user has zero new actionable signals this invocation (Priority 6 test 16)');
+  assert(!res.body?.digest?.length, 'the response reports no digest entries for a user with zero new signals (Priority 6 test 16)');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exitCode = failures === 0 ? 0 : 1;

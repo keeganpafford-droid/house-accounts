@@ -463,6 +463,11 @@ export default async function handler(req, res){
     }
     const baseUrl = getBaseUrl(req);
     const runSummary = [];
+    // Priority 6: newly-inserted signals accumulate here across every
+    // upload processed in this invocation, keyed by user id, so a user with
+    // multiple uploads gets exactly one consolidated digest email instead
+    // of one email per upload. Drained after the per-upload loop below.
+    const perUserDigest = new Map();
 
     for(const upload of uploads || []){
       const user = upload.ha_users;
@@ -696,8 +701,19 @@ export default async function handler(req, res){
           // events, and re-running a timed-out/partial run never re-emails
           // or re-inserts an event it already persisted.
           newSignalRows = Array.isArray(inserted) ? inserted : [];
-          if(!dryRun && newSignalRows.length){
-            await sendEmail({to:user.email, subject:weeklyBriefSubject(newSignalRows), html:reportHtml(user, upload, newSignalRows, baseUrl, weeklySummaryFromSignals(newSignalRows, accountPayloads.length))});
+          // Priority 6 (paid-beta weekly digest correction): no email is
+          // sent here per-upload anymore. Newly-inserted signals are
+          // accumulated into perUserDigest, keyed by user, and exactly one
+          // consolidated email per user is sent after the whole per-upload
+          // loop below finishes -- see the digest-send step after the loop.
+          // This is unchanged for run tracking/dedup: ha_weekly_runs still
+          // gets one row per upload, the event-fingerprint dedup and the
+          // partial-unique-index concurrency guard are untouched.
+          if(newSignalRows.length){
+            const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };
+            bucket.newSignalRows.push(...newSignalRows);
+            bucket.accountsMonitored += accountPayloads.length;
+            perUserDigest.set(user.id, bucket);
           }
         }
         const finalStatus = decideFinalStatus({
@@ -724,7 +740,34 @@ export default async function handler(req, res){
         runSummary.push({uploadId:upload.id, email:user.email, error:err.message});
       }
     }
-    return json(res, 200, {ok:true, dryRun, scopedUploadId: requestedUploadId || null, processed:runSummary.length, runs:runSummary});
+
+    // Priority 6: consolidated per-user digest send, one email per user per
+    // invocation, sent only after every upload's ha_weekly_runs row has
+    // already been finalized above. An email failure here is caught and
+    // logged for exactly this user's digest -- it can never retroactively
+    // turn an already-successful research/signal-persistence run back into
+    // a failed one (that status was written and returned in runSummary
+    // before this step ever runs), and it never blocks another user's
+    // digest from sending.
+    const digestSummary = [];
+    if(!dryRun){
+      for(const [userId, bucket] of perUserDigest){
+        if(!bucket.newSignalRows.length) continue;
+        try{
+          await sendEmail({
+            to: bucket.user.email,
+            subject: weeklyBriefSubject(bucket.newSignalRows),
+            html: reportHtml(bucket.user, null, bucket.newSignalRows, baseUrl, weeklySummaryFromSignals(bucket.newSignalRows, bucket.accountsMonitored))
+          });
+          digestSummary.push({userId, email:bucket.user.email, newSignals:bucket.newSignalRows.length, emailSent:true});
+        }catch(emailErr){
+          console.error('[Weekly Scan] digest email failed for user', userId, emailErr);
+          digestSummary.push({userId, email:bucket.user.email, newSignals:bucket.newSignalRows.length, emailSent:false, emailError:emailErr.message});
+        }
+      }
+    }
+
+    return json(res, 200, {ok:true, dryRun, scopedUploadId: requestedUploadId || null, processed:runSummary.length, runs:runSummary, digest:digestSummary});
   }catch(err){
     return json(res, 500, {error:err.message || 'Weekly scan failed'});
   }
