@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3514, 4262, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3539, 4304, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -462,7 +462,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3514, 4262, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2873, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2898, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5645, 6512, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5693, 6568, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5645, 6512, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6629, 7095, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6685, 7151, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7663, 7666, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5560, 5562, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5565, 5567, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7719, 7722, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5608, 5610, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5613, 5615, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2493, 2498, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2500, 2513, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2907, 2909, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2911, 2929, 'function renderCustomerDashboard(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2932, 2934, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2936, 2954, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -1602,6 +1602,271 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const summaryCount = match ? Number(match[1]) : -1;
   assert(summaryCount === result.displayedOpportunities.length, `required proof 18: the displayed summary count exactly equals the number of rendered eligible cards (summary: ${summaryCount}, rendered: ${result.displayedOpportunities.length})`);
   assert(summaryCount === 1, `required proof 18: only the genuinely eligible opportunity is counted -- the ineligible one never inflates the summary (got ${summaryCount})`);
+}
+
+// ===========================================================================
+// Section E — Fourth QA correction round: the read-time classification
+// boundary (classifyLegacySignalActionability now also returns
+// canonicalEventType), the opportunityType/canonicalEventType field-name
+// collision (opp.opportunityType doubles as a generic "SIGNAL-DRIVEN"/
+// "REPEAT PATTERN" display label, which previously masked the real
+// classification from canonicalSignalKind()/opportunitiesLikelySameInitiative()
+// whenever it was set), event-like classification gaps (open house/
+// festival/rodeo/bare tournament), and the expanded legacy-copy quality
+// gate.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// acceptance test 1: L.L.Bean's flagship initiative is not Acquisition, now
+// proven through the read-time boundary too (not just the raw classifier).
+// ---------------------------------------------------------------------------
+{
+  const legacy = classifyLegacySignalActionability({
+    signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store',
+    whatChanged: 'L.L.Bean investing more than $50 million to reimagine the flagship store in Freeport, Maine.'
+  });
+  assert(legacy.canonicalEventType !== 'ACQUISITION', `acceptance 1: classifyLegacySignalActionability() (the legacy read-time boundary) never classifies L.L.Bean's investment as Acquisition (got "${legacy.canonicalEventType}")`);
+  assert(legacy.canonicalEventType === 'RENOVATION_COMPLETION', `acceptance 1: the read-time boundary now returns the specific classification, not just the coarse eventCategory (got "${legacy.canonicalEventType}")`);
+  assert(legacy.opportunityType === legacy.canonicalEventType, 'acceptance 1: classifyLegacySignalActionability() returns opportunityType as a direct alias of canonicalEventType, consistent with makeSignal()');
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 2-3: New Hope's true acquisition remains Acquisition;
+// Reading Symphony's grant remains Grant/Award, both re-verified through the
+// SAME legacy read-time boundary this round fixed (not just the raw
+// resolveCanonicalEventType() already covered by required proofs 8-9 above).
+// ---------------------------------------------------------------------------
+{
+  const newHope = classifyLegacySignalActionability({
+    signalTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio.'
+  });
+  assert(newHope.canonicalEventType === 'ACQUISITION', `acceptance 2: New Hope Network's genuine acquisition still reads as Acquisition through the legacy boundary (got "${newHope.canonicalEventType}")`);
+
+  const readingSymphony = classifyLegacySignalActionability({
+    signalTitle: 'Reading Symphony received a $15,000 grant', whatChanged: 'Reading Symphony was awarded a $15,000 grant from the NEA'
+  });
+  assert(readingSymphony.canonicalEventType === 'EVENT_AWARD', `acceptance 3: Reading Symphony's grant reads as Grant/Award, not Acquisition, through the legacy boundary (got "${readingSymphony.canonicalEventType}")`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 4-5: the actual production regression -- reproduced by
+// building opportunity objects the way addSignalDerivedOpportunities()
+// (dashboard/index.html) really does: opportunityType forced to the generic
+// display label 'SIGNAL-DRIVEN' (used for the "Signal-driven" badge
+// elsewhere), with canonicalEventType carrying the real classification
+// alongside it. Before this round's fix, opportunitiesLikelySameInitiative()
+// and canonicalSignalKind() read opp.opportunityType FIRST, so this exact
+// shape defeated clustering (both variants disagreed on "type" because both
+// showed 'SIGNAL-DRIVEN', which is not in CANONICAL_KIND_BY_EVENT_TYPE) --
+// and if two variants' overlap fell into the exact-type-match branch, the
+// mismatch could keep them apart entirely.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const account = 'L.L.Bean';
+  const investment = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'SIGNAL-DRIVEN', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store',
+    signalSummary: 'L.L.Bean is investing more than $50 million to reimagine the flagship store in Freeport, Maine',
+    sourceUrl: 'https://example.com/llbean-investment-2', cleanSourceName: 'Example Business News',
+    recommendedBuyingTeam: ['Marketing'], confidence: 78,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, label: 'Ongoing business change' }
+  };
+  const reopening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'SIGNAL-DRIVEN', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean is reopening its flagship store after a significant renovation',
+    signalSummary: 'L.L.Bean is reopening its flagship store after a significant renovation in Freeport, Maine',
+    sourceUrl: 'https://www.bangordailynews.com/llbean-flagship-reopens-2', cleanSourceName: 'Bangor Daily News',
+    confidence: 74,
+    actionabilityStatus: { status: 'unknown-date', isPriorityEligible: false, excludeFromPriorities: true, label: 'Date unavailable' }
+  };
+  const grandOpening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'SIGNAL-DRIVEN', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    signalSummary: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026 in Freeport, Maine',
+    sourceUrl: 'https://example.com/llbean-grand-opening-2', cleanSourceName: 'Portland Press Herald',
+    confidence: 88, eventDate: '2026-09-18', event_date: '2026-09-18', eventDateDisplay: 'September 18–20, 2026', eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' }
+  };
+  const deduped = sandbox.dedupeOpportunities([investment, reopening, grandOpening]);
+  assert(deduped.length === 1, `acceptance 4: the investment/reopening/grand-opening variants (with the real opp.opportunityType='SIGNAL-DRIVEN' collision reproduced) still merge into exactly one opportunity (got ${deduped.length})`);
+  const winner = deduped[0];
+  assert(winner.canonicalEventType !== 'ACQUISITION', `acceptance 4: the merged winner's classification is never Acquisition (got "${winner.canonicalEventType}")`);
+  const headline = sandbox.opportunityHeadline(winner);
+  assert(headline !== 'Acquisition creates a reason to reconnect', `acceptance 4: the card headline for the merged L.L.Bean flagship initiative is never the acquisition headline (got "${headline}")`);
+  assert(/growth|activity|upcoming|relevant/i.test(headline), `acceptance 4: the headline reflects the real expansion/event classification (got "${headline}")`);
+
+  // acceptance 5: the losing "reopening" variant must not remain as a
+  // separate opportunity -- this is exactly the array
+  // accountOpportunityCluster()/additionalOpportunitiesFor() (Research
+  // Details' "Additional Opportunities Found" section) draws from.
+  const reopeningStillPresent = deduped.some(o => o !== winner && /reopening its flagship store/i.test(o.signalTitle || ''));
+  assert(!reopeningStillPresent, 'acceptance 5: the merged-away reopening variant does not survive as its own Additional Opportunity');
+  assert(deduped.length === 1 && winner.mergedDuplicateCount === 2, `acceptance 5: the winner records exactly 2 variants merged away, confirming all three collapsed into one card (got length=${deduped.length}, mergedDuplicateCount=${winner.mergedDuplicateCount})`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 6-8: event actionability consistency -- Aileen Graf's
+// undated open house stays detail-only (never "Ongoing business change"),
+// Sandwich Stampede's explicit July 17-18, 2026 range is a Recent event, and
+// event-like signals never fall back to Ongoing business change through the
+// generic-family fallback path.
+// ---------------------------------------------------------------------------
+{
+  // acceptance 6: Aileen Graf -- exact stored text from the frozen fixture
+  // in scripts/test-canonical-classification.js (rank 4).
+  const aileenGraf = makeSignal({
+    accountName: 'Aileen Graf', signalTitle: 'Open House Event',
+    whatChanged: 'An open house is scheduled for a property designed by Aileen Graf.',
+    business_context: 'The open house indicates a marketing push for the property, which may require promotional materials.',
+    sourceUrl: 'https://destinyagents.com/home-search/listings/x'
+  }, { name: 'Aileen Graf' });
+  assert(!!aileenGraf, 'acceptance 6: makeSignal() retains the Aileen Graf open house signal');
+  assert(aileenGraf.canonicalEventType === 'EVENT_COMMUNITY', `acceptance 6: the open house classifies event-like (EVENT_COMMUNITY), not the generic ongoing bucket (got "${aileenGraf.canonicalEventType}")`);
+  assert(aileenGraf.eventCategory === 'event-like', `acceptance 6: eventCategory is event-like (got "${aileenGraf.eventCategory}")`);
+  assert(aileenGraf.actionabilityStatus.status === 'unknown-date', `acceptance 6: with no trustworthy date, status is Date unavailable, not Ongoing business change (got "${aileenGraf.actionabilityStatus.status}")`);
+  assert(aileenGraf.actionabilityStatus.isPriorityEligible === false, 'acceptance 6: the undated open house is excluded from current priorities (detail-only)');
+
+  // acceptance 7: Sandwich Stampede -- an explicit July 17-18, 2026 event
+  // date range, viewed August 4, 2026 (NOW), must read as a Recent event.
+  const sandwichStampede = makeSignal({
+    accountName: 'Sandwich Stampede', signalTitle: 'Sandwich Stampede festival',
+    whatChanged: 'The Sandwich Stampede festival took place July 17-18, 2026, drawing thousands of attendees.',
+    business_context: 'The festival is a major annual community draw for the town.',
+    sourceUrl: 'https://example.com/sandwich-stampede-2026'
+  }, { name: 'Sandwich Stampede' });
+  assert(!!sandwichStampede, 'acceptance 7: makeSignal() retains the Sandwich Stampede signal');
+  assert(sandwichStampede.canonicalEventType === 'EVENT_COMMUNITY', `acceptance 7: the festival classifies event-like (EVENT_COMMUNITY) (got "${sandwichStampede.canonicalEventType}")`);
+  assert(sandwichStampede.eventDate === '2026-07-17', `acceptance 7: the explicit July 17-18, 2026 range anchors to its first day (got "${sandwichStampede.eventDate}")`);
+  assert(sandwichStampede.actionabilityStatus.status === 'recent-past', `acceptance 7: viewed August 4, 2026, the July 17-18, 2026 festival is a Recent event (got "${sandwichStampede.actionabilityStatus.status}")`);
+  assert(sandwichStampede.actionabilityStatus.label !== 'Ongoing business change', `acceptance 7: the label is never "Ongoing business change" for this explicit-date event (got "${sandwichStampede.actionabilityStatus.label}")`);
+
+  // acceptance 8: event-like signals cannot become Ongoing business change
+  // merely because their wording doesn't hit one of the narrower categories
+  // -- rodeo and bare "tournament" (not just "golf tournament") are
+  // additional examples of the same class of gap this round closed.
+  const rodeo = resolveCanonicalEventType({ signalTitle: 'Downtown rodeo returns for its 40th year' });
+  assert(EVENT_LIKE_TYPES.has(rodeo.eventType), `acceptance 8: a rodeo signal classifies as an event-like type (got "${rodeo.eventType}")`);
+  const tournament = resolveCanonicalEventType({ signalTitle: 'Company hosts annual fishing tournament for employees' });
+  assert(EVENT_LIKE_TYPES.has(tournament.eventType), `acceptance 8: a bare (non-golf) tournament signal classifies as an event-like type (got "${tournament.eventType}")`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance tests 9-11: the expanded legacy-copy quality gate rejects the
+// exact pitchy phrases still visible in Preview on the L.L.Bean, Farmers,
+// Sandwich Stampede, and Aileen Graf cards, while preserving strong,
+// low-pressure grounded copy and catching duplicated account phrasing.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const llbean = { account: 'L.L.Bean' };
+  const farmers = { account: 'Farmers' };
+  const sandwich = { account: 'Sandwich Stampede' };
+  const aileen = { account: 'Aileen Graf' };
+
+  const pitchyMerch = 'Would you be interested in discussing promotional products for your upcoming event?';
+  assert(sandbox.isGroundedOpener(pitchyMerch, llbean) === false, `acceptance 9: "${pitchyMerch}" is rejected by the quality gate`);
+
+  const vagueOpportunity = 'This could be a great opportunity for your team.';
+  assert(sandbox.isGroundedOpener(vagueOpportunity, farmers) === false, `acceptance 9: "${vagueOpportunity}" is rejected by the quality gate`);
+
+  const canWeDiscuss = 'Can we discuss this further?';
+  assert(sandbox.isGroundedOpener(canWeDiscuss, sandwich) === false, `acceptance 9: "${canWeDiscuss}" is rejected by the quality gate`);
+
+  const anythingComingUp = 'Anything coming up that we should be thinking about?';
+  assert(sandbox.isGroundedOpener(anythingComingUp, aileen) === false, `acceptance 9: "${anythingComingUp}" is rejected by the quality gate`);
+
+  const customMerchandise = 'I would be interested in discussing custom merchandise options with your team.';
+  assert(sandbox.isGroundedOpener(customMerchandise, farmers) === false, `acceptance 9: "${customMerchandise}" is rejected by the quality gate`);
+
+  const canWeChat = 'Can we chat about this?';
+  assert(sandbox.isGroundedOpener(canWeChat, sandwich) === false, `acceptance 9: "${canWeChat}" is rejected by the quality gate`);
+
+  // acceptance 10: strong, low-pressure, factual persisted copy remains
+  // preserved -- the gate rejects pitchy/generic copy, not every legacy row.
+  const groundedFarmers = 'Saw Farmers is expanding its downtown branch. Do you know who is leading that project?';
+  assert(sandbox.isGroundedOpener(groundedFarmers, farmers) === true, `acceptance 10: specific, factual, low-pressure persisted copy for Farmers survives the gate (got rejected: "${groundedFarmers}")`);
+  const groundedSandwich = 'Saw the Sandwich Stampede festival wrapped up last month. Do you know who organizes it each year?';
+  assert(sandbox.isGroundedOpener(groundedSandwich, sandwich) === true, `acceptance 10: specific, factual, low-pressure persisted copy for Sandwich Stampede survives the gate (got rejected: "${groundedSandwich}")`);
+
+  // acceptance 11: no duplicated account phrase, exactly the shape reported
+  // in Preview.
+  const doubledLLBean = 'Saw L.L.Bean is investing in the flagship store at L.L.Bean this year.';
+  assert(sandbox.isGroundedOpener(doubledLLBean, llbean) === false, `acceptance 11: "${doubledLLBean}" (duplicated account mention) is rejected by the quality gate`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance test 12: Opportunity Summary is grammatically complete even
+// when the underlying initiative title is a full clause ("L.L.Bean is
+// investing... coming up"), and the fix is generic/dynamic -- proven with a
+// SECOND, unrelated account/initiative to confirm nothing is hardcoded to
+// L.L.Bean-specific wording.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const ctxLLBean = {
+    account: 'L.L.Bean', firstName: 'there', mode: 'Cold',
+    reasonTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store',
+    whyNow: '', category: 'apparel', signalType: 'expansion', department: 'Marketing',
+    initiativeTitle: 'L.L.Bean is investing more than $50 million to reimagine the flagship store',
+    isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false
+  };
+  const playLLBean = sandbox.buildConciseSalesPlay(ctxLLBean);
+  const summaryLLBean = playLLBean.opportunitySummary.join(' ');
+  assert(/\. That creates a timely reason to reach out\./.test(summaryLLBean) || /creates a timely reason to reach out\./.test(summaryLLBean), `acceptance 12: L.L.Bean's Opportunity Summary is grammatically complete (got: "${summaryLLBean}")`);
+  assert(!/store coming up creates a timely reason/.test(summaryLLBean), `acceptance 12: the summary is never the run-on "...store coming up creates a timely reason..." shape (got: "${summaryLLBean}")`);
+
+  // A second, unrelated account/initiative proves the fix is generic, not
+  // hardcoded to L.L.Bean's own wording.
+  const ctxFarmers = {
+    account: 'Farmers', firstName: 'there', mode: 'Cold',
+    reasonTitle: 'Farmers is expanding its downtown branch',
+    whyNow: '', category: 'apparel', signalType: 'expansion', department: 'Operations',
+    initiativeTitle: 'Farmers is expanding its downtown branch',
+    isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false
+  };
+  const playFarmers = sandbox.buildConciseSalesPlay(ctxFarmers);
+  const summaryFarmers = playFarmers.opportunitySummary.join(' ');
+  assert(summaryFarmers.includes('That creates a timely reason to reach out.'), `acceptance 12: Farmers' Opportunity Summary uses the same generic, dynamic construction (got: "${summaryFarmers}")`);
+  assert(!/branch coming up creates a timely reason/.test(summaryFarmers), `acceptance 12: Farmers' summary is never a run-on either (got: "${summaryFarmers}")`);
+}
+
+// ---------------------------------------------------------------------------
+// acceptance test 13: priority summary counts remain equal to visible
+// eligible cards -- re-verified end to end with the Aileen Graf/Sandwich
+// Stampede fixtures from acceptance tests 6-7 mixed into the same feed.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  sandbox.__setActiveTimebox('week');
+  sandbox.__setShowAllWeeklyPriorities(false);
+  const eligibleStampede = {
+    account: 'Sandwich Stampede', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/sandwich-stampede-2026',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event', signalTitle: 'Sandwich Stampede festival',
+    canonicalEventType: 'EVENT_COMMUNITY', confidenceScore: 75,
+    publishedDate: new Date(NOW.getTime() - 18 * 86400000).toISOString(),
+    signalDate: new Date(NOW.getTime() - 18 * 86400000).toISOString(),
+    eventDate: '2026-07-17', eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'recent-past', isPriorityEligible: true, excludeFromPriorities: false, label: 'Recent event' }
+  };
+  const ineligibleAileen = {
+    account: 'Aileen Graf', isVerifiedSignalOpportunity: true, sourceUrl: 'https://destinyagents.com/home-search/listings/x',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event', signalTitle: 'Open House Event',
+    canonicalEventType: 'EVENT_COMMUNITY', confidenceScore: 33,
+    publishedDate: new Date(NOW.getTime() - 5 * 86400000).toISOString(),
+    signalDate: new Date(NOW.getTime() - 5 * 86400000).toISOString(),
+    actionabilityStatus: { status: 'unknown-date', isPriorityEligible: false, excludeFromPriorities: true, label: 'Date unavailable' }
+  };
+  const result = sandbox.renderWeeklyPrioritiesFeed([eligibleStampede, ineligibleAileen], [{ name: 'Sandwich Stampede' }, { name: 'Aileen Graf' }]);
+  const label = sandbox.document.getElementById('resultCount').innerHTML;
+  const match = label.match(/(\d+) accounts? worth reviewing/);
+  assert(Boolean(match), `acceptance 13: the summary label has the expected shape (got: "${label}")`);
+  const summaryCount = match ? Number(match[1]) : -1;
+  assert(summaryCount === result.displayedOpportunities.length, `acceptance 13: the displayed summary count exactly equals the number of rendered eligible cards (summary: ${summaryCount}, rendered: ${result.displayedOpportunities.length})`);
+  assert(summaryCount === 1, `acceptance 13: only Sandwich Stampede (Recent event) is counted -- Aileen Graf's undated open house never inflates the summary (got ${summaryCount})`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

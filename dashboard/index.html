@@ -2696,8 +2696,14 @@ function opportunitiesLikelySameInitiative(a, b){
   // Scoped to real, sourced business-activity signals only -- historical/
   // repeat-pattern opportunities are untouched by this pass.
   if(!isBusinessOpportunity(a) || !isBusinessOpportunity(b)) return false;
-  const typeA = a?.opportunityType || a?.canonicalEventType || '';
-  const typeB = b?.opportunityType || b?.canonicalEventType || '';
+  // QA final round, item 1/2: opportunityType also carries the generic
+  // display-category label ('SIGNAL-DRIVEN'/'REPEAT PATTERN', see
+  // getOpportunityType()) for non-canonical opportunities -- canonicalEventType
+  // is the one field that is EXCLUSIVELY the specific business-event
+  // classification, so it must win whenever present rather than being masked
+  // by the display label.
+  const typeA = a?.canonicalEventType || a?.opportunityType || '';
+  const typeB = b?.canonicalEventType || b?.opportunityType || '';
   if(!relatedEventTypes(typeA, typeB)) return false;
   const domainA = sourceDomain(a?.sourceUrl || '');
   const domainB = sourceDomain(b?.sourceUrl || '');
@@ -2823,6 +2829,25 @@ function mergeBusinessSignalInitiatives(items){
     }
     if(extraSources.length) winner.additionalSources = extraSources;
     if(mergedEvidence.length) winner.evidence = mergedEvidence;
+    // QA final round, item 1: the merge winner is chosen by SOURCE strength
+    // (compareInitiativeCandidates), not by classification accuracy -- a
+    // stale/minority label on the winner (e.g. an older article that predates
+    // a classification fix) must not out-vote the majority, evidence-backed
+    // type shared by the rest of the merged cluster. Ties keep the winner's
+    // own value.
+    const typeCounts = new Map();
+    group.forEach(item => {
+      const t = item.canonicalEventType || '';
+      if(t) typeCounts.set(t, (typeCounts.get(t) || 0) + 1);
+    });
+    if(typeCounts.size){
+      let bestType = winner.canonicalEventType || '';
+      let bestCount = typeCounts.get(bestType) || 0;
+      typeCounts.forEach((count, type) => {
+        if(count > bestCount){ bestType = type; bestCount = count; }
+      });
+      winner.canonicalEventType = bestType;
+    }
     winner.mergedDuplicateCount = group.length - 1;
     return winner;
   });
@@ -3611,7 +3636,13 @@ const CANONICAL_KIND_BY_EVENT_TYPE = {
   REBRAND: 'business'
 };
 function canonicalSignalKind(opp){
-  const canonicalType = opp?.opportunityType || opp?.canonicalEventType || '';
+  // QA final round, item 1: opp.opportunityType also doubles as a generic
+  // display-category label ('SIGNAL-DRIVEN'/'REPEAT PATTERN') for
+  // non-canonical opportunities -- canonicalEventType is the field that is
+  // EXCLUSIVELY the specific business-event classification and must be
+  // checked first, or a truthy display label silently blocks the real
+  // lookup below every time.
+  const canonicalType = opp?.canonicalEventType || opp?.opportunityType || '';
   return CANONICAL_KIND_BY_EVENT_TYPE[canonicalType] || null;
 }
 
@@ -3760,8 +3791,8 @@ function isGroundedOpener(text, opp){
     /had a quick question — who would be best to ask/i,
     // Immediately pitches promotional products instead of asking a
     // referral-focused question first.
-    /discuss(ing)?\s+promotional products/i,
-    /interested in (discussing|exploring)\s+(promotional products|our products|what we offer)/i,
+    /discuss(ing)?\s+(promotional products|custom merchandise|merchandise options|branded (?:items|merchandise|products))/i,
+    /interested in (discussing|exploring)\s+(promotional products|our products|what we offer|custom merchandise|merchandise options)/i,
     // A vague "great opportunity" hook with no factual connection to the
     // real signal, and other generic sales-forward filler.
     /this (could|would|might) be a great opportunity/i,
@@ -3769,6 +3800,11 @@ function isGroundedOpener(text, opp){
     /let us know if you.?d like to explore/i,
     /we.?d love to (discuss|explore|help)/i,
     /reach out to (discuss|explore) (how we can|potential)/i,
+    // QA final round, item 4: generic closers with no factual connection to
+    // the actual signal -- "can we chat/discuss this" and "anything coming
+    // up" ask nothing specific even when a known initiative exists.
+    /can we (discuss|chat about) this(\s+further)?\s*\??/i,
+    /anything coming up (that )?(we should|you.?d like|is worth)?\s*(be\s+)?thinking about/i,
     // Invents a celebration/integration merchandise plan the source text
     // never actually described.
     /enhance the celebration/i,
@@ -3847,14 +3883,20 @@ function opportunityHeadline(opp){
   // Blending them in previously let a suggested "onboarding kit" idea for
   // an acquisition/integration signal make the headline say "Recent
   // hiring" even though the event itself was never a hiring signal.
-  const text = `${opp.opportunity || ''} ${opp.opportunityName || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''} ${opp.whyNow || ''}`.toLowerCase();
   if(type === 'Relationship Expansion') return 'Warm relationship + expansion opportunity';
   if(type === 'Recent Project Follow-Up') return 'Recent order creates a natural follow-up';
   if(type === 'Reorder Due' || type === 'Annual Buying Pattern') return 'Repeat buying window detected';
   if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
-  if(kind === 'acquisition' || /acquisition|acquired|\bmerger\b/.test(text)) return 'Acquisition creates a reason to reconnect';
-  if(kind === 'hiring' || /hiring|recruit(?:ing|ment)?|onboarding|new hire/.test(text)) return 'Recent hiring creates a timely reason to reconnect';
-  if(kind === 'event' || /event|conference|trade show|expo/.test(text)){
+  // QA final round, item 1: rely on kind (businessSignalKind(), which already
+  // prefers the server-computed canonical classification and only falls back
+  // to its own narrow content regex when no canonical type exists) alone --
+  // an independent raw-text regex check here previously let an unrelated
+  // mention of "acquisition"/"merger" anywhere in whyNow/signalSummary (even
+  // a negation, e.g. "not an acquisition") override a correctly classified
+  // investment/renovation/expansion event.
+  if(kind === 'acquisition') return 'Acquisition creates a reason to reconnect';
+  if(kind === 'hiring') return 'Recent hiring creates a timely reason to reconnect';
+  if(kind === 'event'){
     // Priority 1: "upcoming" is never displayed unless a confidently parsed
     // event date is actually in the future -- opp.actionabilityStatus is
     // set by makeSignal() in api/research-batch.js for exactly this check.
@@ -3863,7 +3905,7 @@ function opportunityHeadline(opp){
     if(status === 'recent-past') return 'Recent activity creates a relevant opening for a follow-up';
     return 'Event activity creates a relevant opening';
   }
-  if(kind === 'expansion' || /expansion|new location|growth/.test(text)) return 'Growth activity creates a reason to reach out';
+  if(kind === 'expansion') return 'Growth activity creates a reason to reach out';
   if(layer === 'Follow-Up Signal') return 'Past order history suggests a follow-up opportunity';
   if(layer === 'Repeat / Pattern Signal') return 'Historical timing suggests a repeat opportunity';
   return 'Timely signal creates a reason to reconnect';
@@ -4332,7 +4374,13 @@ function addSignalDerivedOpportunities(account, signals){
     opp.closeProbability = Math.min(96, Math.max(55, Math.round((signal.confidence || 0.72)*100) + (opp.relationshipStrength >= 40 ? 8 : 0) + multiSignalBonus));
     opp.quickWinScore = Math.min(98, getQuickWinScore(account, base, true) + multiSignalBonus);
     opp.confidence = opp.quickWinScore;
+    // QA final round, item 1/2: opportunityType is a generic display-category
+    // label ('SIGNAL-DRIVEN'/'REPEAT PATTERN', see getOpportunityType()), NOT
+    // the canonical business-event classification -- keep the two apart so
+    // canonicalSignalKind()/opportunitiesLikelySameInitiative() (which read
+    // canonicalEventType) see the real classification instead of this label.
     opp.opportunityType = 'SIGNAL-DRIVEN';
+    opp.canonicalEventType = signal.canonicalEventType || '';
     opp.relationshipMode = getRelationshipMode(account);
     assignOpportunityScore(opp, account);
     account.futureOpportunities.unshift(opp);
@@ -6341,8 +6389,16 @@ function buildConciseSalesPlay(ctx){
   const ask = ownerAskPhrase(ctx);
   const offer = ideaOfferPhrase(ctx);
 
+  // QA final round, item 4: `lead` is a real, evidence-derived phrase that
+  // is sometimes a full clause with its own subject/verb (e.g. "L.L.Bean is
+  // investing more than $50 million to reimagine the flagship store coming
+  // up"), not always a bare noun phrase -- directly appending "creates a
+  // timely reason to reach out" onto a clause produced a run-on with no
+  // clear subject for "creates". Splitting into two sentences is
+  // grammatically complete either way, without hardcoding to any specific
+  // account or initiative wording.
   const opportunitySummary = [
-    `${lead} creates a timely reason to reach out.`,
+    `${lead}. That creates a timely reason to reach out.`,
     isWarm ? 'Existing relationship can be used as a bridge.' : 'A specific business reason keeps this from feeling like a cold pitch.',
     'Goal is to earn a reply or referral before selling.'
   ].map(normalizeOutreachText);

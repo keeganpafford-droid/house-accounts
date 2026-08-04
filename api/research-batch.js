@@ -1528,7 +1528,15 @@ function classifyLegacySignalActionability(payload = {}) {
     eventDate: eventDate || '',
     eventDateDisplay: eventDateDisplay || '',
     eventDateConfidence: dateConfidence,
-    isUpcoming: actionabilityStatus.status === 'upcoming'
+    isUpcoming: actionabilityStatus.status === 'upcoming',
+    // QA final round, item 1: re-derive the SPECIFIC classification (e.g.
+    // RENOVATION_COMPLETION vs ACQUISITION) from the evidence text every time
+    // a legacy/already-persisted row is read, not just the coarse event-like
+    // vs ongoing bucket -- otherwise a classification-regex fix (like the
+    // acquisition-language tightening in resolveEventType()) never reaches
+    // rows persisted before the fix shipped.
+    canonicalEventType,
+    opportunityType: canonicalEventType
   };
 }
 

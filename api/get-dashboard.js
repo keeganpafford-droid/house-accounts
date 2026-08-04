@@ -223,6 +223,12 @@ function signalToOpportunity(row){
     account: row.account_name,
     opportunity: s.promoOpportunity || s.opportunityCategory || s.signalType || 'Business Activity',
     opportunityCategory: s.opportunityCategory || s.signalType || 'Business Activity',
+    // QA final round, item 1: carry the canonical classification (freshly
+    // recomputed for legacy rows by classifyLegacySignalActionability() above)
+    // onto the opportunity object itself so every consumer -- headline,
+    // Prepare for Call, outreach, dedup family -- reads the SAME, current
+    // classification rather than a stale value trapped inside businessSignals[0].
+    canonicalEventType: s.canonicalEventType || '',
     signalLayerType: 'Business Activity Signal',
     isVerifiedSignalOpportunity: true,
     signalType: s.signalType || 'Business Activity',

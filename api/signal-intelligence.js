@@ -457,7 +457,14 @@ function resolveEventType(text = '', family = '') {
   if (/\bawards?\b|recognition|recognized|\bwinners?\b|\bmilestones?\b|\banniversar(?:y|ies)\b|\bgrants?\b|funding award|sponsorship award/i.test(t)) {
     return { primaryType: 'EVENT_AWARD', candidateTypes: ['EVENT_AWARD'], recurring: true };
   }
-  if (/community event|golf tournament|\b5k\b|fundraiser|\bcharity\b|\bsponsor/i.test(t)) {
+  // QA final round, item 3: "open house"/"festival"/"rodeo"/bare
+  // "tournament" (not just "golf tournament") previously matched no specific
+  // regex here and fell through to the generic BUSINESS_ACTIVITY_* bucket,
+  // which is never in EVENT_LIKE_TYPES -- an explicitly event-like signal
+  // (open house, festival, tournament, rodeo) must never be silently
+  // downgraded to an ongoing business change just because its wording didn't
+  // happen to match one of the narrower event categories above.
+  if (/community event|golf tournament|\btournaments?\b|\b5k\b|fundraiser|\bcharity\b|\bsponsor|\bopen house(?:s|es)?\b|\bfestivals?\b|\brodeos?\b/i.test(t)) {
     return { primaryType: 'EVENT_COMMUNITY', candidateTypes: ['EVENT_COMMUNITY'], recurring: true };
   }
   if (/product launch|\blaunches\b|\blaunched\b|\bunveil|new product|new service/i.test(t)) {
