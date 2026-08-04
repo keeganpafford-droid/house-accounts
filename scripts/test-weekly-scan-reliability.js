@@ -15,9 +15,17 @@
 import handler, {
   computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult,
   accumulateProgress, decideFinalStatus, FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS,
-  RESEARCH_FETCH_TIMEOUT_MS
+  RESEARCH_FETCH_TIMEOUT_MS, safeSecretEqual
 } from '../api/weekly-scan.js';
 import { resolveOpportunityEvents, dedupeByEventFingerprint, normalizeOpportunity } from '../api/signal-intelligence.js';
+
+// Every scenario below now runs against a fail-closed handler (security
+// hotfix: weekly-monitoring authorization) — a valid CRON_SECRET and a
+// matching Authorization: Bearer header are required by default so that
+// pre-existing orchestration behavior is still exercised, not the auth
+// wall. Tests that specifically target the auth wall itself override
+// cronSecretEnv/authHeader explicitly (see the "hotfix" section below).
+const TEST_CRON_SECRET = 'test-cron-secret-do-not-log-1234567890';
 
 let failures = 0;
 function assert(condition, message){
@@ -216,10 +224,15 @@ function makeRes(){
   return res;
 }
 
-async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, weeklyRunsPostBehavior, priorRunningRows = [], activeRunLookupRows = [], accountsOverride, query = {}, knownUploadIds }){
+async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, weeklyRunsPostBehavior, priorRunningRows = [], activeRunLookupRows = [], accountsOverride, query = {}, knownUploadIds, cronSecretEnv, authHeader }){
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
-  delete process.env.CRON_SECRET;
+  // cronSecretEnv: undefined (default) -> a valid CRON_SECRET is set so
+  // normal orchestration scenarios pass the auth wall unmodified; null ->
+  // CRON_SECRET is deliberately unset (503 scenario); any string -> used
+  // verbatim as CRON_SECRET.
+  if (cronSecretEnv === null) delete process.env.CRON_SECRET;
+  else process.env.CRON_SECRET = cronSecretEnv === undefined ? TEST_CRON_SECRET : cronSecretEnv;
   delete process.env.RESEND_API_KEY; // sendEmail short-circuits without this
   delete process.env.WEEKLY_RESEARCH_BATCH_SIZE; // use the new default (5)
 
@@ -295,7 +308,14 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, w
     throw new Error(`Unhandled fetch in test mock: ${method} ${u}`);
   };
 
-  const req = { method:'GET', headers:{host:'example.test'}, query:{limit:'25', ...query} };
+  // authHeader: undefined (default) -> a valid Bearer header matching
+  // TEST_CRON_SECRET (or the overridden cronSecretEnv); null -> omit the
+  // Authorization header entirely; any string -> used verbatim.
+  const headers = { host:'example.test' };
+  if (authHeader !== null) {
+    headers.authorization = authHeader !== undefined ? authHeader : `Bearer ${cronSecretEnv === undefined ? TEST_CRON_SECRET : cronSecretEnv}`;
+  }
+  const req = { method:'GET', headers, query:{limit:'25', ...query} };
   const res = makeRes();
   try{
     await handler(req, res);
@@ -573,7 +593,7 @@ function successfulResearch(){
   // trigger, or two overlapping cron ticks.
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
-  delete process.env.CRON_SECRET;
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
   delete process.env.RESEND_API_KEY;
   delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
 
@@ -622,7 +642,7 @@ function successfulResearch(){
     throw new Error(`Unhandled fetch in concurrent-invocation test mock: ${method} ${u}`);
   };
 
-  const makeReq = () => ({ method:'GET', headers:{host:'example.test'}, query:{uploadId, limit:'25'} });
+  const makeReq = () => ({ method:'GET', headers:{host:'example.test', authorization:`Bearer ${TEST_CRON_SECRET}`}, query:{uploadId, limit:'25'} });
   const res1 = makeRes();
   const res2 = makeRes();
   try{
@@ -655,7 +675,7 @@ function successfulResearch(){
   // row into a permanently-unrecoverable one.
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
-  delete process.env.CRON_SECRET;
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
   delete process.env.RESEND_API_KEY;
   delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
 
@@ -708,7 +728,7 @@ function successfulResearch(){
     throw new Error(`Unhandled fetch in select-projection regression test mock: ${method} ${u}`);
   };
 
-  const req = { method:'GET', headers:{host:'example.test'}, query:{uploadId, dryRun:'true', limit:'25'} };
+  const req = { method:'GET', headers:{host:'example.test', authorization:`Bearer ${TEST_CRON_SECRET}`}, query:{uploadId, dryRun:'true', limit:'25'} };
   const res = makeRes();
   try{
     await handler(req, res);
@@ -829,6 +849,112 @@ function failureReasonFromFinalPatch(patchCalls){
   assert(!reason.includes('non-JSON'), 'an AbortError is never mislabeled as a non-JSON response diagnostic');
   const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
   assert(finalPatch?.body?.status === 'timed_out', 'sawTimeout/decideFinalStatus behavior for a genuine AbortError is unchanged: timed_out, not failed');
+}
+
+// ---------------------------------------------------------------------------
+// Security hotfix: fail-closed CRON_SECRET / Authorization enforcement.
+// (weekly-scan tests 1-6 of the required 18)
+// ---------------------------------------------------------------------------
+
+{
+  // Pure-function sanity check on the comparison helper itself.
+  assert(safeSecretEqual('abc123', 'abc123') === true, 'safeSecretEqual returns true for identical secrets');
+  assert(safeSecretEqual('abc123', 'abc124') === false, 'safeSecretEqual returns false for equal-length but differing secrets');
+  assert(safeSecretEqual('abc', 'abc123') === false, 'safeSecretEqual returns false for a length mismatch, without throwing');
+  assert(safeSecretEqual('', 'abc123') === false, 'safeSecretEqual returns false for an empty provided value');
+  assert(safeSecretEqual(undefined, 'abc123') === false, 'safeSecretEqual returns false for an undefined provided value, without throwing');
+}
+
+{
+  // Hotfix test 1: missing CRON_SECRET -> 503, and the handler makes zero
+  // downstream calls of any kind before reaching that check.
+  let fetchCalls = 0;
+  const realFetch = global.fetch;
+  global.fetch = async (...args) => { fetchCalls += 1; throw new Error(`unexpected fetch call while CRON_SECRET is unset: ${args[0]}`); };
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  delete process.env.CRON_SECRET;
+  delete process.env.RESEND_API_KEY;
+  const req = { method:'GET', headers:{host:'example.test'}, query:{limit:'25'} };
+  const res = makeRes();
+  try{ await handler(req, res); } finally { global.fetch = realFetch; }
+  assert(res.statusCode === 503, 'a missing CRON_SECRET returns 503 immediately instead of silently skipping authorization (hotfix test 1)');
+  assert(fetchCalls === 0, 'a missing CRON_SECRET results in zero Supabase/provider/research-batch requests (hotfix test 1)');
+}
+
+{
+  // Hotfix test 2: CRON_SECRET is configured but no Authorization header is
+  // sent -> 401, and research-batch is never reached.
+  const { res } = await runHandlerScenario({
+    authHeader: null,
+    researchBehavior: async () => { throw new Error('research-batch should never be called for a missing Authorization header'); }
+  });
+  assert(res.statusCode === 401, 'a missing Authorization header returns 401 when CRON_SECRET is configured (hotfix test 2)');
+}
+
+{
+  // Hotfix test 3: an Authorization header is present but carries the wrong
+  // value -> 401, and research-batch is never reached.
+  const { res } = await runHandlerScenario({
+    authHeader: 'Bearer this-is-not-the-configured-secret',
+    researchBehavior: async () => { throw new Error('research-batch should never be called for an incorrect Bearer token'); }
+  });
+  assert(res.statusCode === 401, 'an incorrect Bearer token returns 401 (hotfix test 3)');
+}
+
+{
+  // Hotfix test 4: a correct Bearer token reaches normal orchestration
+  // end-to-end (run creation, chunk processing, finalization) exactly as
+  // before this hotfix.
+  const { res, patchCalls } = await runHandlerScenario({ researchBehavior: successfulResearch() });
+  const finalPatch = patchCalls.find(p => p.url.includes('/ha_weekly_runs') && p.body.status);
+  assert(res.statusCode === 200, 'a correct Bearer token reaches normal orchestration and returns 200 (hotfix test 4)');
+  assert(finalPatch?.body?.status === 'complete', 'a correct Bearer token allows the run to reach a normal completed status, unchanged by this hotfix (hotfix test 4)');
+}
+
+{
+  // Hotfix test 5: the old ?secret=<correct> query-string fallback no longer
+  // exists -- supplying the correct value there, with no Authorization
+  // header, is still rejected.
+  const { res } = await runHandlerScenario({
+    authHeader: null,
+    query: { secret: TEST_CRON_SECRET },
+    researchBehavior: async () => { throw new Error('research-batch should never be called via the removed ?secret= fallback'); }
+  });
+  assert(res.statusCode === 401, 'the correct secret supplied via ?secret= (no Authorization header) is rejected -- the query-string fallback has been removed (hotfix test 5)');
+}
+
+{
+  // Hotfix test 6: every rejection path (missing header, wrong token,
+  // missing CRON_SECRET) performs literally zero downstream requests --
+  // zero Supabase reads/writes, zero research-batch calls, zero provider
+  // calls, zero Resend calls, zero ha_weekly_runs writes. A single fetch
+  // spy that throws on any call proves this for all three cases at once,
+  // since api/weekly-scan.js has no other way to reach a paid provider or
+  // persist a run except through fetch()/its supabase() helper (which is
+  // itself fetch-backed).
+  const rejectionScenarios = [
+    { label: 'missing Authorization header', cronSecretEnv: undefined, authHeader: null },
+    { label: 'incorrect Bearer token', cronSecretEnv: undefined, authHeader: 'Bearer wrong-secret-value' },
+    { label: 'missing CRON_SECRET', cronSecretEnv: null, authHeader: null }
+  ];
+  for (const scenario of rejectionScenarios) {
+    let fetchCalls = 0;
+    const realFetch = global.fetch;
+    global.fetch = async (...args) => { fetchCalls += 1; throw new Error(`unexpected downstream call for a rejected request (${scenario.label}): ${args[0]}`); };
+    process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+    if (scenario.cronSecretEnv === null) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = TEST_CRON_SECRET;
+    delete process.env.RESEND_API_KEY;
+    const headers = { host:'example.test' };
+    if (scenario.authHeader !== null) headers.authorization = scenario.authHeader;
+    const req = { method:'GET', headers, query:{limit:'25'} };
+    const res = makeRes();
+    try{ await handler(req, res); } finally { global.fetch = realFetch; }
+    assert(fetchCalls === 0, `zero downstream requests (Supabase, research-batch, providers, Resend, ha_weekly_runs) are made for a rejected request: ${scenario.label} (hotfix test 6)`);
+    assert(res.statusCode === 401 || res.statusCode === 503, `a rejected request (${scenario.label}) returns 401 or 503, never proceeds (hotfix test 6)`);
+  }
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

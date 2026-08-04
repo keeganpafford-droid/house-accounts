@@ -22,7 +22,20 @@
 //                    the check. When absent, behavior is unchanged from
 //                    before this parameter existed.
 
+import { timingSafeEqual } from 'crypto';
 import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+
+// Constant-time-ish secret comparison: equal-length secrets are compared via
+// crypto.timingSafeEqual (no early-exit on byte mismatch); a length mismatch
+// short-circuits to false since Node's timingSafeEqual throws on unequal
+// lengths and there is no secret-dependent information to protect in a
+// length check alone. Never logs either input.
+function safeSecretEqual(provided, expected) {
+  const providedBuf = Buffer.from(String(provided || ''), 'utf8');
+  const expectedBuf = Buffer.from(String(expected || ''), 'utf8');
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
 
 // ---------------------------------------------------------------------------
 // Priority 0 (reliability) — hung weekly-run repair.
@@ -400,20 +413,34 @@ export default async function handler(req, res){
   const invocationStart = Date.now();
   const deadline = computeDeadline(invocationStart);
   try{
-    if(process.env.CRON_SECRET){
-      const provided = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query?.secret;
-      if(provided !== process.env.CRON_SECRET) return json(res, 401, {error:'Unauthorized'});
+    // Fail-closed authorization: this must be the very first thing the
+    // handler does, before any query parameter (dryRun/uploadId/limit) is
+    // read and before any Supabase, provider, or email work. A missing
+    // CRON_SECRET is a misconfiguration, not an "open" state -- it now
+    // returns 503 instead of silently skipping authorization. The secret is
+    // accepted only via the Authorization: Bearer header; the previous
+    // ?secret= query-string fallback has been removed. Neither the supplied
+    // nor the expected value is ever logged.
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) return json(res, 503, {error:'Service unavailable: not configured.'});
+    const authHeader = req.headers.authorization || '';
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader);
+    const providedSecret = bearerMatch ? bearerMatch[1] : '';
+    if (!providedSecret || !safeSecretEqual(providedSecret, cronSecret)) {
+      return json(res, 401, {error:'Unauthorized'});
     }
+
     const dryRun = String(req.query?.dryRun || '').toLowerCase() === 'true';
     // Operational/admin targeting: ?uploadId=<uuid> restricts this invocation
     // to exactly one upload, for a manual rerun or production debugging
     // session, instead of the normal limit-bounded sweep across every
-    // monitored upload. This is read only after the CRON_SECRET check above
-    // and adds no separate authorization path of its own — it cannot be used
-    // to bypass CRON_SECRET, only to narrow what an already-authorized
-    // request processes. When absent, behavior is byte-for-byte the same as
-    // before this parameter existed: the limit-bounded query below still
-    // decides what gets processed, and `limit` is otherwise unused/ignored.
+    // monitored upload. This is read only after the authorization check
+    // above and adds no separate authorization path of its own — it cannot
+    // be used to bypass authorization, only to narrow what an
+    // already-authorized request processes. When absent, behavior is
+    // byte-for-byte the same as before this parameter existed: the
+    // limit-bounded query below still decides what gets processed, and
+    // `limit` is otherwise unused/ignored.
     const requestedUploadId = clean(req.query?.uploadId || '');
     let uploads;
     if(requestedUploadId){
@@ -573,7 +600,7 @@ export default async function handler(req, res){
           try{
             const researchResp = await fetchWithTimeout(`${baseUrl}/api/research-batch`, {
               method:'POST',
-              headers:{'Content-Type':'application/json'},
+              headers:{'Content-Type':'application/json', 'Authorization': `Bearer ${cronSecret}`},
               body: JSON.stringify({mode:'weekly-monitoring', accounts: batch})
             }, RESEARCH_FETCH_TIMEOUT_MS);
             // Read the body once as text, then parse — a Response body can
@@ -706,5 +733,6 @@ export default async function handler(req, res){
 export {
   FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS, RESEARCH_FETCH_TIMEOUT_MS, STALE_RUN_THRESHOLD_MS,
   MAX_CHUNKS_SAFELY_PER_INVOCATION,
-  computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult, accumulateProgress, decideFinalStatus
+  computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult, accumulateProgress, decideFinalStatus,
+  safeSecretEqual
 };

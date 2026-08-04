@@ -15,7 +15,7 @@ import {
   resolveEventType,
   displayLabelForEventType
 } from './signal-intelligence.js';
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 
 // Phase 2A implementation-review item 5 — instrumentation privacy. Normal
 // production logs use counts and hashed identifiers only; raw customer/
@@ -55,6 +55,20 @@ function shortHash(value = '') {
 // one. vercel.json's value for this path must be kept at or below
 // api/weekly-scan.js's RESEARCH_FETCH_TIMEOUT_MS by hand.
 
+
+// Constant-time-ish secret comparison: equal-length secrets are compared via
+// crypto.timingSafeEqual (no early-exit on byte mismatch); a length mismatch
+// short-circuits to false since Node's timingSafeEqual throws on unequal
+// lengths and there is no secret-dependent information to protect in a
+// length check alone. Never logs either input. Kept as a local copy (rather
+// than imported from weekly-scan.js) so this independently-deployed
+// serverless function has no build-time dependency on another one.
+function safeSecretEqual(provided, expected) {
+  const providedBuf = Buffer.from(String(provided || ''), 'utf8');
+  const expectedBuf = Buffer.from(String(expected || ''), 'utf8');
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
 
 function clean(text = '') {
   return String(text || '')
@@ -1663,6 +1677,33 @@ export default async function handler(req, res) {
   const startedAt = Date.now();
   const body = req.body || {};
   const targetUploadId = clean(body.uploadId || '');
+  const requestMode = clean(body.mode || '');
+
+  // Security hotfix (weekly-monitoring internal-caller authorization): the
+  // weekly scan cron (api/weekly-scan.js) calls this endpoint with
+  // mode:'weekly-monitoring' and NO uploadId, which meant it never reached
+  // the resolveAuthenticatedUploadOwner() check below and ran fully
+  // unauthenticated -- letting anyone POST mode:'weekly-monitoring' and
+  // trigger paid provider research for arbitrary caller-supplied accounts.
+  // This check is deliberately the very first thing the handler does for
+  // this mode, before uploadId resolution, before researchRunAction
+  // handling, before the OPENAI_API_KEY check, and before any account-array
+  // processing -- and it applies whether or not a uploadId is also present,
+  // so it cannot be bypassed by combining mode:'weekly-monitoring' with a
+  // real or fake uploadId. The secret is accepted only via the
+  // Authorization: Bearer header (never body, query string, or cookies) and
+  // is never logged or echoed back. Every other mode (prospect-intelligence,
+  // warm-account, ranked/default) is unaffected by this check.
+  if (requestMode === 'weekly-monitoring') {
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) return res.status(503).json({ error: 'Service unavailable: not configured.' });
+    const authHeader = req.headers.authorization || '';
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader);
+    const providedSecret = bearerMatch ? bearerMatch[1] : '';
+    if (!providedSecret || !safeSecretEqual(providedSecret, cronSecret)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
 
   // Phase 2A implementation-review ROUND 2, item 2: ANY request bound to a
   // persisted upload (uploadId present) -- whether it is a run-control
@@ -2181,4 +2222,4 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
 
 // Named exports for testability (Phase 2A / B3 classification tests, and
 // Phase 2A implementation-review round 2's run-claim/lease tests).
-export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds };
+export { makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic, completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual };
