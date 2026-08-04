@@ -240,6 +240,10 @@ function signalToOpportunity(row){
     eventCategory: s.eventCategory,
     eventDate: s.eventDate || '',
     event_date: s.eventDate || s.event_date || '',
+    // QA final round, item 2: the human-readable event date RANGE (e.g.
+    // "September 18-20, 2026"), when the source named one -- see
+    // classifyLegacySignalActionability()'s eventDateDisplay.
+    eventDateDisplay: s.eventDateDisplay || '',
     eventDateConfidence: s.eventDateConfidence,
     isUpcoming: s.isUpcoming,
     publicationDate: s.publicationDate || s.publishedDate || '',

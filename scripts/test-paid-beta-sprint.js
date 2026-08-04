@@ -18,7 +18,7 @@ import path from 'path';
 import {
   signalEventCategory, resolveSignalEventDate, computeActionability,
   oneHistoricalOrderFact, salesReadyOpener, salesReadyWhy, makeSignal, EVENT_LIKE_TYPES,
-  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability
+  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability, resolveCanonicalEventType
 } from '../api/research-batch.js';
 
 let failures = 0;
@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3462, 4163, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3514, 4262, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -462,7 +462,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3462, 4163, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2821, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2516, 2873, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5543, 6395, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5645, 6512, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5543, 6395, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6512, 6950, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6629, 7095, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7518, 7521, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5458, 5460, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5463, 5465, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7663, 7666, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5560, 5562, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5565, 5567, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2493, 2498, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2500, 2513, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2855, 2857, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2859, 2877, 'function renderCustomerDashboard(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2907, 2909, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2911, 2929, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -1212,12 +1212,20 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   assert(withoutDuplicate === 'New Hope Network has acquired the assets of Nutrition Capital Network', `leadWithAccountContext() does NOT append the account a second time when the lead already names it (got: "${withoutDuplicate}")`);
 }
 {
-  // required coverage 13 (direct unit proof): normalizeOutreachText()
+  // required coverage 13/15 (direct unit proof): normalizeOutreachText()
   // collapses doubled hyphens/dashes (with or without a space between
-  // them) and doubled terminal punctuation, but preserves a genuine
-  // 3-dot ellipsis and paragraph line breaks.
+  // them) into a single proper em dash -- QA final round, item 6: rendered
+  // outreach may never contain a literal "--"/"- -" ASCII artifact AT ALL,
+  // not even as an intentional dash-off-clause separator -- and collapses
+  // doubled terminal punctuation, but preserves a genuine 3-dot ellipsis
+  // and paragraph line breaks.
   const sandbox = makeSandbox();
-  assert(sandbox.normalizeOutreachText('Not trying to jump straight to a pitch - - just want to start') === 'Not trying to jump straight to a pitch -- just want to start', 'normalizeOutreachText() collapses a spaced-out doubled hyphen ("- -") into a clean "--"');
+  const collapsedDash = sandbox.normalizeOutreachText('Not trying to jump straight to a pitch - - just want to start');
+  assert(collapsedDash === 'Not trying to jump straight to a pitch — just want to start', `normalizeOutreachText() collapses a spaced-out doubled hyphen ("- -") into a single proper em dash, never "--" (got: "${collapsedDash}")`);
+  assert(!collapsedDash.includes('--'), 'required coverage 15: normalizeOutreachText() output never contains a literal "--"');
+  assert(!/-\s+-/.test(collapsedDash), 'required coverage 15: normalizeOutreachText() output never contains a literal "- -"');
+  const collapsedDoubleDash = sandbox.normalizeOutreachText('portfolio -- quick question');
+  assert(collapsedDoubleDash === 'portfolio — quick question', `normalizeOutreachText() collapses an existing "--" separator into a single em dash (got: "${collapsedDoubleDash}")`);
   assert(sandbox.normalizeOutreachText('reimagine the flagship store..') === 'reimagine the flagship store.', 'normalizeOutreachText() collapses a doubled terminal period into one');
   assert(sandbox.normalizeOutreachText('Quick question on onboarding...') === 'Quick question on onboarding...', 'normalizeOutreachText() preserves a genuine 3-dot ellipsis (e.g. from trimToWords() truncation)');
   assert(sandbox.normalizeOutreachText('Hi there,\n\nSaw something.\n\nBest,\n[Rep Name]').includes('\n\n'), 'normalizeOutreachText() preserves paragraph line breaks (does not collapse newlines like ordinary whitespace)');
@@ -1229,11 +1237,371 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   // concise subject, and a long one falls back to the per-signal-type
   // template instead of a truncated run-on sentence.
   const sandbox = makeSandbox();
-  const shortSubject = sandbox.conciseSubject({ mode: 'Cold', initiativeTitle: 'new Richmond distribution center', signalType: 'expansion' });
+  const shortSubject = sandbox.conciseSubject({ mode: 'Cold', account: 'Test Co', initiativeTitle: 'new Richmond distribution center', signalType: 'expansion' });
   assert(shortSubject === 'Question about new Richmond distribution center', `a short (<=6 word) initiative is used verbatim, untruncated, in the subject (got: "${shortSubject}")`);
-  const longSubject = sandbox.conciseSubject({ mode: 'Cold', initiativeTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio', signalType: 'expansion' });
+  // QA final round, item 6: "Do not use generic subjects such as 'Saw the
+  // expansion' when a named initiative is available" -- a long initiative
+  // whose first clause is still too long for the subject now falls back to
+  // an account-grounded, specific subject instead of the old flat generic
+  // template.
+  const longSubject = sandbox.conciseSubject({ mode: 'Cold', account: 'New Hope Network', initiativeTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio', signalType: 'expansion' });
   assert(!longSubject.includes('...'), `a long initiative never falls back to a mid-word-truncated subject (got: "${longSubject}")`);
-  assert(longSubject === 'Saw the expansion', `a long, non-acquisition initiative falls back to the existing concise per-signal-type template (got: "${longSubject}")`);
+  assert(longSubject === 'Quick question about the New Hope Network expansion', `a long, non-acquisition initiative falls back to an account-grounded specific subject, never the generic "Saw the expansion" (got: "${longSubject}")`);
+  assert(longSubject !== 'Saw the expansion', 'required coverage 16: "Saw the expansion" is never used when a named initiative is available');
+  // Only when there is genuinely NO named initiative at all does the
+  // generic per-signal-type fallback remain.
+  const noInitiativeSubject = sandbox.conciseSubject({ mode: 'Cold', account: 'Acme Co', initiativeTitle: '', signalType: 'expansion' });
+  assert(noInitiativeSubject === 'Saw the expansion', `with no initiative title at all, the generic per-signal-type fallback is still used (got: "${noInitiativeSubject}")`);
+}
+
+// ===========================================================================
+// Section D — Final narrow QA correction round: priority-eligibility
+// invariant tied to the rendered status, end-to-end date-range extraction,
+// corrected acquisition/investment/grant classification, L.L.Bean flagship
+// merge with actionability inheritance, a legacy-copy quality gate, and the
+// final outreach-language cleanup (em dash instead of "--", named-initiative
+// subjects, natural owner-ask phrasing).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// required proofs 1-3: undated event-like signals remain detail-only. These
+// exact examples were still visibly leaking into Week/Month priorities in
+// Preview -- reproduced end-to-end via makeSignal() (the real production
+// signal-creation path) rather than a synthetic fixture.
+// ---------------------------------------------------------------------------
+{
+  const cases = [
+    { name: 'HPGR webinar', title: "HPGR's HRCe product webinar", account: 'HPGR' },
+    { name: 'Marriott anniversary', title: 'New York Marriott Marquis anniversary celebration', account: 'New York Marriott Marquis' },
+    { name: 'The Other Women workshops', title: 'The Other Women workshops', account: 'The Other Women' }
+  ];
+  for(const c of cases){
+    const signal = makeSignal({ accountName: c.account, signalTitle: c.title, whatChanged: c.title, sourceUrl: `https://example.com/${c.account.toLowerCase().replace(/\s+/g,'-')}` }, { name: c.account });
+    assert(signal, `required proof (${c.name}): makeSignal() retains the signal instead of discarding it`);
+    assert(signal.eventCategory === 'event-like', `required proof (${c.name}): classified event-like (got "${signal.eventCategory}")`);
+    assert(signal.actionabilityStatus.status === 'unknown-date', `required proof (${c.name}): with no explicit date, status is "unknown-date"/Date unavailable (got "${signal.actionabilityStatus.status}")`);
+    assert(signal.actionabilityStatus.isPriorityEligible === false, `required proof (${c.name}): excluded from priority/digest eligibility`);
+    assert(signal.isUpcoming === false, `required proof (${c.name}): never flagged isUpcoming`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// required proof 4: L.L.Bean's "grand opening scheduled for September
+// 18-20, 2026" (and equivalent phrasings) parses as an exact Upcoming date,
+// not "Date unavailable" -- item 2's end-to-end date-range extraction fix.
+// ---------------------------------------------------------------------------
+{
+  const phrasings = [
+    'grand opening scheduled for September 18-20, 2026',
+    'grand opening scheduled for September 18–20, 2026',
+    'Sep. 18 through 20, 2026'
+  ];
+  for(const text of phrasings){
+    const resolved = resolveSignalEventDate({}, `L.L.Bean flagship ${text}`, '', '', 'event-like');
+    assert(resolved.dateConfidence === 'exact', `required proof 4: "${text}" parses with exact date confidence, not unknown (got "${resolved.dateConfidence}")`);
+    assert(resolved.eventDate === '2026-09-18', `required proof 4: "${text}" anchors to the range's first day, 2026-09-18 (got "${resolved.eventDate}")`);
+    assert(resolved.displayEventDate === 'September 18–20, 2026', `required proof 4: "${text}" preserves the full human-readable date range for display (got "${resolved.displayEventDate}")`);
+    const status = computeActionability({ eventCategory: 'event-like', eventDate: resolved.eventDate, dateConfidence: resolved.dateConfidence, now: NOW });
+    assert(status.status === 'upcoming', `required proof 4: "${text}", viewed as of ${NOW.toISOString().slice(0,10)}, is Upcoming (got "${status.status}")`);
+    assert(status.isPriorityEligible === true, `required proof 4: "${text}" is priority eligible`);
+  }
+  // End-to-end through the canonical legacy-normalization boundary too.
+  const legacy = classifyLegacySignalActionability({
+    signalTitle: 'L.L.Bean flagship grand opening',
+    whatChanged: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026'
+  });
+  assert(legacy.actionabilityStatus.status === 'upcoming', `required proof 4: classifyLegacySignalActionability() also resolves the date range to Upcoming (got "${legacy.actionabilityStatus.status}")`);
+  assert(legacy.eventDateDisplay === 'September 18–20, 2026', `required proof 4: classifyLegacySignalActionability() carries the display range through (got "${legacy.eventDateDisplay}")`);
+}
+
+// ---------------------------------------------------------------------------
+// required proof 5: "ribbon-cutting ceremony on October 9, 2025" viewed in
+// August 2026 (NOW) becomes stale and excluded from priorities. Event date
+// and publication date/discovery timestamps remain genuinely separate
+// fields throughout.
+// ---------------------------------------------------------------------------
+{
+  const resolved = resolveSignalEventDate({}, 'Propane Gas Association of New England ribbon-cutting ceremony on October 9, 2025', '', '', 'event-like');
+  assert(resolved.eventDate === '2025-10-09' && resolved.dateConfidence === 'exact', `required proof 5: the ribbon-cutting date parses exactly (got: ${JSON.stringify(resolved)})`);
+  const status = computeActionability({ eventCategory: 'event-like', eventDate: resolved.eventDate, dateConfidence: resolved.dateConfidence, now: NOW });
+  assert(status.status === 'stale', `required proof 5: viewed in August 2026, the October 9, 2025 ribbon-cutting is "No longer current" (got "${status.status}")`);
+  assert(status.isPriorityEligible === false, 'required proof 5: the stale ribbon-cutting signal is excluded from priorities');
+}
+
+// ---------------------------------------------------------------------------
+// required proof 6: a bare-year-only reference ("San Diego Comic-Con 2022")
+// is enough to prove staleness in 2026, but is never precise enough to
+// fabricate an exact event date -- it stays "approximate" confidence, never
+// "exact".
+// ---------------------------------------------------------------------------
+{
+  const resolved = resolveSignalEventDate({}, 'Warner Bros. Discovery San Diego Comic-Con 2022 exhibit booth', 'San Diego Comic-Con 2022 exhibit booth', '', 'event-like');
+  assert(resolved.dateConfidence === 'approximate', `required proof 6: a bare-year-only event reference gets approximate confidence, never fabricated exact precision (got "${resolved.dateConfidence}")`);
+  const status = computeActionability({ eventCategory: 'event-like', eventDate: resolved.eventDate, dateConfidence: resolved.dateConfidence, now: NOW });
+  assert(status.status === 'stale', `required proof 6: viewed in 2026, "Comic-Con 2022" is stale (got "${status.status}")`);
+}
+
+// ---------------------------------------------------------------------------
+// required proofs 7-10: corrected canonical business-signal classification.
+// ---------------------------------------------------------------------------
+{
+  const llbeanInvestment = resolveCanonicalEventType({ signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store' });
+  assert(llbeanInvestment.eventType !== 'ACQUISITION', `required proof 7: L.L.Bean's capital-investment/renovation signal never classifies as Acquisition (got "${llbeanInvestment.eventType}")`);
+
+  const readingSymphonyGrant = resolveCanonicalEventType({ signalTitle: 'Reading Symphony received a $15,000 grant', whatChanged: 'Reading Symphony was awarded a $15,000 grant from the NEA' });
+  assert(readingSymphonyGrant.eventType !== 'ACQUISITION', `required proof 8: Reading Symphony's grant/funding signal never classifies as Acquisition (got "${readingSymphonyGrant.eventType}")`);
+  assert(readingSymphonyGrant.eventType === 'EVENT_AWARD', `required proof 8: the grant is grouped with Award/Recognition (got "${readingSymphonyGrant.eventType}")`);
+
+  const newHopeAcquisition = resolveCanonicalEventType({ signalTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio' });
+  assert(newHopeAcquisition.eventType === 'ACQUISITION', `required proof 9: New Hope Network's genuine business acquisition still classifies as Acquisition (got "${newHopeAcquisition.eventType}")`);
+
+  const withoutMerch = resolveCanonicalEventType({ signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store' });
+  const withMerch = resolveCanonicalEventType({ signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store', commonPromoCategories: ['Onboarding Kits'], suggestedProducts: ['Onboarding Kits'] });
+  assert(withoutMerch.eventType === withMerch.eventType, `required proof 10: an inferred merchandise category never alters the canonical classification (got "${withoutMerch.eventType}" vs "${withMerch.eventType}")`);
+  assert(withMerch.eventType !== 'HIRING_ACTIVITY', 'required proof 10: an onboarding-kit merch suggestion never reclassifies a non-hiring signal as hiring');
+  // Hiring itself remains correctly classified as hiring (never suppressed
+  // by the acquisition/grant/investment guards above).
+  const genuineHiring = resolveCanonicalEventType({ signalTitle: 'Acme is hiring field marketing coordinators' });
+  assert(genuineHiring.eventType === 'HIRING_ACTIVITY', `required proof 10: genuine hiring language still classifies as hiring (got "${genuineHiring.eventType}")`);
+}
+
+// ---------------------------------------------------------------------------
+// required proofs 11-12: the L.L.Bean flagship investment, reopening, and
+// grand-opening-date variants merge into ONE rich opportunity that retains
+// every variant's distinguishing fact and adopts the most actionable date
+// found across all of them.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const account = 'L.L.Bean';
+  const variantInvestment = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'RENOVATION_COMPLETION', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean investing more than $50 million to reimagine the flagship store',
+    signalSummary: 'L.L.Bean investing more than $50 million to reimagine the flagship store',
+    sourceUrl: 'https://example.com/llbean-investment', cleanSourceName: 'Example Business News',
+    recommendedBuyingTeam: ['Marketing'], confidence: 80,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, label: 'Ongoing business change' },
+    evidence: ['Source: Example Business News', 'L.L.Bean investing more than $50 million to reimagine the flagship store']
+  };
+  const variantReopening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'RENOVATION_COMPLETION', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean flagship reopening after renovation',
+    signalSummary: 'L.L.Bean flagship reopening after renovation',
+    sourceUrl: 'https://www.bangordailynews.com/llbean-flagship-reopens', cleanSourceName: 'Bangor Daily News',
+    confidence: 70,
+    actionabilityStatus: { status: 'unknown-date', isPriorityEligible: false, excludeFromPriorities: true, label: 'Date unavailable' },
+    evidence: ['Source: Bangor Daily News', 'L.L.Bean flagship reopening after renovation']
+  };
+  const variantGrandOpening = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'RENOVATION_COMPLETION', canonicalEventType: 'RENOVATION_COMPLETION',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    signalSummary: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026',
+    sourceUrl: 'https://example.com/llbean-grand-opening', cleanSourceName: 'Portland Press Herald',
+    confidence: 85, eventDate: '2026-09-18', event_date: '2026-09-18', eventDateDisplay: 'September 18–20, 2026', eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' }
+  };
+  const merged = sandbox.dedupeOpportunities([variantInvestment, variantReopening, variantGrandOpening]);
+  assert(merged.length === 1, `required coverage 11: the three L.L.Bean flagship variants merge into exactly one opportunity, not left as separate Additional Opportunities (got ${merged.length})`);
+  const winner = merged[0];
+  assert(winner.mergedDuplicateCount === 2, `required coverage 11: the merged winner records 2 duplicate variants merged away (got ${winner.mergedDuplicateCount})`);
+  assert(winner.actionabilityStatus?.status === 'upcoming', `required coverage 11: the merged initiative becomes Upcoming because it contains the grand-reopening variant's trustworthy future date (got "${winner.actionabilityStatus?.status}")`);
+  assert(winner.eventDateDisplay === 'September 18–20, 2026', `required coverage 11: the merged winner carries the real September 18-20, 2026 reopening date range (got "${winner.eventDateDisplay}")`);
+  assert(Array.isArray(winner.recommendedBuyingTeam) && winner.recommendedBuyingTeam.includes('Marketing'), `required coverage 11: the merged winner retains the strongest department/contact guidance found across variants (got ${JSON.stringify(winner.recommendedBuyingTeam)})`);
+  const evidenceText = JSON.stringify(winner.evidence || []);
+  assert(evidenceText.includes('50 million') || evidenceText.includes('investing'), `required coverage 12: the merged initiative retains the $50 million investment fact (got: ${evidenceText})`);
+  assert(evidenceText.includes('reopening') || evidenceText.includes('renovation'), `required coverage 12: the merged initiative retains the renovation/reopening context (got: ${evidenceText})`);
+  const sourceNames = JSON.stringify(winner.additionalSources || []);
+  assert(sourceNames.includes('Bangor') || sourceNames.includes('Portland') || sourceNames.includes('Example'), `required coverage 12: distinct supporting sources from the merged-away variants survive as additionalSources on the winner (got: ${sourceNames})`);
+
+  // Distinct, genuinely unrelated L.L.Bean events must remain separate.
+  const unrelatedHiring = {
+    account, signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+    opportunityType: 'HIRING_ACTIVITY', canonicalEventType: 'HIRING_ACTIVITY',
+    signalTitle: 'L.L.Bean is hiring seasonal warehouse staff', signalSummary: 'L.L.Bean is hiring seasonal warehouse staff',
+    sourceUrl: 'https://example.com/llbean-hiring', cleanSourceName: 'Different Source', confidence: 60,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, label: 'Ongoing business change' }
+  };
+  const mergedWithUnrelated = sandbox.dedupeOpportunities([variantInvestment, variantReopening, variantGrandOpening, unrelatedHiring]);
+  assert(mergedWithUnrelated.length === 2, `required coverage 11: an unrelated L.L.Bean hiring signal remains a separate opportunity, not folded into the flagship initiative (got ${mergedWithUnrelated.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// required proofs 13-14: the legacy persisted-copy quality gate rejects
+// unsupported/pitchy stored conversationStarter text and preserves strong,
+// grounded, low-pressure persisted copy.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const opp = { account: 'Acme Co' };
+  const pitchy = 'Would you be interested in discussing promotional products for your upcoming event?';
+  assert(sandbox.isGroundedOpener(pitchy, opp) === false, `required coverage 13: legacy copy that immediately pitches promotional products is rejected by the quality gate (got accepted: "${pitchy}")`);
+  const vague = 'This could be a great opportunity to partner up.';
+  assert(sandbox.isGroundedOpener(vague, opp) === false, 'required coverage 13: a vague "great opportunity" hook with no factual connection is rejected');
+  const inventedCelebration = 'We would love to help enhance the celebration with branded merchandise.';
+  assert(sandbox.isGroundedOpener(inventedCelebration, opp) === false, 'required coverage 13: copy inventing a celebration/merchandise plan the source never described is rejected');
+  const integration = 'Happy to help celebrate the integration with custom gifts.';
+  assert(sandbox.isGroundedOpener(integration, opp) === false, 'required coverage 13: invented "celebrate the integration" copy is rejected');
+  const genericAssist = 'Can we discuss how we can assist with your goals?';
+  assert(sandbox.isGroundedOpener(genericAssist, opp) === false, 'required coverage 13: generic "how can we assist" filler is rejected');
+
+  const grounded = 'Saw New Hope Network has acquired the assets of Nutrition Capital Network. Do you know who is leading the integration?';
+  assert(sandbox.isGroundedOpener(grounded, { account: 'New Hope Network' }) === true, `required coverage 14: specific, factual, low-pressure persisted copy is preserved, not silently overwritten (got rejected: "${grounded}")`);
+  const groundedLLBean = 'Saw L.L.Bean is reopening the Freeport flagship in September. Do you know who is leading the reopening?';
+  assert(sandbox.isGroundedOpener(groundedLLBean, { account: 'L.L.Bean' }) === true, `required coverage 14: a second real, factual, grounded opener also survives the gate (got rejected: "${groundedLLBean}")`);
+
+  // Malformed punctuation / duplicated account phrasing on a LEGACY row is
+  // rejected outright (never silently rewritten -- storage is untouched).
+  const malformedPunctuation = 'Saw L.L.Bean is investing -- - pitch - - just wanted to check in.';
+  assert(sandbox.isGroundedOpener(malformedPunctuation, { account: 'L.L.Bean' }) === false, `required coverage 13/15: legacy copy with a malformed "- -" artifact is rejected (got accepted: "${malformedPunctuation}")`);
+  const doubledAccount = 'Saw L.L.Bean is investing in the flagship store at L.L.Bean this year.';
+  assert(sandbox.isGroundedOpener(doubledAccount, { account: 'L.L.Bean' }) === false, `required coverage 13/15: legacy copy with a duplicated account mention is rejected (got accepted: "${doubledAccount}")`);
+}
+
+// ---------------------------------------------------------------------------
+// required proof 15: no freshly generated outreach copy anywhere contains a
+// literal "--", "- -", a duplicate period, or a duplicated account mention
+// -- proven across every outreach surface (email, Best Next Move, call
+// script, questions, subject, opportunity summary) for a realistic
+// acquisition scenario with a trailing-punctuation, account-repeating raw
+// signal title (the exact shape that produced every artifact in the
+// Preview report).
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const opp = {
+    account: 'L.L.Bean', contact: 'Marketing', contactTitle: 'Marketing',
+    signalTitle: 'L.L.Bean flagship grand opening scheduled for September 18-20, 2026.',
+    canonicalEventType: 'RENOVATION_COMPLETION', opportunityType: 'RENOVATION_COMPLETION',
+    recommendedBuyingTeam: ['Retail Operations'], likelyBuyers: ['Retail Operations']
+  };
+  const department = sandbox.groundedDepartmentForOpportunity(opp);
+  const initiativeTitle = sandbox.groundedInitiativeTitle(opp);
+  const canonicalKind = sandbox.canonicalSignalKind(opp);
+  const ctx = {
+    account: opp.account, firstName: 'there', mode: 'Cold', reasonTitle: initiativeTitle, whyNow: '',
+    category: 'apparel', signalType: 'expansion', canonicalKind, department, initiativeTitle,
+    isUpcoming: true, actionabilityTense: 'future', hasKnownContact: false
+  };
+  const play = sandbox.buildConciseSalesPlay(ctx);
+  const surfaces = {
+    outreachEmail: play.outreachEmail,
+    bestNextMove: play.bestNextMove,
+    bestNextMoveCombined: play.bestNextMoveCombined,
+    emailSubject: play.emailSubject,
+    callScript: play.callScript.join(' '),
+    questionsToAsk: play.questionsToAsk.join(' '),
+    opportunitySummary: play.opportunitySummary.join(' ')
+  };
+  for(const [name, text] of Object.entries(surfaces)){
+    assert(!text.includes('--'), `required proof 15: ${name} never contains a literal "--" (got: "${text}")`);
+    assert(!/-\s+-/.test(text), `required proof 15: ${name} never contains a literal "- -" (got: "${text}")`);
+    assert(!/\.\.(?!\.)/.test(text), `required proof 15: ${name} never contains a duplicate period (got: "${text}")`);
+    assert(!/L\.L\.Bean.*L\.L\.Bean/.test(text), `required proof 15: ${name} never mentions the account twice (got: "${text}")`);
+  }
+  assert(surfaces.emailSubject.length < 60, `subject stays concise (got: "${surfaces.emailSubject}")`);
+}
+
+// ---------------------------------------------------------------------------
+// required proof 16: subject lines use the named initiative/event family
+// when one is available -- proven for the L.L.Bean flagship reopening.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const subj = sandbox.conciseSubject({ mode: 'Cold', account: 'L.L.Bean', initiativeTitle: 'L.L.Bean flagship reopening after renovation, grand opening scheduled for September 18-20, 2026', signalType: 'expansion' });
+  assert(/reopening/i.test(subj), `required coverage 16: the subject uses the named reopening initiative, not a generic subject (got: "${subj}")`);
+  assert(subj !== 'Saw the expansion', 'required coverage 16: never falls back to the generic "Saw the expansion" when a named initiative is available');
+}
+
+// ---------------------------------------------------------------------------
+// required proof 17: the defensive rendered-output invariant -- no
+// opportunity whose rendered status is "Date unavailable" or "No longer
+// current" may ever enter a current priority feed (This Week, "View All
+// Opportunities", or the summary count), even when a missing/malformed
+// actionabilityStatus flag would have (under the OLD check) claimed it was
+// eligible. This is the actual dashboard leak traced and fixed this round
+// -- priorityEligibleOpportunities() is the real, single choke point behind
+// This Week/Month/Quarter/Year, "View All Opportunities", and the summary
+// count (all reachable via renderWeeklyPrioritiesFeed() below), not an
+// unused parallel helper.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // Reproduces the exact leak: a signal-derived opportunity with NO
+  // actionabilityStatus at all (a malformed/legacy shape) -- its own
+  // rendered status is honestly "Date unavailable", but the OLD filter
+  // (`actionabilityStatus?.isPriorityEligible !== false`) would have
+  // treated it as eligible, since `undefined !== false` is true.
+  const leakingOpp = {
+    account: 'HPGR', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/hpgr-webinar',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event',
+    signalTitle: "HPGR's HRCe product webinar", signalSummary: "HPGR's HRCe product webinar",
+    confidence: 70, publishedDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(), signalDate: new Date(NOW.getTime() - 2 * 86400000).toISOString()
+  };
+  const renderedLabel = sandbox.signalDateAndActionabilityLine(leakingOpp);
+  assert(renderedLabel === 'Date unavailable', `sanity: the leaking fixture's own rendered status really is "Date unavailable" (got: "${renderedLabel}")`);
+  const oldStyleEligible = leakingOpp?.actionabilityStatus?.isPriorityEligible !== false;
+  assert(oldStyleEligible === true, 'sanity: the OLD flag-based check alone would have wrongly treated this fixture as eligible (undefined !== false)');
+  assert(sandbox.isPriorityEligibleOpportunity(leakingOpp) === false, 'required proof 17: isPriorityEligibleOpportunity() correctly excludes an opportunity whose rendered status is "Date unavailable", regardless of what a missing/stale flag would have claimed');
+  assert(sandbox.priorityEligibleOpportunities([leakingOpp]).length === 0, 'required proof 17: priorityEligibleOpportunities() excludes the leaking fixture');
+
+  for(const timebox of ['week', 'month', 'quarter', 'annual']){
+    for(const showAll of [false, true]){
+      sandbox.__setActiveTimebox(timebox);
+      sandbox.__setShowAllWeeklyPriorities(showAll);
+      const result = sandbox.renderWeeklyPrioritiesFeed([leakingOpp], [{ name: 'HPGR' }]);
+      assert(result.displayedOpportunities.length === 0, `required proof 17: the undated HPGR webinar never renders as a priority card in "${timebox}" (showAll=${showAll}) (got ${result.displayedOpportunities.length} displayed)`);
+      const gridHtml = sandbox.document.getElementById('opportunitiesGrid').innerHTML;
+      assert(!gridHtml.includes('HRCe product webinar'), `required proof 17: the rendered grid HTML never contains the undated card in "${timebox}" (showAll=${showAll})`);
+    }
+  }
+
+  // A "No longer current" (stale) opportunity is excluded the same way.
+  const staleOpp = {
+    account: 'Propane Gas Association of New England', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/propane-ribbon',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event',
+    signalTitle: 'ribbon-cutting ceremony', confidence: 70,
+    eventDate: '2025-10-09', event_date: '2025-10-09', eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'stale', isPriorityEligible: false, excludeFromPriorities: true, label: 'No longer current' }
+  };
+  assert(sandbox.isPriorityEligibleOpportunity(staleOpp) === false, 'required proof 17: a "No longer current" (stale) opportunity is never priority-eligible');
+}
+
+// ---------------------------------------------------------------------------
+// required proof 18: the priority summary count is recomputed from the
+// FINAL eligible/deduped set -- it can never be inflated by a hidden/
+// ineligible card, and always exactly equals the number of cards actually
+// rendered.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  sandbox.__setActiveTimebox('week');
+  sandbox.__setShowAllWeeklyPriorities(false);
+  const eligibleOpp = {
+    account: 'Acme Co', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/acme-tradeshow',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event', signalTitle: 'Acme trade show',
+    confidenceScore: 80, evidence: ['genuinely this week'],
+    publishedDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(),
+    signalDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(),
+    eventDate: new Date(NOW.getTime() + 10 * 86400000).toISOString().slice(0,10), eventDateConfidence: 'exact',
+    actionabilityStatus: { status: 'upcoming', isPriorityEligible: true, excludeFromPriorities: false, label: 'Upcoming' }
+  };
+  // The exact leaking shape from required proof 17 -- must never inflate
+  // the count even though it is included in the input array.
+  const ineligibleOpp = {
+    account: 'HPGR', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/hpgr-webinar-2',
+    signalLayerType: 'Business Activity Signal', signalType: 'Event', signalTitle: 'HPGR webinar',
+    confidenceScore: 70, publishedDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(), signalDate: new Date(NOW.getTime() - 2 * 86400000).toISOString()
+  };
+  const result = sandbox.renderWeeklyPrioritiesFeed([eligibleOpp, ineligibleOpp], [{ name: 'Acme Co' }, { name: 'HPGR' }]);
+  const label = sandbox.document.getElementById('resultCount').innerHTML;
+  const match = label.match(/(\d+) accounts? worth reviewing/);
+  assert(Boolean(match), `required proof 18: the summary label has the expected "N accounts worth reviewing" shape (got: "${label}")`);
+  const summaryCount = match ? Number(match[1]) : -1;
+  assert(summaryCount === result.displayedOpportunities.length, `required proof 18: the displayed summary count exactly equals the number of rendered eligible cards (summary: ${summaryCount}, rendered: ${result.displayedOpportunities.length})`);
+  assert(summaryCount === 1, `required proof 18: only the genuinely eligible opportunity is counted -- the ineligible one never inflates the summary (got ${summaryCount})`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

@@ -413,12 +413,27 @@ function resolveEventType(text = '', family = '') {
 
   const hasNewQualifier = /\bnew\b[\s\S]{0,25}\b(branch|location|office)\b|\bbrand new\b|\bjust opened\b|\bnewest (branch|location|office)\b|\bfirst (branch|location)\b/i.test(t);
   const hasReopenQualifier = /\breopen|re-open|reopened|back open|relaunch(ed)?\b/i.test(t);
-  const hasRenovationQualifier = /\brenovat|remodel|refresh(ed)?|upgraded (branch|location|facility)\b/i.test(t);
+  const hasRenovationQualifier = /\brenovat|remodel|refresh(ed)?|upgraded (branch|location|facility)\b|\breimagin\w*/i.test(t);
   const mentionsBranchOpening = /\bbranch opening\b|\bopening (?:a |its |their )?new branch\b/i.test(t);
   const mentionsRibbonOrGrandOpening = /\bribbon cutting|ribbon-cutting|grand opening\b/i.test(t);
   const mentionsFacilityExpansion = /\bnew facility|new plant|capacity expansion|manufacturing expansion|plant expansion|expanding operations|distribution center\b/i.test(t);
 
-  if (/acquisition of|acquires?|acquired|completes acquisition|finalizes purchase|\bmerger\b|\bmerged\b/i.test(t)) {
+  // QA final round, item 3: "acquired"/"acquisition" also appears in loose,
+  // non-M&A usage ("acquired a $15,000 grant", "acquisition of additional
+  // retail space for the renovation") -- a capital-investment/renovation
+  // signal or a grant/funding/award signal must never be reclassified as a
+  // corporate acquisition merely because that wording (or a contaminating
+  // field elsewhere in the combined classification text) happens to use
+  // "acquired"/"acquisition". Genuine acquisition language is required to
+  // name a business/company/assets/stake as its object, and grant/funding
+  // or investment/renovation language -- when present anywhere in the same
+  // text -- always takes precedence over a bare "acquired"/"acquisition"
+  // match.
+  const mentionsGrantOrFunding = /\b(grants?|funding award|sponsorship award|arts (?:grant|funding)|community funding)\b/i.test(t);
+  const mentionsInvestmentOrRenovation = /\binvest(?:ing|ment|s)?\b|\breimagin\w*|\brenovat\w*|\bremodel\w*|\bredevelop\w*|\bexpand(?:ing|s|ed)?\s+(?:its|their|the)?\s*campus\b|\bconstruction\b/i.test(t);
+  const hasGenuineAcquisitionLanguage = /\bacquisition of\b|\bcompletes acquisition\b|\bfinalizes purchase of\b|\bmerger\b|\bmerged with\b|\bpurchased\s+(?:the\s+)?(?:assets|business|compan(?:y|ies)|operations)\s+of\b/i.test(t)
+    || (/\bacquires?\b|\bacquired\b/i.test(t) && /\b(business(?:es)?|compan(?:y|ies)|assets|stake|firm|operations|entity)\b/i.test(t));
+  if (hasGenuineAcquisitionLanguage && !mentionsGrantOrFunding && !mentionsInvestmentOrRenovation) {
     return { primaryType: 'ACQUISITION', candidateTypes: ['ACQUISITION'], recurring: false };
   }
   if (/\bappoints?\b|\bappointed\b|\bnames?\b.*\bas\b|\bnamed\b.*\bas\b|\bpromotes?\b|\bpromoted\b|joins as|hired as|named (ceo|president|vice president|chief|director)/i.test(t)) {
@@ -436,7 +451,10 @@ function resolveEventType(text = '', family = '') {
   if (/\bconferences?\b|\bsummits?\b|\bwebinars?\b|\bworkshops?\b|\bseminars?\b|\btraining sessions?\b|\bpanel discussions?\b|\broundtables?\b/i.test(t)) {
     return { primaryType: 'EVENT_CONFERENCE', candidateTypes: ['EVENT_CONFERENCE'], recurring: true };
   }
-  if (/\bawards?\b|recognition|recognized|\bwinners?\b|\bmilestones?\b|\banniversar(?:y|ies)\b/i.test(t)) {
+  // QA final round, item 3: grant/funding/sponsorship awards are grouped
+  // with Award/Recognition -- both are discrete, announced occurrences,
+  // never a corporate acquisition (see the acquisition guard above).
+  if (/\bawards?\b|recognition|recognized|\bwinners?\b|\bmilestones?\b|\banniversar(?:y|ies)\b|\bgrants?\b|funding award|sponsorship award/i.test(t)) {
     return { primaryType: 'EVENT_AWARD', candidateTypes: ['EVENT_AWARD'], recurring: true };
   }
   if (/community event|golf tournament|\b5k\b|fundraiser|\bcharity\b|\bsponsor/i.test(t)) {
@@ -544,22 +562,65 @@ function extractEventEntities(title = '', snippet = '', rawContent = '') {
 // eventDate is ONLY set when the text itself describes when the event happened
 // or will happen. Publication date never substitutes for it (see normalizeCandidate
 // / Evidence, where publishedAt stays a separate, per-source field).
+// QA final round, item 2: month-name normalization for date-range parsing
+// below -- reconstructs an unambiguous "Month D, YYYY" string from a
+// captured month token (full name or common abbreviation, with or without
+// a trailing period) so the anchor date is built the same trusted way the
+// existing single-date branches already build theirs (parseDate() on a
+// clean "Month D, YYYY" string), rather than trusting the Date constructor
+// on the raw, possibly-abbreviated source text directly.
+const MONTH_FULL_NAME_BY_KEY = {
+  jan: 'January', feb: 'February', mar: 'March', apr: 'April', may: 'May', jun: 'June',
+  jul: 'July', aug: 'August', sep: 'September', sept: 'September', oct: 'October',
+  nov: 'November', dec: 'December'
+};
+function normalizeMonthName(raw = '') {
+  const key = String(raw).replace(/\./g, '').trim().toLowerCase();
+  return MONTH_FULL_NAME_BY_KEY[key] || (key.length > 3 ? MONTH_FULL_NAME_BY_KEY[key.slice(0, 3)] : null) || null;
+}
+const MONTH_TOKEN = '(January|Jan\\.?|February|Feb\\.?|March|Mar\\.?|April|Apr\\.?|May|June|Jun\\.?|July|Jul\\.?|August|Aug\\.?|September|Sept\\.?|Sep\\.?|October|Oct\\.?|November|Nov\\.?|December|Dec\\.?)';
+const DATE_RANGE_RE = new RegExp(`\\b${MONTH_TOKEN}\\s+(\\d{1,2})\\s*(?:[-–—]|through|to)\\s*(\\d{1,2}),?\\s+(20\\d{2})\\b`, 'i');
+
 function extractEventDate(text = '') {
   const t = clean(text);
   const isoMatch = t.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
   const monthDayYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/i);
+  // Common date-range phrasing ("September 18-20, 2026", "September 18–20,
+  // 2026", "Sep. 18 through 20, 2026") -- extractEventDate() previously only
+  // matched a single day, so a real, explicit range like an L.L.Bean grand
+  // opening ("September 18-20, 2026") silently fell through to "unknown"
+  // and rendered as "Date unavailable" despite naming an exact date. The
+  // anchor date used for all upcoming/recent/stale math is the FIRST day of
+  // the range (when the event begins); displayEventDate preserves the full,
+  // human-readable range text for rendering.
+  const rangeMatch = t.match(DATE_RANGE_RE);
   const monthYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}\b/i);
   const hasEventLanguage = /\b(on|opens?|opened|opening|effective|held|takes place|scheduled for|will open)\b/i.test(t);
 
   let raw = null;
+  let display = null;
   let confidence = 'unknown';
   if (isoMatch) { raw = isoMatch[1]; confidence = 'exact'; }
   else if (monthDayYear) { raw = monthDayYear[0]; confidence = 'exact'; }
+  else if (rangeMatch) {
+    const monthName = normalizeMonthName(rangeMatch[1]);
+    const [, , day1, day2, year] = rangeMatch;
+    if (monthName) {
+      raw = `${monthName} ${day1}, ${year}`;
+      confidence = 'exact';
+      display = `${monthName} ${day1}–${day2}, ${year}`;
+    }
+  }
   else if (monthYear && hasEventLanguage) { raw = monthYear[0]; confidence = 'approximate'; }
 
   const parsed = raw ? parseDate(raw) : null;
-  if (!parsed) return { eventDate: null, dateConfidence: 'unknown', year: null };
-  return { eventDate: parsed.toISOString().slice(0, 10), dateConfidence: confidence, year: parsed.getUTCFullYear() };
+  if (!parsed) return { eventDate: null, dateConfidence: 'unknown', year: null, displayEventDate: null };
+  return {
+    eventDate: parsed.toISOString().slice(0, 10),
+    dateConfidence: confidence,
+    year: parsed.getUTCFullYear(),
+    displayEventDate: display
+  };
 }
 
 function extractYearFallback(text = '', publishedAt = '') {

@@ -1319,7 +1319,18 @@ function resolveSignalEventDate(raw = {}, concreteTrigger = '', title = '', busi
   const directField = clean(raw.event_date || raw.eventDate || '');
   let result = extractEventDate(directField);
   if (result.dateConfidence === 'unknown') {
-    result = extractEventDate(clean(`${concreteTrigger} ${title} ${businessContext} ${directField}`));
+    // QA final round, item 2: search every legitimate factual field the raw
+    // signal carries -- not just businessContext, which buildBusinessContext()
+    // may have replaced with a generic templated sentence when the AI didn't
+    // supply an explicit one -- so an explicit date embedded in whatChanged,
+    // whyItMattersForPromo/whyItMatters, summary, signalDetail, or the
+    // source's own title/evidence text is never lost.
+    const wideText = clean([
+      concreteTrigger, title, businessContext, directField,
+      raw.whatChanged, raw.whyItMattersForPromo, raw.whyItMatters, raw.summary,
+      raw.signalDetail, raw.details, raw.sourceTitle, raw.evidence
+    ].filter(Boolean).join(' '));
+    result = extractEventDate(wideText);
   }
   if (result.dateConfidence === 'unknown' && eventCategory === 'event-like') {
     // Trade show / conference / award names very commonly embed only a bare
@@ -1495,18 +1506,27 @@ function classifyLegacySignalActionability(payload = {}) {
   const looksLikeOldBug = Boolean(storedEventField) && storedEventField === publicationDate;
   let eventDate = looksLikeOldBug ? '' : storedEventField;
   let dateConfidence = storedConfidence;
+  let eventDateDisplay = clean(payload.eventDateDisplay || '');
   if (!dateConfidence) {
-    const resolved = resolveSignalEventDate({ event_date: eventDate }, concreteTrigger, title, businessContext, eventCategory);
+    // QA final round, item 2: pass the REAL payload as `raw` (not a minimal
+    // { event_date } stub) so resolveSignalEventDate()'s widened field
+    // search can actually reach whatChanged/whyItMattersForPromo/summary/
+    // signalDetail/source evidence text on legacy rows too, not just
+    // concreteTrigger/title/businessContext.
+    const resolved = resolveSignalEventDate({ ...payload, event_date: eventDate }, concreteTrigger, title, businessContext, eventCategory);
     eventDate = resolved.eventDate || '';
     dateConfidence = resolved.dateConfidence;
+    eventDateDisplay = resolved.displayEventDate || '';
   } else if (looksLikeOldBug) {
     dateConfidence = 'unknown';
+    eventDateDisplay = '';
   }
   const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
   return {
     eventCategory,
     actionabilityStatus,
     eventDate: eventDate || '',
+    eventDateDisplay: eventDateDisplay || '',
     eventDateConfidence: dateConfidence,
     isUpcoming: actionabilityStatus.status === 'upcoming'
   };
@@ -1562,7 +1582,7 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   // to the source's publication date merely because the true event date is
   // absent, and publicationDate/discoveredAt stay separate fields throughout.
   const eventCategory = signalEventCategory(canonicalType.eventType);
-  const { eventDate: resolvedEventDate, dateConfidence: eventDateConfidence } = resolveSignalEventDate(raw, concreteTrigger, title, businessContext, eventCategory);
+  const { eventDate: resolvedEventDate, dateConfidence: eventDateConfidence, displayEventDate: resolvedEventDateDisplay } = resolveSignalEventDate(raw, concreteTrigger, title, businessContext, eventCategory);
   const publicationDate = clean(raw.publicationDate || raw.publishedDate || raw.date || '');
   const actionabilityStatus = computeActionability({ eventCategory, eventDate: resolvedEventDate, dateConfidence: eventDateConfidence, publicationDate });
   // Reconciliation item 1: a stale or undated event-like signal, or an
@@ -1622,6 +1642,12 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     // printing "Upcoming" or excluding/downranking a signal.
     eventDate: resolvedEventDate || '',
     event_date: resolvedEventDate || '',
+    // QA final round, item 2: preserves a human-readable date RANGE (e.g.
+    // "September 18-20, 2026") when the source text named one -- eventDate
+    // itself stays a single ISO anchor (the range's first day) for all
+    // upcoming/recent/stale math, but the dashboard should render the full
+    // range the source actually described, not just its first day.
+    eventDateDisplay: resolvedEventDateDisplay || '',
     eventDateConfidence,
     eventCategory,
     actionabilityStatus,

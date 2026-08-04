@@ -2716,6 +2716,18 @@ function opportunitiesLikelySameInitiative(a, b){
   if(sameSource) return true;
   if(overlap >= 0.7) return true;
   if(overlap >= 0.5 && closeDate) return true;
+  // QA final round, item 4: an EXACT (not merely cluster-related) event-type
+  // match plus 50%+ title-token overlap is treated as the same initiative
+  // even without a close/parseable date on both sides -- this is what lets
+  // a vaguer "$50 million investment to reimagine the flagship store"
+  // article (often undated in its own right) merge with a later, more
+  // specific "grand opening scheduled for September 18-20, 2026" article
+  // about the SAME renovation. Requiring the exact type (not just cluster
+  // membership) plus real token overlap keeps this from merging two
+  // genuinely different same-type initiatives at the same account (e.g. two
+  // different store renovations), which would share the account/type but
+  // not the location-specific tokens driving the overlap.
+  if(overlap >= 0.5 && typeA && typeA === typeB) return true;
   return false;
 }
 function clusterBusinessSignalOpportunities(items){
@@ -2753,6 +2765,15 @@ function compareInitiativeCandidates(a, b){
   }
   return 0;
 }
+// QA final round, item 4: actionability rank used to find the MOST
+// actionable date across every merged variant -- higher is more current/
+// trustworthy. A merged initiative must reflect the best evidence across
+// ALL its variants, not just whatever the strongest-SOURCE variant
+// happened to carry, so a real future date on a losing variant (e.g. a
+// "grand opening scheduled for September 18-20, 2026" article) is never
+// silently dropped merely because a different article about the same
+// initiative had a stronger domain.
+const MERGE_ACTIONABILITY_RANK = { upcoming: 5, 'recent-past': 4, ongoing: 3, 'unknown-date': 1, 'ongoing-undated': 1, stale: 0, 'ongoing-stale': 0 };
 function mergeBusinessSignalInitiatives(items){
   return clusterBusinessSignalOpportunities(items).map(group => {
     if(group.length === 1) return group[0];
@@ -2761,6 +2782,9 @@ function mergeBusinessSignalInitiatives(items){
     const seenDomains = new Set([sourceDomain(winner.sourceUrl || '')].filter(Boolean));
     const extraSources = Array.isArray(winner.additionalSources) ? [...winner.additionalSources] : [];
     let mergedEvidence = Array.isArray(winner.evidence) ? [...winner.evidence] : (winner.evidence ? [winner.evidence] : []);
+    let bestDateVariant = winner;
+    let bestDateRank = MERGE_ACTIONABILITY_RANK[winner.actionabilityStatus?.status] ?? -1;
+    let bestDeptVariant = (Array.isArray(winner.recommendedBuyingTeam) && winner.recommendedBuyingTeam.length) ? winner : null;
     ranked.slice(1).forEach(other => {
       const domain = sourceDomain(other.sourceUrl || '');
       if(other.sourceUrl && domain && !seenDomains.has(domain)){
@@ -2768,7 +2792,35 @@ function mergeBusinessSignalInitiatives(items){
         seenDomains.add(domain);
       }
       if(Array.isArray(other.evidence)) mergedEvidence = [...new Set([...mergedEvidence, ...other.evidence])];
+      // Preserve each variant's own distinguishing fact (e.g. the "$50
+      // million investment" headline when the winning/dated variant is the
+      // "grand opening" article) so the merged card keeps both, not just
+      // the winner's own description.
+      const otherFact = cleanBusinessText(other.signalSummary || other.signalDetail || other.signalTitle || '');
+      if(otherFact && !mergedEvidence.some(e => String(e).includes(otherFact))) mergedEvidence.push(otherFact);
+      const otherRank = MERGE_ACTIONABILITY_RANK[other.actionabilityStatus?.status] ?? -1;
+      if(otherRank > bestDateRank){ bestDateRank = otherRank; bestDateVariant = other; }
+      if(!bestDeptVariant && Array.isArray(other.recommendedBuyingTeam) && other.recommendedBuyingTeam.length) bestDeptVariant = other;
     });
+    // The winner (strongest source) adopts the most actionable date/status
+    // found across every variant -- this is what lets the merged L.L.Bean
+    // flagship initiative become "Upcoming" from its grand-reopening
+    // variant's real date, even when a different variant (the $50 million
+    // investment article) won on source strength alone.
+    if(bestDateVariant !== winner){
+      winner.actionabilityStatus = bestDateVariant.actionabilityStatus;
+      winner.eventDate = bestDateVariant.eventDate || winner.eventDate;
+      winner.event_date = bestDateVariant.event_date || winner.event_date;
+      winner.eventDateDisplay = bestDateVariant.eventDateDisplay || winner.eventDateDisplay;
+      winner.eventDateConfidence = bestDateVariant.eventDateConfidence || winner.eventDateConfidence;
+      winner.eventCategory = bestDateVariant.eventCategory || winner.eventCategory;
+      winner.isUpcoming = bestDateVariant.actionabilityStatus?.status === 'upcoming';
+    }
+    if(bestDeptVariant && bestDeptVariant !== winner){
+      winner.recommendedBuyingTeam = bestDeptVariant.recommendedBuyingTeam;
+      winner.likelyBuyers = bestDeptVariant.likelyBuyers || bestDeptVariant.recommendedBuyingTeam;
+      if(!winner.suggestedContactDetails && bestDeptVariant.suggestedContactDetails) winner.suggestedContactDetails = bestDeptVariant.suggestedContactDetails;
+    }
     if(extraSources.length) winner.additionalSources = extraSources;
     if(mergedEvidence.length) winner.evidence = mergedEvidence;
     winner.mergedDuplicateCount = group.length - 1;
@@ -3692,20 +3744,55 @@ function getRepEvidenceBullets(opp){
 // exist on already-persisted signals, so those fall through to the
 // (now also grounded) layer-based templates below instead of surfacing
 // stale ungrounded copy.
-function isGroundedOpener(text){
+// QA final round, item 5: a conservative READ-time quality gate for legacy
+// PERSISTED conversationStarter text -- old rows may still carry copy that
+// predates the field-selling tone fix (QA round 2, item 4). Persisted text
+// is only preferred when it survives every check below; storage is never
+// touched (no row is rewritten) -- a rejected value simply falls through to
+// the grounded deterministic generator that already exists below.
+function isGroundedOpener(text, opp){
   const t = String(text || '').trim();
   if(!t) return false;
   const UNGROUNDED_LEGACY_PATTERNS = [
     /noticed some event or community activity/i,
     /saw some recent (company )?activity/i,
     /noticed some (hiring|launch|team or leadership) activity on your end/i,
-    /had a quick question — who would be best to ask/i
+    /had a quick question — who would be best to ask/i,
+    // Immediately pitches promotional products instead of asking a
+    // referral-focused question first.
+    /discuss(ing)?\s+promotional products/i,
+    /interested in (discussing|exploring)\s+(promotional products|our products|what we offer)/i,
+    // A vague "great opportunity" hook with no factual connection to the
+    // real signal, and other generic sales-forward filler.
+    /this (could|would|might) be a great opportunity/i,
+    /can we discuss how we can assist/i,
+    /let us know if you.?d like to explore/i,
+    /we.?d love to (discuss|explore|help)/i,
+    /reach out to (discuss|explore) (how we can|potential)/i,
+    // Invents a celebration/integration merchandise plan the source text
+    // never actually described.
+    /enhance the celebration/i,
+    /celebrate the integration/i,
+    /celebrat\w+ this (milestone|acquisition|integration) with (custom |branded )?merchandise/i
   ];
-  return !UNGROUNDED_LEGACY_PATTERNS.some(p => p.test(t));
+  if(UNGROUNDED_LEGACY_PATTERNS.some(p => p.test(t))) return false;
+  // Malformed punctuation (a doubled terminal period that isn't a genuine
+  // 3-dot ellipsis, or a doubled/spaced-out hyphen artifact) or a duplicated
+  // account mention -- the same artifact classes normalizeOutreachText()
+  // cleans on freshly generated copy, but a legacy persisted row is never
+  // silently rewritten; it is simply rejected here.
+  if(/\.\.(?!\.)/.test(t)) return false;
+  if(/-\s+-/.test(t)) return false;
+  const account = String(opp?.account || opp?.accountName || '').trim();
+  if(account && account.length > 2){
+    const escaped = account.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if(new RegExp(`${escaped}.*${escaped}`, 'i').test(t)) return false;
+  }
+  return true;
 }
 
 function getSuggestedOpener(opp){
-  if(isGroundedOpener(opp.conversationStarter)) return opp.conversationStarter;
+  if(isGroundedOpener(opp.conversationStarter, opp)) return opp.conversationStarter;
   // QA round 3, item 5: same fix as businessSuggestedOpener() -- never
   // greet with a department/role placeholder from opp.contact.
   const knownContact = likelyKnownBuyer(opp);
@@ -3882,16 +3969,28 @@ function formatShortDate(value){
 function signalDateAndActionabilityLine(opp){
   const status = opp.actionabilityStatus || {};
   const eventDate = opp.eventDate || opp.event_date || '';
+  // QA final round, item 2: prefer the human-readable date RANGE (e.g.
+  // "September 18-20, 2026") when the source actually named one, instead of
+  // collapsing it to just its first day via formatShortDate().
+  const eventDateText = opp.eventDateDisplay || (eventDate ? formatShortDate(eventDate) : '');
   const pubDate = opp.publicationDate || opp.publishedDate || '';
   switch(status.status){
-    case 'upcoming': return eventDate ? `Upcoming — Event date: ${formatShortDate(eventDate)}` : 'Upcoming';
-    case 'recent-past': return eventDate ? `Recent event — Event date: ${formatShortDate(eventDate)} (follow up)` : 'Recent event (follow up)';
+    case 'upcoming': return eventDateText ? `Upcoming — Event date: ${eventDateText}` : 'Upcoming';
+    case 'recent-past': return eventDateText ? `Recent event — Event date: ${eventDateText} (follow up)` : 'Recent event (follow up)';
     case 'ongoing': return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Ongoing business change';
     case 'stale': return 'No longer current';
     case 'ongoing-stale': return 'No longer current';
     case 'unknown-date': return 'Date unavailable';
     case 'ongoing-undated': return 'Date unavailable';
-    default: return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Date unavailable';
+    // QA final round, item 1/17: a signal with NO recognized
+    // actionabilityStatus.status at all (malformed, or never classified)
+    // must never be guessed as "Ongoing business change" merely because a
+    // publication date happens to be present -- that guess is exactly the
+    // "event date substituted from publication date" mistake for a signal
+    // that might genuinely be event-like (which requires its OWN event
+    // date, never a publication date). An unclassified signal's honest
+    // status is unknown, full stop.
+    default: return 'Date unavailable';
   }
 }
 
@@ -4218,6 +4317,9 @@ function addSignalDerivedOpportunities(account, signals){
     opp.eventCategory = signal.eventCategory || '';
     opp.eventDate = signal.eventDate || signal.event_date || '';
     opp.event_date = opp.eventDate;
+    // QA final round, item 2: the human-readable date RANGE, when the
+    // source named one -- see api/research-batch.js's eventDateDisplay.
+    opp.eventDateDisplay = signal.eventDateDisplay || '';
     opp.eventDateConfidence = signal.eventDateConfidence || 'unknown';
     opp.isUpcoming = signal.actionabilityStatus?.status === 'upcoming';
     opp.publicationDate = signal.publicationDate || signal.publishedDate || '';
@@ -5940,21 +6042,20 @@ function trimToWords(text, maxWords){
   return words.slice(0, maxWords).join(' ').replace(/[,.!?;:]+$/, '') + '...';
 }
 
-// QA round 3, item 5: final sanitizer applied to every generated outreach
+// QA final round, item 6: rendered outreach may never contain a literal
+// "--"/"- -" ASCII doubled-hyphen artifact at all (not even as an
+// intentional dash-off-clause separator) -- every such run collapses to a
+// single, proper em dash instead. Applied to every generated outreach
 // surface (email, call script lines, questions, subject, Best Next Move)
 // right before it is returned/rendered -- this is the SHARED path every
 // caller goes through, so a fix here applies to every account/signal, not
-// just the one from the QA report. Collapses malformed artifacts that can
-// appear when scraped/AI-generated fragments (which may already carry
-// stray dash separators or trailing punctuation) are stitched into a
-// sentence: doubled hyphen/dash runs with or without a space between them
-// ("pitch - - just" / "pitch --  -- just" -> "pitch -- just"), doubled
-// terminal punctuation ("store.." -> "store."), and doubled spaces --
-// while never touching a genuine 3-dot ellipsis (trimToWords()'s own
-// truncation marker) or line breaks (paragraph structure in the email).
+// just the one from the QA report. Also collapses doubled terminal
+// punctuation ("store.." -> "store.") and doubled spaces -- while never
+// touching a genuine 3-dot ellipsis (trimToWords()'s own truncation
+// marker) or line breaks (paragraph structure in the email).
 function normalizeOutreachText(text){
   return String(text || '')
-    .replace(/(?:[-–—]\s*){2,}/g, ' -- ')
+    .replace(/(?:[-–—]\s*){2,}/g, ' — ')
     .replace(/([.!?])\1+/g, (m, ch) => (m.length === 3 && ch === '.') ? m : ch)
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/ +\n/g, '\n')
@@ -6216,14 +6317,14 @@ function leadWithAccountContext(ctx){
 // Never derived from a promo category -- only from the real recommended
 // department/buying-team evidence (ctx.department). Falls back to an
 // honest, referral-focused generic ask (not a category guess) when no
-// department is known at all. QA round 3, item 5: avoids the awkward,
-// overly-formal "on the Marketing side" construction, and gives
-// acquisition/integration signals their own natural phrasing (matching the
-// call-script guidance: "who is leading the integration or communications
-// around that").
+// department is known at all. QA final round, item 6: "who's leading that
+// for Marketing?" (the prior round's fix) still reads as an awkward,
+// truncated fragment -- this reads as a natural question a person would
+// actually ask, and never claims the department is already involved (it's
+// phrased as an open question either way).
 function ownerAskPhrase(ctx){
-  if(ctx.canonicalKind === 'acquisition') return `who's leading the integration or communications around that`;
-  if(ctx.department) return `who's leading that for ${ctx.department}`;
+  if(ctx.canonicalKind === 'acquisition') return `who on your team is leading the integration or communications around it`;
+  if(ctx.department) return `whether ${ctx.department} is already involved, or who else might be`;
   return `who would be the right person to ask about that`;
 }
 
@@ -6350,12 +6451,28 @@ function questionsForSignal(ctx){
 // back to the existing per-signal-type templates.
 function conciseSubject(ctx){
   if(ctx.canonicalKind === 'acquisition') return ctx.mode === 'Warm' ? 'Quick question about the acquisition' : 'Question about the recent acquisition';
-  const shortInitiative = trimToWords(String(ctx.initiativeTitle || '').replace(/[.!?]+$/, ''), 6);
-  const fitsWithoutTruncation = shortInitiative && shortInitiative.length <= 40 && !shortInitiative.endsWith('...');
+  const cleanedInitiative = String(ctx.initiativeTitle || '').replace(/[.!?]+$/, '').trim();
+  // QA final round, item 6: prefer the initiative's own first clause (up to
+  // its first comma) over a flat 6-word truncation -- "L.L.Bean flagship
+  // reopening after renovation, grand opening scheduled for September
+  // 18-20, 2026" yields "L.L.Bean flagship reopening after renovation",
+  // a complete, natural phrase, instead of a truncated fragment.
+  const firstClause = cleanedInitiative.split(',')[0].trim();
+  const shortInitiative = trimToWords(firstClause.length && firstClause.length <= 60 ? firstClause : cleanedInitiative, 6);
+  const fitsWithoutTruncation = shortInitiative && shortInitiative.length <= 55 && !shortInitiative.endsWith('...');
   if(fitsWithoutTruncation) return `Question about ${shortInitiative}`;
   if(ctx.signalType === 'hiring') return ctx.mode === 'Warm' ? `Hiring at ${ctx.account}?` : 'Quick question on onboarding';
   if(ctx.signalType === 'event') return ctx.reasonTitle && ctx.reasonTitle.length < 35 ? `Question about ${ctx.reasonTitle}` : 'Question about the event';
-  if(ctx.signalType === 'expansion') return 'Saw the expansion';
+  // A named initiative is available but too long even for its first clause
+  // -- a specific, account-grounded subject is still preferred over the
+  // generic "Saw the expansion", which gives the recipient no idea what
+  // the note is actually about.
+  if(ctx.signalType === 'expansion'){
+    if(/reopen/i.test(cleanedInitiative)) return `Quick question about the ${ctx.account} reopening`;
+    if(/renovat|reimagin/i.test(cleanedInitiative)) return `Quick question about the ${ctx.account} renovation`;
+    if(cleanedInitiative) return `Quick question about the ${ctx.account} expansion`;
+    return 'Saw the expansion';
+  }
   if(ctx.signalType === 'repeat') return ctx.mode === 'Warm' ? 'Thinking of you' : 'Quick follow-up';
   return ctx.mode === 'Warm' ? 'Thinking of you' : `Question for ${ctx.account}`;
 }
@@ -6855,6 +6972,34 @@ function setActiveTimebox(timebox){
   refreshOpportunityViews();
 }
 
+// QA final round, item 1: the previous check here (`opp?.actionabilityStatus
+// ?.isPriorityEligible !== false`) defaults an opportunity to ELIGIBLE
+// whenever actionabilityStatus is missing or malformed -- `undefined !==
+// false` is true. That is exactly how an undated event-like signal (HPGR
+// webinar, Marriott anniversary, workshops, tournament, ...) could render
+// "Date unavailable" on its card (signalDateAndActionabilityLine()'s own
+// default case is conservative) while STILL counting as priority-eligible
+// for Week/Month/Quarter/Year and the summary count: the render path and
+// the filter path were independently derived and could silently disagree.
+// isPriorityEligibleOpportunity() closes that gap by deriving eligibility
+// from the SAME rendered label the card actually shows for any
+// signal-derived (Business Activity Signal) opportunity -- "Date
+// unavailable" or "No longer current" can never be priority-eligible,
+// full stop, regardless of what a stale/malformed actionabilityStatus flag
+// claims. Historical/repeat-pattern opportunities (not signal-derived) are
+// untouched -- they are judged by order-history recency, not an event
+// date, and signalDateAndActionabilityLine()'s own default ("Date
+// unavailable" when there's no publication date either) must not exclude
+// them.
+function isPriorityEligibleOpportunity(opp){
+  if(!opp) return false;
+  if(isBusinessOpportunity(opp)){
+    const label = signalDateAndActionabilityLine(opp);
+    if(label === 'Date unavailable' || label === 'No longer current') return false;
+  }
+  return opp?.actionabilityStatus?.isPriorityEligible !== false;
+}
+
 // Reconciliation item 1/2: a shared, defensive filter applied at every entry
 // point into the priorities feed (This Week/Month/Quarter/Year AND the "View
 // All Opportunities" toggle), regardless of which code path constructed the
@@ -6864,7 +7009,7 @@ function setActiveTimebox(timebox){
 // addSignalDerivedOpportunities' own gate. It remains reachable only through
 // Research Details/account history (renderVerifiedSignals).
 function priorityEligibleOpportunities(opps){
-  return (opps || []).filter(opp => opp?.actionabilityStatus?.isPriorityEligible !== false);
+  return (opps || []).filter(isPriorityEligibleOpportunity);
 }
 
 function prepareTimeboxReasons(opps, timebox=activeTimebox){
