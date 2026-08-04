@@ -56,7 +56,7 @@ function classifySignalFamily(input = '', intendedFamily = '') {
   if (/acquisition|acquired|merger|merged|funding|investment|capital raise|ipo|public market|earnings|major contract|contract win/.test(text)) return 'financial';
   if (/rebrand|new brand|brand identity|new logo|brand refresh/.test(text)) return 'rebrand';
   if (/new facility|new office|new branch|new location|relocat|renovat|reopen|ribbon cutting|grand opening|distribution center|manufacturing expansion|plant expansion|headquarters|capacity expansion/.test(text)) return 'growth';
-  if (/trade show|tradeshow|conference|expo|summit|webinar|open house|customer event|dealer meeting|sales meeting|booth|exhibitor|grand opening event|festival/.test(text)) return 'events';
+  if (/trade show|tradeshow|conference|expo|summit|webinar|workshop|seminar|training session|panel discussion|roundtable|open house|customer event|dealer meeting|sales meeting|booth|exhibitor|grand opening event|festival/.test(text)) return 'events';
   if (/product launch|service launch|launches|launched|introduc|unveil|new offering|new program|campaign launch/.test(text)) return 'product';
   if (/strategic partnership|partnership|distribution agreement|supplier agreement|customer contract|award contract|selected by|collaboration/.test(text)) return 'partnership';
   if (/appoint|promot|joins as|named ceo|named president|named vice president|new director|new executive|leadership change|role change/.test(text)) return 'leadership';
@@ -73,7 +73,7 @@ function signalSubtype(text = '', family = classifySignalFamily(text)) {
     ['Major Contract', /contract win|major contract|selected by|award contract/], ['New Facility', /new facility|new plant|manufacturing plant/],
     ['Branch Reopening', /reopen|renovat.*branch|branch.*renovat/], ['New Location', /new location|new branch|new office/],
     ['Trade Show Participation', /trade show|tradeshow|expo|booth|exhibitor/], ['Conference / Summit', /conference|summit/],
-    ['Webinar', /webinar/], ['Product Launch', /product launch|launches|launched|unveil/], ['Executive Appointment', /appoint|named ceo|named president|joins as/],
+    ['Webinar', /webinar/], ['Workshop / Training', /workshop|seminar|training session|panel discussion|roundtable/], ['Product Launch', /product launch|launches|launched|unveil/], ['Executive Appointment', /appoint|named ceo|named president|joins as/],
     ['Promotion', /promot/], ['Hiring Initiative', /hiring initiative|workforce growth|recruiting campaign|now hiring/],
     ['Company Anniversary', /anniversary/], ['Safety Milestone', /safety milestone|years without|lost-time/], ['Award / Recognition', /award|recognition|winner/],
     ['Community Event', /community event|golf tournament|5k|fundraiser|charity event|festival/], ['Sponsorship', /sponsor/], ['Rebrand', /rebrand|brand identity|new logo/]
@@ -427,10 +427,16 @@ function resolveEventType(text = '', family = '') {
   if (/trade show|tradeshow|\bexpo\b|\bbooth\b|exhibitor/i.test(t)) {
     return { primaryType: 'EVENT_TRADE_SHOW', candidateTypes: ['EVENT_TRADE_SHOW'], recurring: true };
   }
-  if (/\bconference\b|\bsummit\b|\bwebinar\b/i.test(t)) {
+  // QA round 3, item 1: `\bworkshop\b` (and siblings) never matched the far
+  // more common plural phrasing ("workshops", "seminars", "webinars") --
+  // `\b` is a boundary between the LAST letter and what follows, so a
+  // trailing "s" right after the word defeats it entirely, silently
+  // dropping these signals out of EVENT_LIKE_TYPES and into "ongoing".
+  // Every noun below now tolerates an optional plural "s".
+  if (/\bconferences?\b|\bsummits?\b|\bwebinars?\b|\bworkshops?\b|\bseminars?\b|\btraining sessions?\b|\bpanel discussions?\b|\broundtables?\b/i.test(t)) {
     return { primaryType: 'EVENT_CONFERENCE', candidateTypes: ['EVENT_CONFERENCE'], recurring: true };
   }
-  if (/\baward\b|recognition|recognized|\bwinner\b|\bmilestone\b|\banniversary\b/i.test(t)) {
+  if (/\bawards?\b|recognition|recognized|\bwinners?\b|\bmilestones?\b|\banniversar(?:y|ies)\b/i.test(t)) {
     return { primaryType: 'EVENT_AWARD', candidateTypes: ['EVENT_AWARD'], recurring: true };
   }
   if (/community event|golf tournament|\b5k\b|fundraiser|\bcharity\b|\bsponsor/i.test(t)) {

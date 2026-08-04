@@ -2836,12 +2836,31 @@ function calculateRevenueContext(accounts, opportunities){
   return {historicalRevenue, historicalOpps: historicalOpps.length, newBusinessOpps: newBusinessOpps.length, totalReasons: opps.length};
 }
 
+// QA round 3, item 4: the single source of truth for "Newly Detected" --
+// every place that surfaces this number (the dashboard metric tile, the
+// "You're all set" summary banner, any future callers) must call this
+// same function rather than reading data.newThisWeek.length directly.
+// data.newThisWeek (from api/get-dashboard.js) is already scoped to the
+// current view (My View/Team View) and already excludes stale/date-
+// unavailable/non-eligible signals via classifyLegacySignalActionability()
+// -- but it is still one row per raw SIGNAL. "Newly Detected" counts
+// distinct new OPPORTUNITIES/INITIATIVES (the same unit the dashboard
+// cards themselves render), so the same event-level dedup used everywhere
+// else on the dashboard (dedupeOpportunities, then uniqueDashboardOpportunities
+// for any remaining exact-duplicate rows) is applied here too. A raw
+// `data.newThisWeek.length` and this function's result are NOT
+// interchangeable -- reading the raw length anywhere is exactly the bug
+// that produced "18" (raw signal rows) vs "17" (deduped initiatives) in
+// the same view.
+function newlyDetectedCount(data){
+  return uniqueDashboardOpportunities(dedupeOpportunities(data?.newThisWeek || [])).length;
+}
+
 function renderCustomerDashboard(data){
   const panel = document.getElementById('customerDashboard');
   if(!panel) return;
   const accounts = data?.accounts || [];
   const signals = data?.signals || [];
-  const newThisWeek = uniqueDashboardOpportunities(dedupeOpportunities(data?.newThisWeek || []));
   const weeklyRuns = data?.weeklyRuns || [];
   const latestRun = weeklyRuns[0] || null;
   panel.style.display = 'block';
@@ -2851,7 +2870,7 @@ function renderCustomerDashboard(data){
     subtitle.textContent = `${uploadName} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
   }
   const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
-  set('dashNewThisWeek', newThisWeek.length);
+  set('dashNewThisWeek', newlyDetectedCount(data));
   set('dashSavedAccounts', accounts.length);
   set('dashSavedSignals', signals.length);
   set('dashLastScan', formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at));
@@ -3012,7 +3031,13 @@ async function loadSavedDashboard(email){
     if(results) results.style.display = 'block';
     const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     if(banner){
-      const newCount = Array.isArray(data.newThisWeek) ? data.newThisWeek.length : 0;
+      // QA round 3, item 4: use the exact same deduped count the
+      // dashboard metric tile shows (newlyDetectedCount()) instead of the
+      // raw data.newThisWeek.length -- previously this banner counted raw
+      // signal rows while the tile counted deduped initiatives, which is
+      // what produced the "18 newly detected" vs "17 newly detected"
+      // mismatch between the two.
+      const newCount = newlyDetectedCount(data);
       banner.innerHTML = `<strong>You're all set.</strong> Watching ${escapeHtml(accounts.length)} account${accounts.length===1?'':'s'} · ${escapeHtml((data.signals || []).length)} reason${(data.signals || []).length===1?'':'s'} to reach out · ${escapeHtml(newCount)} newly detected.`;
     }
     renderCustomerDashboard(data);
@@ -3508,8 +3533,45 @@ function cleanBusinessText(text){
   return t;
 }
 
+// QA round 3, item 2: canonical business-event classification, shared by
+// businessSignalKind()/opportunityHeadline() and inferSalesPlaySignalType()
+// (Best Next Move / Questions to Ask / email / subject bucket selection) --
+// so the card headline, Opportunity Summary, recommended department, and
+// outreach can never disagree about what kind of business event this is.
+// ALWAYS prefers the server-computed canonical event type
+// (opp.opportunityType/opp.canonicalEventType, from
+// resolveCanonicalEventType() in api/research-batch.js, evaluated against
+// the full evidence text at persist time) over any content-regex guessing
+// re-derived here, and NEVER considers inferred merchandise categories
+// (commonPromoCategories/suggestedProducts) as evidence of the event kind --
+// an "onboarding kit" idea suggested for an acquisition must never make the
+// event itself look like a hiring signal.
+const CANONICAL_KIND_BY_EVENT_TYPE = {
+  ACQUISITION: 'acquisition',
+  HIRING_ACTIVITY: 'hiring',
+  EVENT_TRADE_SHOW: 'event', EVENT_CONFERENCE: 'event', EVENT_COMMUNITY: 'event',
+  EVENT_AWARD: 'recognition',
+  NEW_LOCATION_OPENING: 'expansion', LOCATION_REOPENING: 'expansion', RENOVATION_COMPLETION: 'expansion',
+  LOCATION_EVENT_UNSPECIFIED: 'expansion', FACILITY_EXPANSION: 'expansion',
+  LEADERSHIP_APPOINTMENT: 'leadership',
+  PRODUCT_LAUNCH: 'launch',
+  PARTNERSHIP: 'business',
+  REBRAND: 'business'
+};
+function canonicalSignalKind(opp){
+  const canonicalType = opp?.opportunityType || opp?.canonicalEventType || '';
+  return CANONICAL_KIND_BY_EVENT_TYPE[canonicalType] || null;
+}
+
 function businessSignalKind(opp){
+  const canonical = canonicalSignalKind(opp);
+  if(canonical) return canonical;
+  // Content-only fallback for opportunities with no canonical event type
+  // (e.g. historical/repeat-pattern opportunities that never went through
+  // makeSignal()) -- deliberately excludes commonPromoCategories/
+  // suggestedProducts.
   const raw = `${opp.signalType || ''} ${opp.opportunityCategory || ''} ${opp.opportunity || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''}`.toLowerCase();
+  if(/acquisition|acquired|\bmerger\b|\bmerged\b/.test(raw)) return 'acquisition';
   if(/hiring|career|job|recruit|new hire|technician|production|operator/.test(raw)) return 'hiring';
   if(/event|conference|expo|trade show|open house|campaign|sponsorship/.test(raw)) return 'event';
   if(/expansion|new location|facility|opening|grand opening|growth/.test(raw)) return 'expansion';
@@ -3542,7 +3604,12 @@ function businessSignalPlainSummary(opp){
 // specific, it says so plainly (a transparent limited state) instead of
 // inventing urgency or implying a merch program that doesn't exist.
 function businessSuggestedOpener(opp){
-  const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
+  // QA round 3, item 5: greeting must be a verified person name, never a
+  // department/role placeholder that happens to be sitting in opp.contact
+  // (e.g. "Marketing") -- see likelyKnownBuyer()'s isGenericContactLabel()
+  // filter.
+  const knownContact = likelyKnownBuyer(opp);
+  const contact = knownContact && !knownContact.includes('/') ? knownContact.split(' ')[0] : 'there';
   const kind = businessSignalKind(opp);
   const account = opp.account || 'this account';
   const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
@@ -3639,7 +3706,10 @@ function isGroundedOpener(text){
 
 function getSuggestedOpener(opp){
   if(isGroundedOpener(opp.conversationStarter)) return opp.conversationStarter;
-  const contact = opp.contact && !String(opp.contact).includes('/') ? String(opp.contact).split(' ')[0] : 'there';
+  // QA round 3, item 5: same fix as businessSuggestedOpener() -- never
+  // greet with a department/role placeholder from opp.contact.
+  const knownContact = likelyKnownBuyer(opp);
+  const contact = knownContact && !knownContact.includes('/') ? knownContact.split(' ')[0] : 'there';
   const layer = signalLayerLabel(opp);
   const oppName = String(opp.opportunity || opp.opportunityName || '').toLowerCase();
   const categories = (opp.commonPromoCategories || opp.suggestedProducts || []).map(x => String(x).toLowerCase());
@@ -3684,13 +3754,19 @@ function opportunityHeadline(opp){
   const type = typeof getRecommendationType === 'function' ? getRecommendationType(opp || {}) : '';
   const layer = signalLayerLabel(opp);
   const kind = businessSignalKind(opp);
-  const cats = (opp.commonPromoCategories || opp.suggestedProducts || []).join(' ').toLowerCase();
-  const text = `${opp.opportunity || ''} ${opp.opportunityName || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''} ${opp.whyNow || ''} ${cats}`.toLowerCase();
+  // QA round 3, item 2: this classification text NEVER includes inferred
+  // merchandise categories (opp.commonPromoCategories/suggestedProducts) --
+  // those are product IDEAS, not evidence of what business event occurred.
+  // Blending them in previously let a suggested "onboarding kit" idea for
+  // an acquisition/integration signal make the headline say "Recent
+  // hiring" even though the event itself was never a hiring signal.
+  const text = `${opp.opportunity || ''} ${opp.opportunityName || ''} ${opp.signalTitle || ''} ${opp.signalSummary || ''} ${opp.whyNow || ''}`.toLowerCase();
   if(type === 'Relationship Expansion') return 'Warm relationship + expansion opportunity';
   if(type === 'Recent Project Follow-Up') return 'Recent order creates a natural follow-up';
   if(type === 'Reorder Due' || type === 'Annual Buying Pattern') return 'Repeat buying window detected';
   if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
-  if(kind === 'hiring' || /hiring|recruit|onboarding|new hire/.test(text)) return 'Recent hiring creates a timely reason to reconnect';
+  if(kind === 'acquisition' || /acquisition|acquired|\bmerger\b/.test(text)) return 'Acquisition creates a reason to reconnect';
+  if(kind === 'hiring' || /hiring|recruit(?:ing|ment)?|onboarding|new hire/.test(text)) return 'Recent hiring creates a timely reason to reconnect';
   if(kind === 'event' || /event|conference|trade show|expo/.test(text)){
     // Priority 1: "upcoming" is never displayed unless a confidently parsed
     // event date is actually in the future -- opp.actionabilityStatus is
@@ -3797,19 +3873,25 @@ function formatShortDate(value){
 // opp.actionabilityStatus shape (see classifyLegacySignalActionability() in
 // api/research-batch.js) as fresh ones, so they render identically here --
 // no separate legacy-only branch needed.
+// QA round 3, item 3: NEVER returns an empty string -- every branch,
+// including the defensive default, resolves to one of the 5 supported
+// states, so the status area on the card and in Verified Opportunity can
+// never render blank. Exact required formats: "Upcoming — Event date: X",
+// "Recent event — Event date: X", "Ongoing business change — Published: X",
+// "Date unavailable", "No longer current".
 function signalDateAndActionabilityLine(opp){
   const status = opp.actionabilityStatus || {};
   const eventDate = opp.eventDate || opp.event_date || '';
   const pubDate = opp.publicationDate || opp.publishedDate || '';
   switch(status.status){
-    case 'upcoming': return eventDate ? `Upcoming — ${formatShortDate(eventDate)}` : 'Upcoming';
-    case 'recent-past': return eventDate ? `Recent event — ${formatShortDate(eventDate)} (follow up)` : 'Recent event (follow up)';
-    case 'ongoing': return pubDate ? `Ongoing business change — published ${formatShortDate(pubDate)}` : 'Ongoing business change';
+    case 'upcoming': return eventDate ? `Upcoming — Event date: ${formatShortDate(eventDate)}` : 'Upcoming';
+    case 'recent-past': return eventDate ? `Recent event — Event date: ${formatShortDate(eventDate)} (follow up)` : 'Recent event (follow up)';
+    case 'ongoing': return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Ongoing business change';
     case 'stale': return 'No longer current';
     case 'ongoing-stale': return 'No longer current';
     case 'unknown-date': return 'Date unavailable';
     case 'ongoing-undated': return 'Date unavailable';
-    default: return pubDate ? `Ongoing business change — published ${formatShortDate(pubDate)}` : '';
+    default: return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Date unavailable';
   }
 }
 
@@ -3882,7 +3964,7 @@ function renderVerifiedOpportunitySection(opp){
     : escapeHtml(evidenceSourceLabel(opp) || 'Account history');
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Verified Opportunity</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
-    ${dateLine ? `<div class="sales-play-detail-item"><strong>Date</strong>${escapeHtml(dateLine)}</div>` : ''}
+    <div class="sales-play-detail-item"><strong>Status</strong>${escapeHtml(dateLine)}</div>
     <div class="sales-play-detail-item"><strong>Event source</strong>${source}</div>
   </div></div>`;
 }
@@ -4010,7 +4092,7 @@ function renderRepOpportunityCard(opp){
           <div class="opp-label">Signal</div>
           <div class="opp-content"><strong>${escapeHtml(opportunityHeadline(opp))}</strong></div>
         </div>
-        ${dateLine ? `<div class="opp-section signal-date-line"><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>` : ''}
+        <div class="opp-section signal-date-line"><div class="opp-label">Status</div><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>
         <div class="opp-section">
           <div class="opp-label">Why it matters</div>
           <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
@@ -5858,6 +5940,28 @@ function trimToWords(text, maxWords){
   return words.slice(0, maxWords).join(' ').replace(/[,.!?;:]+$/, '') + '...';
 }
 
+// QA round 3, item 5: final sanitizer applied to every generated outreach
+// surface (email, call script lines, questions, subject, Best Next Move)
+// right before it is returned/rendered -- this is the SHARED path every
+// caller goes through, so a fix here applies to every account/signal, not
+// just the one from the QA report. Collapses malformed artifacts that can
+// appear when scraped/AI-generated fragments (which may already carry
+// stray dash separators or trailing punctuation) are stitched into a
+// sentence: doubled hyphen/dash runs with or without a space between them
+// ("pitch - - just" / "pitch --  -- just" -> "pitch -- just"), doubled
+// terminal punctuation ("store.." -> "store."), and doubled spaces --
+// while never touching a genuine 3-dot ellipsis (trimToWords()'s own
+// truncation marker) or line breaks (paragraph structure in the email).
+function normalizeOutreachText(text){
+  return String(text || '')
+    .replace(/(?:[-–—]\s*){2,}/g, ' -- ')
+    .replace(/([.!?])\1+/g, (m, ch) => (m.length === 3 && ch === '.') ? m : ch)
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ +\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // QA round 2, item 3: recommended department/contact must come from the
 // REAL initiative -- opp.recommendedBuyingTeam/likelyBuyers (the same
 // server-computed evidence the card's own "Recommended contact" already
@@ -5883,14 +5987,24 @@ function groundedDepartmentForOpportunity(opp){
 // title/trigger -- not a bucketed generic phrase like "an upcoming event or
 // campaign" that says nothing about what actually happened.
 function groundedInitiativeTitle(opp){
-  return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '');
+  // QA round 3, item 5: strip any trailing sentence punctuation once, at
+  // the source -- callers embed this phrase mid-sentence (e.g. "Lead with
+  // {title}.") and a raw AI-generated signalTitle/concreteTrigger that
+  // already ends in "." would otherwise produce a double period downstream.
+  return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '').replace(/[.!?]+$/, '');
 }
 
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp, opts){
   opts = opts || {};
   const account = cleanSalesPlayText(opp.account || 'this account');
-  const contactName = cleanSalesPlayText(opp.contactName || opp.contact || '');
+  // QA round 3, item 5: greeting must use a verified PERSON name only --
+  // opp.contact/opp.contactTitle are often a department/role placeholder
+  // (e.g. "Marketing", "Relevant department lead") rather than a real
+  // contact, which previously produced "Hi Marketing,". likelyKnownBuyer()
+  // already filters exactly this class of generic/department label via
+  // isGenericContactLabel(); reuse it instead of trusting opp.contact raw.
+  const contactName = cleanSalesPlayText(likelyKnownBuyer(opp));
   const firstName = contactName && !contactName.includes('/') ? contactName.split(' ')[0] : 'there';
   const mode = salesPlayModeFromOpp(opp);
   const reasonTitle = cleanSalesPlayText(getReasonToReachOutTitle(opp));
@@ -5907,6 +6021,12 @@ window.createSalesPlayPanel = function(opp, opts){
   const isUpcoming = opp.actionabilityStatus?.status === 'upcoming';
   const actionabilityTense = opp.actionabilityStatus?.tense || '';
   const hasKnownContact = Boolean(likelyKnownBuyer(opp) || opp.suggestedContactDetails?.name || opp.suggested_contact_details?.name);
+  // QA round 3, item 5: the precise canonical kind (e.g. distinguishing
+  // "acquisition" from a plain "expansion") so subject lines/asks can be
+  // specific about an acquisition without changing the outreach-flavor
+  // bucket signalType already uses (QA round 3, item 2 treats acquisition
+  // as a form of expansion for that purpose).
+  const canonicalKind = canonicalSignalKind(opp) || '';
 
   const play = buildConciseSalesPlay({
     account,
@@ -5918,6 +6038,7 @@ window.createSalesPlayPanel = function(opp, opts){
     sourceLabel,
     category,
     signalType,
+    canonicalKind,
     department,
     initiativeTitle,
     isUpcoming,
@@ -6055,25 +6176,54 @@ function ownerPhraseForSignal(ctx){
 }
 
 function triggerPhraseForSignal(ctx){
-  if(ctx.initiativeTitle) return ctx.initiativeTitle;
+  // QA round 3, item 5: trim + strip trailing sentence punctuation here too
+  // (groundedInitiativeTitle() already does this at the source, but ctx can
+  // be built directly by tests/other callers, so this stays defensive) --
+  // every caller below embeds this phrase mid-sentence, and an untouched
+  // trailing "." produces a double period.
+  if(ctx.initiativeTitle) return String(ctx.initiativeTitle).trim().replace(/[.!?]+$/, '');
   if(ctx.whyNow) return ctx.whyNow.replace(/[.]+$/,'');
   return 'a timely account signal';
 }
 
 // The lead-in sentence fragment used across every outreach surface --
 // references the exact initiative, and only claims "coming up" when the
-// actionability state actually supports it.
+// actionability state actually supports it. Deliberately preserves the
+// phrase's own capitalization (it is a real, already-correctly-capitalized
+// signal title/sentence from the source evidence) -- callers must never
+// re-lowercase this, which previously mangled proper nouns like account
+// and initiative names ("new hope network").
 function initiativeLeadIn(ctx){
   const title = triggerPhraseForSignal(ctx);
   return ctx.isUpcoming ? `${title} coming up` : title;
 }
 
+// QA round 3, item 5: when the lead phrase already names the account as
+// its own subject (e.g. "New Hope Network has acquired..."), appending
+// "at <account>" produces a duplicated, run-on construction ("...expanding
+// its portfolio. at New Hope Network."). Only append it when the account
+// isn't already named.
+function leadAlreadyNamesAccount(lead, account){
+  const a = String(account || '').trim().toLowerCase();
+  if(!a) return false;
+  return String(lead || '').toLowerCase().includes(a);
+}
+function leadWithAccountContext(ctx){
+  const lead = initiativeLeadIn(ctx);
+  return leadAlreadyNamesAccount(lead, ctx.account) ? lead : `${lead} at ${ctx.account}`;
+}
+
 // Never derived from a promo category -- only from the real recommended
 // department/buying-team evidence (ctx.department). Falls back to an
 // honest, referral-focused generic ask (not a category guess) when no
-// department is known at all.
+// department is known at all. QA round 3, item 5: avoids the awkward,
+// overly-formal "on the Marketing side" construction, and gives
+// acquisition/integration signals their own natural phrasing (matching the
+// call-script guidance: "who is leading the integration or communications
+// around that").
 function ownerAskPhrase(ctx){
-  if(ctx.department) return `who's leading that on the ${ctx.department} side`;
+  if(ctx.canonicalKind === 'acquisition') return `who's leading the integration or communications around that`;
+  if(ctx.department) return `who's leading that for ${ctx.department}`;
   return `who would be the right person to ask about that`;
 }
 
@@ -6094,14 +6244,17 @@ function buildConciseSalesPlay(ctx){
     `${lead} creates a timely reason to reach out.`,
     isWarm ? 'Existing relationship can be used as a bridge.' : 'A specific business reason keeps this from feeling like a cold pitch.',
     'Goal is to earn a reply or referral before selling.'
-  ];
+  ].map(normalizeOutreachText);
 
-  const bestNextMove = isWarm
-    ? `Call or email ${ctx.firstName}. Mention ${lead.toLowerCase()}. Ask ${ask}. Offer ${offer} if it's welcome.`
-    : `Lead with ${lead.toLowerCase()}. Ask ${ask}. Keep the first ask small and referral-focused${ctx.hasKnownContact ? '' : ' since there is no confirmed contact yet'}.`;
+  // QA round 3, item 5: lead is never lowercased -- it is a real,
+  // already-correctly-capitalized signal title/sentence, and forcing it to
+  // lowercase mangled proper nouns (account/initiative names).
+  const bestNextMove = normalizeOutreachText(isWarm
+    ? `Call or email ${ctx.firstName}. Mention ${lead}. Ask ${ask}. Offer ${offer} if it's welcome.`
+    : `Lead with ${lead}. Ask ${ask}. Keep the first ask small and referral-focused${ctx.hasKnownContact ? '' : ' since there is no confirmed contact yet'}.`);
 
-  const emailSubject = conciseSubject(ctx);
-  const outreachEmail = trimToWords(buildReplyFirstEmail(ctx), 120);
+  const emailSubject = normalizeOutreachText(conciseSubject(ctx));
+  const outreachEmail = normalizeOutreachText(trimToWords(buildReplyFirstEmail(ctx), 120));
   const callScript = buildNaturalCallScript(ctx);
   const questionsToAsk = questionsForSignal(ctx).slice(0, 3);
   const successLooksLike = ['Referral to the right person', 'Permission to send ideas', 'Meeting booked'];
@@ -6115,7 +6268,7 @@ function buildConciseSalesPlay(ctx){
   // separately (nothing computed here was deleted) so any other caller, and
   // the account-context reasoning itself, is preserved -- only the display
   // in Prepare for Call's Call Plan group uses the combined field.
-  const bestNextMoveCombined = `${bestNextMove} ${coachingNote}`;
+  const bestNextMoveCombined = normalizeOutreachText(`${bestNextMove} ${coachingNote}`);
 
   return {
     opportunitySummary,
@@ -6143,27 +6296,33 @@ function linkedinMessageForOpp(opp){
 }
 
 function buildReplyFirstEmail(ctx){
-  const lead = initiativeLeadIn(ctx);
+  // QA round 3, item 5: leadWithAccountContext() never lowercases the
+  // lead (preserves proper-noun capitalization) and only appends
+  // "at <account>" when the lead doesn't already name the account itself
+  // (avoids "...expanding its portfolio. at New Hope Network." duplication).
+  const lead = leadWithAccountContext(ctx);
   const ask = ownerAskPhrase(ctx);
   const offer = ideaOfferPhrase(ctx);
 
+  let email;
   if(ctx.mode === 'Warm'){
-    return `Hey ${ctx.firstName},\n\nSaw ${lead.toLowerCase()} at ${ctx.account} and thought of you.\n\nDoes that sit with your team, or do you know ${ask}?\n\nHappy to send over ${offer} if it would help -- no pressure either way.\n\nBest,\n[Rep Name]`;
+    email = `Hey ${ctx.firstName},\n\nSaw ${lead} and thought of you.\n\nDoes that sit with your team, or do you know ${ask}?\n\nHappy to send over ${offer} if it would help -- no pressure either way.\n\nBest,\n[Rep Name]`;
+  } else if(ctx.mode === 'Lukewarm'){
+    email = `Hey ${ctx.firstName},\n\nIt has been a bit, but ${lead} felt like a good reason to reconnect.\n\nDo you know ${ask}?\n\nCan send over ${offer} if useful -- just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
+  } else {
+    email = `Hi ${ctx.firstName},\n\nSaw ${lead}.\n\nDo you know ${ask}? Not trying to jump straight to a pitch -- just want to start with the right person.\n\nIf it's useful, happy to share ${offer} once I know more.\n\nBest,\n[Rep Name]`;
   }
-  if(ctx.mode === 'Lukewarm'){
-    return `Hey ${ctx.firstName},\n\nIt has been a bit, but ${lead.toLowerCase()} at ${ctx.account} felt like a good reason to reconnect.\n\nDo you know ${ask}?\n\nCan send over ${offer} if useful -- just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
-  }
-  return `Hi ${ctx.firstName},\n\nSaw ${lead.toLowerCase()} at ${ctx.account}.\n\nDo you know ${ask}? Not trying to jump straight to a pitch -- just want to start with the right person.\n\nIf it's useful, happy to share ${offer} once I know more.\n\nBest,\n[Rep Name]`;
+  return normalizeOutreachText(email);
 }
 
 function buildNaturalCallScript(ctx){
-  const lead = initiativeLeadIn(ctx).toLowerCase();
+  const lead = leadWithAccountContext(ctx);
   const ask = ownerAskPhrase(ctx);
   return [
-    `<strong>Open:</strong> “Hey ${ctx.firstName}, saw ${lead} at ${ctx.account} -- quick question.”`,
+    `<strong>Open:</strong> “Hey ${ctx.firstName}, saw ${lead} -- quick question.”`,
     `<strong>Reason:</strong> “Wanted to check ${ask}, or whether that's something your team handles.”`,
     `<strong>Ask:</strong> “No pitch yet -- just trying to find the right person. Is that you, or should I talk to someone else?”`
-  ];
+  ].map(normalizeOutreachText);
 }
 
 function questionsForSignal(ctx){
@@ -6177,12 +6336,23 @@ function questionsForSignal(ctx){
     `Do you know ${ask}?`,
     statusQuestion,
     'Would a few relevant ideas be useful once things take shape?'
-  ];
+  ].map(normalizeOutreachText);
 }
 
+// QA round 3, item 5: concise, human, grounded subject lines. Never uses
+// the full factual sentence as the subject (the old `specific` branch below
+// could produce "Question about New Hope Network has acquired the..." --
+// a run-on clause truncated mid-word). Acquisition/integration signals get
+// their own natural, non-hardcoded phrasing (matches the valid shapes:
+// "Quick question about the acquisition" / "Question about the recent
+// acquisition"); everything else prefers a short (<=6 word), untruncated
+// slice of the real initiative when one is available, and otherwise falls
+// back to the existing per-signal-type templates.
 function conciseSubject(ctx){
-  const specific = shortText(ctx.initiativeTitle || '', 40);
-  if(specific && specific.length > 8) return `Question about ${specific}`;
+  if(ctx.canonicalKind === 'acquisition') return ctx.mode === 'Warm' ? 'Quick question about the acquisition' : 'Question about the recent acquisition';
+  const shortInitiative = trimToWords(String(ctx.initiativeTitle || '').replace(/[.!?]+$/, ''), 6);
+  const fitsWithoutTruncation = shortInitiative && shortInitiative.length <= 40 && !shortInitiative.endsWith('...');
+  if(fitsWithoutTruncation) return `Question about ${shortInitiative}`;
   if(ctx.signalType === 'hiring') return ctx.mode === 'Warm' ? `Hiring at ${ctx.account}?` : 'Quick question on onboarding';
   if(ctx.signalType === 'event') return ctx.reasonTitle && ctx.reasonTitle.length < 35 ? `Question about ${ctx.reasonTitle}` : 'Question about the event';
   if(ctx.signalType === 'expansion') return 'Saw the expansion';
@@ -6200,7 +6370,23 @@ function subjectRationale(ctx, subject){
 }
 
 function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
-  const text = [reasonTitle, whyNow, category, opp.opportunityName, opp.opportunity, opp.signalType, opp.signalTitle, opp.evidence].join(' ').toLowerCase();
+  // QA round 3, item 2: prefer the same canonical classification the card
+  // headline uses (never overridden by the inferred merch `category`
+  // argument) so Best Next Move/Questions to Ask/email/subject never
+  // disagree with the card about what kind of business event this is. An
+  // acquisition is treated as a form of business expansion for the
+  // purposes of this outreach-flavor bucket -- the real specificity comes
+  // from ctx.initiativeTitle/ctx.department grounding, not this bucket.
+  const canonical = canonicalSignalKind(opp);
+  if(canonical === 'hiring') return 'hiring';
+  if(canonical === 'event' || canonical === 'recognition') return 'event';
+  if(canonical === 'expansion' || canonical === 'acquisition') return 'expansion';
+  // Content-only fallback for opportunities with no canonical event type --
+  // deliberately excludes `category` (the inferred merch category), which
+  // previously let a suggested "onboarding kit" idea reclassify an
+  // acquisition signal as hiring.
+  const text = [reasonTitle, whyNow, opp.opportunityName, opp.opportunity, opp.signalType, opp.signalTitle, opp.evidence].join(' ').toLowerCase();
+  if(/acquisition|acquired|\bmerger\b/.test(text)) return 'expansion';
   if(/hiring|career|jobs|recruit|new hire|onboard/.test(text)) return 'hiring';
   if(/event|conference|trade show|expo|campaign|booth/.test(text)) return 'event';
   if(/expansion|opening|opened|new location|facility|branch/.test(text)) return 'expansion';

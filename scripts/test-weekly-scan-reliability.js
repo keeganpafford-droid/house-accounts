@@ -1020,7 +1020,14 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
         signals: [{
           accountName, signalType: 'Business Activity', signalTitle: `${accountName} business update`,
           whatChanged: `${accountName} had a business update`, whyItMattersForPromo: 'Timely reason to reach out',
-          sourceUrl: `https://example.com/${accountName.toLowerCase().replace(/\s+/g, '-')}`, confidenceScore: 80
+          sourceUrl: `https://example.com/${accountName.toLowerCase().replace(/\s+/g, '-')}`, confidenceScore: 80,
+          // Real research-batch responses always carry the AI-reported
+          // publicationDate field (see the JSON schema researchers are
+          // prompted with) -- an undated ongoing signal is correctly
+          // digest-ineligible per the canonical actionability boundary, so
+          // this fixture needs a real, recent date like production data
+          // would have, not an artificially dateless one.
+          publicationDate: new Date().toISOString()
         }],
         diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
       });

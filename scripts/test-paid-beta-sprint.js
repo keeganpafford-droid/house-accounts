@@ -204,6 +204,50 @@ const NOW = new Date('2026-08-04T00:00:00Z');
 }
 
 // ---------------------------------------------------------------------------
+// QA round 3, item 1: the exact three visible Preview defects -- an undated
+// HPGR-style webinar, an undated anniversary celebration, and an undated
+// workshop -- proven end-to-end through the real makeSignal() pipeline.
+// Required coverage 1, 2, 3.
+// ---------------------------------------------------------------------------
+{
+  const raw = {
+    accountName: 'HPGR', signalTitle: 'HPGR HRCe product webinar', concrete_trigger: 'HPGR HRCe product webinar',
+    business_context: 'HPGR is promoting a product webinar for its customer base, no date visible on the page.',
+    sourceUrl: 'https://example.com/hpgr-webinar', confidence: 85
+  };
+  const madeSignal = makeSignal(raw, {});
+  assert(madeSignal !== null, 'required coverage 1: an undated HPGR-style webinar is retained (research detail), not discarded');
+  assert(madeSignal.eventCategory === 'event-like', `required coverage 1: the webinar is classified event-like (got "${madeSignal.eventCategory}")`);
+  assert(madeSignal.actionabilityStatus.status === 'unknown-date', `required coverage 1: with no explicit date, the webinar is "unknown-date"/Date unavailable, never treated as a current priority (got "${madeSignal.actionabilityStatus.status}")`);
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false && madeSignal.actionabilityStatus.excludeFromPriorities === true, 'required coverage 1: the undated webinar is excluded from priority/digest eligibility');
+  assert(madeSignal.isUpcoming === false, 'required coverage 1: the undated webinar is never flagged isUpcoming');
+}
+{
+  const raw = {
+    accountName: 'New York Marriott Marquis', signalTitle: 'New York Marriott Marquis anniversary celebration', concrete_trigger: 'anniversary celebration',
+    business_context: 'The hotel is celebrating its anniversary, no specific date given.',
+    sourceUrl: 'https://example.com/marriott-anniversary', confidence: 80
+  };
+  const madeSignal = makeSignal(raw, {});
+  assert(madeSignal !== null, 'required coverage 2: an undated anniversary celebration is retained (research detail), not discarded');
+  assert(madeSignal.eventCategory === 'event-like', `required coverage 2: the anniversary celebration is classified event-like (got "${madeSignal.eventCategory}")`);
+  assert(madeSignal.actionabilityStatus.status === 'unknown-date', `required coverage 2: with no explicit date, the anniversary is Date unavailable, never a current priority (got "${madeSignal.actionabilityStatus.status}")`);
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false, 'required coverage 2: the undated anniversary is excluded from priority eligibility');
+}
+{
+  const raw = {
+    accountName: 'The Other Women', signalTitle: 'The Other Women workshops', concrete_trigger: 'The Other Women workshops',
+    business_context: 'The Other Women hosts workshops for entrepreneurs, no date specified.',
+    sourceUrl: 'https://example.com/the-other-women-workshops', confidence: 75
+  };
+  const madeSignal = makeSignal(raw, {});
+  assert(madeSignal !== null, 'required coverage 3: an undated workshop is retained (research detail), not discarded');
+  assert(madeSignal.eventCategory === 'event-like', `required coverage 3: "workshops" (plural) is correctly classified event-like, not mistakenly treated as ongoing due to the word-boundary/plural classifier gap (got "${madeSignal.eventCategory}")`);
+  assert(madeSignal.actionabilityStatus.status === 'unknown-date', `required coverage 3: with no explicit date, the workshop is Date unavailable, never a current priority (got "${madeSignal.actionabilityStatus.status}")`);
+  assert(madeSignal.actionabilityStatus.isPriorityEligible === false, 'required coverage 3: the undated workshop is excluded from priority eligibility');
+}
+
+// ---------------------------------------------------------------------------
 // QA round 2, item 1: classifyLegacySignalActionability() -- the single
 // canonical, backward-compatible normalizer for signals persisted before
 // actionabilityStatus/eventCategory existed. Required coverage items 1, 7,
@@ -260,14 +304,74 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(result.actionabilityStatus.isPriorityEligible === false, 'required coverage 8: the old legacy hiring signal is not priority eligible');
 }
 {
-  // Required coverage 9: a fresh signal with valid, trustworthy new
-  // metadata is passed through unchanged -- never reclassified.
+  // Required coverage 9 (revised for QA round 3, item 1): a correctly
+  // classified fresh signal is NOT visibly reclassified/overridden --
+  // classifyLegacySignalActionability() now always recomputes
+  // eventCategory/actionabilityStatus from more primitive facts (never
+  // blindly trusts the stored derived judgment directly), which is a
+  // provable no-op for a signal that was already correct, and a
+  // self-healing correction for one that wasn't (see the "internally
+  // inconsistent metadata" test below). Real title/trigger content is
+  // required here for the fixture to be realistic -- a fresh signal always
+  // carries this.
   const freshStatus = { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
-  const freshSignal = { eventCategory: 'event-like', actionabilityStatus: freshStatus, eventDate: '2027-01-01', eventDateConfidence: 'exact' };
-  assert(hasTrustworthyActionabilityMetadata(freshSignal) === true, 'required coverage 9: a signal with a complete actionabilityStatus/eventCategory is recognized as trustworthy, not legacy');
+  const freshSignal = {
+    accountName: 'Acme Corp', signalTitle: 'Acme trade show', title: 'Acme trade show', concreteTrigger: 'Acme trade show',
+    canonicalEventType: 'EVENT_TRADE_SHOW', businessContext: '',
+    eventCategory: 'event-like', actionabilityStatus: freshStatus, eventDate: '2027-01-01', eventDateConfidence: 'exact'
+  };
+  assert(hasTrustworthyActionabilityMetadata(freshSignal) === true, 'required coverage 9: a signal with a complete actionabilityStatus/eventCategory is recognized as trustworthy (shape-complete)');
   const result = classifyLegacySignalActionability(freshSignal);
-  assert(result.actionabilityStatus === freshStatus, 'required coverage 9: a fresh signal\'s own actionabilityStatus object is returned verbatim, never recomputed/overridden');
-  assert(result.eventDate === '2027-01-01' && result.eventDateConfidence === 'exact', 'required coverage 9: a fresh signal\'s own eventDate/eventDateConfidence are preserved unchanged');
+  assert(result.eventCategory === 'event-like', 'required coverage 9: a correctly-classified fresh signal\'s eventCategory recomputes to the same value (no visible change)');
+  assert(result.actionabilityStatus.status === freshStatus.status && result.actionabilityStatus.isPriorityEligible === freshStatus.isPriorityEligible, `required coverage 9: a correctly-classified fresh signal's actionabilityStatus recomputes to the same values -- recomputation is a genuine no-op, not an override (got: ${JSON.stringify(result.actionabilityStatus)})`);
+  assert(result.eventDate === '2027-01-01' && result.eventDateConfidence === 'exact', 'required coverage 9: a fresh signal\'s own trustworthy eventDate/eventDateConfidence are preserved, not re-derived from text');
+}
+{
+  // QA round 3, item 1: internally inconsistent stored metadata must NOT be
+  // blindly trusted -- an event-like signal wrongly marked
+  // isPriorityEligible:true/status:"ongoing" with no real date is corrected
+  // at the boundary, exactly like the visible HPGR webinar/anniversary/
+  // workshop Preview defects.
+  const inconsistentWebinar = {
+    accountName: 'HPGR', signalTitle: 'HPGR HRCe product webinar', title: 'HPGR HRCe product webinar', concreteTrigger: 'HPGR HRCe product webinar',
+    canonicalEventType: 'EVENT_CONFERENCE', businessContext: 'HPGR is promoting a product webinar.',
+    // Simulates a bug: eventCategory/actionabilityStatus wrongly claim this
+    // is an eligible ongoing signal, despite dateConfidence:'unknown'.
+    eventCategory: 'ongoing', eventDateConfidence: 'unknown', publicationDate: new Date().toISOString(),
+    actionabilityStatus: { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Ongoing business change' }
+  };
+  assert(hasTrustworthyActionabilityMetadata(inconsistentWebinar) === true, 'the inconsistent fixture is shape-complete (this is exactly the "looks trustworthy but is not" case the invariant must catch)');
+  const healed = classifyLegacySignalActionability(inconsistentWebinar);
+  assert(healed.eventCategory === 'event-like', `internally inconsistent metadata is corrected: eventCategory recomputed as event-like from the webinar content, not trusted as "ongoing" (got: "${healed.eventCategory}")`);
+  assert(healed.actionabilityStatus.status === 'unknown-date', `internally inconsistent metadata is corrected: status recomputed as "unknown-date" (Date unavailable), not trusted as "ongoing" (got: "${healed.actionabilityStatus.status}")`);
+  assert(healed.actionabilityStatus.isPriorityEligible === false, 'internally inconsistent metadata is corrected: the healed signal is not priority eligible, regardless of what the stored flag claimed');
+}
+{
+  // Required coverage 4 & 6: an explicit future event date with 'exact'
+  // confidence IS Upcoming; the SAME date with only 'approximate'
+  // confidence is NOT -- Upcoming requires an explicit, not inferred, date.
+  const exactFuture = { accountName: 'Acme', signalTitle: 'Acme trade show', title: 'Acme trade show', concreteTrigger: 'Acme trade show', canonicalEventType: 'EVENT_TRADE_SHOW', businessContext: '', eventDate: '2099-03-15', eventDateConfidence: 'exact', sourceUrl: 'https://example.com/acme' };
+  const exactResult = classifyLegacySignalActionability(exactFuture);
+  assert(exactResult.actionabilityStatus.status === 'upcoming' && exactResult.actionabilityStatus.isPriorityEligible === true, `required coverage 4: an explicit (exact-confidence) future event date IS Upcoming (got: "${exactResult.actionabilityStatus.status}")`);
+
+  const approxFuture = { ...exactFuture, eventDateConfidence: 'approximate' };
+  const approxResult = classifyLegacySignalActionability(approxFuture);
+  assert(approxResult.actionabilityStatus.status === 'unknown-date' && approxResult.actionabilityStatus.isPriorityEligible === false, `an approximate/inferred future date is never confident enough to claim Upcoming (got: "${approxResult.actionabilityStatus.status}")`);
+}
+{
+  // Required coverage 5/6: an explicit recent-past event date remains
+  // Recent event; an old one becomes No longer current.
+  // classifyLegacySignalActionability() has no `now` override -- these
+  // fixtures use real current-time-relative offsets rather than the fixed
+  // NOW constant Section A's computeActionability()-direct tests use.
+  const recentPastBase = { accountName: 'Acme', signalTitle: 'Acme ribbon cutting', title: 'Acme ribbon cutting', concreteTrigger: 'Acme ribbon cutting', canonicalEventType: 'LOCATION_EVENT_UNSPECIFIED', businessContext: '', eventDateConfidence: 'exact', sourceUrl: 'https://example.com/acme-rc' };
+  const recentPast = { ...recentPastBase, eventDate: new Date(Date.now() - 20 * 86400000).toISOString().slice(0,10) };
+  const recentResult = classifyLegacySignalActionability(recentPast);
+  assert(recentResult.actionabilityStatus.status === 'recent-past' && recentResult.actionabilityStatus.isPriorityEligible === true, `required coverage 5: an explicit event 20 days in the past remains Recent event (got: "${recentResult.actionabilityStatus.status}")`);
+
+  const oldEvent = { ...recentPastBase, eventDate: new Date(Date.now() - 400 * 86400000).toISOString().slice(0,10) };
+  const oldResult = classifyLegacySignalActionability(oldEvent);
+  assert(oldResult.actionabilityStatus.status === 'stale' && oldResult.actionabilityStatus.isPriorityEligible === false, `required coverage 6: an event 400 days in the past becomes No longer current (got: "${oldResult.actionabilityStatus.status}")`);
 }
 
 // ===========================================================================
@@ -346,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3437, 4081, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3462, 4163, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -369,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5461, 6209, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5543, 6395, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -378,13 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5461, 6209, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6326, 6764, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6512, 6950, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2375, 2380, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2598, 2601, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7332, 7335, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5376, 5378, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5381, 5383, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7518, 7521, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5458, 5460, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5463, 5465, 'function clampScore(');
+// QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
+// helper, plus the small dedup-key generator the dashboard metric tile
+// (and, since the fix, the summary banner) both route through.
+const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2493, 2498, 'function formatDashboardScanDate(');
+const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2500, 2513, 'function uniqueDashboardOpportunities(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2855, 2857, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2859, 2877, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -421,10 +532,14 @@ function makeSandbox(){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
+    FORMAT_DASHBOARD_SCAN_DATE_SRC,
+    UNIQUE_DASHBOARD_OPPORTUNITIES_SRC,
     DEDUPE_AND_IDENTITY_BLOCK,
     CARD_AND_MODAL_BLOCK,
     SALES_PLAY_BLOCK,
-    SCORING_AND_TIMEBOX_BLOCK
+    SCORING_AND_TIMEBOX_BLOCK,
+    NEWLY_DETECTED_COUNT_SRC,
+    RENDER_CUSTOMER_DASHBOARD_SRC
   ].join('\n\n');
   new vm.Script(fullSource, { filename: 'dashboard-paid-beta-extract.js' }).runInContext(sandbox);
   sandbox.__domElements = domElements;
@@ -648,6 +763,41 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const historyHtml = sandbox.renderVerifiedSignals([staleOpp, eligibleOpp]);
   assert(historyHtml.includes('Natural Products Expo West 2023'), 'reconciliation item 1, sub-test 4: the retained stale signal remains visible in Research Details/account history (renderVerifiedSignals)');
   assert(/no longer current|past event/i.test(historyHtml), `reconciliation item 1, sub-test 4: the retained stale signal is clearly labeled as no longer current in account history (got: "${historyHtml.slice(0, 400)}")`);
+}
+
+// ---------------------------------------------------------------------------
+// QA round 3, item 1: an undated event-like signal (the HPGR webinar shape)
+// is excluded from ALL FOUR priority timeframes -- This Week, This Month,
+// This Quarter, This Year -- not just the default "week" tab, while
+// remaining visible in Research Details/account history.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const undatedWebinar = {
+    account: 'HPGR', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/hpgr-webinar',
+    signalTitle: 'HPGR HRCe product webinar', title: 'HPGR HRCe product webinar', signalType: 'Event', isReal: true,
+    actionabilityStatus: { status: 'unknown-date', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unavailable' }
+  };
+  const eligibleOpp = {
+    account: 'Acme Corp', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/acme-hiring',
+    signalTitle: 'Acme is hiring field marketing coordinators', signalType: 'Hiring', isReal: true,
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Ongoing business change' },
+    publishedDate: new Date(NOW.getTime() - 5 * 86400000).toISOString(), publicationDate: new Date(NOW.getTime() - 5 * 86400000).toISOString()
+  };
+  for(const timebox of ['week', 'month', 'quarter', 'annual']){
+    sandbox.__setActiveTimebox(timebox);
+    sandbox.__setShowAllWeeklyPriorities(false);
+    sandbox.renderWeeklyPrioritiesFeed([undatedWebinar, eligibleOpp], [{ name: 'HPGR' }, { name: 'Acme Corp' }]);
+    const grid = sandbox.document.getElementById('opportunitiesGrid');
+    assert(!grid.innerHTML.includes('HPGR HRCe product webinar'), `required coverage 1: the undated HPGR webinar never renders as a priority card in the "${timebox}" timeframe`);
+    // View All Opportunities toggle for this timeframe must exclude it too.
+    sandbox.__setShowAllWeeklyPriorities(true);
+    sandbox.renderWeeklyPrioritiesFeed([undatedWebinar, eligibleOpp], [{ name: 'HPGR' }, { name: 'Acme Corp' }]);
+    assert(!grid.innerHTML.includes('HPGR HRCe product webinar'), `required coverage 1: the undated HPGR webinar is excluded from "View All Opportunities" in the "${timebox}" timeframe too`);
+  }
+  const historyHtml = sandbox.renderVerifiedSignals([undatedWebinar, eligibleOpp]);
+  assert(historyHtml.includes('HPGR HRCe product webinar'), 'required coverage 1: the undated HPGR webinar remains visible in Research Details/account history across every timeframe');
+  assert(/date unavailable/i.test(historyHtml), `required coverage 1: the undated webinar is clearly labeled Date unavailable in account history (got: "${historyHtml.slice(0, 400)}")`);
 }
 
 // ---------------------------------------------------------------------------
@@ -882,6 +1032,208 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const opp4 = { account: 'Full History Co' };
   const html4 = sandbox.renderAccountContextSection(opp4);
   assert(/5 orders on file/.test(html4) && html4.includes('Sam Patel'), `state (history and contact): both real order history and the real contact are shown (got: "${html4}")`);
+}
+
+// ---------------------------------------------------------------------------
+// QA round 3, item 4: "Newly Detected" single source of truth. Reproduces
+// the exact discrepancy from Preview QA -- a raw data.newThisWeek array
+// with 18 signal rows where two rows are the same real-world initiative
+// (same account/signalType/title/sourceUrl -- an exact duplicate the way a
+// re-run or a second source pass can legitimately produce), so the
+// deduped count is 17. The old banner code read data.newThisWeek.length
+// directly (18); the tile already deduped first (17). Both call sites now
+// route through the single newlyDetectedCount() helper, so this proves
+// they agree.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const newThisWeek = [];
+  for(let i = 1; i <= 17; i++){
+    newThisWeek.push({
+      account: `Account ${i}`, isVerifiedSignalOpportunity: true, sourceUrl: `https://example.com/${i}`,
+      signalType: 'Business Activity', signalTitle: `Account ${i} business update`, evidence: ['real evidence']
+    });
+  }
+  // The 18th raw row is an EXACT duplicate of row 1 (same account, same
+  // signalType, same title, same sourceUrl) -- the precise shape that
+  // collapses under dedup, reproducing 18 raw rows / 17 real initiatives.
+  newThisWeek.push({
+    account: 'Account 1', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/1',
+    signalType: 'Business Activity', signalTitle: 'Account 1 business update', evidence: ['real evidence']
+  });
+  const data = { newThisWeek };
+
+  assert(data.newThisWeek.length === 18, 'sanity: the raw fixture really does have 18 signal rows, reproducing the Preview QA banner count');
+  const deduped = sandbox.newlyDetectedCount(data);
+  assert(deduped === 17, `required coverage 17 (Newly Detected): newlyDetectedCount() collapses the exact-duplicate row, matching the previously-correct tile value of 17, not the raw 18 (got: ${deduped})`);
+
+  // Directly prove the two real call sites -- the metric tile
+  // (renderCustomerDashboard) and the summary banner -- now render the
+  // SAME number for the SAME data, closing the exact regression reported
+  // ("18 newly detected" banner vs "17 newly detected" tile).
+  sandbox.document.getElementById('customerDashboard').style = {};
+  const tileEl = sandbox.document.getElementById('dashNewThisWeek');
+  sandbox.renderCustomerDashboard(data);
+  assert(tileEl.textContent === 17, `required coverage 17 (Newly Detected): the dashboard metric tile shows the deduped count (got: ${tileEl.textContent})`);
+  const bannerCount = sandbox.newlyDetectedCount(data);
+  assert(bannerCount === Number(tileEl.textContent), `required coverage 17 (Newly Detected): the banner's own count computation (newlyDetectedCount()) exactly matches what the tile rendered -- the two surfaces can no longer disagree (banner: ${bannerCount}, tile: ${tileEl.textContent})`);
+}
+{
+  // A raw array with NO duplicates must not be under-counted -- proves the
+  // fix didn't just hardcode dedup, it genuinely reflects distinct
+  // initiatives when there are no duplicates to collapse.
+  const sandbox = makeSandbox();
+  const newThisWeek = [1, 2, 3].map(i => ({
+    account: `Distinct Account ${i}`, isVerifiedSignalOpportunity: true, sourceUrl: `https://example.com/distinct-${i}`,
+    signalType: 'Business Activity', signalTitle: `Distinct Account ${i} update`, evidence: ['real evidence']
+  }));
+  assert(sandbox.newlyDetectedCount({ newThisWeek }) === 3, 'Newly Detected: three genuinely distinct new signals are never under-counted by dedup');
+}
+{
+  // Newly Detected must exclude stale/date-unavailable event-like signals
+  // -- this is enforced server-side (api/get-dashboard.js's newThisWeek
+  // filter already routes through classifyLegacySignalActionability()
+  // before newThisWeek is ever sent to the client), so the client-side
+  // count over an already-filtered array must not re-admit anything; an
+  // empty/undated feed simply produces zero, not a fabricated count.
+  const sandbox = makeSandbox();
+  assert(sandbox.newlyDetectedCount({ newThisWeek: [] }) === 0, 'Newly Detected: an empty (nothing new/eligible this window) newThisWeek array counts as zero, not undefined/NaN');
+  assert(sandbox.newlyDetectedCount({}) === 0, 'Newly Detected: a missing newThisWeek field on the response never throws and counts as zero');
+}
+
+// ---------------------------------------------------------------------------
+// QA round 3, item 5: outreach text normalization. Reproduces the exact
+// New Hope Network / Nutrition Capital Network acquisition defects from the
+// Preview QA report against the SHARED generation path (buildConciseSalesPlay/
+// buildReplyFirstEmail/buildNaturalCallScript/questionsForSignal/
+// conciseSubject/ownerAskPhrase), not a one-account patch.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // The exact reported opportunity: an acquisition signal where the AI
+  // returned "Marketing" as the suggestedContact (no real named contact),
+  // recommendedBuyingTeam is Marketing, and the raw signalTitle already
+  // ends in a period AND already names the account as its own subject --
+  // the precise shape that produced every defect in the report.
+  const opp = {
+    account: 'New Hope Network',
+    contact: 'Marketing', contactTitle: 'Marketing',
+    signalTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio.',
+    canonicalEventType: 'ACQUISITION', opportunityType: 'ACQUISITION',
+    recommendedBuyingTeam: ['Marketing'], likelyBuyers: ['Marketing'],
+    commonPromoCategories: ['Onboarding Kits'], suggestedProducts: ['Onboarding Kits']
+  };
+
+  // required coverage 10/11: department never used as a greeting; unknown
+  // contact renders "Hi there,".
+  const knownBuyer = sandbox.likelyKnownBuyer(opp);
+  assert(knownBuyer === '', `required coverage 10/11: likelyKnownBuyer() never treats a department/role placeholder ("Marketing") as a real contact name (got: "${knownBuyer}")`);
+
+  const department = sandbox.groundedDepartmentForOpportunity(opp);
+  const initiativeTitle = sandbox.groundedInitiativeTitle(opp);
+  const canonicalKind = sandbox.canonicalSignalKind(opp);
+  assert(canonicalKind === 'acquisition', `sanity: the fixture is genuinely classified as an acquisition (got: "${canonicalKind}")`);
+  assert(!initiativeTitle.endsWith('.'), `groundedInitiativeTitle() strips trailing sentence punctuation at the source (got: "${initiativeTitle}")`);
+
+  const ctx = {
+    account: opp.account, firstName: knownBuyer && !knownBuyer.includes('/') ? knownBuyer.split(' ')[0] : 'there',
+    mode: 'Cold', reasonTitle: initiativeTitle, whyNow: '', category: 'onboarding kits',
+    signalType: 'expansion', canonicalKind, department, initiativeTitle,
+    isUpcoming: false, actionabilityTense: 'ongoing', hasKnownContact: false
+  };
+  assert(ctx.firstName === 'there', `required coverage 11: with no verified contact, the greeting name resolves to "there" (renders "Hi there,"), never the department (got: "${ctx.firstName}")`);
+
+  const play = sandbox.buildConciseSalesPlay(ctx);
+
+  // required coverage 11: department never used as email or call greeting.
+  assert(play.outreachEmail.startsWith('Hi there,'), `required coverage 11: the email greeting is "Hi there," -- never a department (got: "${play.outreachEmail.slice(0, 30)}")`);
+  assert(!/^Hi Marketing/.test(play.outreachEmail), 'required coverage 11: the email never greets with the department name "Hi Marketing,"');
+
+  // required coverage 12: proper nouns remain correctly capitalized
+  // throughout every generated surface -- never lowercased mid-sentence.
+  assert(play.outreachEmail.includes('New Hope Network') && play.outreachEmail.includes('Nutrition Capital Network'), `required coverage 12: proper nouns keep their real capitalization in the email (got: "${play.outreachEmail}")`);
+  assert(!/new hope network|nutrition capital network/.test(play.outreachEmail), `required coverage 12: proper nouns are never lowercased (got: "${play.outreachEmail}")`);
+  assert(play.bestNextMove.includes('New Hope Network') || play.bestNextMove.includes('Nutrition Capital Network'), `required coverage 12: Best Next Move also preserves proper-noun capitalization (got: "${play.bestNextMove}")`);
+  assert(!/new hope network|nutrition capital network/.test(play.bestNextMove), `required coverage 12: Best Next Move never lowercases the account/initiative name (got: "${play.bestNextMove}")`);
+
+  // required coverage 13: no duplicated account phrase, no double period,
+  // no "- -" artifact -- the initiative already names New Hope Network as
+  // its own subject, so "at New Hope Network" must never be appended.
+  assert(!/expanding its portfolio\.\s*at New Hope Network/i.test(play.outreachEmail), `required coverage 13: the account is never named a second time when the factual sentence already names it (got: "${play.outreachEmail}")`);
+  assert(!/at New Hope Network at New Hope Network/i.test(play.outreachEmail), 'required coverage 13: no duplicated account phrase');
+  assert(!/\.\./.test(play.outreachEmail) && !/\.\./.test(play.bestNextMove), `required coverage 13: no double period anywhere in the email or Best Next Move (email: "${play.outreachEmail}", bestNextMove: "${play.bestNextMove}")`);
+  assert(!/-\s+-/.test(play.outreachEmail) && !/-\s+-/.test(play.bestNextMove), `required coverage 13: no malformed doubled-hyphen artifact ("- -") in the email or Best Next Move (email: "${play.outreachEmail}", bestNextMove: "${play.bestNextMove}")`);
+
+  // required coverage 14: subject lines are concise and grounded -- never
+  // the full factual sentence, never truncated mid-word.
+  assert(play.emailSubject === 'Question about the recent acquisition', `required coverage 14: an acquisition signal gets the natural, non-hardcoded acquisition subject (got: "${play.emailSubject}")`);
+  assert(!/New Hope Network has acquired the\.\.\./.test(play.emailSubject), 'required coverage 14: the subject is never the full run-on sentence truncated mid-word');
+  assert(play.emailSubject.length < 60, `required coverage 14: the subject stays concise (got ${play.emailSubject.length} chars: "${play.emailSubject}")`);
+
+  // Avoid: "on the Marketing side" phrasing (explicitly called out as
+  // awkward); the call script/questions still ask about ownership using
+  // the acquisition-specific integration/communications phrasing.
+  assert(!/on the Marketing side/i.test(play.outreachEmail), `outreach avoids the awkward "on the Marketing side" phrasing (got: "${play.outreachEmail}")`);
+  assert(/integration or communications/i.test(play.outreachEmail), `an acquisition signal's owner-ask references integration/communications, matching the call-script guidance (got: "${play.outreachEmail}")`);
+
+  // email/Best Next Move/phone opener (call script)/questions all share the
+  // same factual initiative and the same normalized owner-ask.
+  const callScriptText = play.callScript.join(' ');
+  assert(callScriptText.includes('New Hope Network') || callScriptText.includes('Nutrition Capital Network'), `the call script opener shares the same factual initiative as the email (got: "${callScriptText}")`);
+  assert(/integration or communications/i.test(callScriptText), 'the call script uses the same normalized owner-ask as the email');
+  assert(play.questionsToAsk.some(q => /integration or communications/i.test(q)), `Questions to Ask uses the same normalized owner-ask as the email/call script (got: ${JSON.stringify(play.questionsToAsk)})`);
+  assert(!/on the Marketing side/i.test(callScriptText) && !play.questionsToAsk.some(q => /on the Marketing side/i.test(q)), 'neither the call script nor Questions to Ask uses the awkward "on the Marketing side" phrasing');
+}
+{
+  // required coverage 10 (direct unit proof): unknown contact -> "Hi there,"
+  // across every greeting-deriving function, not just the acquisition
+  // fixture above.
+  const sandbox = makeSandbox();
+  assert(sandbox.likelyKnownBuyer({ contact: 'HR' }) === '', 'likelyKnownBuyer(): "HR" (a department) is never treated as a real contact name');
+  assert(sandbox.likelyKnownBuyer({ contact: 'Relevant department lead' }) === '', 'likelyKnownBuyer(): the generic placeholder "Relevant department lead" is never treated as a real contact name');
+  assert(sandbox.likelyKnownBuyer({ contact: 'Jordan Lee' }) === 'Jordan Lee', 'likelyKnownBuyer(): a genuine two-word person name IS accepted as a real contact');
+
+  const opener = sandbox.businessSuggestedOpener({ account: 'Acme Co', contact: 'Marketing', signalTitle: 'Acme Co opens new facility' });
+  assert(opener.startsWith('Hey there'), `businessSuggestedOpener() never greets with a department name (got: "${opener}")`);
+  const opener2 = sandbox.getSuggestedOpener({ account: 'Acme Co', contact: 'Operations', opportunity: 'Repeat order', evidence: [] });
+  assert(!/^Hey Operations/.test(opener2), `getSuggestedOpener() never greets with a department name (got: "${opener2}")`);
+}
+{
+  // required coverage 13 (direct unit proof): leadAlreadyNamesAccount()/
+  // leadWithAccountContext() -- the account is appended ONLY when the
+  // lead phrase doesn't already name it, proven both ways.
+  const sandbox = makeSandbox();
+  assert(sandbox.leadAlreadyNamesAccount('New Hope Network has acquired the assets', 'New Hope Network') === true, 'leadAlreadyNamesAccount() detects the account name already present in the lead phrase');
+  assert(sandbox.leadAlreadyNamesAccount('hiring field marketing coordinators', 'Acme Manufacturing') === false, 'leadAlreadyNamesAccount() correctly reports false when the account is genuinely not named');
+
+  const withAccount = sandbox.leadWithAccountContext({ initiativeTitle: 'hiring field marketing coordinators', account: 'Acme Manufacturing', isUpcoming: false });
+  assert(withAccount === 'hiring field marketing coordinators at Acme Manufacturing', `leadWithAccountContext() appends "at <account>" when the account is not already named (got: "${withAccount}")`);
+  const withoutDuplicate = sandbox.leadWithAccountContext({ initiativeTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network', account: 'New Hope Network', isUpcoming: false });
+  assert(withoutDuplicate === 'New Hope Network has acquired the assets of Nutrition Capital Network', `leadWithAccountContext() does NOT append the account a second time when the lead already names it (got: "${withoutDuplicate}")`);
+}
+{
+  // required coverage 13 (direct unit proof): normalizeOutreachText()
+  // collapses doubled hyphens/dashes (with or without a space between
+  // them) and doubled terminal punctuation, but preserves a genuine
+  // 3-dot ellipsis and paragraph line breaks.
+  const sandbox = makeSandbox();
+  assert(sandbox.normalizeOutreachText('Not trying to jump straight to a pitch - - just want to start') === 'Not trying to jump straight to a pitch -- just want to start', 'normalizeOutreachText() collapses a spaced-out doubled hyphen ("- -") into a clean "--"');
+  assert(sandbox.normalizeOutreachText('reimagine the flagship store..') === 'reimagine the flagship store.', 'normalizeOutreachText() collapses a doubled terminal period into one');
+  assert(sandbox.normalizeOutreachText('Quick question on onboarding...') === 'Quick question on onboarding...', 'normalizeOutreachText() preserves a genuine 3-dot ellipsis (e.g. from trimToWords() truncation)');
+  assert(sandbox.normalizeOutreachText('Hi there,\n\nSaw something.\n\nBest,\n[Rep Name]').includes('\n\n'), 'normalizeOutreachText() preserves paragraph line breaks (does not collapse newlines like ordinary whitespace)');
+  assert(sandbox.normalizeOutreachText('too   many   spaces') === 'too many spaces', 'normalizeOutreachText() collapses doubled/tripled spaces');
+}
+{
+  // required coverage 14 (non-acquisition subjects still behave sanely):
+  // a short, ungrounded-in-punctuation initiative still produces a
+  // concise subject, and a long one falls back to the per-signal-type
+  // template instead of a truncated run-on sentence.
+  const sandbox = makeSandbox();
+  const shortSubject = sandbox.conciseSubject({ mode: 'Cold', initiativeTitle: 'new Richmond distribution center', signalType: 'expansion' });
+  assert(shortSubject === 'Question about new Richmond distribution center', `a short (<=6 word) initiative is used verbatim, untruncated, in the subject (got: "${shortSubject}")`);
+  const longSubject = sandbox.conciseSubject({ mode: 'Cold', initiativeTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio', signalType: 'expansion' });
+  assert(!longSubject.includes('...'), `a long initiative never falls back to a mid-word-truncated subject (got: "${longSubject}")`);
+  assert(longSubject === 'Saw the expansion', `a long, non-acquisition initiative falls back to the existing concise per-signal-type template (got: "${longSubject}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

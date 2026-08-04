@@ -24,6 +24,11 @@
 
 import { timingSafeEqual } from 'crypto';
 import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+// QA round 3, item 1/6: digest eligibility is validated through the SAME
+// canonical actionability boundary as every other reader (get-dashboard.js),
+// never by trusting a persisted row's actionabilityStatus.isPriorityEligible
+// directly.
+import { classifyLegacySignalActionability } from './research-batch.js';
 
 // Constant-time-ish secret comparison: equal-length secrets are compared via
 // crypto.timingSafeEqual (no early-exit on byte mismatch); a length mismatch
@@ -730,11 +735,15 @@ export default async function handler(req, res){
           // new row persisted this run, including stale/undated/ceiling-past
           // signals that are correctly retained for Research Details/account
           // history. The digest, however, is an actionability notification,
-          // not a persistence report -- only rows whose
-          // payload.actionabilityStatus.isPriorityEligible is not explicitly
-          // false are accumulated into the user's digest bucket, so a user
-          // with only non-actionable new rows this run gets no email.
-          const digestEligibleRows = newSignalRows.filter(row => row.payload?.actionabilityStatus?.isPriorityEligible !== false);
+          // not a persistence report -- only rows the canonical boundary
+          // classifies as priority-eligible are accumulated into the user's
+          // digest bucket, so a user with only non-actionable new rows this
+          // run gets no email. QA round 3: routed through
+          // classifyLegacySignalActionability() rather than trusting
+          // row.payload.actionabilityStatus directly, so an internally
+          // inconsistent stored value can never leak an ineligible signal
+          // into the digest.
+          const digestEligibleRows = newSignalRows.filter(row => classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false);
           if(digestEligibleRows.length){
             const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };
             bucket.newSignalRows.push(...digestEligibleRows);

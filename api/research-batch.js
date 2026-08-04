@@ -1399,13 +1399,21 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
       const parsed = parseSignalDate(eventDate);
       if (parsed) {
         const diffDays = Math.round((parsed.getTime() - now.getTime()) / 86400000);
+        // QA round 3, item 1: "Upcoming" requires an explicit (exact-
+        // confidence) future date. An approximate/inferred one (e.g. a bare
+        // "Month Year" mention, or the past-year-only bare-year fallback in
+        // resolveSignalEventDate()) is not a strong enough basis to assert
+        // something is definitely still to come -- it falls through to
+        // Date unavailable instead of a confident future claim.
         if (diffDays > 0) {
-          return { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
-        }
-        if (diffDays >= -FOLLOW_UP_WINDOW_DAYS) {
+          if (dateConfidence === 'exact') {
+            return { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' };
+          }
+        } else if (diffDays >= -FOLLOW_UP_WINDOW_DAYS) {
           return { status: 'recent-past', tense: 'past', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Recent event' };
+        } else {
+          return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'No longer current' };
         }
-        return { status: 'stale', tense: 'past', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'No longer current' };
       }
     }
     return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unavailable' };
@@ -1442,39 +1450,58 @@ function hasTrustworthyActionabilityMetadata(payload = {}) {
   );
 }
 
+// QA round 3, item 1: this is the single canonical read boundary every
+// signal -- legacy, fresh, or partially normalized -- passes through before
+// priority selection, "Newly Detected" counts, timeframe feeds, outreach
+// tense, or digest eligibility ever see it. It NEVER trusts a stored
+// canonicalEventType/eventCategory/actionabilityStatus directly; it always
+// recomputes eventCategory and actionabilityStatus fresh from more
+// primitive inputs (evidence text and, when present and not the old
+// publication-date-fallback bug, the stored eventDate/eventDateConfidence).
+// signalEventCategory()/computeActionability()/resolveCanonicalEventType()
+// are pure functions of those inputs, so this is a genuine no-op for a
+// signal that was already classified correctly, and a self-healing
+// correction for one that wasn't (e.g. a classifier gap that has since been
+// fixed, or any other internally inconsistent combination such as
+// event-like content marked isPriorityEligible:true with no real date).
 function classifyLegacySignalActionability(payload = {}) {
-  if (hasTrustworthyActionabilityMetadata(payload)) {
-    // Correctly-processed fresh signals are returned unchanged -- never
-    // reclassified or overridden.
-    return {
-      eventCategory: payload.eventCategory,
-      actionabilityStatus: payload.actionabilityStatus,
-      eventDate: payload.eventDate || payload.event_date || '',
-      eventDateConfidence: payload.eventDateConfidence || 'unknown',
-      isUpcoming: payload.actionabilityStatus.status === 'upcoming'
-    };
-  }
   const title = clean(payload.title || payload.signalTitle || '');
   const concreteTrigger = clean(payload.concreteTrigger || payload.concrete_trigger || '');
   const businessContext = clean(payload.businessContext || payload.companyContext || payload.signalDetail || payload.whatChanged || '');
-  const canonicalEventType = clean(payload.canonicalEventType || payload.opportunityType || '') ||
-    resolveCanonicalEventType({
-      concrete_trigger: concreteTrigger, signalTitle: title,
-      whatChanged: businessContext, business_context: businessContext
-    }).eventType;
+  const canonicalEventType = resolveCanonicalEventType({
+    concrete_trigger: concreteTrigger, signalTitle: title,
+    whatChanged: businessContext, business_context: businessContext
+  }).eventType;
   const eventCategory = signalEventCategory(canonicalEventType);
-  const publicationDate = clean(payload.publicationDate || payload.publishedDate || '');
-  // The legacy eventDate/event_date field is only trusted when it is NOT
-  // identical to the publication date -- that exact equality is the
-  // fingerprint of the old bug (makeSignal() used to fall back to
-  // publicationDate/publishedDate/date whenever a real event date was
-  // absent). A genuinely distinct legacy event date is still parsed and
-  // trusted, same as any other evidence text.
-  const legacyEventField = payload.event_date || payload.eventDate || '';
-  const trustworthyLegacyField = (legacyEventField && legacyEventField === publicationDate) ? '' : legacyEventField;
-  const { eventDate, dateConfidence } = resolveSignalEventDate(
-    { event_date: trustworthyLegacyField }, concreteTrigger, title, businessContext, eventCategory
-  );
+  // payload.publishedAt covers signals persisted through the weekly-scan
+  // pipeline (resolveOpportunityEvents() in signal-intelligence.js), which
+  // uses that field name instead of the dashboard path's publishedDate --
+  // without it, every weekly-scan-sourced ongoing signal would be
+  // misjudged as dateless regardless of its real, evidence-backed publish
+  // date.
+  const publicationDate = clean(payload.publicationDate || payload.publishedDate || payload.publishedAt || '');
+
+  const storedEventField = payload.event_date || payload.eventDate || '';
+  const storedConfidence = payload.eventDateConfidence || '';
+  // A stored eventDate identical to the publication date is the fingerprint
+  // of the old publication-date-fallback bug -- untrusted either way, same
+  // as before. Otherwise: a stored dateConfidence (any value including
+  // 'unknown') is trusted as-is rather than re-derived, because re-parsing
+  // an already-resolved ISO date string through resolveSignalEventDate()
+  // would risk silently upgrading a genuinely 'approximate' evidence-based
+  // date to 'exact' merely because it is now ISO-formatted. Only a signal
+  // with NO stored confidence at all (true legacy, pre-dating this field)
+  // falls back to full text-based re-derivation.
+  const looksLikeOldBug = Boolean(storedEventField) && storedEventField === publicationDate;
+  let eventDate = looksLikeOldBug ? '' : storedEventField;
+  let dateConfidence = storedConfidence;
+  if (!dateConfidence) {
+    const resolved = resolveSignalEventDate({ event_date: eventDate }, concreteTrigger, title, businessContext, eventCategory);
+    eventDate = resolved.eventDate || '';
+    dateConfidence = resolved.dateConfidence;
+  } else if (looksLikeOldBug) {
+    dateConfidence = 'unknown';
+  }
   const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
   return {
     eventCategory,
