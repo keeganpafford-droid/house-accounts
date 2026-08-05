@@ -103,11 +103,11 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
 // file -- extractFn()'s own signature/closing-brace checks are the actual
 // correctness guarantee, not these numbers.
 const EXTRACTED = {
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2480, 2490, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2553, 2570, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2584, 2609, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2631, 2641, {async: true}),
-  request: extractFn('request', 9815, 9832, {async: true})
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2482, 2492, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2555, 2572, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2586, 2611, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2633, 2643, {async: true}),
+  request: extractFn('request', 9817, 9834, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

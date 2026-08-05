@@ -107,61 +107,61 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // numbers were re-derived mechanically (parse-complete scan from each
 // function's real signature line), not hand-counted.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2480, 2490, {async: true}),
+  extractFn('claimAutomaticResearchRun', 2482, 2492, {async: true}),
   // Duplicate-company research control (beta round): researchAccountFromManageModal(),
   // researchListFromManageModal(), and researchTopAccounts() (all extracted
   // below) now call checkDuplicateCompanyResearch() before ever claiming a
   // run -- it must be real, extracted source (not stubbed), since its own
   // fetch call and fail-open contract are directly part of the orchestration
   // under test here.
-  extractFn('checkDuplicateCompanyResearch', 2504, 2520, {async: true}),
-  extractFn('duplicateCompanyResearchMessage', 2530, 2533),
-  extractFn('heartbeatCurrentResearchRun', 2553, 2570, {async: true}),
-  extractFn('reportResearchRunOutcome', 2584, 2609, {async: true}),
-  extractFn('normalizeSavedAccount', 2745, 2807),
-  extractFn('accountCardFor', 4527, 4533),
-  extractFn('accountSignalsPanel', 4534, 4537),
+  extractFn('checkDuplicateCompanyResearch', 2506, 2522, {async: true}),
+  extractFn('duplicateCompanyResearchMessage', 2532, 2535),
+  extractFn('heartbeatCurrentResearchRun', 2555, 2572, {async: true}),
+  extractFn('reportResearchRunOutcome', 2586, 2611, {async: true}),
+  extractFn('normalizeSavedAccount', 2747, 2809),
+  extractFn('accountCardFor', 4529, 4535),
+  extractFn('accountSignalsPanel', 4536, 4539),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 5729, 5764, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 5593, 5615, {async: true}),
-  extractFn('persistScopedResearchResult', 5623, 5668, {async: true}),
-  extractFn('researchAccountFromManageModal', 5766, 5904, {async: true}),
-  extractFn('researchAccountByName', 6120, 6259, {async: true}),
-  extractFn('getAccountsForResearch', 6264, 6277),
-  extractFn('batchPayloadForAccounts', 6279, 6323),
-  extractFn('applyBusinessSignalAccountBoost', 6326, 6334),
-  extractFn('researchAccountsBatch', 6336, 6434, {async: true}),
-  extractFn('signalTopicKeyClient', 6436, 6444),
-  extractFn('dedupeSignalsClient', 6446, 6459),
-  extractFn('researchTopAccounts', 6461, 6629, {async: true}),
-  extractFn('refreshOpportunityViews', 6730, 6750),
+  extractFn('safeParseResearchResponse', 5731, 5766, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 5595, 5617, {async: true}),
+  extractFn('persistScopedResearchResult', 5625, 5670, {async: true}),
+  extractFn('researchAccountFromManageModal', 5768, 5906, {async: true}),
+  extractFn('researchAccountByName', 6122, 6261, {async: true}),
+  extractFn('getAccountsForResearch', 6266, 6279),
+  extractFn('batchPayloadForAccounts', 6281, 6325),
+  extractFn('applyBusinessSignalAccountBoost', 6328, 6336),
+  extractFn('researchAccountsBatch', 6338, 6436, {async: true}),
+  extractFn('signalTopicKeyClient', 6438, 6446),
+  extractFn('dedupeSignalsClient', 6448, 6461),
+  extractFn('researchTopAccounts', 6463, 6631, {async: true}),
+  extractFn('refreshOpportunityViews', 6732, 6752),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 6786, 6796),
+  extractFn('applyModalResearchResultToDashboard', 6788, 6798),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 6817, 6845, {async: true}),
-  extractFn('renderDetailedAccountViews', 9058, 9126),
-  extractFn('serializeAccountForStorage', 9136, 9195),
-  extractFn('performSaveCurrentUpload', 9205, 9305, {async: true}),
-  extractFn('saveCurrentUpload', 9314, 9318),
-  extractFn('toggleAccountMetadataEdit', 9326, 9332),
-  extractFn('saveAccountMetadataEdit', 9355, 9391, {async: true}),
-  extractRaw('delegatedClickListener', 9409, 9448, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 9461, 9477),
-  extractFn('escapeHtml', 9763, 9766)
+  extractFn('researchAccountFromCard', 6819, 6847, {async: true}),
+  extractFn('renderDetailedAccountViews', 9060, 9128),
+  extractFn('serializeAccountForStorage', 9138, 9197),
+  extractFn('performSaveCurrentUpload', 9207, 9307, {async: true}),
+  extractFn('saveCurrentUpload', 9316, 9320),
+  extractFn('toggleAccountMetadataEdit', 9328, 9334),
+  extractFn('saveAccountMetadataEdit', 9357, 9393, {async: true}),
+  extractRaw('delegatedClickListener', 9411, 9450, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 9463, 9479),
+  extractFn('escapeHtml', 9765, 9768)
 ].join('\n\n');
 
 // ===========================================================================

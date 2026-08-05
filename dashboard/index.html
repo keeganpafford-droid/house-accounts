@@ -2477,13 +2477,15 @@ let currentResearchAttemptId = null;
 // against that exact id without depending on the currentUploadId global --
 // existing callers that omit it keep claiming against currentUploadId
 // exactly as before.
-async function claimAutomaticResearchRun(runIntent, explicitUploadId){
+// targetAccountNames: the exact account names this attempt targets (never
+// "every account in the upload") -- server re-normalizes/validates this.
+async function claimAutomaticResearchRun(runIntent, explicitUploadId, targetAccountNames){
   const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
   if(!headers) return { ok:false, status:401, data:{ error:'Your session has expired. Please log in again.' } };
   const res = await fetch('/api/research-batch', {
     method:'POST',
     headers,
-    body: JSON.stringify({ researchRunAction:'claim', uploadId: explicitUploadId || currentUploadId, runIntent })
+    body: JSON.stringify({ researchRunAction:'claim', uploadId: explicitUploadId || currentUploadId, runIntent, targetAccountNames: Array.isArray(targetAccountNames) ? targetAccountNames : undefined })
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
@@ -5804,7 +5806,7 @@ async function researchAccountFromManageModal(accountName, listId){
     return {ok:false, error: duplicateCompanyResearchMessage(account.name, dupCheck.scope), duplicateCompany:true};
   }
 
-  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
+  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId, [account.name]);
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
     return {ok:false, error:'Another research run is currently active for this uploaded list. Please wait for it to finish.'};
@@ -5951,7 +5953,7 @@ async function researchListFromManageModal(listId){
     };
   }
 
-  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
+  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId, researchableAccounts.map(a => a.name));
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
     return {ok:false, error:'Another research run is currently active for this uploaded list. Please wait for it to finish.'};
@@ -6127,7 +6129,7 @@ async function researchAccountByName(accountName, options = {}){
   let ownClaim = false;
   if(currentUploadId && !attemptId){
     if(panel) panel.innerHTML = `<div class="signal-loading">Starting research for ${escapeHtml(account.name)}...</div>`;
-    const claim = await claimAutomaticResearchRun('manual-rerun');
+    const claim = await claimAutomaticResearchRun('manual-rerun', undefined, [account.name]);
     const outcome = claim.ok && claim.data ? claim.data.outcome : null;
     if(!claim.ok || outcome === 'attached-active' || outcome === 'completed'){
       if(panel) panel.innerHTML = `<div class="no-signals-message">Another research run is currently active for this uploaded list. Please wait for it to finish.</div>`;
@@ -6510,7 +6512,7 @@ async function researchTopAccounts(options = {}){
   // immediately bouncing off "already running".
   let claim;
   try{
-    claim = await claimAutomaticResearchRun(auto ? 'auto' : 'manual-rerun');
+    claim = await claimAutomaticResearchRun(auto ? 'auto' : 'manual-rerun', undefined, accounts.map(a => a.name));
   }catch(err){
     console.error('[Research] failed to claim a research run', { message: err && err.message });
     researchInProgress = false;

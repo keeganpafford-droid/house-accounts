@@ -1952,32 +1952,105 @@ async function resolveDuplicateCheckScopeUserIds(userId, organizationId) {
   }
 }
 
+// Target-granularity correction round: sanitizes a client-supplied list of
+// account names (or already-normalized keys -- it makes no difference, this
+// re-normalizes unconditionally) into the exact set of normalized company
+// keys a claimed run should be considered "actively targeting". Never trusts
+// client-supplied normalized values directly -- every entry is re-derived via
+// the shared normalizeCompanyName() server-side. Non-string entries are
+// dropped, empties are dropped, duplicates are collapsed, and the result is
+// capped at a reasonable count so a malformed/oversized payload cannot bloat
+// result_summary.
+const TARGET_COMPANY_KEYS_MAX_COUNT = 500;
+function sanitizeTargetCompanyKeys(names) {
+  if (!Array.isArray(names)) return [];
+  const keys = new Set();
+  for (const raw of names) {
+    if (typeof raw !== 'string') continue;
+    if (raw.length > 300) continue; // defensive length bound -- no real company name is this long
+    const key = normalizeCompanyName(raw);
+    if (!key) continue;
+    keys.add(key);
+    if (keys.size >= TARGET_COMPANY_KEYS_MAX_COUNT) break;
+  }
+  return [...keys];
+}
+
+// Target-granularity correction round: writes the exact normalized
+// company-key set a claimed attempt is actively targeting into that row's
+// own result_summary (an existing jsonb column -- no migration). Always
+// writes a COMPLETE replacement object (never merges with whatever was
+// there before), which is what guarantees a reclaimed/new attempt never
+// inherits a stale target set left over from a prior attempt on the same
+// row. Guarded by user_id + upload_id + research_run_id + attempt_id +
+// status='running', so this can only ever affect the exact attempt that is
+// still the current, live owner of the row -- a superseded attempt's write
+// silently matches zero rows. Fails open: a failure here is logged (bounded,
+// non-sensitive context only) and swallowed -- it must never block the
+// claim/dispatch it was called from, and callers must never fall back to
+// inferring targets from every account in the upload.
+async function persistRunTargetCompanyKeys({ userId, uploadId, researchRunId, attemptId, targetCompanyKeys }) {
+  try {
+    await rbSupabase(
+      `ha_research_runs?user_id=eq.${encodeURIComponent(userId)}&upload_id=eq.${encodeURIComponent(uploadId)}&research_run_id=eq.${encodeURIComponent(researchRunId)}&attempt_id=eq.${encodeURIComponent(attemptId)}&status=eq.running`,
+      {
+        method: 'PATCH',
+        prefer: 'return=minimal',
+        body: JSON.stringify({
+          result_summary: {
+            target_company_keys: targetCompanyKeys,
+            target_account_count: targetCompanyKeys.length,
+            target_scope_version: 1
+          }
+        })
+      }
+    );
+    return true;
+  } catch (err) {
+    console.warn('[research-batch] failed to persist target-company metadata for a claimed run; failing open (this run will report no collisions to other uploads until its targets are successfully recorded)', {
+      uploadId, researchRunId, message: err && err.message
+    });
+    return false;
+  }
+}
+
 // Returns a Set of normalized company keys (normalizeCompanyName() output)
-// currently claimed by an ACTIVE (status='running', lease not expired)
+// currently targeted by an ACTIVE (status='running', lease not expired)
 // research run belonging to a DIFFERENT upload within the resolved scope.
-// Never includes the current upload's own run/accounts (excluded at the
-// query itself). Never inspects a user/org outside the resolved scope handed
-// to it. Fails open: any error here returns an empty Set (i.e. "no known
-// collisions") rather than throwing -- callers must never let a failure in
-// this check block or fail real research, per the duplicate-company-control
-// spec's explicit fail-open requirement.
+//
+// Target-granularity correction round: this now reads the EXACT company
+// keys that run's own claim/dispatch recorded into its result_summary
+// (result_summary.target_company_keys -- see persistRunTargetCompanyKeys()
+// above), never "every account belonging to that run's upload". An upload
+// with an active run for ONE account no longer causes every other account in
+// that same upload to be treated as actively researched -- that was the
+// confirmed overblocking defect this round corrects. A row with missing or
+// malformed target metadata (e.g. its claim-time write failed, or it predates
+// this round) contributes NO collisions and is simply skipped -- it is never
+// used as a signal to fall back to querying that upload's full account list.
+//
+// Never includes the current upload's own run (excluded at the query
+// itself, by upload_id). Never inspects a user/org outside the resolved
+// scope handed to it. Fails open: any error here returns an empty Set (i.e.
+// "no known collisions") rather than throwing -- callers must never let a
+// failure in this check block or fail real research.
 async function findActiveDuplicateCompanyCollisions({ userId, organizationId, uploadId }) {
   try {
     const scopeUserIds = await resolveDuplicateCheckScopeUserIds(userId, organizationId);
     const userFilter = `in.(${scopeUserIds.map(encodeURIComponent).join(',')})`;
     const nowIso = new Date().toISOString();
     const otherRuns = await rbSupabase(
-      `ha_research_runs?user_id=${userFilter}&upload_id=neq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(nowIso)}&select=upload_id`
+      `ha_research_runs?user_id=${userFilter}&upload_id=neq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(nowIso)}&select=upload_id,result_summary`
     );
-    const otherUploadIds = [...new Set((Array.isArray(otherRuns) ? otherRuns : []).map(r => r.upload_id).filter(Boolean))];
-    if (!otherUploadIds.length) return new Set();
-
-    const uploadFilter = `in.(${otherUploadIds.map(encodeURIComponent).join(',')})`;
-    const otherAccounts = await rbSupabase(`ha_accounts?upload_id=${uploadFilter}&select=account_name`);
     const collisions = new Set();
-    for (const row of (Array.isArray(otherAccounts) ? otherAccounts : [])) {
-      const key = normalizeCompanyName(row.account_name);
-      if (key) collisions.add(key);
+    for (const run of (Array.isArray(otherRuns) ? otherRuns : [])) {
+      const keys = run && run.result_summary && Array.isArray(run.result_summary.target_company_keys)
+        ? run.result_summary.target_company_keys
+        : null;
+      if (!keys) continue; // missing/malformed target metadata -- ignore this run, never infer from its upload's full account list
+      for (const key of keys) {
+        if (typeof key === 'string' && key) collisions.add(key);
+      }
     }
     return collisions;
   } catch (err) {
@@ -2209,7 +2282,25 @@ export default async function handler(req, res) {
           // concurrent execution.
           return res.status(202).json({ ok: true, outcome, researchRunId: run.research_run_id, message: 'This research run is already in progress.' });
         }
-        // claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease.
+        // claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease:
+        // this caller now genuinely owns the run. Target-granularity
+        // correction round: persist the exact normalized company keys this
+        // attempt is targeting BEFORE returning success, so
+        // findActiveDuplicateCompanyCollisions() never has to fall back to
+        // "every account in this upload" for it. body.targetAccountNames is
+        // untrusted client input -- sanitizeTargetCompanyKeys() re-normalizes
+        // every entry server-side rather than trusting any client-supplied
+        // normalized value. A write failure here fails open (logged, this
+        // run simply reports no collisions to other uploads until corrected)
+        // and must never block the claim itself from succeeding.
+        const targetCompanyKeys = sanitizeTargetCompanyKeys(body.targetAccountNames);
+        await persistRunTargetCompanyKeys({
+          userId: uploadOwner.id,
+          uploadId: targetUploadId,
+          researchRunId: run.research_run_id,
+          attemptId: run.attempt_id,
+          targetCompanyKeys
+        });
         return res.status(200).json({ ok: true, outcome, researchRunId: run.research_run_id, attemptId: run.attempt_id, leaseExpiresAt: run.lease_expires_at });
       }
       if (researchRunAction === 'heartbeat') {
@@ -2371,6 +2462,22 @@ export default async function handler(req, res) {
         }
         safeAccounts = kept;
       }
+      // Target-granularity correction round, requirement 4: this run's own
+      // stored target set must reflect the FINAL, authoritative researchable
+      // set -- not whatever the client originally claimed with -- and this
+      // update must land before any provider call below. Otherwise this run
+      // would keep blocking another upload's request for a company it
+      // ultimately never actually researched (e.g. every account skipped as
+      // a duplicate here, or dropped by the same-request dedup above).
+      // Written even when safeAccounts is now empty (an explicit [] release).
+      // Fails open: a failed update is logged and never blocks dispatch.
+      await persistRunTargetCompanyKeys({
+        userId: uploadOwner.id,
+        uploadId: targetUploadId,
+        researchRunId: runId,
+        attemptId,
+        targetCompanyKeys: sanitizeTargetCompanyKeys(safeAccounts.map(a => a.name))
+      });
     }
     if (!safeAccounts.length) {
       // Every requested account was a currently-active duplicate elsewhere
@@ -2831,5 +2938,6 @@ export {
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES,
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
-  resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions
+  resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
+  sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys
 };

@@ -39,7 +39,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // Required tests 1-5: list-level research labels, active-account scoping,
 // disabled-while-running, and Delete Uploaded List staying separate.
 // ---------------------------------------------------------------------------
-const listCardSrc = extractLines('listCard', 9925, 9957, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 9927, 9959, 'function listCard(list){');
 assert(
   /const everResearched = accounts\.some\(a => a\.lastResearchedAt\);/.test(listCardSrc),
   'listCard() determines the list-level research label from whether ANY account in the list has ever been researched'
@@ -83,7 +83,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 5919, 6087, 'async function researchListFromManageModal(listId){');
+const researchListSrc = extractLines('researchListFromManageModal', 5921, 6089, 'async function researchListFromManageModal(listId){');
 assert(
   /const activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -94,7 +94,7 @@ assert(
 );
 assert(
   /const snapshot = await fetchUploadScopedSnapshot\(expectedUploadId\);/.test(researchListSrc) &&
-  /const claim = await claimAutomaticResearchRun\('manual-rerun', expectedUploadId\);/.test(researchListSrc),
+  /const claim = await claimAutomaticResearchRun\('manual-rerun', expectedUploadId, researchableAccounts\.map\(a => a\.name\)\);/.test(researchListSrc),
   'researchListFromManageModal() reuses the exact same scoped-snapshot and claim primitives as the single-account path -- no second research engine'
 );
 assert(
@@ -120,7 +120,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines('handleListResearchClick', 10169, 10264, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines('handleListResearchClick', 10171, 10266, "async function handleListResearchClick(btn){");
 assert(
   /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeAccounts\.length\} account/.test(handleListResearchClickSrc),
   'the confirmation dialog names the list and states its active-account count'
@@ -156,7 +156,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 6925, 6986, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 6927, 6988, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any timebox-matching/eligibility helper at all -- it cannot depend on whether a result qualifies for This Week/Month/Quarter/Year (comments discussing the requirement do not count as a dependency)'
@@ -213,7 +213,7 @@ assert(
 // uploaded list, the upload-success panel stays visible throughout, and
 // post-research totals update without a manual refresh.
 // ---------------------------------------------------------------------------
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3591, 3696, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3593, 3698, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /fetch\(`\/api\/get-dashboard\?email=\$\{encodeURIComponent\(e\)\}&view=\$\{encodeURIComponent\(dashboardViewMode \|\| defaultDashboardView\(\)\)\}`/.test(fetchAggregateSrc),
   'required test 11: fetchAndRenderAggregateDashboard() calls the real /api/get-dashboard aggregate endpoint (every uploaded list the user owns), the exact same source loadSavedDashboard() has always used -- never a single-upload-scoped request'

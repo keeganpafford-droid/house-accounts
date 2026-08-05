@@ -802,7 +802,7 @@ async function run(){
     const fnEnd = dashSource.indexOf('\nasync function researchAccountsBatch', fnStart);
     const fnBody = dashSource.slice(fnStart, fnEnd > -1 ? fnEnd : fnStart + 4000);
     assert(fnStart > -1, 'researchAccountByName() is present in dashboard/index.html');
-    assert(/claimAutomaticResearchRun\('manual-rerun'\)/.test(fnBody), 'researchAccountByName() claims its own manual-rerun run when called standalone against an existing upload -- it no longer sends uploadId without a real attemptId');
+    assert(/claimAutomaticResearchRun\('manual-rerun', undefined, \[account\.name\]\)/.test(fnBody), 'researchAccountByName() claims its own manual-rerun run when called standalone against an existing upload -- it no longer sends uploadId without a real attemptId, and now also passes its own single target company name for the target-granularity duplicate check');
     assert(/if\(currentUploadId && !attemptId\)/.test(fnBody), 'the self-claim only activates when currentUploadId is set and no attemptId was already supplied by the caller (i.e. NOT when called from researchTopAccounts()\'s fallback loop, which already has one)');
   }
 
