@@ -31,14 +31,20 @@ function extractLines(label, startLine, endLine, expectedFirst){
   return slice.join('\n');
 }
 
+// FR2 round: line ranges re-derived after this round's guided-tour-focus
+// and aggregate-dashboard-lifecycle changes shifted every block below.
+// extractLines()'s own start-line signature check is the actual guarantee
+// of correctness -- these numbers were re-derived mechanically (parse-
+// complete / last-top-level-declaration scan from each block's real start
+// line), not hand-counted.
 const SRC = [
   extractLines('currentUploadName', 2443, 2443, "let currentUploadName"),
   extractLines('add-customer-data-modal-and-route', 3295, 3418, 'let addCustomerDataModalTriggerEl = null;'),
-  extractLines('guided-tour', 3650, 3993, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
-  extractLines('beta-welcome-modal', 3995, 4008, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 9105, 9150, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 9345, 9348, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 9350, 9379, 'function dismissUploadSuccessState(){')
+  extractLines('guided-tour', 3701, 4091, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
+  extractLines('beta-welcome-modal', 4093, 4106, 'function showBetaWelcomeModal(){'),
+  extractLines('upload-success-state', 9258, 9303, 'const MISSING_FIELD_LABELS = {'),
+  extractLines('escapeHtml', 9522, 9525, 'function escapeHtml(text){'),
+  extractLines('dismissUploadSuccessState-and-wiring', 9527, 9556, 'function dismissUploadSuccessState(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------
@@ -255,7 +261,12 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
     URLSearchParams,
     URL,
     console,
-    getComputedStyle: fakeWindow.getComputedStyle
+    getComputedStyle: fakeWindow.getComputedStyle,
+    // FR2 round: closeGuidedTour() now schedules a requestAnimationFrame
+    // cleanup pass after endOverlay() -- run it synchronously here, same
+    // style as the fake setTimeout above, so its effects are observable
+    // immediately rather than needing a real event-loop tick.
+    requestAnimationFrame: (fn) => fn()
   };
   vm.createContext(sandbox);
   new vm.Script(`${SRC}\n\nthis.__exports = { launchGuidedTour, closeGuidedTour, nextGuidedTourStep, backGuidedTourStep, skipGuidedTour, finishGuidedTour, guidedTourKeydownHandler, guidedTourResizeHandler, guidedTourScrollHandler, wireGuidedTourControls, guidedTourStatus, markGuidedTourStatus, readGuidedTourState, GUIDED_TOUR_STEPS, GUIDED_TOUR_VIEWPORT_MARGIN, handleMvpDashboardRoute, openLightweightCustomerUpload, openAddCustomerDataModal, closeAddCustomerDataModal, wireAddCustomerDataModalControls, showBetaWelcomeModal, renderUploadSuccessState, dismissUploadSuccessState, wireUploadSuccessStateControls };`, { filename: 'dashboard-extract.js' }).runInContext(sandbox);

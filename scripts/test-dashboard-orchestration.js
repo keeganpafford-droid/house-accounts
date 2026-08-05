@@ -95,34 +95,47 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // closing-brace checks are the actual guarantee of correctness -- these
 // numbers were re-derived mechanically (brace-depth scan from each
 // function's real signature line), not hand-counted.
+// FR2 round: line ranges re-derived after this round's guided-tour-focus,
+// safe-response-parsing, aggregate-dashboard-lifecycle, and list-research
+// completion-workflow changes shifted almost every function below.
+// extractFn()/extractRaw()'s own signature/closing-brace checks are the
+// actual guarantee of correctness -- these numbers were re-derived
+// mechanically (parse-complete scan from each function's real signature
+// line), not hand-counted.
 const REAL_SOURCE = [
   extractFn('claimAutomaticResearchRun', 2480, 2490, {async: true}),
   extractFn('heartbeatCurrentResearchRun', 2510, 2527, {async: true}),
   extractFn('reportResearchRunOutcome', 2541, 2566, {async: true}),
   extractFn('normalizeSavedAccount', 2702, 2764),
-  extractFn('accountCardFor', 4376, 4378),
-  extractFn('accountSignalsPanel', 4379, 4382),
-  extractFn('fetchUploadScopedSnapshot', 5438, 5460, {async: true}),
-  extractFn('persistScopedResearchResult', 5468, 5513, {async: true}),
-  extractFn('researchAccountFromManageModal', 5563, 5692, {async: true}),
-  extractFn('researchAccountByName', 5838, 5978, {async: true}),
-  extractFn('getAccountsForResearch', 5983, 5996),
-  extractFn('batchPayloadForAccounts', 5998, 6042),
-  extractFn('applyBusinessSignalAccountBoost', 6045, 6053),
-  extractFn('researchAccountsBatch', 6055, 6144, {async: true}),
-  extractFn('signalTopicKeyClient', 6146, 6154),
-  extractFn('dedupeSignalsClient', 6156, 6169),
-  extractFn('researchTopAccounts', 6171, 6301, {async: true}),
-  extractFn('refreshOpportunityViews', 6402, 6422),
-  extractFn('renderDetailedAccountViews', 8681, 8749),
-  extractFn('serializeAccountForStorage', 8759, 8818),
-  extractFn('performSaveCurrentUpload', 8828, 8928, {async: true}),
-  extractFn('saveCurrentUpload', 8937, 8941),
-  extractFn('toggleAccountMetadataEdit', 8949, 8955),
-  extractFn('saveAccountMetadataEdit', 8978, 9014, {async: true}),
-  extractRaw('delegatedClickListener', 9032, 9054, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 9067, 9083),
-  extractFn('escapeHtml', 9345, 9348)
+  extractFn('accountCardFor', 4474, 4476),
+  extractFn('accountSignalsPanel', 4477, 4480),
+  // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
+  // parse every research response through this real function instead of a
+  // blind res.json() -- it must be extracted as real source (not stubbed)
+  // since it directly participates in the request/response orchestration
+  // under test here, exactly like fetchUploadScopedSnapshot() below.
+  extractFn('safeParseResearchResponse', 5672, 5707, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 5536, 5558, {async: true}),
+  extractFn('persistScopedResearchResult', 5566, 5611, {async: true}),
+  extractFn('researchAccountFromManageModal', 5709, 5837, {async: true}),
+  extractFn('researchAccountByName', 5992, 6131, {async: true}),
+  extractFn('getAccountsForResearch', 6136, 6149),
+  extractFn('batchPayloadForAccounts', 6151, 6195),
+  extractFn('applyBusinessSignalAccountBoost', 6198, 6206),
+  extractFn('researchAccountsBatch', 6208, 6297, {async: true}),
+  extractFn('signalTopicKeyClient', 6299, 6307),
+  extractFn('dedupeSignalsClient', 6309, 6322),
+  extractFn('researchTopAccounts', 6324, 6454, {async: true}),
+  extractFn('refreshOpportunityViews', 6555, 6575),
+  extractFn('renderDetailedAccountViews', 8834, 8902),
+  extractFn('serializeAccountForStorage', 8912, 8971),
+  extractFn('performSaveCurrentUpload', 8981, 9081, {async: true}),
+  extractFn('saveCurrentUpload', 9090, 9094),
+  extractFn('toggleAccountMetadataEdit', 9102, 9108),
+  extractFn('saveAccountMetadataEdit', 9131, 9167, {async: true}),
+  extractRaw('delegatedClickListener', 9185, 9207, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 9220, 9236),
+  extractFn('escapeHtml', 9522, 9525)
 ].join('\n\n');
 
 // ===========================================================================
@@ -382,8 +395,16 @@ function makeFetch(router){
   fetchImpl.calls = calls;
   return fetchImpl;
 }
+// FR2 round: every real research call site now reads the body once via
+// res.text() (safeParseResearchResponse()) instead of calling res.json()
+// directly -- see dashboard/index.html's own comment on why. This mock
+// must support that same real Response contract, not just .json(), or
+// every research call in this file's scenarios would throw
+// "res.text is not a function" despite the orchestration logic itself
+// being correct.
 function jsonResponse(data, {ok = true, status = 200} = {}){
-  return { ok, status, json: async () => data };
+  const body = JSON.stringify(data);
+  return { ok, status, json: async () => data, text: async () => body, headers: { get: () => null } };
 }
 
 function callsTo(calls, urlSuffix){ return calls.filter(c => c.url === urlSuffix); }

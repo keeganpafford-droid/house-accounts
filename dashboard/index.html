@@ -2077,7 +2077,7 @@
        pure duplication that made this row visually crowded. -->
   <section class="mvp-dashboard-heading" aria-labelledby="mvpDashboardTitle">
     <div>
-      <h2 id="mvpDashboardTitle">House Accounts</h2>
+      <h2 id="mvpDashboardTitle" tabindex="-1">House Accounts</h2>
       <p>Who should I contact next, and why?</p>
     </div>
     <div class="mvp-dashboard-heading-right">
@@ -3483,6 +3483,56 @@ async function manualDashboardRefresh(){
 // at -- see the personalEmpty/noData guards below.
 let freshUploadRenderedThisSession = false;
 
+// FR2 round: true the instant fetchAndRenderAggregateDashboard() has ever
+// successfully rendered real (non-empty) aggregate numbers into the Your
+// Accounts panel this page visit -- whether from page load or a post-
+// upload/post-research refresh. processData() reads this to decide whether
+// an honest aggregate is already on screen (leave it untouched, never
+// overwrite it with a single-upload snapshot) or whether this is a true
+// first upload with nothing real to show yet (show a neutral placeholder
+// instead of fabricated single-upload numbers).
+let aggregateDashboardEverLoaded = false;
+
+function showBuildingDashboardPanelPlaceholder(){
+  const panel = document.getElementById('customerDashboard');
+  if(!panel) return;
+  panel.style.display = 'block';
+  const subtitle = document.getElementById('customerDashboardSubtitle');
+  if(subtitle) subtitle.textContent = 'Building your dashboard…';
+  const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
+  set('dashNewThisWeek', '—');
+  set('dashSavedAccounts', '—');
+  set('dashSavedSignals', '—');
+  set('dashLastScan', '—');
+}
+
+// Shown only when the very first aggregate refresh a user ever sees (no
+// prior aggregate dashboard was on screen to fall back to) fails --
+// preserves the neutral, non-destructive framing required for this state
+// and offers a real retry rather than leaving "Building your dashboard…"
+// stuck forever.
+function showDashboardRefreshRetryState(){
+  const panel = document.getElementById('customerDashboard');
+  if(!panel) return;
+  panel.style.display = 'block';
+  const subtitle = document.getElementById('customerDashboardSubtitle');
+  if(subtitle){
+    subtitle.innerHTML = '';
+    subtitle.append('We couldn’t load your dashboard just now. ');
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.textContent = 'Retry';
+    retryBtn.className = 'ha-link-button';
+    retryBtn.style.cssText = 'background:none;border:none;padding:0;color:inherit;text-decoration:underline;cursor:pointer;font:inherit;';
+    retryBtn.addEventListener('click', async () => {
+      showBuildingDashboardPanelPlaceholder();
+      const result = await refreshAggregateDashboard();
+      if(!result || !result.ok) showDashboardRefreshRetryState();
+    });
+    subtitle.appendChild(retryBtn);
+  }
+}
+
 // Follow-up round: single aggregate-dashboard fetch+render core, used by
 // BOTH loadSavedDashboard() (page load / manual "load my dashboard") and
 // refreshAggregateDashboard() (post-upload, post-research) -- both read
@@ -3572,6 +3622,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     if(banner){ banner.style.display = 'none'; banner.innerHTML = ''; }
     renderCustomerDashboard(data);
     refreshOpportunityViews();
+    aggregateDashboardEverLoaded = true;
     return {ok:true, data, accounts};
   }catch(err){
     if(skeleton) skeleton.classList.remove('active');
@@ -3921,6 +3972,11 @@ function guidedTourScrollHandler(){
   positionGuidedTourCard(target);
 }
 
+function isHelpRelatedGuidedTourTrigger(el){
+  if(!el || typeof el.closest !== 'function') return false;
+  return el.id === 'haHelpToggle' || Boolean(el.closest('#haHelpDropdown, .ha-help-dropdown'));
+}
+
 function launchGuidedTour(){
   const { overlay } = guidedTourElements();
   if(!overlay) return;
@@ -3931,6 +3987,17 @@ function launchGuidedTour(){
     window.HouseAccountsHeader.beginOverlay();
   }
   if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
+  // FR2 round: unlike the add-data action param, this hash was never
+  // consumed -- it stayed in the URL for the rest of the session, so any
+  // later hashchange (browser back/forward, another same-page hash link)
+  // would silently re-trigger the tour a second time via
+  // handleMvpDashboardRoute(). Strip it immediately, the same way add-data
+  // is stripped, so the tour only ever launches from a real user action.
+  if(window.location.hash === '#restart-tour'){
+    const url = new URL(window.location.href);
+    url.hash = '';
+    window.history.replaceState(null, '', url.pathname + url.search);
+  }
   guidedTourTriggerEl = document.activeElement;
   guidedTourActive = true;
   guidedTourStepIndex = 0;
@@ -3955,9 +4022,40 @@ function closeGuidedTour(){
   // Escape and every exit path (Skip, Finish) restore the user's normal
   // scrolling -- the lock must never outlive the tour itself.
   unlockGuidedTourScroll();
-  if(guidedTourTriggerEl && typeof guidedTourTriggerEl.focus === 'function') guidedTourTriggerEl.focus();
+  // FR2 round: the overlay CSS only force-hides the Help dropdown while
+  // body.ha-overlay-open is set -- it never guaranteed the dropdown's own
+  // hidden/aria-expanded state or the trigger's focus stayed closed once
+  // that CSS safety net lifts. Re-assert the closed state explicitly here,
+  // before restoring any focus, rather than trusting whatever beginOverlay()
+  // left behind at tour start.
+  const cameFromHelp = isHelpRelatedGuidedTourTrigger(guidedTourTriggerEl);
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+    window.HouseAccountsHeader.closeMenus();
+  }
+  if(cameFromHelp){
+    // Never hand focus back to the control that launched the tour when it
+    // lives inside the Help menu (e.g. "Restart Product Tour") -- refocusing
+    // it is exactly what let the dropdown reappear. Land on a neutral,
+    // always-present heading instead.
+    const neutralTarget = document.getElementById('mvpDashboardTitle');
+    if(neutralTarget && typeof neutralTarget.focus === 'function') neutralTarget.focus();
+  } else if(guidedTourTriggerEl && typeof guidedTourTriggerEl.focus === 'function'){
+    guidedTourTriggerEl.focus();
+  }
   guidedTourTriggerEl = null;
   if(wasActive && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+  // endOverlay() lifts the CSS force-hide the instant every open overlay
+  // (including this tour) has closed. Repeat the same cleanup one more time
+  // on the next frame so no event fired during teardown -- a click, a focus
+  // event, a queued hashchange -- can land after the CSS safety net is gone
+  // but before the underlying menu state has been reasserted.
+  if(wasActive){
+    requestAnimationFrame(() => {
+      if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+        window.HouseAccountsHeader.closeMenus();
+      }
+    });
+  }
 }
 
 function nextGuidedTourStep(){
@@ -5560,6 +5658,54 @@ function getActiveResearchBreadcrumb(uploadId, researchRunId){
   return '';
 }
 
+// FR2 round: every research call below used to do a blind `await
+// res.json()`. When the response is not JSON -- most commonly a
+// platform-level page such as a Vercel function-invocation-timeout or
+// crash page, which is plain text/HTML, not an application error -- that
+// threw a raw V8 SyntaxError ("Unexpected token 'A', "An error o"... is
+// not valid JSON") straight into the user's error message. Every real
+// branch of research-account.js/research-batch.js returns JSON on every
+// path, so a non-JSON body here is never an application error. Mirrors the
+// same read-once-as-text-then-parse pattern weekly-scan.js already uses
+// for its own internal /api/research-batch call (see that file's own
+// comment on this exact failure mode).
+async function safeParseResearchResponse(res, context){
+  const rawBody = await res.text();
+  let parsed = null;
+  try{ parsed = JSON.parse(rawBody); }catch(parseErr){
+    const contentType = res.headers.get('content-type') || 'unknown';
+    const vercelId = res.headers.get('x-vercel-id');
+    const bodyPreview = rawBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+    console.error('[Research] non-JSON response', {
+      endpoint: (context && context.endpoint) || null,
+      httpStatus: res.status,
+      contentType,
+      vercelId: vercelId || null,
+      uploadId: (context && context.uploadId) || null,
+      accountId: (context && context.accountId) || null,
+      accountName: (context && context.accountName) || null,
+      correlationId: (context && context.correlationId) || null,
+      bodyPreview
+    });
+    const err = new Error('Research could not be completed. Please try again.');
+    err.isBrandedResearchError = true;
+    throw err;
+  }
+  if(!res.ok){
+    console.error('[Research] error response', {
+      endpoint: (context && context.endpoint) || null,
+      httpStatus: res.status,
+      uploadId: (context && context.uploadId) || null,
+      accountId: (context && context.accountId) || null,
+      accountName: (context && context.accountName) || null,
+      correlationId: (context && context.correlationId) || null,
+      error: parsed && parsed.error
+    });
+    throw new Error((parsed && parsed.error) || 'Research could not be completed. Please try again.');
+  }
+  return parsed;
+}
+
 async function researchAccountFromManageModal(accountName, listId){
   // Stabilization round: this used to refuse outright ("Open this list on
   // the dashboard to research this account") whenever the account's list
@@ -5635,8 +5781,7 @@ async function researchAccountFromManageModal(accountName, listId){
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
     const res = await fetch(endpoint, {method:'POST', headers, body: JSON.stringify(payload)});
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Research failed');
+    const data = await safeParseResearchResponse(res, {endpoint, uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
     account.signals = enhancedPublicMode
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
       : (Array.isArray(data.signals) ? data.signals : []);
@@ -5731,6 +5876,15 @@ async function researchListFromManageModal(listId){
   setActiveResearchBreadcrumb(expectedUploadId, researchRunId, null);
 
   let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0;
+  // FR2 round item 4: tracked per-account so the caller can branch the
+  // completion workflow on however many DISTINCT accounts from THIS run
+  // actually produced an opportunity (zero / exactly one / multiple),
+  // rather than only the aggregate attempted/withSignals/failures counts
+  // above. Carries the full (uploadId, accountId, accountName) identity so
+  // duplicate account names across different uploads stay distinguishable
+  // downstream. An account with signals but zero derived opportunities is
+  // correctly counted in the totals above but never appears here.
+  const accountResults = [];
   try{
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
@@ -5756,8 +5910,7 @@ async function researchListFromManageModal(listId){
           accounts: batchPayloadForAccounts(enhancedGroup)
         })
       });
-      const data = await res.json();
-      if(!res.ok) throw new Error(data.error || 'Batch research failed');
+      const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${enhancedGroup.length} accounts`});
       enhancedGroup.forEach(account => {
         attempted += 1;
         const signals = (data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : [];
@@ -5765,6 +5918,7 @@ async function researchListFromManageModal(listId){
         account.lastResearchedAt = new Date().toISOString();
         if(signals.length){ withSignals += 1; totalSignals += signals.length; }
         addSignalDerivedOpportunities(account, account.signals);
+        accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
       });
     }
     for(const account of historicalGroup){
@@ -5785,12 +5939,12 @@ async function researchListFromManageModal(listId){
           projects: account.projects || []
         };
         const res = await fetch('/api/research-account', {method:'POST', headers, body: JSON.stringify(payload)});
-        const data = await res.json();
-        if(!res.ok) throw new Error(data.error || 'Research failed');
+        const data = await safeParseResearchResponse(res, {endpoint:'/api/research-account', uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
         account.signals = Array.isArray(data.signals) ? data.signals : [];
         account.lastResearchedAt = new Date().toISOString();
         if(account.signals.length){ withSignals += 1; totalSignals += account.signals.length; }
         addSignalDerivedOpportunities(account, account.signals);
+        accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
       }catch(err){
         failures += 1;
       }
@@ -5809,7 +5963,7 @@ async function researchListFromManageModal(listId){
       return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
     }
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    return {ok:true, attempted, withSignals, totalSignals, failures, accountCount: activeAccounts.length};
+    return {ok:true, attempted, withSignals, totalSignals, failures, accountCount: activeAccounts.length, accountsWithOpportunities: accountResults.filter(a => a.opportunityCount > 0)};
   }catch(err){
     await reportResearchRunOutcome('fail', err, runContext);
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
@@ -5893,8 +6047,7 @@ async function researchAccountByName(accountName, options = {}){
       headers,
       body: JSON.stringify(payload)
     });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Research failed');
+    const data = await safeParseResearchResponse(res, {endpoint, uploadId: currentUploadId, accountId: account.id, accountName: account.name});
     account.signals = enhancedPublicMode
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
       : (Array.isArray(data.signals) ? data.signals : []);
@@ -9245,20 +9398,41 @@ function processData(records){
   showAllWeeklyPriorities = false;
   activeTimebox = 'week';
 
-  // Render the focused recommendation feed
-  const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
-    emptyMessage: `<div class="no-signals-message">No actionable opportunities yet for this window -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out this week. New business triggers, reorder windows, and follow-ups are checked automatically; try This Month or research your top accounts now to look further ahead.</div>`
-  });
-
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
   const activePipelineTotal = accounts.reduce((sum, a) => sum + (a.activePipelineValue || 0), 0);
-  const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
-  const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
 
-  document.getElementById('totalAccounts').textContent = accounts.length;
-  document.getElementById('totalOppValue').textContent = futureOpportunities.length;
-  document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
-  document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
+  // FR2 round root-cause fix: an aggregate dashboard (every uploaded list
+  // the user owns) may already be correctly rendered in #results/the
+  // priorities feed/the stat bar at this point. Writing THIS upload's own
+  // accounts/futureOpportunities into those same elements here would
+  // replace that real aggregate with a single-list snapshot the instant
+  // this upload finishes parsing -- exactly the bug this round reported
+  // ("the correct aggregate dashboard of 41 accounts appeared only after
+  // clicking View Priorities"). When an aggregate has already loaded this
+  // session, skip all of it and leave those elements untouched;
+  // refreshAggregateDashboard() below (the same fetchAndRenderAggregateDashboard
+  // path page load uses) redraws everything -- monitored lists, account
+  // totals, saved signals, Recently Researched, priorities -- from the FULL
+  // aggregate, including this new upload, once it resolves. A true first
+  // upload has no existing aggregate to protect, so it keeps rendering its
+  // own (honest -- it IS the whole aggregate) accounts immediately, exactly
+  // as before.
+  if(!aggregateDashboardEverLoaded){
+    // Render the focused recommendation feed
+    renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
+      emptyMessage: `<div class="no-signals-message">No actionable opportunities yet for this window -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out this week. New business triggers, reorder windows, and follow-ups are checked automatically; try This Month or research your top accounts now to look further ahead.</div>`
+    });
+    const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
+    const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
+    document.getElementById('totalAccounts').textContent = accounts.length;
+    document.getElementById('totalOppValue').textContent = futureOpportunities.length;
+    document.getElementById('highConfidenceCount').textContent = highConfidenceAccounts.size;
+    document.getElementById('avgConfidence').textContent = Math.round(futureOpportunities.reduce((sum, o) => sum + o.confidence, 0) / Math.max(futureOpportunities.length, 1)) + '%';
+    renderDetailedAccountViews(accounts);
+    document.getElementById('results').style.display = 'block';
+    const exampleOpportunity = document.getElementById('exampleOpportunity');
+    if(exampleOpportunity) exampleOpportunity.style.display = 'none';
+  }
   renderResearchDiagnostics();
 
   const notice = document.getElementById('notice');
@@ -9275,11 +9449,6 @@ function processData(records){
     notice.innerHTML = noticeMessages.join('<br>');
   }
 
-  renderDetailedAccountViews(accounts);
-
-  document.getElementById('results').style.display = 'block';
-  const exampleOpportunity = document.getElementById('exampleOpportunity');
-  if(exampleOpportunity) exampleOpportunity.style.display = 'none';
   const dashboardLoadingSkeletonEl = document.getElementById('dashboardLoadingSkeleton');
   if(dashboardLoadingSkeletonEl) dashboardLoadingSkeletonEl.classList.remove('active');
   // Stabilization round: populate and show the real "Your Accounts" panel
@@ -9289,17 +9458,18 @@ function processData(records){
   // loadSavedDashboard(), so clicking "Manage Customer Accounts" from the
   // upload-success actions right after a first upload had nothing real to
   // click, and the account summary looked like it had "disappeared".
-  // Every value here is already computed above by this function's own
-  // unmodified pipeline -- no new counting/ranking logic. Signals/last-scan
-  // are honestly 0/"--" immediately post-upload since no research run has
-  // completed yet.
-  showCustomerDashboardPanel({
-    subtitleText: `${currentUploadName || 'Your customer list'} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`,
-    newCount: futureOpportunities.length,
-    accountCount: accounts.length,
-    signalCount: 0,
-    lastScanLabel: '—'
-  });
+  //
+  // FR2 round: when a real aggregate is already on screen, leave it
+  // completely alone here too (same rationale as the #results guard
+  // above) -- refreshAggregateDashboard() below corrects it once ready. A
+  // true first upload still shows an immediate, honest placeholder: real
+  // numbers aren't findable yet (the aggregate fetch and this local
+  // single-upload count are not guaranteed to agree, and signals are
+  // always 0 pre-research), so a neutral "Building your dashboard…" state
+  // is shown instead of fabricated single-upload numbers.
+  if(!aggregateDashboardEverLoaded){
+    showBuildingDashboardPanelPlaceholder();
+  }
   // A fresh upload just rendered client-side -- any still-in-flight or
   // future "no data yet" response from the unrelated initial auto-load
   // must never hide/replace it (see loadSavedDashboard()'s guards).
@@ -9325,19 +9495,26 @@ function processData(records){
   // save won the race, but nothing enforced it. Chaining explicitly closes
   // that latent race rather than continuing to rely on timing.
   //
-  // Follow-up round: the showCustomerDashboardPanel() call above is an
-  // honest, immediate SINGLE-UPLOAD snapshot shown while the save is still
-  // in flight (0 uploaded lists, 0 accounts is the wrong impression to
-  // leave the user with even for a second) -- but it must never be the
-  // state the user is left looking at. The instant the save resolves,
+  // Follow-up round / FR2 round: whatever this upload left on screen above
+  // (the untouched prior aggregate, or the neutral "Building your
+  // dashboard…" placeholder for a first upload) must never be the state
+  // the user is left looking at. The instant the save resolves,
   // refreshAggregateDashboard() re-fetches the same aggregate
   // /api/get-dashboard source loadSavedDashboard() uses and redraws Your
   // Accounts/totals/combined-list context/Recently Researched/priorities
   // from the FULL aggregate (every uploaded list, including this new one) --
   // silently, without touching the upload-success panel still on screen or
-  // showing the loading skeleton/Sample Analysis over it.
+  // showing the loading skeleton/Sample Analysis over it. A failed refresh
+  // must not leave a first-time user stuck on "Building your dashboard…"
+  // forever, and must never discard an existing aggregate that was already
+  // correctly on screen -- only the no-prior-aggregate placeholder case
+  // gets a visible, retryable failure state.
   saveCurrentUpload('uploaded').then(async () => {
-    if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+    let refreshResult = null;
+    if(typeof refreshAggregateDashboard === 'function') refreshResult = await refreshAggregateDashboard();
+    if(refreshResult && !refreshResult.ok && !aggregateDashboardEverLoaded){
+      showDashboardRefreshRetryState();
+    }
     autoResearchTopAccountsOnce();
   });
 }
@@ -9780,8 +9957,66 @@ else wireUploadSuccessStateControls();
    const statusEl = document.querySelector(`.acct-mgr-list[data-list-id="${CSS.escape(listId)}"] [data-list-status]`);
    if(result.ok){
      const summary = `Research complete — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}.`;
-     if(statusEl){ statusEl.hidden = false; statusEl.classList.remove('is-error'); statusEl.classList.add('is-success'); statusEl.textContent = summary; }
+     // Individual research and list research must both update aggregate
+     // saved-signal totals without a browser refresh -- refresh BEFORE
+     // rendering the summary/action below so window.accountRadarAccounts
+     // (and therefore Recently Researched) already reflects this run's
+     // results by the time the user can click anything.
      if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+     // FR2 round item 4: zero/one/multiple-account completion workflow.
+     // accountsWithOpportunities is the exact set of DISTINCT accounts from
+     // THIS run that produced a real opportunity -- an account with signals
+     // but no derived opportunity, or no signals at all, still counts
+     // toward the totals above but never drives an action here.
+     const opportunityAccounts = Array.isArray(result.accountsWithOpportunities) ? result.accountsWithOpportunities : [];
+     if(statusEl){
+       statusEl.hidden = false;
+       statusEl.classList.remove('is-error');
+       statusEl.classList.add('is-success');
+       statusEl.innerHTML = '';
+       statusEl.append(document.createTextNode(summary));
+       if(opportunityAccounts.length === 0){
+         statusEl.append(document.createTextNode(' No verified opportunities were found.'));
+       } else if(opportunityAccounts.length === 1){
+         const only = opportunityAccounts[0];
+         statusEl.append(document.createTextNode(' '));
+         const viewBtn = document.createElement('button');
+         viewBtn.type = 'button';
+         viewBtn.className = 'btn btn-ghost btn-mini';
+         viewBtn.textContent = 'View Opportunity';
+         viewBtn.addEventListener('click', () => {
+           if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(only.uploadId, only.accountName);
+         });
+         statusEl.appendChild(viewBtn);
+       } else {
+         statusEl.append(document.createTextNode(' '));
+         const reviewBtn = document.createElement('button');
+         reviewBtn.type = 'button';
+         reviewBtn.className = 'btn btn-ghost btn-mini';
+         reviewBtn.textContent = 'Review Opportunities';
+         reviewBtn.addEventListener('click', async () => {
+           // Aggregate dashboard is already fresh (refreshed above); this
+           // second call is cheap and guarantees correctness even if
+           // something else changed state between completion and the
+           // click. Close the modal and hand off to Recently Researched --
+           // the same production section (composite uploadId+accountName
+           // identity, per-account signal/opportunity counts, its own
+           // "View opportunities" action per row) individual research
+           // completions already use, so duplicate account names across
+           // uploads stay distinguishable and no account is forced open.
+           if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+           if(window.HouseAccountManager && typeof window.HouseAccountManager.close === 'function' && window.HouseAccountManager.isOpen()){
+             window.HouseAccountManager.close();
+           }
+           const section = document.getElementById('recentlyResearchedSection');
+           if(section){
+             section.scrollIntoView({behavior:'smooth', block:'start'});
+             if(typeof highlightResultElement === 'function') highlightResultElement(section);
+           }
+         });
+         statusEl.appendChild(reviewBtn);
+       }
+     }
    }else{
      if(statusEl){ statusEl.hidden = false; statusEl.classList.remove('is-success'); statusEl.classList.add('is-error'); statusEl.textContent = result.error || 'List research failed.'; }
    }
