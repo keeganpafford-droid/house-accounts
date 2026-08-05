@@ -4040,8 +4040,20 @@ function findAccountForOpp(opp){
 function realPriorCategories(opp){
   const account = findAccountForOpp(opp);
   const set = account?.categoryTypes;
-  if(!set || typeof set.size !== 'number' || !set.size) return [];
-  return [...set].filter(Boolean).slice(0,4);
+  if(set && typeof set.size === 'number' && set.size) return [...set].filter(Boolean).slice(0,4);
+  // Commercial-readiness correction round (final), item 3: fall back to the
+  // opportunity's OWN historicalPurchaseData (set once, at creation time --
+  // see createOpportunity()'s account.purchases.map(...) above) when the
+  // live account-list lookup above doesn't resolve a populated
+  // categoryTypes Set. Previously purchased categories then depended
+  // entirely on window.accountRadarAccounts still holding an exactly-
+  // name-matched entry with categoryTypes intact at render time -- this
+  // made the row silently disappear (leaving only Related Suggested
+  // Categories visible) whenever that live lookup missed, even though the
+  // real purchase data was already captured on the opportunity itself.
+  const fromOpp = Array.isArray(opp?.historicalPurchaseData) ? opp.historicalPurchaseData : [];
+  const categories = [...new Set(fromOpp.map(p => String(p?.category || '').trim()).filter(Boolean))];
+  return categories.slice(0,4);
 }
 
 function structuredEvidenceRows(opp){
@@ -4306,7 +4318,7 @@ function renderAccountContextSection(opp){
   const notes = String(account.notes || '').trim();
   const rows = [];
   if(orderCount) rows.push(`<div class="sales-play-detail-item"><strong>Previous orders</strong>${orderCount} order${orderCount===1?'':'s'} on file${revenue ? ` · ${escapeHtml(fmtMoney(revenue))} historical revenue` : ''}</div>`);
-  if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Previously purchased categories</strong>${escapeHtml(categories.join(', '))}</div>`);
+  if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Previously purchased categories</strong>${escapeHtml(categories.join(', '))} <span class="opp-purchased-note">(from your uploaded order history)</span></div>`);
   if(mostRecent) rows.push(`<div class="sales-play-detail-item"><strong>Cadence</strong>Most recent order ${escapeHtml(mostRecent)}</div>`);
   if(contacts.length) rows.push(`<div class="sales-play-detail-item"><strong>Uploaded contacts</strong>${escapeHtml(contacts.slice(0,3).map(c=>c.name||c.email).join(', '))}</div>`);
   if(notes) rows.push(`<div class="sales-play-detail-item"><strong>Account notes</strong>${escapeHtml(shortText(notes,180))}</div>`);
@@ -6571,18 +6583,28 @@ function triggerPhraseForSignal(ctx){
 // createSalesPlayPanel()'s ctx.orderCategory/ctx.orderDateText) -- there is
 // no AI-signal initiativeTitle for these, and the uploaded relationship
 // context must take priority over any generic public-signal framing.
-function accountHistoryOrderPhrase(ctx){
-  const cat = String(ctx.orderCategory || '').trim();
-  return cat ? cat.toLowerCase() : 'recent order';
+// Commercial-readiness correction round (final): the real purchased
+// category, lowercase, or '' when none is known -- deliberately NEVER
+// returns a placeholder like "recent order" here. Every caller below builds
+// its own complete noun phrase ("the X order" / "the X program" / "an
+// order" / "a reorder program") depending on whether a category is known,
+// so "order"/"program"/"recent" is written exactly once per sentence no
+// matter which branch fires. The previous version returned a fallback
+// phrase that ALREADY contained "order"/"recent order", which callers then
+// wrapped in another "... order"/"the recent ... order" template -- the
+// exact mechanism behind the live "recent order order" / "recent recent
+// order order" defects.
+function accountHistoryCategoryPhrase(ctx){
+  return String(ctx.orderCategory || '').trim().toLowerCase();
 }
 function accountHistoryLeadPhrase(ctx){
-  const cat = accountHistoryOrderPhrase(ctx);
+  const cat = accountHistoryCategoryPhrase(ctx);
   if(ctx.layer === 'Follow-Up Signal'){
-    return ctx.orderDateText ? `the ${cat} order from ${ctx.orderDateText}` : `the recent ${cat} order`;
+    const orderNoun = cat ? `${cat} order` : 'order';
+    return ctx.orderDateText ? `the ${orderNoun} from ${ctx.orderDateText}` : `the recent ${orderNoun}`;
   }
   // Repeat / Pattern Signal.
-  if(ctx.orderCategory) return `the ${cat} program`;
-  return 'your order history with them';
+  return cat ? `the ${cat} program` : 'their order history';
 }
 // The natural question a rep would actually ask about THIS order/program --
 // never "is <department> already involved" (that framing assumes nobody
@@ -6593,13 +6615,37 @@ function accountHistoryAskPhrase(ctx){
   if(ctx.layer === 'Follow-Up Signal'){
     return 'how it went — fit, feedback, quantities, or whether anything else is needed';
   }
+  const cat = accountHistoryCategoryPhrase(ctx);
+  const programNoun = cat ? `${cat} program` : 'reorder program';
   if(ctx.reorderStatus === 'overdue'){
-    return `whether the ${accountHistoryOrderPhrase(ctx)} program is still something they need, since the usual timing has already passed`;
+    return `whether the ${programNoun} is still something they need, since the usual timing has already passed`;
   }
-  return `whether the ${accountHistoryOrderPhrase(ctx)} program is returning this year`;
+  return `whether the ${programNoun} is returning this year`;
 }
 function accountHistoryOfferPhrase(){
   return 'a few ideas for next time';
+}
+
+// Commercial-readiness correction round 2, item 2: the uploaded contact is
+// already known, so every account-history surface must ask a direct
+// customer-follow-up question -- never "Do you know ${ask}?", which reads
+// as asking a known contact whether THEY know how their own order went
+// (the exact reported defect). accountHistoryAskPhrase() still supplies the
+// grounded noun-clause used by "Ask ${ask}." in Best Next Move / call
+// script reason lines (those already read correctly as direct asks); this
+// builds the separate interrogative-sentence form needed anywhere the copy
+// poses the question directly to the contact (email body, Questions to
+// Ask).
+function accountHistoryDirectQuestion(ctx){
+  if(ctx.layer === 'Follow-Up Signal'){
+    return 'How did it go — was the fit, quantity, and timing right, and is there anything else you need?';
+  }
+  const cat = accountHistoryCategoryPhrase(ctx);
+  const programNoun = cat ? `${cat} program` : 'reorder program';
+  if(ctx.reorderStatus === 'overdue'){
+    return `Is the ${programNoun} still something you need, since the usual timing has already passed?`;
+  }
+  return `Is the ${programNoun} returning this year?`;
 }
 
 // The lead-in sentence fragment used across every outreach surface --
@@ -6697,25 +6743,29 @@ function ideaOfferPhrase(ctx){
 // described as merely upcoming.
 // -----------------------------------------------------------------------
 function accountHistorySubject(ctx){
-  const cat = accountHistoryOrderPhrase(ctx);
-  if(ctx.layer === 'Follow-Up Signal') return `Quick check-in on the recent ${cat} order`;
-  if(ctx.reorderStatus === 'overdue') return `Checking in on the ${cat} program`;
-  return `Is the ${cat} program returning this year?`;
+  const cat = accountHistoryCategoryPhrase(ctx);
+  if(ctx.layer === 'Follow-Up Signal'){
+    const orderNoun = cat ? `${cat} order` : 'order';
+    return `Quick check-in on the recent ${orderNoun}`;
+  }
+  const programNoun = cat ? `${cat} program` : 'reorder program';
+  if(ctx.reorderStatus === 'overdue') return `Checking in on the ${programNoun}`;
+  return `Is the ${programNoun} returning this year?`;
 }
 function accountHistorySubjectRationale(){
   return 'It names the actual order or program from their purchase history, so it reads as a specific, low-pressure check-in rather than a generic account touch.';
 }
 function accountHistoryEmail(ctx){
   const lead = leadWithAccountContext(ctx);
-  const ask = accountHistoryAskPhrase(ctx);
+  const question = accountHistoryDirectQuestion(ctx);
   const offer = accountHistoryOfferPhrase();
   let email;
   if(ctx.layer === 'Follow-Up Signal'){
-    email = `Hey ${ctx.firstName},\n\nWanted to check in on ${lead}.\n\nDo you know ${ask}?\n\nHappy to send over ${offer} if it would help — no pressure either way.\n\nBest,\n[Rep Name]`;
+    email = `Hey ${ctx.firstName},\n\nWanted to check in on ${lead}.\n\n${question}\n\nHappy to send over ${offer} if it would help — no pressure either way.\n\nBest,\n[Rep Name]`;
   } else if(ctx.reorderStatus === 'overdue'){
-    email = `Hey ${ctx.firstName},\n\nIt's been a while since ${lead}, so wanted to check in.\n\nDo you know ${ask}?\n\nCan send over ${offer} if useful — just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
+    email = `Hey ${ctx.firstName},\n\nIt's been a while since ${lead}, so wanted to check in.\n\n${question}\n\nCan send over ${offer} if useful — just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
   } else {
-    email = `Hey ${ctx.firstName},\n\nLooks like it's around the time for ${lead} again, so wanted to check in.\n\nDo you know ${ask}?\n\nHappy to send over ${offer} if it would help.\n\nBest,\n[Rep Name]`;
+    email = `Hey ${ctx.firstName},\n\nLooks like it's around the time for ${lead} again, so wanted to check in.\n\n${question}\n\nHappy to send over ${offer} if it would help.\n\nBest,\n[Rep Name]`;
   }
   return normalizeOutreachText(email);
 }
@@ -6729,12 +6779,11 @@ function accountHistoryCallScript(ctx){
   ].map(normalizeOutreachText);
 }
 function accountHistoryQuestions(ctx){
-  const ask = accountHistoryAskPhrase(ctx);
   const statusQuestion = ctx.layer === 'Follow-Up Signal'
     ? 'Was everything received on time and as expected?'
     : (ctx.reorderStatus === 'overdue' ? 'Is this still a program you run, or has anything changed?' : 'What is the typical timing for this so we can plan ahead?');
   return [
-    `Do you know ${ask}?`,
+    accountHistoryDirectQuestion(ctx),
     statusQuestion,
     'Would it help to see a few ideas for next time?'
   ].map(normalizeOutreachText);
@@ -7316,19 +7365,18 @@ function collapseDuplicateFollowUps(opps){
     const key = followUpCollapseKey(opp);
     const existing = map.get(key);
     if(!existing || getDailyReasonScore(opp) > getDailyReasonScore(existing)){
-      const merged = {...opp};
-      const related = (opps || []).filter(o => followUpCollapseKey(o) === key);
-      if(related.length > 1){
-        merged.opportunity = 'Recent Project Follow-Up';
-        merged.opportunityName = 'Recent Project Follow-Up';
-        merged.reasonToReachOut = 'Multiple recent projects completed';
-        merged.conversationStarter = 'Check in on how the recent projects were received.';
-        merged.evidence = [
-          `Multiple recent projects found (${related.length})`,
-          ...(Array.isArray(opp.evidence) ? opp.evidence : [])
-        ].slice(0,4);
-      }
-      map.set(key, merged);
+      // Commercial-readiness correction round: every Follow-Up Signal
+      // opportunity for one account today is a GENERIC industry template
+      // driven by the SAME account.subscores.recency (see
+      // createOpportunity()) -- there is no per-distinct-order grounding
+      // that would make >1 template here mean >1 real recent order.
+      // Rewriting to a plural "Multiple recent projects" claim was
+      // therefore always fabricating a fact the data doesn't support (the
+      // exact "'recent projects' even though there is one order" defect).
+      // The fix keeps this a pure best-of-N pick: the highest-scoring
+      // template survives UNCHANGED, with no relabeling to a claim about
+      // plurality this pipeline cannot actually verify.
+      map.set(key, {...opp});
     }
   });
   return [...map.values(), ...passthrough];

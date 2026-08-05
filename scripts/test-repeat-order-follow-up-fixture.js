@@ -69,14 +69,14 @@ const SRC = [
   // accountHistoryStatusLine) that createRepeatPatternOpportunities() now
   // calls to ground its reasonToReachOut/conversationStarter text -- and
   // that this test also verifies directly for required tests 1-3.
-  extractLines('format-short-date', 4065, 4069, 'function formatShortDate(value){', '}'),
-  extractLines('account-history-status', 4100, 4165, 'function isAccountHistoryOpportunity(opp){', '}'),
-  extractLines('opportunity-generation', 5737, 6266, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 7025, 7053, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 7072, 7087, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 7090, 7139, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 7191, 7262, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 7390, 7446, 'function monthIndexFromName(name){', '}'),
+  extractLines('format-short-date', 4077, 4081, 'function formatShortDate(value){', '}'),
+  extractLines('account-history-status', 4112, 4177, 'function isAccountHistoryOpportunity(opp){', '}'),
+  extractLines('opportunity-generation', 5749, 6278, 'function estimateFutureValue(account, opportunityType){', '}'),
+  extractLines('order-history-filters', 7074, 7102, 'function isClosedHistoricalRecord(record){', '}'),
+  extractLines('normalize-signal-layer-type', 7121, 7136, 'function normalizeSignalLayerType(type){', '}'),
+  extractLines('recommendation-type', 7139, 7188, 'function daysSinceDate(value){', '}'),
+  extractLines('opportunity-scoring', 7240, 7311, 'function calculateOpportunityScore(opp){', '}'),
+  extractLines('timebox-classification', 7438, 7494, 'function monthIndexFromName(name){', '}'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the
   // uploaded contact/real order history (not a generic public-signal
   // department framing) drives the Conversation Starter/Best Next Move/
@@ -85,7 +85,7 @@ const SRC = [
   // never invoked below -- it is DOM-heavy (document.body...) and inert as
   // long as it is only assigned, not called (same pattern already relied
   // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
-  extractLines('sales-play-account-history-grounding', 6279, 6770, 'function cleanSalesPlayText(value){', '}')
+  extractLines('sales-play-account-history-grounding', 6291, 6819, 'function cleanSalesPlayText(value){', '}')
 ].join('\n\n');
 
 const EXPORT_NAMES = [

@@ -1,17 +1,34 @@
-// Commercial-readiness correction round, item 8: a REAL rendered weekly-
-// digest preview -- not a conceptual mockup. Uses the actual production
-// renderer (reportHtml/weeklySummaryFromSignals, imported unmodified from
-// api/weekly-scan.js) fed with:
-//   - a real business-activity signal shape (the L.L.Bean flagship-
-//     reopening fixture already used elsewhere in this repo's test suite,
-//     scripts/test-paid-beta-sprint.js), and
-//   - REAL account-history opportunities produced by running the actual
-//     dashboard/index.html signal-generation pipeline (parseCSV ->
-//     generateFutureOpportunities, extracted verbatim, same technique as
-//     scripts/test-repeat-order-follow-up-fixture.js) against
-//     scripts/fixtures/repeat-order-follow-up-fixture.csv, so the
-//     Brightview/Ridgeline copy in this preview is byte-for-byte what the
-//     corrected account-history status/label logic actually produces.
+// Commercial-readiness correction round (final), item 1: a REAL rendered
+// weekly-digest preview generated through the EXACT final weekly-scan
+// input path -- not a hand-adapted mockup. Every function that touches a
+// digest row here is imported unmodified from api/weekly-scan.js:
+//   - accountPayload() shapes a raw ha_accounts row exactly as the real
+//     handler does;
+//   - deriveAccountHistoryDigestRows() is the SAME function the real
+//     handler now calls per upload to pull recent-order follow-ups and
+//     reorder opportunities out of already-stored order history
+//     (raw_data.existingSignals/repeatPatterns);
+//   - dedupeDigestRows() is the SAME whole-bucket dedup the real handler
+//     applies right before send;
+//   - reportHtml()/weeklySummaryFromSignals() are the SAME renderer used
+//     for the real email.
+// This script does NOT construct digest rows by hand for account-history
+// opportunities -- it builds ha_accounts-shaped rows (raw_data.
+// existingSignals/repeatPatterns) from a real run of the dashboard's own
+// signal-generation pipeline against the fixture CSV, exactly as
+// dashboard/index.html's serializeAccountForStorage() would persist them,
+// then hands those rows to the real weekly-scan functions.
+//
+// The one thing this script cannot do without running providers is
+// discover a NEW public business signal -- so the single business-activity
+// row below is constructed directly in the ha_signals row shape
+// (account_name/signal_type/why_reach_out/payload) research-batch.js's
+// real output already takes after api/weekly-scan.js inserts it, using
+// the same L.L.Bean fixture text already used in
+// scripts/test-paid-beta-sprint.js's acceptance tests. It is pushed into
+// the SAME digestEligibleRows-equivalent list as the account-history rows,
+// then run through the same dedupeDigestRows()/reportHtml() call the real
+// handler makes.
 //
 // No email is sent -- this only writes a local HTML file. No provider is
 // called (no OpenAI/Serper/Firecrawl network requests).
@@ -19,7 +36,7 @@
 // Usage: node scripts/generate-digest-preview.js [output-path.html]
 import { readFileSync, writeFileSync } from 'fs';
 import vm from 'vm';
-import { reportHtml, weeklySummaryFromSignals } from '../api/weekly-scan.js';
+import { reportHtml, weeklySummaryFromSignals, accountPayload, deriveAccountHistoryDigestRows, dedupeDigestRows } from '../api/weekly-scan.js';
 
 const html = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
 const lines = html.split('\n');
@@ -44,14 +61,14 @@ const SRC = [
   extractLines('parse-csv', 3367, 3485, 'function parseCSV(text){'),
   extractLines('infer-promo-category', 3487, 3507, 'function inferPromoCategory(text){'),
   extractLines('infer-industry', 3509, 3517, 'function inferIndustry(client, projects){'),
-  extractLines('format-short-date', 4065, 4069, 'function formatShortDate(value){'),
-  extractLines('account-history-status', 4100, 4165, 'function isAccountHistoryOpportunity(opp){'),
-  extractLines('opportunity-generation', 5737, 6266, 'function estimateFutureValue(account, opportunityType){'),
-  extractLines('order-history-filters', 7025, 7053, 'function isClosedHistoricalRecord(record){'),
-  extractLines('normalize-signal-layer-type', 7072, 7087, 'function normalizeSignalLayerType(type){'),
-  extractLines('recommendation-type', 7090, 7139, 'function daysSinceDate(value){'),
-  extractLines('opportunity-scoring', 7191, 7262, 'function calculateOpportunityScore(opp){'),
-  extractLines('timebox-classification', 7390, 7446, 'function monthIndexFromName(name){')
+  extractLines('format-short-date', 4077, 4081, 'function formatShortDate(value){'),
+  extractLines('account-history-status', 4112, 4177, 'function isAccountHistoryOpportunity(opp){'),
+  extractLines('opportunity-generation', 5749, 6278, 'function estimateFutureValue(account, opportunityType){'),
+  extractLines('order-history-filters', 7074, 7102, 'function isClosedHistoricalRecord(record){'),
+  extractLines('normalize-signal-layer-type', 7121, 7136, 'function normalizeSignalLayerType(type){'),
+  extractLines('recommendation-type', 7139, 7188, 'function daysSinceDate(value){'),
+  extractLines('opportunity-scoring', 7240, 7311, 'function calculateOpportunityScore(opp){'),
+  extractLines('timebox-classification', 7438, 7494, 'function monthIndexFromName(name){')
 ].join('\n\n');
 
 const EXPORT_NAMES = [
@@ -122,41 +139,39 @@ function buildAccounts(records){
 const csvText = readFileSync(new URL('./fixtures/repeat-order-follow-up-fixture.csv', import.meta.url), 'utf8');
 const records = dash.parseCSV(csvText);
 const accounts = buildAccounts(records);
-const byName = Object.fromEntries(accounts.map(a => [a.name, a]));
 
-function groundedRepeatPatternOpp(accountName){
-  const a = byName[accountName];
-  return a.futureOpportunities.find(o => o.opportunityType === 'REPEAT PATTERN');
-}
-function groundedFollowUpOpp(accountName){
-  const a = byName[accountName];
-  return a.futureOpportunities.find(o => o.signalLayerType === 'Follow-Up Signal');
-}
-
-// Converts a real dashboard opportunity object into the ha_signals row
-// shape reportHtml()/opportunityCardHtml() actually read (account_name,
-// signal_type, why_reach_out, payload) -- the SAME field names
-// api/weekly-scan.js writes when it persists a research-batch result. This
-// is the one adaptation this preview tool performs: account-history
-// opportunities are computed entirely client-side today and are not yet
-// persisted to ha_signals/wired into weekly-scan.js's real query (a
-// genuine backlog item, not something this branch changes -- see the
-// accompanying report). Everything about the TEXT itself -- the status
-// line, the conversation starter, the account name -- is the real,
-// corrected production output, not invented for this preview.
-function toDigestRow(accountName, opp){
-  const statusLine = dash.accountHistoryStatusLine(opp);
+// Builds the exact ha_accounts row shape serializeAccountForStorage()
+// persists (metrics + raw_data.existingSignals/repeatPatterns), then runs
+// it through the REAL accountPayload() from api/weekly-scan.js -- the same
+// read path the real handler uses for every account, every invocation.
+function toStoredAccountRow(account){
   return {
-    account_name: accountName,
-    signal_type: opp.signalLayerType,
-    why_reach_out: `${statusLine} — ${opp.whyNow || opp.reasonToReachOut || ''}`,
-    payload: { suggestedNextMove: opp.conversationStarter, signalTitle: opp.opportunity || opp.opportunityName }
+    account_name: account.name,
+    industry: account.industry || '',
+    contact_name: account.contactName || '',
+    contact_email: account.contactEmail || '',
+    metrics: {
+      revenue: account.revenue || 0,
+      orderCount: account.orderCount || 0,
+      relationshipStrength: account.relationshipStrength || 0
+    },
+    raw_data: {
+      historicalCategories: [...(account.categoryTypes || [])],
+      existingSignals: account.futureOpportunities.filter(o => o.signalLayerType === 'Follow-Up Signal'),
+      repeatPatterns: account.futureOpportunities.filter(o => o.opportunityType === 'REPEAT PATTERN')
+    }
   };
 }
 
-// Real L.L.Bean business-signal fixture text, same shape/content already
-// used in scripts/test-paid-beta-sprint.js's acceptance tests (a real,
-// sourced business-activity signal -- not fabricated for this preview).
+const accountPayloads = accounts.map(toStoredAccountRow).map(accountPayload);
+const accountHistoryRows = deriveAccountHistoryDigestRows(accountPayloads);
+
+// Real, sourced L.L.Bean business-activity signal (same fixture text
+// already used in scripts/test-paid-beta-sprint.js's acceptance tests),
+// in the exact row shape a real research-batch discovery would take after
+// api/weekly-scan.js inserts it into ha_signals and the actionability gate
+// (classifyLegacySignalActionability) passes it through as digest-eligible
+// -- reproduced directly here rather than run through providers.
 const llbeanRow = {
   account_name: 'L.L.Bean',
   signal_type: 'Business Activity',
@@ -167,31 +182,17 @@ const llbeanRow = {
   }
 };
 
-const brightviewRow = toDigestRow('Brightview Dental Group', groundedFollowUpOpp('Brightview Dental Group'));
-const ridgelineRow = toDigestRow('Ridgeline Auto Group', groundedRepeatPatternOpp('Ridgeline Auto Group'));
-const lakeshoreRow = toDigestRow('Lakeshore Manufacturing Co', groundedRepeatPatternOpp('Lakeshore Manufacturing Co'));
-const goldenValleyRow = toDigestRow('Golden Valley Steel Supply', groundedRepeatPatternOpp('Golden Valley Steel Supply'));
-
-const newSignals = [llbeanRow, brightviewRow, ridgelineRow, lakeshoreRow, goldenValleyRow];
-
-// Required proof: no exact duplicate opportunities in the digest, and
-// stale/detail-only signals excluded (none of these are stale -- all are
-// current-run signals; a genuinely stale/excluded business signal would
-// simply never have reached digestEligibleRows in the real handler, per
-// api/weekly-scan.js's classifyLegacySignalActionability() gate -- this
-// preview only demonstrates the RENDERING side, not that gate itself,
-// which is already covered by scripts/test-weekly-scan-reliability.js).
-const seenKeys = new Set();
-for(const row of newSignals){
-  const key = `${row.account_name}|${row.why_reach_out}`;
-  if(seenKeys.has(key)) throw new Error(`duplicate digest row detected for ${row.account_name} -- this preview tool requires unique rows, matching the real dedup guarantee`);
-  seenKeys.add(key);
-}
+// The exact combine-and-dedupe step the real handler performs per upload
+// (allDigestRowsForUpload), followed by the exact whole-bucket dedup it
+// applies right before send (dedupeDigestRows) -- both imported, neither
+// reimplemented here.
+const allDigestRowsForUpload = [llbeanRow, ...accountHistoryRows];
+const dedupedRows = dedupeDigestRows(allDigestRowsForUpload);
 
 const user = { email: 'rep@example.com', name: 'Sample Rep' };
 const baseUrl = 'https://app.example.com';
-const summary = weeklySummaryFromSignals(newSignals, accounts.length);
-const emailHtml = reportHtml(user, null, newSignals, baseUrl, summary);
+const summary = weeklySummaryFromSignals(dedupedRows, accounts.length);
+const emailHtml = reportHtml(user, null, dedupedRows, baseUrl, summary);
 
 // "Other Accounts to Watch" -- explicitly a PREVIEW-TOOL-ONLY addition
 // appended below the real, unmodified reportHtml() output, not part of
@@ -200,7 +201,7 @@ const emailHtml = reportHtml(user, null, newSignals, baseUrl, summary);
 // look like without changing the real email template.
 const otherAccountNames = accounts
   .map(a => a.name)
-  .filter(name => !newSignals.some(r => r.account_name === name));
+  .filter(name => !dedupedRows.some(r => r.account_name === name));
 const otherAccountsHtml = `
 <div style="margin:24px auto 0;max-width:680px;padding:0 16px;">
   <div style="border:1px dashed #B45309;border-radius:14px;padding:16px 18px;background:#FBEFE3;">
@@ -221,6 +222,6 @@ ${otherAccountsHtml}
 const outPath = process.argv[2] || new URL('../digest-preview.html', import.meta.url).pathname;
 writeFileSync(outPath, fullPreviewHtml);
 console.log(`Digest preview written to: ${outPath}`);
-console.log(`Signals included: ${newSignals.map(r => r.account_name).join(', ')}`);
+console.log(`Signals included: ${dedupedRows.map(r => r.account_name).join(', ')}`);
 console.log(`Other Accounts to Watch: ${otherAccountNames.join(', ')}`);
 console.log('No email was sent. No provider was called.');

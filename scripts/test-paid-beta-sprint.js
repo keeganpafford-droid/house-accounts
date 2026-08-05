@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3603, 4485, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3603, 4497, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5874, 6955, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5886, 7004, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,13 +482,13 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5874, 6955, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 7072, 7576, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 7121, 7624, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2388, 2393, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2611, 2614, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 8144, 8147, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5789, 5791, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5794, 5796, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 8192, 8195, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5801, 5803, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5806, 5808, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
@@ -689,6 +689,51 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   assert(sandbox.realPriorCategories(noHistoryOpp).length === 0, 'required test 12: with no real historical categories, realPriorCategories() returns empty rather than falling back to inferred ones');
   const noHistoryRows = sandbox.structuredEvidenceRows(noHistoryOpp);
   assert(!noHistoryRows.some(r => r.label.includes('Prior categories')), 'required test 12: the Prior Categories row is hidden entirely when no real order history exists, not shown with invented data');
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round (final), required tests 14/15:
+// Previously Purchased Categories must remain visibly distinct from
+// inferred ideas EVEN when the live window.accountRadarAccounts lookup
+// (findAccountForOpp) misses -- e.g. the account list hasn't loaded a
+// matching entry yet, or the name no longer matches exactly. Before this
+// round's fix, realPriorCategories() depended entirely on that live join
+// succeeding; this proves the opportunity's own historicalPurchaseData
+// (captured once, at creation time) is a working fallback source, so the
+// Evidence card's "Previously purchased categories" row does not silently
+// disappear -- leaving only "Related suggested categories" visible, the
+// exact defect reported from live Preview.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  // Deliberately empty -- simulates findAccountForOpp() finding no match at
+  // all (e.g. the account list not yet loaded, or a name mismatch).
+  sandbox.window.accountRadarAccounts = [];
+  const opp = {
+    account: 'Ridgeline Auto Group',
+    commonPromoCategories: ['caps', 'beanies', 'employee hats'], // inferred idea, deliberately different
+    historicalPurchaseData: [
+      { project: 'Fall Headwear Order', category: 'Headwear', revenue: 4200, date: '2025-09-12' },
+      { project: 'Spring Headwear Order', category: 'Headwear', revenue: 3100, date: '2025-03-04' }
+    ]
+  };
+  const priorCategories = sandbox.realPriorCategories(opp);
+  assert(priorCategories.join(',') === 'Headwear', `required test 14: with no live account-list match, realPriorCategories() still recovers the real purchased category (Headwear) from the opportunity's own historicalPurchaseData (got: ${JSON.stringify(priorCategories)})`);
+
+  const evidenceHtml = sandbox.renderSupportingResearchDetails(opp);
+  assert(evidenceHtml.includes('Previously purchased categories') && evidenceHtml.includes('Headwear') && evidenceHtml.includes('from your uploaded order history'), 'required test 14: the Evidence card renders a visibly distinct, clearly-labeled Previously Purchased Categories row from the fallback data, not just Related Suggested Categories');
+  assert(evidenceHtml.includes('Related suggested categories') && evidenceHtml.includes('caps') && evidenceHtml.includes('inferred idea, not purchase history'), 'required test 14: Related Suggested Categories still renders separately, clearly labeled as an inferred idea');
+  assert(evidenceHtml.indexOf('Previously purchased categories') < evidenceHtml.indexOf('Related suggested categories'), 'required test 14: the purchased-categories row appears before the inferred-ideas row, never merged into one label');
+
+  // required test 15: the inferred ideas never leak into or replace the
+  // real purchased-category row itself.
+  const purchasedRowMatch = evidenceHtml.match(/Previously purchased categories<\/strong>([^<]*)/);
+  assert(!!purchasedRowMatch && !/caps|beanies|employee hats/.test(purchasedRowMatch[1]), 'required test 15: the inferred category words never appear inside the Previously Purchased Categories row itself');
+
+  // No fallback data either (a genuinely new/no-history account) -- the row
+  // is still correctly hidden entirely, not filled with invented data.
+  const noHistoryOpp = { account: 'Brand New Prospect', commonPromoCategories: ['Launch Kits'], historicalPurchaseData: [] };
+  assert(sandbox.realPriorCategories(noHistoryOpp).length === 0, 'required test 14: with neither a live account match nor historicalPurchaseData, realPriorCategories() still returns empty rather than inventing data');
 }
 
 // ---------------------------------------------------------------------------

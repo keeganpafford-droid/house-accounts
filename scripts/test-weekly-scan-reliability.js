@@ -1111,6 +1111,237 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
 }
 
 // ---------------------------------------------------------------------------
+// Commercial-readiness correction round (final), item 1: account-history
+// opportunities (recent-order follow-ups, reorder check-ins) entering the
+// REAL weekly digest input path via deriveAccountHistoryDigestRows()/
+// dedupeDigestRows() (required tests 1-7). Reuses the same mocked-fetch
+// integration harness as the Priority 6 digest tests above -- ha_accounts
+// rows here carry raw_data.existingSignals/repeatPatterns exactly as
+// dashboard/index.html's serializeAccountForStorage() writes them, proving
+// the digest is built from the same already-persisted data the dashboard
+// itself produces, not a test-only reimplementation.
+// ---------------------------------------------------------------------------
+
+function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const brightviewFollowUp = {
+    signalLayerType: 'Follow-Up Signal',
+    opportunity: 'Customer Follow-Up',
+    whyNow: 'Brightview Dental Group placed an onboarding / recruiting order recently.',
+    conversationStarter: 'Call or email Priya directly. Reference the onboarding / recruiting order. Ask how it went.',
+    quickWinScore: 80
+  };
+  const ridgelineReorder = {
+    opportunityType: 'REPEAT PATTERN',
+    opportunity: 'Reorder Check-In',
+    whyNow: 'Ridgeline Auto Group is around the normal time for its headwear program.',
+    conversationStarter: 'Call or email Dana directly. Reference the headwear program. Ask whether it is returning this year.',
+    quickWinScore: 70
+  };
+  // A generic, non-grounded Repeat/Pattern-Signal template (opportunityType
+  // is NOT 'REPEAT PATTERN') -- deriveAccountHistoryDigestRows() must
+  // exclude this from the digest, proving the exclusion holds even when
+  // raw_data carries entries, not only when it is completely empty.
+  const meridianGeneric = {
+    opportunityType: 'GENERIC INDUSTRY TEMPLATE',
+    opportunity: 'Employee Recognition Program',
+    whyNow: 'Meridian Office Partners has not been reached out to recently.',
+    conversationStarter: 'Call or email the team.',
+    quickWinScore: 40
+  };
+
+  const baseAcct = (overrides) => ({ id:`acct-${Math.random().toString(36).slice(2)}`, industry:'', contact_name:'', contact_email:'', metrics:{orderCount:1}, raw_data:{}, created_at:new Date().toISOString(), updated_at:new Date().toISOString(), ...overrides });
+
+  const uploadA = { id: 'upload-hist-a', user_id: 'user-hist-1', upload_name: 'History List A', summary: {}, created_at: new Date().toISOString(), ha_users: { id: 'user-hist-1', email: 'histrep@example.com', name: 'Hist Rep', company: '' } };
+  const uploadB = { id: 'upload-hist-b', user_id: 'user-hist-1', upload_name: 'History List B', summary: {}, created_at: new Date().toISOString(), ha_users: { id: 'user-hist-1', email: 'histrep@example.com', name: 'Hist Rep', company: '' } };
+  const uploadC = { id: 'upload-hist-c', user_id: 'user-hist-2', upload_name: 'History List C', summary: {}, created_at: new Date().toISOString(), ha_users: { id: 'user-hist-2', email: 'histrep2@example.com', name: 'Hist Rep Two', company: '' } };
+
+  const accountsByUpload = {
+    'upload-hist-a': [
+      baseAcct({ account_name: 'L.L.Bean' }), // business signal, via research-batch
+      baseAcct({ account_name: 'Brightview Dental Group', raw_data: { existingSignals: [brightviewFollowUp] } })
+    ],
+    'upload-hist-b': [
+      // Same account, same underlying opportunity, uploaded into a SECOND
+      // list this user owns -- proves the whole-bucket dedupeDigestRows()
+      // collapse (required test 4), not just deriveAccountHistoryDigestRows()'s
+      // own per-upload dedup.
+      baseAcct({ account_name: 'Brightview Dental Group', raw_data: { existingSignals: [brightviewFollowUp] } }),
+      baseAcct({ account_name: 'Ridgeline Auto Group', raw_data: { repeatPatterns: [ridgelineReorder] } }),
+      baseAcct({ account_name: 'Meridian Office Partners', raw_data: { repeatPatterns: [meridianGeneric] } })
+    ],
+    'upload-hist-c': [
+      baseAcct({ account_name: 'Ridgeline Auto Group', raw_data: { repeatPatterns: [ridgelineReorder] } })
+    ]
+  };
+
+  // For the two-user isolation scenario, uploadB is deliberately left out --
+  // it belongs to user-hist-1 but also contains Ridgeline (used by
+  // uploadC/user-hist-2 there), which would contaminate the isolation proof
+  // for reasons unrelated to what that scenario is testing.
+  const uploads = users === 1 ? [uploadA, uploadB] : [uploadA, uploadC];
+
+  const emailCalls = [];
+  const patchCalls = [];
+  let runIdCounter = 0;
+
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse(uploads);
+    if (u.includes('/rest/v1/ha_accounts')) {
+      const match = u.match(/upload_id=eq\.([^&]+)/);
+      const uploadId = match ? decodeURIComponent(match[1]) : '';
+      return jsonResponse(accountsByUpload[uploadId] || []);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]); // nothing stale/active
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') {
+      runIdCounter += 1;
+      const body = JSON.parse(options.body)[0];
+      return jsonResponse([{ id: `run-${runIdCounter}`, ...body }]);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      patchCalls.push({ url: u, body });
+      return jsonResponse([{ id: 'run-patched', ...body }]);
+    }
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') {
+      const rows = JSON.parse(options.body);
+      return jsonResponse(rows);
+    }
+    if (u.includes('/api/research-batch')) {
+      const body = JSON.parse(options.body);
+      const llbean = (body.accounts || []).find(a => a.name === 'L.L.Bean');
+      // Ongoing/undated "business update" phrasing (matching the
+      // proven-priority-eligible shape used by twoUploadSameUserMock above)
+      // -- an event-like signal with no resolvable event date is correctly
+      // excluded from the digest by the canonical actionability boundary
+      // (see the reconciliation item 1/2 tests below), which is not what
+      // this scenario is testing.
+      const signals = llbean ? [{
+        accountName: 'L.L.Bean', signalType: 'Business Activity', signalTitle: 'L.L.Bean business update',
+        whatChanged: 'L.L.Bean had a business update', whyItMattersForPromo: 'Timely reason to reach out',
+        sourceUrl: 'https://example.com/llbean', confidenceScore: 85, publicationDate: new Date().toISOString()
+      }] : [];
+      return jsonResponse({
+        signals,
+        diagnostics: { structuredSummary: { eligibleAccounts: body.accounts.length, processedAccounts: body.accounts.length, failedAccounts: 0 } }
+      });
+    }
+    if (u === 'https://api.resend.com/emails' && method === 'POST') {
+      const body = JSON.parse(options.body);
+      emailCalls.push(body);
+      if (resendBehavior) return resendBehavior(body);
+      return jsonResponse({ id: 'resend-id-1' });
+    }
+    throw new Error(`Unhandled fetch in account-history digest test mock: ${method} ${u}`);
+  };
+
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  return { req, res, emailCalls, patchCalls, restoreFetch: () => { global.fetch = realFetch; } };
+}
+
+{
+  const { req, res, emailCalls, restoreFetch } = accountHistoryDigestMock();
+  try { await handler(req, res); } finally { restoreFetch(); }
+
+  assert(res.statusCode === 200, 'account-history digest wiring: the invocation returns 200');
+  assert(emailCalls.length === 1, `required test 3 (public + account-history opportunities in one consolidated digest): exactly one digest email is sent for the user across both uploads (got ${emailCalls.length})`);
+  const email = emailCalls[0];
+  if(email){
+    assert(email.to === 'histrep@example.com', 'the consolidated digest is addressed to the correct user');
+    assert(email.html.includes('L.L.Bean'), 'required test 3: the real public business signal (L.L.Bean) is present alongside account-history opportunities in the actual weekly-scan digest input');
+    assert(email.html.includes('Brightview Dental Group'), 'required test 1: Brightview enters the actual weekly digest input path');
+    assert(email.html.includes('Ridgeline Auto Group'), 'required test 2: Ridgeline enters the actual weekly digest input path');
+    assert(!email.html.includes('Meridian Office Partners'), 'a generic, non-grounded Repeat/Pattern template (opportunityType !== REPEAT PATTERN) is excluded from the digest');
+    // Count opportunity CARDS for Brightview (its own <h2> heading), not
+    // bare substring occurrences of the account name -- Brightview's own
+    // why-it-matters text also legitimately names the account, so a raw
+    // substring count would over-count a single, correctly-deduped card.
+    const brightviewCardCount = (email.html.match(/<h2[^>]*>Brightview Dental Group<\/h2>/g) || []).length;
+    assert(brightviewCardCount === 1, `required test 4 (duplicate history opportunities produce one digest entry): Brightview's identical follow-up, present via TWO uploads this user owns, renders as exactly one opportunity card in the digest (got ${brightviewCardCount})`);
+  }
+  assert(res.body?.digest?.length === 1 && res.body.digest[0].newSignals === 3, `the response reports exactly 3 consolidated digest entries for this user -- L.L.Bean, Brightview (once, not twice), Ridgeline (got ${res.body?.digest?.[0]?.newSignals})`);
+}
+
+{
+  // required test 6: an email failure while sending the account-history-
+  // inclusive digest is non-fatal -- both uploads' runs still finalize as
+  // complete, and the failure is reported transparently.
+  const { req, res, patchCalls, emailCalls, restoreFetch } = accountHistoryDigestMock({
+    resendBehavior: () => jsonResponse({ message: 'Resend simulated outage' }, false, 502)
+  });
+  try { await handler(req, res); } finally { restoreFetch(); }
+  assert(res.statusCode === 200, 'required test 6: the invocation still returns 200 even though the account-history-inclusive digest email failed');
+  const finalPatches = patchCalls.filter(p => p.body.status);
+  assert(finalPatches.length === 2 && finalPatches.every(p => p.body.status === 'complete'), 'required test 6: both uploads still finalize as complete despite the digest email failure');
+  assert(emailCalls.length === 1, 'required test 6: the email delivery was genuinely attempted once');
+  assert(res.body?.digest?.[0]?.emailSent === false && !!res.body?.digest?.[0]?.emailError, 'required test 6: the digest email failure is reported transparently, without hiding the completed research');
+}
+
+{
+  // required test 7 (extended to account-history): two different users in
+  // one invocation, each with their own account-history opportunity, remain
+  // fully isolated from one another.
+  const { req, res, emailCalls, restoreFetch } = accountHistoryDigestMock({ users: 2 });
+  try { await handler(req, res); } finally { restoreFetch(); }
+  assert(res.statusCode === 200, 'required test 7: the two-user account-history invocation returns 200');
+  assert(emailCalls.length === 2, `required test 7: exactly 2 digest emails are sent, one per user (got ${emailCalls.length})`);
+  const toRepOne = emailCalls.find(e => e.to === 'histrep@example.com');
+  const toRepTwo = emailCalls.find(e => e.to === 'histrep2@example.com');
+  assert(!!toRepOne && !!toRepTwo, 'required test 7: each user receives their own digest at their own address');
+  if(toRepOne && toRepTwo){
+    assert(toRepOne.html.includes('Brightview Dental Group') && !toRepOne.html.includes('Ridgeline Auto Group'), "required test 7: user one's digest contains only their own account-history opportunity (Brightview), never the other user's (Ridgeline)");
+    assert(toRepTwo.html.includes('Ridgeline Auto Group') && !toRepTwo.html.includes('Brightview Dental Group'), "required test 7: user two's digest contains only their own account-history opportunity (Ridgeline), never the other user's (Brightview)");
+  }
+}
+
+{
+  // required test 5 (dedicated): zero eligible opportunities -- research-
+  // batch finds no public signal and the only raw_data present is the
+  // excluded generic (non-REPEAT-PATTERN) template -- suppresses the email
+  // entirely, not just filters one row out of a non-empty digest.
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+  const upload = { id: 'upload-hist-zero', user_id: 'user-hist-zero', upload_name: 'Zero List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: 'user-hist-zero', email: 'zero@example.com', name: 'Zero Rep', company: '' } };
+  const account = { id: 'acct-zero', account_name: 'Meridian Office Partners', industry: '', contact_name: '', contact_email: '', metrics: { orderCount: 1 }, raw_data: { repeatPatterns: [{ opportunityType: 'GENERIC INDUSTRY TEMPLATE', opportunity: 'Employee Recognition Program', whyNow: 'no real pattern', conversationStarter: 'call the team' }] }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  const emailCallsZero = [];
+  const realFetchZero = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([upload]);
+    if (u.includes('/rest/v1/ha_accounts')) return jsonResponse([account]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') { const body = JSON.parse(options.body)[0]; return jsonResponse([{ id: 'run-zero', ...body }]); }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') { return jsonResponse([{ id: 'run-zero', ...JSON.parse(options.body) }]); }
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse([]);
+    if (u.includes('/api/research-batch')) {
+      const body = JSON.parse(options.body);
+      return jsonResponse({ signals: [], diagnostics: { structuredSummary: { eligibleAccounts: body.accounts.length, processedAccounts: body.accounts.length, failedAccounts: 0 } } });
+    }
+    if (u === 'https://api.resend.com/emails' && method === 'POST') { emailCallsZero.push(JSON.parse(options.body)); return jsonResponse({ id: 'resend-id-zero' }); }
+    throw new Error(`Unhandled fetch in zero-eligible account-history mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetchZero; }
+  assert(res.statusCode === 200, 'required test 5: a zero-eligible-opportunity invocation (only a generic, non-grounded template present) still returns 200');
+  assert(emailCallsZero.length === 0, 'required test 5: zero eligible opportunities (public or account-history) suppresses the digest email entirely');
+  assert(!res.body?.digest?.length, 'required test 5: the response reports no digest entries when nothing eligible was found');
+}
+
+// ---------------------------------------------------------------------------
 // Reconciliation item 1/2 for the paid-beta sprint: a genuinely NEW signal
 // that is retained/persisted (not discarded by makeSignal()'s actionability
 // gate -- see api/research-batch.js) but is stale/undated/past the ongoing

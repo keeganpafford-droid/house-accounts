@@ -262,6 +262,101 @@ function accountPayload(row){
     repeatPatterns: raw.repeatPatterns || []
   };
 }
+
+// Commercial-readiness correction round (final): the functional gap this
+// closes -- account-history opportunities (recent-order follow-ups,
+// upcoming/current/overdue reorder patterns) were computed and displayed
+// correctly on the dashboard, but never entered the weekly digest's own
+// input at all. The dashboard already computes and persists them on every
+// save (dashboard/index.html's serializeAccountForStorage() writes
+// existingSignals/repeatPatterns into ha_accounts.raw_data, and
+// accountPayload() above already reads both back out) -- so this reads
+// that ALREADY-COMPUTED, ALREADY-GROUNDED data (the exact same
+// signalLayerType/opportunityType/whyNow/reasonToReachOut/
+// conversationStarter text a rep sees on the dashboard, including this
+// round's corrected wording and lapsed-window honesty) rather than
+// recomputing anything server-side or adding a new table/migration.
+//
+// Deliberately excludes generic, non-grounded Repeat/Pattern-Signal
+// opportunities (opportunityType !== 'REPEAT PATTERN') from the digest --
+// same reasoning as the dashboard's own collapseDuplicateGenericRepeatSignals():
+// they are not evidence of a real detected reorder cadence, just an
+// industry-template guess, and do not belong in an actionability
+// notification like the digest.
+//
+// Honest limitation (documented, not fixed here, per "do not add a new
+// persistence table or migration"): unlike business signals (deduped
+// across invocations via the persisted event_fingerprint unique
+// constraint), there is no persisted "already digested this account-
+// history opportunity" record. A reorder opportunity that is still
+// current/approaching next week will appear in next week's digest again,
+// for as long as the underlying condition holds. Exact duplicates WITHIN
+// one invocation (the required, in-scope guarantee) are still fully
+// prevented -- see the per-account collapse below and dedupeDigestRows().
+function deriveAccountHistoryDigestRows(accountPayloads){
+  const rows = [];
+  for(const account of accountPayloads || []){
+    if(!account || !account.name) continue;
+    const existingSignals = Array.isArray(account.existingSignals) ? account.existingSignals : [];
+    const repeatPatterns = Array.isArray(account.repeatPatterns) ? account.repeatPatterns : [];
+
+    // At most one Follow-Up Signal per account -- the highest-scoring one --
+    // mirroring the dashboard's own collapseDuplicateFollowUps() (every
+    // Follow-Up template for one account describes the SAME single recent
+    // order, never genuinely distinct orders; see that function's comment).
+    const followUp = existingSignals
+      .filter(o => o && o.signalLayerType === 'Follow-Up Signal')
+      .sort((a, b) => Number(b.quickWinScore || b.confidence || 0) - Number(a.quickWinScore || a.confidence || 0))[0];
+    if(followUp){
+      rows.push({
+        account_name: account.name,
+        signal_type: 'Follow-Up Signal',
+        why_reach_out: clean(followUp.whyNow || followUp.reasonToReachOut || ''),
+        payload: { suggestedNextMove: followUp.conversationStarter || '', signalTitle: followUp.opportunity || followUp.opportunityName || '' }
+      });
+    }
+
+    // Every genuine, grounded reorder pattern (one per real detected
+    // category cadence) -- deduped by opportunity name as a defensive
+    // safety net against a stale/double-saved persisted duplicate.
+    const seenPatternKeys = new Set();
+    for(const pattern of repeatPatterns){
+      if(!pattern || pattern.opportunityType !== 'REPEAT PATTERN') continue;
+      const key = String(pattern.opportunity || pattern.opportunityName || '').toLowerCase().trim();
+      if(!key || seenPatternKeys.has(key)) continue;
+      seenPatternKeys.add(key);
+      rows.push({
+        account_name: account.name,
+        signal_type: 'Repeat / Pattern Signal',
+        why_reach_out: clean(pattern.whyNow || pattern.reasonToReachOut || ''),
+        payload: { suggestedNextMove: pattern.conversationStarter || '', signalTitle: pattern.opportunity || pattern.opportunityName || '' }
+      });
+    }
+  }
+  return rows;
+}
+
+// Required proof (duplicate history opportunities produce one digest
+// entry): a final, cheap safety net applied to the whole consolidated
+// bucket right before send -- catches the case deriveAccountHistoryDigestRows()'s
+// own per-upload dedup cannot see on its own, the SAME account appearing
+// in two different uploads this user owns with the same underlying
+// opportunity. Business-signal rows (which already carry a DB-enforced
+// unique event_fingerprint) are unaffected in practice -- two genuinely
+// different real events for the same account essentially never produce
+// byte-identical why_reach_out text, so this key does not merge them.
+function dedupeDigestRows(rows){
+  const seen = new Set();
+  const out = [];
+  for(const row of rows || []){
+    const key = `${String(row.account_name || '').toLowerCase().trim()}|${String(row.signal_type || '').toLowerCase().trim()}|${String(row.why_reach_out || '').toLowerCase().trim()}`;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 async function sendEmail({to, subject, html}){
   const key = process.env.RESEND_API_KEY;
   if(!key) return {skipped:true, reason:'Missing RESEND_API_KEY'};
@@ -530,6 +625,13 @@ export default async function handler(req, res){
       const accountPayloads = (accounts || []).map(accountPayload).filter(a => a.name && !['paused','archived'].includes(clean(a.monitoringStatus || '').toLowerCase()));
       if(!accountPayloads.length) continue;
 
+      // Computed here (cheap, synchronous, no network/provider call) so it
+      // is captured even if this upload's business-signal research below
+      // is skipped or partially cut off by the invocation deadline --
+      // account-history opportunities come entirely from already-stored
+      // order history, independent of this run's research outcome.
+      const accountHistoryDigestRows = deriveAccountHistoryDigestRows(accountPayloads);
+
       if(Date.now() >= deadline){
         // No time left in this invocation to even start this upload. It is
         // simply not processed this cycle — no 'running' row is created, so
@@ -721,35 +823,46 @@ export default async function handler(req, res){
           // events, and re-running a timed-out/partial run never re-emails
           // or re-inserts an event it already persisted.
           newSignalRows = Array.isArray(inserted) ? inserted : [];
-          // Priority 6 (paid-beta weekly digest correction): no email is
-          // sent here per-upload anymore. Newly-inserted signals are
-          // accumulated into perUserDigest, keyed by user, and exactly one
-          // consolidated email per user is sent after the whole per-upload
-          // loop below finishes -- see the digest-send step after the loop.
-          // This is unchanged for run tracking/dedup: ha_weekly_runs still
-          // gets one row per upload, the event-fingerprint dedup and the
-          // partial-unique-index concurrency guard are untouched.
-          //
-          // Reconciliation item 1: newSignalRows itself (used just below for
-          // the run's own newSignals count) still reflects EVERY genuinely
-          // new row persisted this run, including stale/undated/ceiling-past
-          // signals that are correctly retained for Research Details/account
-          // history. The digest, however, is an actionability notification,
-          // not a persistence report -- only rows the canonical boundary
-          // classifies as priority-eligible are accumulated into the user's
-          // digest bucket, so a user with only non-actionable new rows this
-          // run gets no email. QA round 3: routed through
-          // classifyLegacySignalActionability() rather than trusting
-          // row.payload.actionabilityStatus directly, so an internally
-          // inconsistent stored value can never leak an ineligible signal
-          // into the digest.
-          const digestEligibleRows = newSignalRows.filter(row => classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false);
-          if(digestEligibleRows.length){
-            const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };
-            bucket.newSignalRows.push(...digestEligibleRows);
-            bucket.accountsMonitored += accountPayloads.length;
-            perUserDigest.set(user.id, bucket);
-          }
+        }
+        // Priority 6 (paid-beta weekly digest correction): no email is sent
+        // here per-upload. Eligible signals are accumulated into
+        // perUserDigest, keyed by user, and exactly one consolidated email
+        // per user is sent after the whole per-upload loop below finishes --
+        // see the digest-send step after the loop. This is unchanged for
+        // run tracking/dedup: ha_weekly_runs still gets one row per upload,
+        // the event-fingerprint dedup and the partial-unique-index
+        // concurrency guard are untouched.
+        //
+        // Reconciliation item 1: newSignalRows itself (used just below for
+        // the run's own newSignals count) still reflects EVERY genuinely
+        // new row persisted this run, including stale/undated/ceiling-past
+        // signals that are correctly retained for Research Details/account
+        // history. The digest, however, is an actionability notification,
+        // not a persistence report -- only rows the canonical boundary
+        // classifies as priority-eligible are accumulated into the user's
+        // digest bucket, so a user with only non-actionable new rows this
+        // run gets no email. QA round 3: routed through
+        // classifyLegacySignalActionability() rather than trusting
+        // row.payload.actionabilityStatus directly, so an internally
+        // inconsistent stored value can never leak an ineligible signal
+        // into the digest. This gate is specific to business signals --
+        // account-history rows (accountHistoryDigestRows) have no
+        // actionabilityStatus concept and are never subject to it.
+        //
+        // Commercial-readiness correction round (final): moved outside the
+        // `if(rowsToInsert.length)` block above and combined with
+        // accountHistoryDigestRows here so a run that found ZERO new
+        // business signals (the common case) still correctly surfaces this
+        // upload's follow-up/reorder opportunities in the SAME digest
+        // bucket, updating accountsMonitored exactly once per upload either
+        // way.
+        const digestEligibleRows = newSignalRows.filter(row => classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false);
+        const allDigestRowsForUpload = [...digestEligibleRows, ...accountHistoryDigestRows];
+        if(allDigestRowsForUpload.length){
+          const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };
+          bucket.newSignalRows.push(...allDigestRowsForUpload);
+          bucket.accountsMonitored += accountPayloads.length;
+          perUserDigest.set(user.id, bucket);
         }
         const finalStatus = decideFinalStatus({
           accountsProcessed: progressSummary.accountsProcessed,
@@ -787,17 +900,21 @@ export default async function handler(req, res){
     const digestSummary = [];
     if(!dryRun){
       for(const [userId, bucket] of perUserDigest){
-        if(!bucket.newSignalRows.length) continue;
+        // Final, whole-bucket dedup -- catches the same account-history
+        // opportunity surfacing from two different uploads this user owns
+        // (deriveAccountHistoryDigestRows()'s own dedup is per-upload only).
+        const dedupedRows = dedupeDigestRows(bucket.newSignalRows);
+        if(!dedupedRows.length) continue;
         try{
           await sendEmail({
             to: bucket.user.email,
-            subject: weeklyBriefSubject(bucket.newSignalRows),
-            html: reportHtml(bucket.user, null, bucket.newSignalRows, baseUrl, weeklySummaryFromSignals(bucket.newSignalRows, bucket.accountsMonitored))
+            subject: weeklyBriefSubject(dedupedRows),
+            html: reportHtml(bucket.user, null, dedupedRows, baseUrl, weeklySummaryFromSignals(dedupedRows, bucket.accountsMonitored))
           });
-          digestSummary.push({userId, email:bucket.user.email, newSignals:bucket.newSignalRows.length, emailSent:true});
+          digestSummary.push({userId, email:bucket.user.email, newSignals:dedupedRows.length, emailSent:true});
         }catch(emailErr){
           console.error('[Weekly Scan] digest email failed for user', userId, emailErr);
-          digestSummary.push({userId, email:bucket.user.email, newSignals:bucket.newSignalRows.length, emailSent:false, emailError:emailErr.message});
+          digestSummary.push({userId, email:bucket.user.email, newSignals:dedupedRows.length, emailSent:false, emailError:emailErr.message});
         }
       }
     }
@@ -817,5 +934,10 @@ export {
   // change -- these are unchanged) so a local, no-email preview tool can
   // render the REAL production digest HTML instead of a mockup. See
   // scripts/generate-digest-preview.js.
-  reportHtml, opportunityCardHtml, weeklySummaryFromSignals, weeklyBriefSubject, metricRows
+  reportHtml, opportunityCardHtml, weeklySummaryFromSignals, weeklyBriefSubject, metricRows,
+  // Commercial-readiness correction round (final): exported (no behavior
+  // change) so the local preview tool can drive the exact same digest-row
+  // derivation the real handler uses, per "generate the local HTML preview
+  // through the exact final weekly-scan input path."
+  accountPayload, deriveAccountHistoryDigestRows, dedupeDigestRows
 };
