@@ -16,6 +16,7 @@ import {
   displayLabelForEventType,
   extractEventDate
 } from './signal-intelligence.js';
+import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
 
 // Phase 2A implementation-review item 5 — instrumentation privacy. Normal
@@ -1904,13 +1905,88 @@ async function resolveAuthenticatedUploadOwner(req, uploadId) {
     return { user: null, reason: 'invalid-token' };
   }
   if (!authUserId) return { user: null, reason: 'invalid-token' };
-  const userRows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUserId)}&select=id,email&limit=1`);
+  // Duplicate-company-research-control round: organization_id added to this
+  // SELECT (previously id,email only) so callers can resolve org-vs-solo
+  // scope for the duplicate-company check without a second round trip. This
+  // is the exact same ha_users table and column api/save-upload.js's
+  // getUsageContext()/orgUsers() and api/settings.js already read for the
+  // identical purpose (cross-upload, org-scoped company identity) -- no new
+  // table, no new authorization surface, the row itself is already fully
+  // verified (real auth token, matched to a real ha_users row) before this
+  // column is ever read.
+  const userRows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUserId)}&select=id,email,organization_id&limit=1`);
   const user = Array.isArray(userRows) ? userRows[0] : null;
   if (!user?.id) return { user: null, reason: 'invalid-token' };
   const uploadRows = await rbSupabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&select=id,user_id&limit=1`);
   const upload = Array.isArray(uploadRows) ? uploadRows[0] : null;
   if (!upload || upload.user_id !== user.id) return { user: null, reason: 'not-owner' };
   return { user, reason: null };
+}
+
+// Duplicate-company research control (beta round). Cost/spend protection
+// only -- never merges, shares, or exposes account records across uploads or
+// organizations; only ever tells the caller "a matching company is already
+// being actively researched elsewhere in your scope," using the caller's OWN
+// account name back to them.
+//
+// Scope: organization-wide when the resolved user belongs to one, else
+// solo-user-only. Reuses the exact scoping pattern api/save-upload.js's
+// getUsageContext()/orgUsers() already uses for the (also cross-upload,
+// also org-scoped) free-plan company-count check -- not reinvented here.
+// The user_id filter below is applied AT the query (PostgREST
+// user_id=in.(...)), never after fetching -- this scope resolution can never
+// see, let alone return, another organization's rows.
+async function resolveDuplicateCheckScopeUserIds(userId, organizationId) {
+  if (!organizationId) return [userId];
+  try {
+    const rows = await rbSupabase(`ha_users?organization_id=eq.${encodeURIComponent(organizationId)}&select=id`);
+    const ids = (Array.isArray(rows) ? rows : []).map(u => u.id).filter(Boolean);
+    return ids.length ? ids : [userId];
+  } catch (err) {
+    // Fail open at scope resolution too -- see findActiveDuplicateCompanyCollisions()'s
+    // own fail-open contract just below. A failure here must never block
+    // research; falling back to solo scope is the safe, conservative default
+    // (it can only under-protect, never expose another org's data).
+    console.warn('[research-batch] duplicate-company scope resolution failed; falling back to solo scope', { message: err && err.message });
+    return [userId];
+  }
+}
+
+// Returns a Set of normalized company keys (normalizeCompanyName() output)
+// currently claimed by an ACTIVE (status='running', lease not expired)
+// research run belonging to a DIFFERENT upload within the resolved scope.
+// Never includes the current upload's own run/accounts (excluded at the
+// query itself). Never inspects a user/org outside the resolved scope handed
+// to it. Fails open: any error here returns an empty Set (i.e. "no known
+// collisions") rather than throwing -- callers must never let a failure in
+// this check block or fail real research, per the duplicate-company-control
+// spec's explicit fail-open requirement.
+async function findActiveDuplicateCompanyCollisions({ userId, organizationId, uploadId }) {
+  try {
+    const scopeUserIds = await resolveDuplicateCheckScopeUserIds(userId, organizationId);
+    const userFilter = `in.(${scopeUserIds.map(encodeURIComponent).join(',')})`;
+    const nowIso = new Date().toISOString();
+    const otherRuns = await rbSupabase(
+      `ha_research_runs?user_id=${userFilter}&upload_id=neq.${encodeURIComponent(uploadId)}&status=eq.running&lease_expires_at=gt.${encodeURIComponent(nowIso)}&select=upload_id`
+    );
+    const otherUploadIds = [...new Set((Array.isArray(otherRuns) ? otherRuns : []).map(r => r.upload_id).filter(Boolean))];
+    if (!otherUploadIds.length) return new Set();
+
+    const uploadFilter = `in.(${otherUploadIds.map(encodeURIComponent).join(',')})`;
+    const otherAccounts = await rbSupabase(`ha_accounts?upload_id=${uploadFilter}&select=account_name`);
+    const collisions = new Set();
+    for (const row of (Array.isArray(otherAccounts) ? otherAccounts : [])) {
+      const key = normalizeCompanyName(row.account_name);
+      if (key) collisions.add(key);
+    }
+    return collisions;
+  } catch (err) {
+    console.warn('[research-batch] duplicate-company collision check failed; failing open (no collisions reported, research proceeds normally)', {
+      uploadId,
+      message: err && err.message
+    });
+    return new Set();
+  }
 }
 
 // Phase 2A implementation-review ROUND 2, items 3/4 — calls the atomic
@@ -2157,6 +2233,35 @@ export default async function handler(req, res) {
         // attempt's state).
         return res.status(200).json({ ok: true, applied: result.applied });
       }
+      if (researchRunAction === 'check-duplicates') {
+        // Duplicate-company research control (beta round): read-only,
+        // best-effort bookkeeping action, gated by the exact same
+        // uploadOwner resolution every other researchRunAction above already
+        // requires -- no new authorization surface. accountNames is
+        // optional: an explicit list checks only those account names; when
+        // omitted, every account currently on this upload is checked (the
+        // caller doesn't need to know in advance which single account, or
+        // whole list, it is about to dispatch).
+        const requestedNames = Array.isArray(body.accountNames)
+          ? body.accountNames.map(n => clean(n)).filter(Boolean)
+          : null;
+        let namesToCheck = requestedNames;
+        if (!namesToCheck) {
+          try {
+            const ownAccounts = await rbSupabase(`ha_accounts?upload_id=eq.${encodeURIComponent(targetUploadId)}&select=account_name`);
+            namesToCheck = (Array.isArray(ownAccounts) ? ownAccounts : []).map(a => a.account_name).filter(Boolean);
+          } catch (err) {
+            // Fail open (item 4): if we cannot even determine which of this
+            // upload's own accounts to check, report zero duplicates rather
+            // than blocking the caller from proceeding.
+            console.warn('[research-batch] duplicate-company check: could not load this upload\'s own accounts; failing open', { uploadId: targetUploadId, message: err && err.message });
+            return res.status(200).json({ ok: true, duplicateAccountNames: [], scope: uploadOwner.organization_id ? 'organization' : 'user', checkFailed: true });
+          }
+        }
+        const collisions = await findActiveDuplicateCompanyCollisions({ userId: uploadOwner.id, organizationId: uploadOwner.organization_id, uploadId: targetUploadId });
+        const duplicateAccountNames = namesToCheck.filter(name => collisions.has(normalizeCompanyName(name)));
+        return res.status(200).json({ ok: true, duplicateAccountNames, scope: uploadOwner.organization_id ? 'organization' : 'user' });
+      }
       return res.status(400).json({ error: `Unknown researchRunAction "${researchRunAction}".` });
     } catch (err) {
       return res.status(500).json({ error: err.message || 'Research run tracking request failed.' });
@@ -2210,7 +2315,7 @@ export default async function handler(req, res) {
     }
 
     const seenAccountKeys = new Set();
-    const safeAccounts = (Array.isArray(accounts) ? accounts : [])
+    let safeAccounts = (Array.isArray(accounts) ? accounts : [])
       .filter(a => a && a.name)
       .map((a, idx) => ({
         id: String(idx),
@@ -2240,6 +2345,48 @@ export default async function handler(req, res) {
       })
       .slice(0, Math.max(1, Math.min(Number(process.env.RESEARCH_BATCH_MAX_ACCOUNTS || 250), 500)));
     if (!safeAccounts.length) return res.status(400).json({ error: 'No accounts provided' });
+
+    // Duplicate-company research control (beta round): the authoritative
+    // enforcement point -- "at the production research dispatch point,
+    // before provider work begins." Every caller (individual research, list
+    // research, the automatic batch pass, and the per-account fallback loop)
+    // ultimately reaches this exact point before any OpenAI/Serper/Firecrawl
+    // call below. dashboard/index.html's callers also pre-check via the
+    // researchRunAction:'check-duplicates' action above and normally never
+    // send an already-known-colliding account here at all; this re-check is
+    // deliberate defense-in-depth for the narrow race window between that
+    // check and this request (another run claiming the same company in
+    // between), and is what makes the protection authoritative rather than
+    // purely advisory. Only reachable for uploadId-bound requests -- the
+    // anonymous prospecting flow (no uploadId, no authenticated owner) has no
+    // cross-upload identity to check against and is unaffected.
+    let skippedDuplicateAccountNames = [];
+    if (targetUploadId) {
+      const collisions = await findActiveDuplicateCompanyCollisions({ userId: uploadOwner.id, organizationId: uploadOwner.organization_id, uploadId: targetUploadId });
+      if (collisions.size) {
+        const kept = [];
+        for (const account of safeAccounts) {
+          if (collisions.has(normalizeCompanyName(account.name))) skippedDuplicateAccountNames.push(account.name);
+          else kept.push(account);
+        }
+        safeAccounts = kept;
+      }
+    }
+    if (!safeAccounts.length) {
+      // Every requested account was a currently-active duplicate elsewhere
+      // in scope -- an honest, distinct, non-error outcome (item 4: this is
+      // spend protection, not a reason to make research unavailable or to
+      // surface a scary generic failure). Never falls through to the
+      // generic "No accounts provided" 400 above.
+      return res.status(200).json({
+        ok: true,
+        byAccount: {},
+        signals: [],
+        skippedDuplicateAccountNames,
+        allAccountsSkippedAsDuplicates: true,
+        message: 'Every requested account is already being actively researched from another uploaded list. We skipped duplicate research for now.'
+      });
+    }
 
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
     let candidates = [];
@@ -2617,6 +2764,14 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       signals: finalSignals,
       byAccount,
       researchRunId: runId,
+      // Duplicate-company research control: accounts that were requested but
+      // excluded from safeAccounts above because a matching company already
+      // had active research elsewhere in scope. Always present (empty array
+      // when nothing was skipped) so callers can reliably distinguish "this
+      // account has zero real signals" from "this account was never actually
+      // researched" -- the two must never be conflated (a skipped duplicate
+      // must not be marked researched or have an empty result persisted).
+      skippedDuplicateAccountNames,
       providerUsage,
       diagnostics: {
         elapsedMs: Date.now() - startedAt,
@@ -2675,5 +2830,6 @@ export {
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES,
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
-  openaiUsageFromResponse, enrichCandidatesWithFirecrawl
+  openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
+  resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions
 };

@@ -2,6 +2,7 @@
 // Endpoint: POST /api/save-upload
 
 import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType } from './signal-intelligence.js';
+import { normalizeCompanyName } from './company-identity.js';
 import { createHash } from 'crypto';
 
 // Phase 2A implementation-review item 5 — same instrumentation-privacy
@@ -74,9 +75,11 @@ async function authFetchUser(req){
   return resp.json();
 }
 
-function normalizeCompanyName(name=''){
-  return clean(name).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
-}
+// FR: duplicate-company-research-control round -- normalizeCompanyName() is
+// now the shared api/company-identity.js implementation (byte-identical
+// regex to what lived here before), also used by api/settings.js and
+// api/research-batch.js's duplicate-company research check, instead of each
+// file hand-maintaining its own copy.
 async function orgUsers(orgId,userId){
   if(orgId){
     const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(orgId)}&select=id`, {method:'GET'}).catch(()=>[]);

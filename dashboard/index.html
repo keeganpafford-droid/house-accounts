@@ -2489,6 +2489,49 @@ async function claimAutomaticResearchRun(runIntent, explicitUploadId){
   return { ok: res.ok, status: res.status, data };
 }
 
+// Duplicate-company research control (beta round): checks, BEFORE ever
+// claiming a research run or calling a provider, which of the given account
+// names (or, if accountNames is omitted, every account currently on
+// uploadId) already have another, currently-active research run elsewhere in
+// this workspace -- see api/research-batch.js's researchRunAction:
+// 'check-duplicates'. This is cost/spend protection only: it never merges or
+// hides account records, and it must never make research unavailable on its
+// own -- any failure here (network error, non-ok response, malformed JSON)
+// fails OPEN, returning an empty duplicate list, exactly like the server's
+// own fail-open contract for this same check. Callers filter their own
+// account list against the returned names; this function has no side
+// effects and claims nothing.
+async function checkDuplicateCompanyResearch(uploadId, accountNames){
+  try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) return { ok:true, duplicateAccountNames:[] };
+    const res = await fetch('/api/research-batch', {
+      method:'POST',
+      headers,
+      body: JSON.stringify({ researchRunAction:'check-duplicates', uploadId, accountNames: accountNames || undefined })
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok || !data || !Array.isArray(data.duplicateAccountNames)) return { ok:true, duplicateAccountNames:[] };
+    return { ok:true, duplicateAccountNames: data.duplicateAccountNames, scope: data.scope || 'user' };
+  }catch(err){
+    console.warn('[Research] duplicate-company check failed; failing open (proceeding as if no duplicates were found)', { uploadId, message: err && err.message });
+    return { ok:true, duplicateAccountNames:[] };
+  }
+}
+
+// The one honest, production wording for a skipped duplicate-company
+// research collision -- used identically by the individual and list-level
+// research paths so the message never varies by accident. Never claims the
+// run is active "for this list" when it actually belongs to another list.
+// scope ('organization'|'user', from checkDuplicateCompanyResearch()'s own
+// response) decides whether "in this workspace" is said at all -- a Solo
+// user with no organization must never see workspace language implying a
+// team scope that was never actually checked.
+function duplicateCompanyResearchMessage(accountName, scope){
+  const workspacePhrase = scope === 'organization' ? ' in this workspace' : '';
+  return `${accountName} is already being researched from another uploaded list${workspacePhrase}. We skipped duplicate research for now. Try again after that run finishes.`;
+}
+
 // Phase 2A implementation-review ROUND 3, item 1 — renews the current
 // attempt's lease. Called from refreshOpportunityViews() immediately before
 // its trailing save (item 1's "heartbeat immediately before final
@@ -5751,6 +5794,16 @@ async function researchAccountFromManageModal(accountName, listId){
     return {ok:false, error:'This account no longer exists in this list.'};
   }
 
+  // Duplicate-company research control (beta round): checked BEFORE ever
+  // claiming this upload's research-run lock, so a colliding account never
+  // holds that lock for nothing. Spend protection only -- never blocks an
+  // unrelated account, never marks this account researched, never persists
+  // an empty result for it.
+  const dupCheck = await checkDuplicateCompanyResearch(expectedUploadId, [account.name]);
+  if(dupCheck.duplicateAccountNames.includes(account.name)){
+    return {ok:false, error: duplicateCompanyResearchMessage(account.name, dupCheck.scope), duplicateCompany:true};
+  }
+
   const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
@@ -5876,6 +5929,28 @@ async function researchListFromManageModal(listId){
   const activeAccounts = allAccounts.filter(a => a.monitoringStatus !== 'paused');
   if(!activeAccounts.length) return {ok:false, error:'This list has no active accounts to research.'};
 
+  // Duplicate-company research control (beta round): checked BEFORE ever
+  // claiming this upload's research-run lock, so a list made up entirely of
+  // colliding accounts never holds that lock for nothing. Only the colliding
+  // accounts are excluded -- unrelated accounts in the same list are
+  // unaffected. Tracked separately from `failures` below: a skipped
+  // duplicate is not a research failure, and must never be marked
+  // researched or have an empty result persisted.
+  const dupCheck = await checkDuplicateCompanyResearch(expectedUploadId, activeAccounts.map(a => a.name));
+  const duplicateNameSet = new Set(dupCheck.duplicateAccountNames || []);
+  const skippedDuplicates = activeAccounts
+    .filter(a => duplicateNameSet.has(a.name))
+    .map(a => ({uploadId: expectedUploadId, accountId: a.id, accountName: a.name}));
+  const researchableAccounts = activeAccounts.filter(a => !duplicateNameSet.has(a.name));
+  if(!researchableAccounts.length){
+    return {
+      ok:false,
+      error: `Every active account in this list is already being researched from another uploaded list${dupCheck.scope==='organization'?' in this workspace':''}. We skipped duplicate research for now. Try again after those runs finish.`,
+      allSkippedAsDuplicates:true,
+      skippedDuplicates
+    };
+  }
+
   const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
@@ -5909,8 +5984,8 @@ async function researchListFromManageModal(listId){
     // (real order history, no public-signal research needed) go through
     // /api/research-account individually, same as a single "Research
     // Account" click would for each of them.
-    const enhancedGroup = activeAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
-    const historicalGroup = activeAccounts.filter(a => !enhancedGroup.includes(a));
+    const enhancedGroup = researchableAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
+    const historicalGroup = researchableAccounts.filter(a => !enhancedGroup.includes(a));
 
     if(enhancedGroup.length){
       const res = await fetch('/api/research-batch', {
@@ -5925,7 +6000,19 @@ async function researchListFromManageModal(listId){
         })
       });
       const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${enhancedGroup.length} accounts`});
+      // Defense-in-depth for the narrow race window between the pre-check
+      // above and this request: the server independently re-checks and may
+      // have excluded an account from its own dispatch even though it
+      // passed the pre-check moments earlier -- see api/research-batch.js's
+      // own skippedDuplicateAccountNames. Never treated as "researched, zero
+      // signals": excluded from attempted/withSignals and added to
+      // skippedDuplicates instead.
+      const serverSkipped = new Set(Array.isArray(data.skippedDuplicateAccountNames) ? data.skippedDuplicateAccountNames : []);
       enhancedGroup.forEach(account => {
+        if(serverSkipped.has(account.name)){
+          skippedDuplicates.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
+          return;
+        }
         attempted += 1;
         const signals = (data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : [];
         account.signals = signals;
@@ -5977,7 +6064,21 @@ async function researchListFromManageModal(listId){
       return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
     }
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    return {ok:true, attempted, withSignals, totalSignals, failures, accountCount: activeAccounts.length, accountsWithOpportunities: accountResults.filter(a => a.opportunityCount > 0)};
+    return {
+      ok:true,
+      attempted,
+      withSignals,
+      totalSignals,
+      failures,
+      // "accounts requested" per the required completion summary -- every
+      // active account originally considered, including any later excluded
+      // as a duplicate. accountsSkippedAsDuplicates is the same information
+      // scripts/reports can use to avoid double-counting duplicates as
+      // failures.
+      accountCount: activeAccounts.length,
+      skippedDuplicates,
+      accountsWithOpportunities: accountResults.filter(a => a.opportunityCount > 0)
+    };
   }catch(err){
     await reportResearchRunOutcome('fail', err, runContext);
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
@@ -6282,7 +6383,16 @@ async function researchAccountsBatch(accounts, options = {}){
       aiError: ''
     });
 
+    // Duplicate-company research control: defense-in-depth for the narrow
+    // race window between researchTopAccounts()'s own pre-check and this
+    // request -- see api/research-batch.js's skippedDuplicateAccountNames.
+    // An account named here was excluded from the server's own dispatch;
+    // treating a missing byAccount entry as "researched, zero signals"
+    // would incorrectly mark it researched, so these are skipped entirely
+    // rather than falling into the loop below.
+    const serverSkippedDuplicates = new Set(Array.isArray(data.skippedDuplicateAccountNames) ? data.skippedDuplicateAccountNames : []);
     accounts.forEach(account => {
+      if(serverSkippedDuplicates.has(account.name)) return;
       const signals = byAccount[account.name] || [];
       if(signals.length){
         account.signals = dedupeSignalsClient([...(account.signals || []), ...signals]);
@@ -6365,6 +6475,30 @@ async function researchTopAccounts(options = {}){
   const auto = options && options.auto;
   if(btn){ btn.disabled = true; btn.textContent = 'Checking research status...'; }
 
+  // Duplicate-company research control (beta round): resolved and checked
+  // BEFORE claiming the per-upload research-run lock, exactly like the
+  // individual/list-level paths -- getAccountsForResearch() has no
+  // dependency on the claim itself, so this ordering costs nothing and means
+  // a pass made up entirely of accounts already active elsewhere never holds
+  // this upload's one run slot for nothing. Only the colliding accounts are
+  // excluded -- unrelated accounts proceed normally.
+  let accounts = getAccountsForResearch(options);
+  const dupCheck = await checkDuplicateCompanyResearch(currentUploadId, accounts.map(a => a.name));
+  const duplicateNameSet = new Set(dupCheck.duplicateAccountNames || []);
+  // Diagnostics can't be recorded here yet -- window.researchDiagnostics is
+  // reset (fresh array) further below, right before the real research pass
+  // starts, which would silently discard an entry pushed this early. The
+  // skipped names are carried forward and logged AFTER that reset instead.
+  const skippedDuplicateNames = duplicateNameSet.size
+    ? accounts.filter(a => duplicateNameSet.has(a.name)).map(a => a.name)
+    : [];
+  if(duplicateNameSet.size) accounts = accounts.filter(a => !duplicateNameSet.has(a.name));
+  if(!accounts.length){
+    researchInProgress = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
+    return;
+  }
+
   // Phase 2A implementation-review ROUND 2, item 3/4: claim the server-owned
   // run BEFORE doing any actual research. This single claim covers the
   // entire pass (the batch call below AND the fallback loop's up to 4
@@ -6422,8 +6556,22 @@ async function researchTopAccounts(options = {}){
 
   if(btn){ btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
   window.researchDiagnostics = [];
+  if(skippedDuplicateNames.length){
+    // No dedicated toast/summary UI exists for this automatic/whole-list
+    // pass -- logged into the research-diagnostics record (the same one the
+    // diagnostics panel already reads) so the skip is visible without
+    // inventing new UI surface for a background pass.
+    getResearchDiagnostics().push({
+      accountName: 'Duplicate-company research control',
+      signalsFound: 0, searchResultsFound: 0, rawSearchResultsFound: 0,
+      acceptedSearchSignals: 0, domainSignalsFound: 0, rejectedResults: 0,
+      queriesRun: 0, domainProbes: 0, domainUsed: '', directDomainCandidates: 0,
+      sourceCoverage: {}, acceptedByBucket: {}, elapsedMs: 0, candidateSamples: [],
+      aiEnabled: false, aiRawSignals: 0, aiAcceptedSignals: 0,
+      aiError: `Skipped ${skippedDuplicateNames.length} account${skippedDuplicateNames.length===1?'':'s'} already being researched from another uploaded list: ${skippedDuplicateNames.join(', ')}.`
+    });
+  }
   renderResearchDiagnostics();
-  const accounts = getAccountsForResearch(options);
 
   try{
     // First try the batch AI web-search path. This mirrors the Google-AI-style research flow.
@@ -10049,7 +10197,12 @@ else wireUploadSuccessStateControls();
    await load();
    const statusEl = document.querySelector(`.acct-mgr-list[data-list-id="${CSS.escape(listId)}"] [data-list-status]`);
    if(result.ok){
-     const summary = `Research complete — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}.`;
+     // Duplicate-company research control: skippedDuplicates accounts are
+     // reported distinctly from failures -- they were never a research
+     // failure, they were correctly excluded because a matching company was
+     // already being actively researched elsewhere in scope.
+     const skippedCount = Array.isArray(result.skippedDuplicates) ? result.skippedDuplicates.length : 0;
+     const summary = `Research complete — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}${skippedCount ? `, ${skippedCount} skipped (already being researched from another list)` : ''}.`;
      // Individual research and list research must both update aggregate
      // saved-signal totals without a browser refresh -- refresh BEFORE
      // rendering the summary/action below so window.accountRadarAccounts

@@ -104,10 +104,10 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
 // correctness guarantee, not these numbers.
 const EXTRACTED = {
   claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2480, 2490, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2510, 2527, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2541, 2566, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2588, 2598, {async: true}),
-  request: extractFn('request', 9667, 9684, {async: true})
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2553, 2570, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2584, 2609, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2631, 2641, {async: true}),
+  request: extractFn('request', 9815, 9832, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

@@ -39,12 +39,12 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // line), not hand-counted.
 const SRC = [
   extractLines('currentUploadName', 2443, 2443, "let currentUploadName"),
-  extractLines('add-customer-data-modal-and-route', 3295, 3418, 'let addCustomerDataModalTriggerEl = null;'),
-  extractLines('guided-tour', 3701, 4091, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
-  extractLines('beta-welcome-modal', 4093, 4106, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 9351, 9396, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 9615, 9618, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 9620, 9649, 'function dismissUploadSuccessState(){')
+  extractLines('add-customer-data-modal-and-route', 3338, 3461, 'let addCustomerDataModalTriggerEl = null;'),
+  extractLines('guided-tour', 3744, 4134, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
+  extractLines('beta-welcome-modal', 4136, 4149, 'function showBetaWelcomeModal(){'),
+  extractLines('upload-success-state', 9499, 9544, 'const MISSING_FIELD_LABELS = {'),
+  extractLines('escapeHtml', 9763, 9766, 'function escapeHtml(text){'),
+  extractLines('dismissUploadSuccessState-and-wiring', 9768, 9797, 'function dismissUploadSuccessState(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------

@@ -1,3 +1,5 @@
+import { normalizeCompanyName } from './company-identity.js';
+
 function json(res,status,body){res.setHeader('Cache-Control','no-store, max-age=0');return res.status(status).json(body)}
 function clean(v=''){return String(v||'').trim()}
 function env(){const rawUrl=process.env.SUPABASE_URL;const key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!rawUrl||!key)throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');const url=String(rawUrl).trim().replace(/\/+$/,'').replace(/\/rest\/v1$/i,'');return{url,key}}
@@ -5,7 +7,12 @@ async function sb(path, options={}){const{url,key}=env();const resp=await fetch(
 async function authUser(req){const token=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const resp=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});if(!resp.ok)return null;return resp.json()}
 async function haUser(req){const au=await authUser(req);if(!au?.id)return null;const {data}=await sb(`ha_users?auth_user_id=eq.${encodeURIComponent(au.id)}&select=*&limit=1`);return Array.isArray(data)?data[0]:null}
 async function loadOrg(user){if(!user?.organization_id)return null;const {data}=await sb(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`);return Array.isArray(data)?data[0]:null}
-function normalizeName(v=''){return clean(v).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim()}
+// FR: duplicate-company-research-control round -- normalizeName() now
+// delegates to the shared api/company-identity.js implementation
+// (byte-identical regex to what lived here before), also used by
+// api/save-upload.js and api/research-batch.js's duplicate-company research
+// check, instead of each file hand-maintaining its own copy.
+const normalizeName = normalizeCompanyName;
 // Phase 2A / A1: the only plan values a client is allowed to request through
 // this public endpoint. 'enterprise' and 'manual' are deliberately absent —
 // planConfig()/planPatch() below still know how to build an enterprise patch
