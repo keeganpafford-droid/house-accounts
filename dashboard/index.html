@@ -1749,6 +1749,130 @@
   .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
   .beta-modal{padding:24px;}
 }
+
+/* Onboarding sprint: guided product tour. Reuses the same navy/teal/cream/
+   gold identity as the beta welcome modal above rather than introducing a
+   new visual language. */
+.ha-tour-overlay{
+  display:none;
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  background:rgba(23,55,94,.55);
+}
+.ha-tour-overlay.active{display:block;}
+.ha-tour-spotlight{
+  position:fixed;
+  z-index:10001;
+  border-radius:10px;
+  box-shadow:0 0 0 6px rgba(31,183,174,.55), 0 0 0 9999px rgba(23,55,94,.55);
+  pointer-events:none;
+  transition:top .18s ease, left .18s ease, width .18s ease, height .18s ease;
+}
+.ha-tour-card{
+  position:fixed;
+  z-index:10002;
+  width:min(360px, calc(100vw - 32px));
+  background:#fff;
+  border:2px solid #17375E;
+  border-radius:12px;
+  padding:22px;
+  box-shadow:0 20px 60px rgba(23,55,94,.28);
+  transition:top .18s ease, left .18s ease;
+}
+.ha-tour-card.centered{
+  position:fixed;
+  top:50%!important;
+  left:50%!important;
+  transform:translate(-50%,-50%);
+}
+.ha-tour-eyebrow{
+  font-family:var(--mono, ui-monospace, monospace);
+  font-size:.68rem;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+  font-weight:800;
+  color:#B45309;
+  margin-bottom:8px;
+}
+.ha-tour-card h3{
+  font-family:var(--display, Georgia, serif);
+  font-size:1.35rem;
+  line-height:1.15;
+  margin:0 0 10px;
+  color:#17375E;
+}
+.ha-tour-card p{margin:0 0 16px;color:#17375E;line-height:1.5;font-size:.94rem;}
+.ha-tour-dots{display:flex;gap:6px;margin-bottom:16px;}
+.ha-tour-dot{width:7px;height:7px;border-radius:50%;background:#D8DEE9;}
+.ha-tour-dot.active{background:#1FB7AE;}
+.ha-tour-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.ha-tour-actions-right{display:flex;gap:8px;flex-wrap:wrap;}
+.ha-tour-btn{
+  border:0;
+  border-radius:6px;
+  padding:10px 16px;
+  font-weight:800;
+  font-size:.84rem;
+  cursor:pointer;
+  font-family:inherit;
+}
+.ha-tour-btn-primary{background:#F5A623;color:#1f2937;}
+.ha-tour-btn-secondary{background:#F7F8FA;color:#17375E;border:1px solid #D8DEE9;}
+.ha-tour-btn-skip{background:none;color:#6B7280;padding:10px 4px;}
+.ha-tour-btn:focus-visible,
+.ha-tour-btn-skip:focus-visible{outline:3px solid #1FB7AE;outline-offset:2px;}
+.ha-tour-btn[disabled]{opacity:.5;cursor:not-allowed;}
+@media(max-width:640px){
+  .ha-tour-card{padding:18px;width:calc(100vw - 24px);}
+  .ha-tour-actions{flex-direction:column;align-items:stretch;}
+  .ha-tour-actions-right{justify-content:flex-end;}
+}
+
+/* Onboarding sprint: branded first-upload success state -- replaces the
+   old bare "Saved account list for weekly monitoring." text notice, which
+   never explained what was accepted or what to do next. */
+.upload-success-state{
+  position:relative;
+  background:#fff;
+  border:2px solid #17375E;
+  border-left:6px solid #1FB7AE;
+  border-radius:10px;
+  padding:22px 26px;
+  margin-bottom:20px;
+}
+.upload-success-dismiss{
+  position:absolute;
+  top:12px;
+  right:14px;
+  border:0;
+  background:none;
+  color:#6B7280;
+  font-size:1.3rem;
+  line-height:1;
+  cursor:pointer;
+  padding:4px;
+}
+.upload-success-dismiss:hover{color:#17375E;}
+.upload-success-title{
+  font-family:var(--display, Georgia, serif);
+  font-size:1.4rem;
+  color:#17375E;
+  margin-bottom:8px;
+  padding-right:24px;
+}
+.upload-success-detail{color:#17375E;line-height:1.5;font-size:.94rem;margin-bottom:10px;}
+.upload-success-warning{
+  background:#fff8e8;
+  border-left:3px solid #F5A623;
+  border-radius:6px;
+  padding:10px 14px;
+  color:#7a4a00;
+  font-size:.88rem;
+  line-height:1.45;
+  margin-bottom:14px;
+}
+.upload-success-actions{display:flex;gap:10px;flex-wrap:wrap;}
 .locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 
 .monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
@@ -1862,7 +1986,7 @@
     <a href="/dashboard/" class="brand-link"><h1>House Accounts</h1></a>
     <span class="tag">Promo Distributor Tool</span>
   </div>
-  <nav class="site-nav" aria-label="Main navigation"><a href="/dashboard/">Dashboard</a><a href="/prospects/">Prospects</a><a href="/export-guides/">Import Guides</a><a href="/contact.html">Feedback</a></nav>
+  <nav class="site-nav" aria-label="Main navigation"><a href="/dashboard/">Dashboard</a><a href="/export-guides/">Export Guides</a><a href="/contact.html">Feedback</a></nav>
   <div class="header-copy"><strong>Turn dormant house accounts into active revenue.</strong><span>We find the signals. You close the deals.</span></div>
 </header>
 
@@ -1889,10 +2013,28 @@
       <p>Our mission is simple:</p>
       <div class="beta-mission">Help promotional products sales reps answer one question:<br>Who should I contact today, and why?</div>
       <p>As a beta user, your feedback will directly influence what we build next.</p>
-      <div class="beta-setup-time">Estimated setup time: 3–5 minutes</div>
+      <div class="beta-setup-time">A 60–90 second tour, then your first upload takes about 2–3 minutes.</div>
       <button class="btn" type="button" id="betaWelcomeStartBtn">Get Started</button>
     </div>
   </div>
+
+  <div class="ha-tour-overlay" id="haTourOverlay" aria-hidden="true">
+    <div class="ha-tour-spotlight" id="haTourSpotlight" hidden></div>
+    <div class="ha-tour-card" id="haTourCard" role="dialog" aria-modal="true" aria-labelledby="haTourTitle" aria-describedby="haTourBody" tabindex="-1">
+      <div class="ha-tour-eyebrow" id="haTourEyebrow"></div>
+      <h3 id="haTourTitle"></h3>
+      <p id="haTourBody"></p>
+      <div class="ha-tour-dots" id="haTourDots"></div>
+      <div class="ha-tour-actions">
+        <button type="button" class="ha-tour-btn-skip" id="haTourSkipBtn">Skip Tour</button>
+        <div class="ha-tour-actions-right">
+          <button type="button" class="ha-tour-btn ha-tour-btn-secondary" id="haTourBackBtn">Back</button>
+          <button type="button" class="ha-tour-btn ha-tour-btn-primary" id="haTourNextBtn">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <section class="lead-gate" id="leadGate">
     <h2>Know which house accounts to call this week.</h2>
     <div class="promise">Enter your information and upload your customer list. House Accounts automatically analyzes your accounts and shows your team the best reasons to reach out.</div>
@@ -2088,11 +2230,23 @@
   </div>
   <div class="member-empty-state" id="memberEmptyState" style="display:none;">
     <strong>My View</strong><br>
-    You haven't uploaded any customer or prospect lists yet.<br>
+    You haven't uploaded any customer accounts yet.<br>
     <span>Upload your own customer order history to begin receiving your personal recommendations.</span>
   </div>
 
   <div id="results">
+
+    <section class="upload-success-state" id="uploadSuccessState" style="display:none;" role="status" aria-live="polite">
+      <button class="upload-success-dismiss" id="uploadSuccessDismiss" type="button" aria-label="Dismiss">&times;</button>
+      <div class="upload-success-title" id="uploadSuccessTitle"></div>
+      <div class="upload-success-detail" id="uploadSuccessDetail"></div>
+      <div class="upload-success-warning" id="uploadSuccessWarning" hidden></div>
+      <div class="upload-success-actions">
+        <button class="btn" type="button" id="uploadSuccessViewPrioritiesBtn">View Priorities</button>
+        <button class="btn btn-secondary" type="button" id="uploadSuccessManageAccountsBtn">Manage Customer Accounts</button>
+        <button class="btn btn-secondary" type="button" id="uploadSuccessAnotherBtn">Upload Another List</button>
+      </div>
+    </section>
 
     <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
       <div class="customer-dashboard-top">
@@ -3049,6 +3203,15 @@ function handleMvpDashboardRoute(){
   if(window.location.hash === '#add-customer-data' || window.location.hash === '#dropzone'){
     window.setTimeout(openLightweightCustomerUpload, 0);
   }
+  // "Restart Product Tour" (Help menu, available site-wide via
+  // site-header.js) links to /dashboard/#restart-tour -- the tour only
+  // ever makes sense to run from here, since it spotlights real dashboard
+  // elements. Explicit user action only; this route is never visited
+  // automatically, so returning users are never blocked or interrupted by
+  // it (required: "returning users must not be blocked by the tour").
+  if(window.location.hash === '#restart-tour'){
+    window.setTimeout(launchGuidedTour, 0);
+  }
 }
 window.addEventListener('hashchange', handleMvpDashboardRoute);
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', handleMvpDashboardRoute);
@@ -3092,7 +3255,7 @@ function renderDashboardViewSwitcher(){
   if(snap){
     snap.textContent = canTeam
       ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
-      : (hasCanonicalSnapshot ? `Your organization is monitoring ${customerCount} customers and ${prospectCount} prospects.` : 'Your account view is loading.');
+      : (hasCanonicalSnapshot ? `Your organization is monitoring ${customerCount} customer account${customerCount===1?'':'s'}.` : 'Your account view is loading.');
   }
   if(buttons){
     buttons.style.display = canTeam ? 'flex' : 'none';
@@ -3105,7 +3268,7 @@ function showJoinedWelcomeIfNeeded(){
   const params = new URLSearchParams(window.location.search);
   if(params.get('joined') !== '1') return;
   const orgName = currentDashboardData?.organization?.name || dashboardUsage?.organization?.name || 'your organization';
-  const msg = `Welcome to ${orgName}. Your team is already monitoring customer and prospect accounts. Upload your own list to get personalized recommendations.`;
+  const msg = `Welcome to ${orgName}. Your team is already monitoring house accounts. Upload your own customer list to get personalized recommendations.`;
   const banner = document.getElementById('savedDashboardBanner');
   if(banner){ banner.style.display='block'; banner.innerHTML = `<strong>${escapeHtml(msg)}</strong>`; }
 }
@@ -3211,6 +3374,267 @@ function getBetaFirstName(){
   return String(lead.name).trim().split(/\s+/)[0] || '';
 }
 
+// ---------------------------------------------------------------------------
+// Onboarding sprint: guided product tour.
+//
+// Persistence: user-namespaced localStorage, following the exact same
+// pattern already established by the Recently Researched dismissal
+// mechanism (dismissedResearchNamespace()/DISMISSED_RESEARCH_STORAGE_PREFIX
+// above) -- there is no existing server-side per-user preference store to
+// extend, and adding one is a migration this sprint is not authorized to
+// make. Key: `ha_guided_tour_v1::<userNamespace>`, namespaced by
+// HouseAuth.getUser()'s auth_user_id (falling back to id, then email, then
+// 'anonymous'), so two different people signed in on the same browser never
+// see or inherit each other's tour completion state (required test 6).
+// Cross-device limitation (documented, not fixed here): completing or
+// skipping the tour on one browser/device does not carry to another, since
+// this is plain localStorage, not a synced server record.
+// ---------------------------------------------------------------------------
+const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';
+function guidedTourNamespace(){
+  try{
+    const user = (window.HouseAuth && typeof HouseAuth.getUser === 'function') ? HouseAuth.getUser() : null;
+    const raw = user && (user.auth_user_id || user.id || user.email);
+    return raw ? String(raw).trim().toLowerCase() : 'anonymous';
+  }catch(err){ return 'anonymous'; }
+}
+function guidedTourStorageKey(){ return `${GUIDED_TOUR_STORAGE_PREFIX}${guidedTourNamespace()}`; }
+function readGuidedTourState(){
+  try{
+    const raw = localStorage.getItem(guidedTourStorageKey());
+    if(!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  }catch(err){ return {}; }
+}
+function writeGuidedTourState(state){
+  try{ localStorage.setItem(guidedTourStorageKey(), JSON.stringify(state)); }
+  catch(err){ /* best-effort only -- localStorage may be unavailable/full/corrupt */ }
+}
+function markGuidedTourStatus(status){
+  writeGuidedTourState({ status, updatedAt: new Date().toISOString() });
+}
+function guidedTourStatus(){
+  return readGuidedTourState().status || '';
+}
+
+// Five required steps, in the required order. `target` is a CSS selector
+// for the REAL interface element this step explains -- when that element
+// exists AND is actually visible (not hidden behind an empty #results
+// panel for a brand-new user with no data yet), the tour spotlights it in
+// place. When it exists but is not currently visible, the step still shows
+// its explanation as a centered card rather than skipping the step or
+// spotlighting nothing -- every new user completes all five steps even
+// before their first upload, which is exactly when this tour matters most.
+const GUIDED_TOUR_STEPS = [
+  {
+    id: 'add-customer-data',
+    target: '#dropzone',
+    eyebrow: 'Step 1 of 5',
+    title: 'Add Customer Data',
+    body: 'Start by uploading your existing customer and order history -- not a cold prospect list. House Accounts uses the relationships you already have to find timely, real reasons to reach out.'
+  },
+  {
+    id: 'export-guides',
+    target: 'a[href="/export-guides/"]',
+    eyebrow: 'Step 2 of 5',
+    title: 'Export Guides',
+    body: "Not sure how to get a customer export out of your CRM, order system, or spreadsheet? Export Guides has simple, step-by-step instructions for the system you already use."
+  },
+  {
+    id: 'manage-accounts',
+    target: '#manageCustomerAccountsBtn',
+    eyebrow: 'Step 3 of 5',
+    title: 'Your Accounts',
+    body: 'Manage Customer Accounts is where you monitor, pause, research, or remove any uploaded list -- all your uploaded customer lists live here.'
+  },
+  {
+    id: 'weekly-priorities',
+    target: '#timeboxSectionHeader',
+    eyebrow: 'Step 4 of 5',
+    title: "This Week's Priorities",
+    body: 'House Accounts prioritizes real business triggers, upcoming reorder windows, and customer follow-ups here, so you always know exactly who to contact this week and why.'
+  },
+  {
+    id: 'prepare-for-call',
+    target: '.btn-generate-play',
+    eyebrow: 'Step 5 of 5',
+    title: 'Prepare for Call',
+    body: 'Every opportunity includes the specific reason to reach out, a suggested conversation, account context, and the evidence behind it -- everything you need before you pick up the phone.'
+  }
+];
+
+let guidedTourStepIndex = 0;
+let guidedTourActive = false;
+let guidedTourTriggerEl = null;
+let guidedTourResizeHandlerBound = false;
+
+function guidedTourElements(){
+  return {
+    overlay: document.getElementById('haTourOverlay'),
+    spotlight: document.getElementById('haTourSpotlight'),
+    card: document.getElementById('haTourCard'),
+    eyebrow: document.getElementById('haTourEyebrow'),
+    title: document.getElementById('haTourTitle'),
+    body: document.getElementById('haTourBody'),
+    dots: document.getElementById('haTourDots'),
+    skipBtn: document.getElementById('haTourSkipBtn'),
+    backBtn: document.getElementById('haTourBackBtn'),
+    nextBtn: document.getElementById('haTourNextBtn')
+  };
+}
+
+// An element only counts as a real spotlight target when it is actually
+// on-screen right now -- offsetParent is null for anything inside a
+// display:none ancestor (e.g. #results before a brand-new user's first
+// upload), which is exactly the case this must detect and fall back from.
+function isElementVisibleForTour(el){
+  if(!el) return false;
+  if(el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function positionGuidedTourCard(target){
+  const { spotlight, card } = guidedTourElements();
+  if(!card) return;
+  const visible = isElementVisibleForTour(target);
+  if(!visible){
+    card.classList.add('centered');
+    if(spotlight) spotlight.hidden = true;
+    return;
+  }
+  card.classList.remove('centered');
+  const rect = target.getBoundingClientRect();
+  const margin = 12;
+  if(spotlight){
+    spotlight.hidden = false;
+    spotlight.style.top = `${Math.max(rect.top - margin, 4)}px`;
+    spotlight.style.left = `${Math.max(rect.left - margin, 4)}px`;
+    spotlight.style.width = `${rect.width + margin * 2}px`;
+    spotlight.style.height = `${rect.height + margin * 2}px`;
+  }
+  // Prefer placing the card below the target; flip above if there is not
+  // enough room; clamp horizontally so the card can never render partially
+  // off-screen on a laptop or mobile viewport.
+  const cardWidth = Math.min(360, window.innerWidth - 32);
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const placeAbove = spaceBelow < 220 && rect.top > 220;
+  let top = placeAbove ? Math.max(rect.top - margin - 10, 12) : rect.bottom + margin + 10;
+  if(!placeAbove) top = Math.min(top, window.innerHeight - 60);
+  let left = rect.left;
+  left = Math.max(12, Math.min(left, window.innerWidth - cardWidth - 12));
+  card.style.top = `${top}px`;
+  card.style.left = `${left}px`;
+  if(placeAbove){
+    // Anchor the bottom of the card to just above the target instead of
+    // the top, so a tall card never overlaps the spotlighted element.
+    card.style.top = 'auto';
+    card.style.bottom = `${Math.max(window.innerHeight - rect.top + margin + 10, 12)}px`;
+  } else {
+    card.style.bottom = 'auto';
+  }
+}
+
+function renderGuidedTourStep(){
+  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  if(!step) return;
+  const { eyebrow, title, body, dots, backBtn, nextBtn, card } = guidedTourElements();
+  if(eyebrow) eyebrow.textContent = step.eyebrow;
+  if(title) title.textContent = step.title;
+  if(body) body.textContent = step.body;
+  if(dots){
+    dots.innerHTML = GUIDED_TOUR_STEPS.map((_, i) => `<span class="ha-tour-dot${i === guidedTourStepIndex ? ' active' : ''}"></span>`).join('');
+  }
+  if(backBtn) backBtn.disabled = guidedTourStepIndex === 0;
+  if(nextBtn) nextBtn.textContent = guidedTourStepIndex === GUIDED_TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+  const target = step.target ? document.querySelector(step.target) : null;
+  positionGuidedTourCard(target);
+  if(card) card.focus({preventScroll:true});
+}
+
+function guidedTourKeydownHandler(e){
+  if(!guidedTourActive) return;
+  if(e.key === 'Escape'){ e.preventDefault(); skipGuidedTour(); return; }
+  if(e.key === 'Tab'){
+    // Trap Tab within the tour card's own focusable controls -- Skip,
+    // Back, Next -- so keyboard focus never escapes to the spotlighted
+    // page content behind the overlay while a step is open.
+    const { card } = guidedTourElements();
+    if(!card) return;
+    const focusable = Array.from(card.querySelectorAll('button:not([disabled])'));
+    if(!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  }
+}
+
+function guidedTourResizeHandler(){
+  if(!guidedTourActive) return;
+  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const target = step && step.target ? document.querySelector(step.target) : null;
+  positionGuidedTourCard(target);
+}
+
+function launchGuidedTour(){
+  const { overlay } = guidedTourElements();
+  if(!overlay) return;
+  guidedTourTriggerEl = document.activeElement;
+  guidedTourActive = true;
+  guidedTourStepIndex = 0;
+  overlay.classList.add('active');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.addEventListener('keydown', guidedTourKeydownHandler, true);
+  if(!guidedTourResizeHandlerBound){
+    window.addEventListener('resize', guidedTourResizeHandler);
+    guidedTourResizeHandlerBound = true;
+  }
+  renderGuidedTourStep();
+}
+
+function closeGuidedTour(){
+  const { overlay, spotlight } = guidedTourElements();
+  guidedTourActive = false;
+  if(overlay){ overlay.classList.remove('active'); overlay.setAttribute('aria-hidden', 'true'); }
+  if(spotlight) spotlight.hidden = true;
+  document.removeEventListener('keydown', guidedTourKeydownHandler, true);
+  if(guidedTourTriggerEl && typeof guidedTourTriggerEl.focus === 'function') guidedTourTriggerEl.focus();
+  guidedTourTriggerEl = null;
+}
+
+function nextGuidedTourStep(){
+  if(guidedTourStepIndex >= GUIDED_TOUR_STEPS.length - 1){
+    finishGuidedTour();
+    return;
+  }
+  guidedTourStepIndex += 1;
+  renderGuidedTourStep();
+}
+function backGuidedTourStep(){
+  if(guidedTourStepIndex <= 0) return;
+  guidedTourStepIndex -= 1;
+  renderGuidedTourStep();
+}
+function skipGuidedTour(){
+  markGuidedTourStatus('skipped');
+  closeGuidedTour();
+}
+function finishGuidedTour(){
+  markGuidedTourStatus('completed');
+  closeGuidedTour();
+}
+
+function wireGuidedTourControls(){
+  const { skipBtn, backBtn, nextBtn, overlay } = guidedTourElements();
+  if(skipBtn) skipBtn.addEventListener('click', skipGuidedTour);
+  if(backBtn) backBtn.addEventListener('click', backGuidedTourStep);
+  if(nextBtn) nextBtn.addEventListener('click', nextGuidedTourStep);
+  // Clicking the dimmed backdrop (not the card itself) behaves like Skip --
+  // an explicit exit, same as Escape, never a silent auto-advance.
+  if(overlay) overlay.addEventListener('click', e => { if(e.target === overlay) skipGuidedTour(); });
+}
+
 function showBetaWelcomeModal(){
   const modal = document.getElementById('betaWelcomeModal');
   if(!modal) return;
@@ -3234,6 +3658,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('#dashboardViewButtons [data-view]').forEach(btn=>btn.addEventListener('click',()=>setDashboardView(btn.dataset.view)));
   loadDashboardUsage();
   maybeShowBetaWelcomeForSignedInUser();
+  wireGuidedTourControls();
   setTimeout(() => {
     const params = new URLSearchParams(window.location.search);
     if(!params.get('dashboardEmail') && !params.get('email')){
@@ -3244,7 +3669,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const betaWelcomeStartBtn = document.getElementById('betaWelcomeStartBtn');
   if(betaWelcomeStartBtn){
-    betaWelcomeStartBtn.addEventListener('click', dismissBetaWelcomeModal);
+    // "Get Started" launches the guided tour rather than merely closing the
+    // popup or routing straight to upload -- the welcome modal is dismissed
+    // first (it never reappears once dismissed, same as before), then the
+    // tour opens on top of the real dashboard behind it.
+    betaWelcomeStartBtn.addEventListener('click', () => {
+      dismissBetaWelcomeModal();
+      launchGuidedTour();
+    });
   }
 
   const leadForm = document.getElementById('leadForm');
@@ -3351,12 +3783,12 @@ async function handleFile(file){
           hideUploadProgress();
         }catch(err){
           hideUploadProgress();
-          showError('We could not analyze that customer order history. Please check the file and try again.');
+          showError(`We could not find a company/account column in that file, so nothing was saved. House Accounts needs at least one column identifying the customer -- ${err && err.message ? err.message : 'please check the file and try again.'} See Export Guides for the exact columns House Accounts accepts.`);
         }
       }, 250);
     }catch(err){
       hideUploadProgress();
-      showError('We could not read that customer list. Please check the file and try again.');
+      showError('We could not read that file, so nothing was saved. Confirm it is a plain CSV export and try again, or see Export Guides for help preparing your file.');
     }
   };
   reader.onerror = () => { hideUploadProgress(); showError('Could not read file.'); };
@@ -8040,6 +8472,60 @@ function isWarmAccount(account){
   return String(account?.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase() === 'warm';
 }
 
+// Onboarding sprint, item 3: a branded, informative success state after a
+// file is saved -- replaces relying on the old bare "Saved account list for
+// weekly monitoring." text notice as the only feedback a first-time user
+// got. Explains exactly what was accepted (never presents missing optional
+// fields as a failure -- the upload still succeeded), and gives three
+// direct next actions so the user is never stranded on a generic
+// completion screen.
+const MISSING_FIELD_LABELS = {
+  project_name: 'project/order name',
+  order_date: 'order date',
+  revenue: 'revenue',
+  margin: 'margin',
+  contact_name: 'contact name',
+  contact_email: 'contact email'
+};
+function renderUploadSuccessState(records, accounts){
+  const panel = document.getElementById('uploadSuccessState');
+  if(!panel) return;
+  const titleEl = document.getElementById('uploadSuccessTitle');
+  const detailEl = document.getElementById('uploadSuccessDetail');
+  const warningEl = document.getElementById('uploadSuccessWarning');
+  const accountCount = accounts.length;
+  const hasOrderHistory = accounts.some(a => Number(a.orderCount || 0) > 0);
+  const hasContacts = accounts.some(a => a.contactName || a.contactEmail || (Array.isArray(a.contacts) && a.contacts.length));
+
+  if(titleEl) titleEl.textContent = `${currentUploadName || 'Your customer list'} is saved.`;
+  if(detailEl){
+    const parts = [];
+    parts.push(`<strong>${escapeHtml(accountCount)}</strong> customer account${accountCount===1?'':'s'} accepted.`);
+    parts.push(hasOrderHistory
+      ? 'Order history was recognized, so repeat buying patterns and follow-up timing can be identified.'
+      : 'No order history was recognized in this file.');
+    parts.push(hasContacts
+      ? 'Contact information was recognized for at least one account.'
+      : 'No contact information was recognized in this file.');
+    detailEl.innerHTML = parts.join(' ');
+  }
+  if(warningEl){
+    const missing = Array.isArray(records.missingCols) ? records.missingCols.filter(k => MISSING_FIELD_LABELS[k]) : [];
+    if(!hasOrderHistory){
+      warningEl.hidden = false;
+      warningEl.innerHTML = 'This list has no recognizable order history, so House Accounts will monitor these accounts for public business triggers (hiring, expansions, leadership changes, and similar activity). Reorder and follow-up intelligence will be limited until order history is included. This is not a failed upload.';
+    } else if(missing.length){
+      warningEl.hidden = false;
+      const labels = missing.map(k => MISSING_FIELD_LABELS[k]).join(', ');
+      warningEl.innerHTML = `A few optional fields were not found in this file (${escapeHtml(labels)}). House Accounts will still analyze whatever was included -- this is not a failed upload.`;
+    } else {
+      warningEl.hidden = true;
+      warningEl.innerHTML = '';
+    }
+  }
+  panel.style.display = 'block';
+}
+
 function processData(records){
   // Group by client
   const clients = {};
@@ -8138,7 +8624,7 @@ function processData(records){
 
   // Render the focused recommendation feed
   const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
-    emptyMessage: `<div class="no-signals-message">Nothing urgent this week. Upload or refresh your account list to check for new reasons to reach out.</div>`
+    emptyMessage: `<div class="no-signals-message">No actionable opportunities yet for this window -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out this week. New business triggers, reorder windows, and follow-ups are checked automatically; try This Month or research your top accounts now to look further ahead.</div>`
   });
 
   const closedHistoricalRevenue = accounts.reduce((sum, a) => sum + (a.revenue || 0), 0);
@@ -8171,6 +8657,7 @@ function processData(records){
   document.getElementById('results').style.display = 'block';
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
+  renderUploadSuccessState(records, accounts);
 
   lastAnalysisSummary = {
     accountCount: accounts.length,
@@ -8193,6 +8680,39 @@ function escapeHtml(text){
   const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
   return String(text || '').replace(/[&<>"']/g, m => map[m]);
 }
+
+function dismissUploadSuccessState(){
+  const panel = document.getElementById('uploadSuccessState');
+  if(panel) panel.style.display = 'none';
+}
+function wireUploadSuccessStateControls(){
+  const dismissBtn = document.getElementById('uploadSuccessDismiss');
+  if(dismissBtn) dismissBtn.addEventListener('click', dismissUploadSuccessState);
+  const viewPrioritiesBtn = document.getElementById('uploadSuccessViewPrioritiesBtn');
+  if(viewPrioritiesBtn){
+    viewPrioritiesBtn.addEventListener('click', () => {
+      dismissUploadSuccessState();
+      const header = document.getElementById('timeboxSectionHeader');
+      if(header) header.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  }
+  const manageAccountsBtn = document.getElementById('uploadSuccessManageAccountsBtn');
+  if(manageAccountsBtn){
+    manageAccountsBtn.addEventListener('click', () => {
+      dismissUploadSuccessState();
+      document.getElementById('manageCustomerAccountsBtn')?.click();
+    });
+  }
+  const anotherBtn = document.getElementById('uploadSuccessAnotherBtn');
+  if(anotherBtn){
+    anotherBtn.addEventListener('click', () => {
+      dismissUploadSuccessState();
+      openLightweightCustomerUpload();
+    });
+  }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireUploadSuccessStateControls);
+else wireUploadSuccessStateControls();
 </script>
 
 <script>

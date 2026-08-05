@@ -52,23 +52,23 @@ function extractLines(label, startLine, endLine, expectedFirst){
 
 // Same verbatim extraction ranges as scripts/test-repeat-order-follow-up-fixture.js.
 const SRC = [
-  extractLines('timebox-config', 2388, 2393, 'const TIMEBOX_CONFIG = {'),
-  extractLines('opportunity-identity-helpers', 2529, 2614, 'function cleanOpportunityToken(value){'),
-  extractLines('is-business-opportunity', 2945, 2947, 'function isBusinessOpportunity(opp){'),
-  extractLines('signal-layer-label', 3610, 3620, 'function signalLayerLabel(opp){'),
-  extractLines('is-likely-invalid-account-name', 3594, 3601, 'function isLikelyInvalidAccountName(name){'),
-  extractLines('parse-maybe-date', 3646, 3651, 'function parseMaybeDate(value){'),
-  extractLines('parse-csv', 3367, 3485, 'function parseCSV(text){'),
-  extractLines('infer-promo-category', 3487, 3507, 'function inferPromoCategory(text){'),
-  extractLines('infer-industry', 3509, 3517, 'function inferIndustry(client, projects){'),
-  extractLines('format-short-date', 4077, 4081, 'function formatShortDate(value){'),
-  extractLines('account-history-status', 4112, 4177, 'function isAccountHistoryOpportunity(opp){'),
-  extractLines('opportunity-generation', 5749, 6278, 'function estimateFutureValue(account, opportunityType){'),
-  extractLines('order-history-filters', 7074, 7102, 'function isClosedHistoricalRecord(record){'),
-  extractLines('normalize-signal-layer-type', 7121, 7136, 'function normalizeSignalLayerType(type){'),
-  extractLines('recommendation-type', 7139, 7188, 'function daysSinceDate(value){'),
-  extractLines('opportunity-scoring', 7240, 7311, 'function calculateOpportunityScore(opp){'),
-  extractLines('timebox-classification', 7438, 7494, 'function monthIndexFromName(name){')
+  extractLines('timebox-config', 2542, 2547, 'const TIMEBOX_CONFIG = {'),
+  extractLines('opportunity-identity-helpers', 2683, 2768, 'function cleanOpportunityToken(value){'),
+  extractLines('is-business-opportunity', 3099, 3101, 'function isBusinessOpportunity(opp){'),
+  extractLines('signal-layer-label', 4042, 4052, 'function signalLayerLabel(opp){'),
+  extractLines('is-likely-invalid-account-name', 4026, 4033, 'function isLikelyInvalidAccountName(name){'),
+  extractLines('parse-maybe-date', 4078, 4083, 'function parseMaybeDate(value){'),
+  extractLines('parse-csv', 3799, 3917, 'function parseCSV(text){'),
+  extractLines('infer-promo-category', 3919, 3939, 'function inferPromoCategory(text){'),
+  extractLines('infer-industry', 3941, 3949, 'function inferIndustry(client, projects){'),
+  extractLines('format-short-date', 4509, 4513, 'function formatShortDate(value){'),
+  extractLines('account-history-status', 4544, 4609, 'function isAccountHistoryOpportunity(opp){'),
+  extractLines('opportunity-generation', 6181, 6721, 'function estimateFutureValue(account, opportunityType){'),
+  extractLines('order-history-filters', 7506, 7534, 'function isClosedHistoricalRecord(record){'),
+  extractLines('normalize-signal-layer-type', 7553, 7559, 'function normalizeSignalLayerType(type){'),
+  extractLines('recommendation-type', 7571, 7670, 'function daysSinceDate(value){'),
+  extractLines('opportunity-scoring', 7672, 7743, 'function calculateOpportunityScore(opp){'),
+  extractLines('timebox-classification', 7870, 7926, 'function monthIndexFromName(name){')
 ].join('\n\n');
 
 const EXPORT_NAMES = [

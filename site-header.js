@@ -115,7 +115,15 @@
             <nav class="ha-nav-links" aria-label="Main navigation">${links.map(navLink).join('')}</nav>
             <div class="ha-account-actions">
               ${authenticated
-                ? `<a class="ha-action-link" href="/contact.html">Help</a><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`
+                ? `<div class="ha-help-menu">
+                    <button class="ha-action-link" type="button" id="haHelpToggle" aria-haspopup="true" aria-expanded="false">Help</button>
+                    <div class="ha-help-dropdown" id="haHelpDropdown" role="menu" aria-label="Help" hidden>
+                      <a role="menuitem" href="/dashboard/#restart-tour">Restart Product Tour</a>
+                      <a role="menuitem" href="/export-guides/#need-help">Export Help</a>
+                      <a role="menuitem" href="/export-guides/#troubleshooting">Upload Troubleshooting</a>
+                      <a role="menuitem" href="/contact.html">Contact / Feedback</a>
+                    </div>
+                   </div><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`
                 : `<a class="ha-action-link ha-secondary" href="/login">Log In</a><a class="ha-action-link ha-primary" href="/signup">Start Free</a>`}
             </div>
           </div>
@@ -138,6 +146,31 @@
       menu.setAttribute('aria-expanded',String(open));
       menu.textContent=open?'✕':'☰';
     });
+
+    const helpToggle=wrapper.querySelector('#haHelpToggle');
+    const helpDropdown=wrapper.querySelector('#haHelpDropdown');
+    if(helpToggle && helpDropdown){
+      const closeHelp=()=>{
+        helpDropdown.hidden=true;
+        helpToggle.setAttribute('aria-expanded','false');
+      };
+      helpToggle.addEventListener('click',e=>{
+        e.stopPropagation();
+        const open=helpDropdown.hidden;
+        helpDropdown.hidden=!open;
+        helpToggle.setAttribute('aria-expanded',String(open));
+        if(open){
+          const first=helpDropdown.querySelector('a');
+          if(first) first.focus();
+        }
+      });
+      document.addEventListener('click',e=>{
+        if(!helpDropdown.hidden && !helpDropdown.contains(e.target) && e.target!==helpToggle) closeHelp();
+      });
+      document.addEventListener('keydown',e=>{
+        if(e.key==='Escape' && !helpDropdown.hidden){ closeHelp(); helpToggle.focus(); }
+      });
+    }
 
     const logout=wrapper.querySelector('[data-ha-logout]');
     if(logout){

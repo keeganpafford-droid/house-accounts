@@ -186,6 +186,39 @@ body > .topnav{display:none !important;}
   white-space:nowrap;
 }
 
+.ha-help-menu{position:relative}
+.ha-help-dropdown{
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  min-width:210px;
+  background:#fff;
+  border:1px solid var(--ha-border);
+  border-radius:8px;
+  box-shadow:0 12px 28px rgba(23,55,94,.16);
+  padding:6px;
+  z-index:1002;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.ha-help-dropdown a{
+  display:block;
+  padding:9px 10px;
+  border-radius:5px;
+  color:var(--ha-navy);
+  text-decoration:none;
+  font-size:.84rem;
+  font-weight:650;
+  white-space:nowrap;
+}
+.ha-help-dropdown a:hover,
+.ha-help-dropdown a:focus-visible{background:var(--ha-bg);color:var(--ha-teal);outline:none}
+@media(max-width:1260px){
+  .ha-help-menu{width:100%}
+  .ha-help-dropdown{position:static;box-shadow:none;border:0;padding:0 0 0 12px;margin-top:2px}
+}
+
 .ha-menu-button{
   display:none;
   width:42px;
