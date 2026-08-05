@@ -15,6 +15,18 @@
     --muted:#6B7280;
     --danger:#B3261E;
     --danger-surface:#FBEAE8;
+    /* Commercial-readiness core validation, item 4: --signal (#F5A623) is
+       ~2.1:1 against white -- well under WCAG AA's 4.5:1 floor for text --
+       and stays reserved for CTA buttons/decorative accents, where it is
+       large/bold enough and never the only cue. Small uppercase card
+       labels (SIGNAL, STATUS, WHY IT MATTERS, RECOMMENDED CONTACT,
+       CONVERSATION STARTER, and similar) use these darker burnt-amber
+       tokens instead, chosen to keep the same navy/teal/cream/gold
+       identity while actually being readable. --label-amber (#B45309) is
+       ~5.2:1 on white; --label-amber-strong (#92400E, ~7.4:1) is available
+       for any label small/thin enough to still read weak at that level. */
+    --label-amber:#B45309;
+    --label-amber-strong:#92400E;
     --display: 'Fraunces', Georgia, serif;
     --mono: 'IBM Plex Mono', monospace;
     --body: 'Inter', system-ui, sans-serif;
@@ -94,7 +106,7 @@
   .upload-zone p{color:var(--muted); font-size:0.9rem; margin-bottom:16px;}
   .upload-zone input{display:none;}
   .upload-intro{max-width:820px; margin:0 auto;}
-  .upload-eyebrow{font-family:var(--mono); font-size:0.74rem; font-weight:700; letter-spacing:0.11em; text-transform:uppercase; color:var(--signal); margin-bottom:8px;}
+  .upload-eyebrow{font-family:var(--mono); font-size:0.74rem; font-weight:700; letter-spacing:0.11em; text-transform:uppercase; color:var(--label-amber); margin-bottom:8px;}
   .upload-helper{max-width:760px; margin:22px auto 0; text-align:left; display:grid; grid-template-columns:1fr 1fr; gap:18px;}
   .upload-helper-card{background:#F7F8FA; border:1px solid var(--line); border-radius:8px; padding:18px;}
   .upload-helper-card h3{font-size:0.78rem; font-family:var(--mono); letter-spacing:0.08em; text-transform:uppercase; color:var(--ink); margin-bottom:10px;}
@@ -120,7 +132,7 @@
   .workflow-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.07);text-decoration:none;color:inherit;display:block;transition:.15s ease;}
   .workflow-card:hover{transform:translateY(-1px);border-color:var(--radar);box-shadow:0 14px 34px rgba(23,55,94,.10);}
   .workflow-card.active{border-color:var(--radar);box-shadow:0 0 0 3px rgba(31,183,174,.12),0 14px 34px rgba(23,55,94,.10);}
-  .workflow-label{font-family:var(--mono);font-size:.72rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--signal);margin-bottom:8px;}
+  .workflow-label{font-family:var(--mono);font-size:.72rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--label-amber);margin-bottom:8px;}
   .workflow-title{font-family:var(--display);font-size:1.25rem;color:var(--ink);margin-bottom:7px;}
   .workflow-copy{font-size:.9rem;color:var(--muted);line-height:1.45;}
   .workflow-cta{display:inline-flex;margin-top:12px;font-weight:800;color:var(--radar);font-size:.88rem;}
@@ -229,7 +241,7 @@
     font-size:0.65rem;
     text-transform:uppercase;
     letter-spacing:0.1em;
-    color:var(--signal);
+    color:var(--label-amber);
     margin-bottom:6px;
     font-weight:600;
   }
@@ -299,7 +311,7 @@
     font-family:var(--mono);
     text-transform:uppercase;
     letter-spacing:0.16em;
-    color:var(--signal);
+    color:var(--label-amber);
     font-size:0.72rem;
     font-weight:800;
     margin-bottom:4px;
@@ -382,7 +394,7 @@
     font-family:var(--mono);
     text-transform:uppercase;
     letter-spacing:0.12em;
-    color:var(--signal);
+    color:var(--label-amber);
     font-size:0.68rem;
     font-weight:800;
     margin-bottom:8px;
@@ -649,7 +661,7 @@
     font-size:0.8rem;
     text-transform:uppercase;
     letter-spacing:0.12em;
-    color:var(--signal);
+    color:var(--label-amber);
     margin-bottom:12px;
   }
   .top-opps-list{
@@ -817,7 +829,7 @@
     font-size:0.65rem;
     text-transform:uppercase;
     letter-spacing:0.08em;
-    color:var(--signal);
+    color:var(--label-amber);
     font-weight:600;
     margin-bottom:4px;
   }
@@ -950,7 +962,7 @@
     font-size:0.65rem;
     text-transform:uppercase;
     letter-spacing:0.08em;
-    color:var(--signal);
+    color:var(--label-amber);
     font-weight:600;
     margin-bottom:4px;
   }
@@ -981,7 +993,7 @@
     text-transform:uppercase;
     letter-spacing:0.05em;
     font-weight:600;
-    color:var(--signal);
+    color:var(--label-amber);
   }
   .signal-connection{
     background:#fff;
@@ -996,7 +1008,8 @@
     font-size:0.6rem;
     text-transform:uppercase;
     letter-spacing:0.06em;
-    color:var(--signal);
+    /* Smallest label on this page (0.6rem) -- uses the stronger amber. */
+    color:var(--label-amber-strong);
     font-weight:600;
     margin-bottom:2px;
   }
@@ -1086,7 +1099,7 @@
   .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
 
   .section-title{
-    font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--signal);
+    font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--label-amber);
     margin-bottom:12px; margin-top:20px;
   }
 

@@ -121,7 +121,7 @@ async function firecrawlScrape(url) {
 }
 
 async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 6, totalLimit = 100) {
-  if (!process.env.FIRECRAWL_API_KEY) return { candidates, scrapedCount: 0 };
+  if (!process.env.FIRECRAWL_API_KEY) return { candidates, scrapedCount: 0, attemptedCount: 0 };
   const byAccount = new Map();
   const selectedKeys = new Set();
   const selected = [];
@@ -147,7 +147,7 @@ async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 
 
 Page content: ${content}`, 2200), provider: `${c.provider || 'search'}+firecrawl` };
   });
-  return { candidates: enriched, scrapedCount };
+  return { candidates: enriched, scrapedCount, attemptedCount: selected.length };
 }
 
 function safeArray(value, max = 6) {
@@ -675,6 +675,19 @@ function responseOutputText(data = {}) {
   return chunks.join('\n');
 }
 
+// Commercial-readiness core validation, item 1: the OpenAI Responses API
+// already reports token usage in every response body (data.usage) -- this
+// was previously discarded. Returning it alongside the text (rather than
+// adding a separate metered call) is the smallest reliable way to capture
+// real token counts.
+function openaiUsageFromResponse(data = {}) {
+  const usage = data?.usage || {};
+  return {
+    inputTokens: Number(usage.input_tokens || usage.prompt_tokens || 0) || 0,
+    outputTokens: Number(usage.output_tokens || usage.completion_tokens || 0) || 0,
+    totalTokens: Number(usage.total_tokens || 0) || 0
+  };
+}
 async function callOpenAIJson({ apiKey, model, prompt }) {
   const resp = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -688,7 +701,7 @@ async function callOpenAIJson({ apiKey, model, prompt }) {
   });
   if (!resp.ok) throw new Error(await resp.text().catch(() => `OpenAI error ${resp.status}`));
   const data = await resp.json();
-  return responseOutputText(data);
+  return { text: responseOutputText(data), usage: openaiUsageFromResponse(data) };
 }
 
 async function callOpenAIWebSearch({ apiKey, model, accounts }) {
@@ -752,7 +765,7 @@ Confidence must be 0-100. Return nothing only for clear duplicates, spam, unveri
   });
   if (!resp.ok) throw new Error(await resp.text().catch(() => `OpenAI web search error ${resp.status}`));
   const data = await resp.json();
-  return responseOutputText(data);
+  return { text: responseOutputText(data), usage: openaiUsageFromResponse(data) };
 }
 
 
@@ -2235,6 +2248,29 @@ export default async function handler(req, res) {
     let searchDiagnostics = [];
     let rawText = '';
     let providerMode = 'openai-web-search';
+    // Commercial-readiness core validation, item 1: accumulated across this
+    // single handler invocation, then logged and returned -- never a
+    // separate metering system, just the totals this run's own provider
+    // calls already report.
+    const openaiUsage = { calls: 0, failures: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    let firecrawlAttempted = 0;
+    let firecrawlScraped = 0;
+    // A failed OpenAI call throws and aborts the whole request (existing,
+    // unchanged behavior) before the normal success-path usage log below is
+    // ever reached -- log the partial usage (including the failure count)
+    // right here, at the point of failure, so a failed run is not silently
+    // invisible to the usage report.
+    function logProviderUsageOnFailure() {
+      try {
+        console.log('[research-batch.provider-usage]', JSON.stringify({
+          userId: uploadOwner?.id || null,
+          run: { uploadId: targetUploadId || null, researchRunId: runId, mode, elapsedMs: Date.now() - startedAt, accountsAttempted: safeAccounts.length, failed: true },
+          openai: { ...openaiUsage, model },
+          serper: { configured: serperConfigured, queries: searchDiagnostics.reduce((sum, d) => sum + (d.targetedQueriesRun || 0), 0), failedQueries: searchDiagnostics.reduce((sum, d) => sum + (Array.isArray(d.queries) ? d.queries.filter(q => q.error).length : 0), 0) },
+          firecrawl: { configured: !!process.env.FIRECRAWL_API_KEY, requests: firecrawlAttempted, successes: firecrawlScraped, failures: Math.max(0, firecrawlAttempted - firecrawlScraped) }
+        }));
+      } catch { /* logging must never mask the real error */ }
+    }
 
     // Prospect Intelligence uses Serper for intent-driven targeted search.
     // Tavily/Brave are intentionally not required for this beta workflow.
@@ -2262,6 +2298,8 @@ export default async function handler(req, res) {
       searchDiagnostics = discovered.diagnostics || [];
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
+      firecrawlAttempted = enriched.attemptedCount || 0;
+      firecrawlScraped = enriched.scrapedCount || 0;
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
         prospectDebugLog('Firecrawl enrichment complete', {
@@ -2355,11 +2393,33 @@ ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets and clean page content:
 ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query, intendedSignalFamily:c.intendedSignalFamily, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, entityVerification:c.entityVerification, sourceAuthorityScore:c.sourceAuthorityScore, freshnessScore:c.freshnessScore, candidateScore:c.candidateScore, eventFingerprint:c.eventFingerprint, sources:c.sources})), null, 2)}`;
-      rawText = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
+      try {
+        const result = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
+        rawText = result.text;
+        openaiUsage.calls += 1;
+        openaiUsage.inputTokens += result.usage.inputTokens;
+        openaiUsage.outputTokens += result.usage.outputTokens;
+        openaiUsage.totalTokens += result.usage.totalTokens;
+      } catch (err) {
+        openaiUsage.failures += 1;
+        logProviderUsageOnFailure();
+        throw err;
+      }
       parsed = parseJsonLoose(rawText);
     } else {
       // Fallback: ask OpenAI's web search to do the batch research in the same style as Google AI.
-      rawText = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
+      try {
+        const result = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
+        rawText = result.text;
+        openaiUsage.calls += 1;
+        openaiUsage.inputTokens += result.usage.inputTokens;
+        openaiUsage.outputTokens += result.usage.outputTokens;
+        openaiUsage.totalTokens += result.usage.totalTokens;
+      } catch (err) {
+        openaiUsage.failures += 1;
+        logProviderUsageOnFailure();
+        throw err;
+      }
       parsed = parseJsonLoose(rawText);
       sourceCoverage['ai-web-search'] = safeAccounts.length;
     }
@@ -2513,6 +2573,36 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const finalSignals = Object.values(byAccount).flat().sort(compareBestSignals);
     const avgConfidence = finalSignals.length ? Math.round(finalSignals.reduce((sum, s) => sum + Number(s.confidenceScore || 0), 0) / finalSignals.length) : 0;
 
+    // Commercial-readiness core validation, item 1: the smallest reliable
+    // per-run usage rollup -- reuses searchDiagnostics (already computed per
+    // account above, including targetedQueriesRun and per-query
+    // serperHttpStatus/error) rather than adding a second parallel counting
+    // mechanism. No API keys, headers, or raw provider response bodies are
+    // included -- only counts, token totals, elapsed time, and business
+    // identifiers (account/upload/run ids) already used throughout this
+    // file's existing debug logging (prospectDebugLog).
+    const serperQueries = searchDiagnostics.reduce((sum, d) => sum + (d.targetedQueriesRun || 0), 0);
+    const serperFailedQueries = searchDiagnostics.reduce((sum, d) => sum + (Array.isArray(d.queries) ? d.queries.filter(q => q.error).length : 0), 0);
+    const accountsWithSignalsCount = new Set(finalSignals.filter(s => !s.isFallbackOpportunity).map(s => s.accountName)).size;
+    const providerUsage = {
+      run: {
+        uploadId: targetUploadId || null,
+        researchRunId: runId,
+        mode,
+        elapsedMs: Date.now() - startedAt,
+        accountsAttempted: safeAccounts.length,
+        accountsWithSignals: accountsWithSignalsCount,
+        accountsWithNoSignals: Math.max(0, safeAccounts.length - accountsWithSignalsCount),
+        signalsProduced: finalSignals.filter(s => !s.isFallbackOpportunity).length
+      },
+      openai: { ...openaiUsage, model },
+      serper: { configured: serperConfigured, queries: serperQueries, failedQueries: serperFailedQueries },
+      firecrawl: { configured: !!process.env.FIRECRAWL_API_KEY, requests: firecrawlAttempted, successes: firecrawlScraped, failures: Math.max(0, firecrawlAttempted - firecrawlScraped) }
+    };
+    try {
+      console.log('[research-batch.provider-usage]', JSON.stringify({ userId: uploadOwner?.id || null, ...providerUsage }));
+    } catch { /* logging must never fail the request */ }
+
     // Note: this endpoint no longer marks any ha_research_runs row
     // completed/failed itself. Under the round-2 design (item 3/4), a
     // logical research run can span multiple requests to this endpoint (the
@@ -2527,6 +2617,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       signals: finalSignals,
       byAccount,
       researchRunId: runId,
+      providerUsage,
       diagnostics: {
         elapsedMs: Date.now() - startedAt,
         model,
@@ -2583,5 +2674,6 @@ export {
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES,
-  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability
+  hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
+  openaiUsageFromResponse, enrichCandidatesWithFirecrawl
 };

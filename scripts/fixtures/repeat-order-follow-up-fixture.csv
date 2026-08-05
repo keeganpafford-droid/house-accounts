@@ -1,0 +1,18 @@
+client_name,project_name,order_date,category,quantity,revenue,order_status,contact_name,contact_email
+Ridgeline Auto Group,Staff Caps - Service Dept,2023-08-12,Headwear,150,2200,Completed,Dana Whitfield,dana@ridgelineauto.example.com
+Ridgeline Auto Group,Staff Caps - Service Dept,2024-08-09,Headwear,160,2400,Completed,Dana Whitfield,dana@ridgelineauto.example.com
+Ridgeline Auto Group,Staff Caps - Service Techs,2025-08-14,Headwear,90,1300,Completed,Dana Whitfield,dana@ridgelineauto.example.com
+Ridgeline Auto Group,Staff Caps - Service Advisors,2025-08-14,Headwear,85,1300,Completed,Dana Whitfield,dana@ridgelineauto.example.com
+Lakeshore Manufacturing Co,Safety Milestone Awards,2024-09-05,Recognition / Awards,40,3100,Completed,,
+Lakeshore Manufacturing Co,Safety Milestone Awards,2025-09-10,Recognition / Awards,45,3400,Completed,,
+Brightview Dental Group,New Hire Welcome Kit Batch,2026-07-24,Onboarding / Recruiting,20,1800,Completed,Priya Nandakumar,priya@brightviewdental.example.com
+Pinecrest Financial Advisors,Client Appreciation Event Kit,2023-03-14,Event / Giveaway,60,2800,Completed,,
+Pinecrest Financial Advisors,Client Appreciation Event Kit,2024-03-11,Event / Giveaway,65,3050,Completed,,
+Golden Valley Steel Supply,Crew Shirts - Winter Batch,2025-01-15,Apparel,80,1150,Completed,,
+Golden Valley Steel Supply,Crew Shirts - Spring Batch,2025-04-10,Apparel,75,1080,Completed,,
+Golden Valley Steel Supply,Crew Shirts - Summer Batch,2025-07-08,Apparel,90,1300,Completed,,
+Golden Valley Steel Supply,Crew Shirts - Fall Batch,2025-10-02,Apparel,70,1020,Completed,,
+Cascade Outdoor Retailers,Holiday Retail Packaging,2023-11-02,Print / Stationery,500,2600,Completed,,
+Cascade Outdoor Retailers,Holiday Retail Packaging,2024-11-06,Print / Stationery,540,2900,Completed,,
+Meridian Office Partners,Client Welcome Packet,2025-11-20,Client Gifts,30,900,Completed,,
+Vantage Analytics Group,,,,,,,,

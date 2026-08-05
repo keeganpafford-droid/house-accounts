@@ -1173,5 +1173,167 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
   assert(!res.body?.digest?.length, 'reconciliation item 1/2: the response reports no digest entries when the only new signal is non-eligible');
 }
 
+// ---------------------------------------------------------------------------
+// Commercial-readiness core validation, item 3 (required test): overlapping
+// signals across two uploads for the SAME user must not create repeated
+// digest entries. Each ha_uploads row is processed independently (its own
+// research-batch call, its own resolveOpportunityEvents() pass), so two
+// uploads that each independently rediscover the SAME real-world event for
+// the same account will each attempt an ha_signals insert with the same
+// (user_id, event_fingerprint) pair. Production relies on the
+// on_conflict=user_id,event_fingerprint + Prefer: resolution=ignore-
+// duplicates upsert (a real Postgres unique constraint) to make the second
+// attempt a no-op; this mock reproduces that exact contract in-memory
+// (tracking already-inserted (user_id, event_fingerprint) pairs and
+// returning an empty array for a collision, exactly like PostgREST's
+// ignore-duplicates does) rather than assuming it away, so this test
+// actually exercises the digest-side consequence of that constraint: the
+// second upload's "new" row never reaches newSignalRows, so it can never
+// reach perUserDigest either.
+// ---------------------------------------------------------------------------
+{
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userId = 'user-digest-overlap';
+  const uploadA = { id: 'upload-overlap-a', user_id: userId, upload_name: 'List A', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'overlap-rep@example.com', name: 'Overlap Rep', company: '' } };
+  const uploadB = { id: 'upload-overlap-b', user_id: userId, upload_name: 'List B', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'overlap-rep@example.com', name: 'Overlap Rep', company: '' } };
+  const accountsByUpload = {
+    'upload-overlap-a': [{ id: 'acct-overlap-a1', account_name: 'Gamma Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    'upload-overlap-b': [{ id: 'acct-overlap-b1', account_name: 'Gamma Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+  };
+  // The SAME underlying real-world event, discovered independently by both
+  // uploads' research-batch calls (a realistic case: the same company
+  // appears on two different uploaded lists, e.g. a re-upload or two
+  // overlapping territory lists).
+  const sharedPublicationDate = new Date().toISOString();
+  const sharedSignal = () => ({
+    accountName: 'Gamma Co', signalType: 'Business Activity', signalTitle: 'Gamma Co opens new distribution center',
+    whatChanged: 'Gamma Co opened a new distribution center', whyItMattersForPromo: 'Timely reason to reach out',
+    sourceUrl: 'https://example.com/gamma-co-distribution-center', confidenceScore: 82,
+    publicationDate: sharedPublicationDate
+  });
+
+  const emailCalls = [];
+  const insertAttempts = [];
+  const insertedFingerprintsByUser = new Map();
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadA, uploadB]);
+    if (u.includes('/rest/v1/ha_accounts')) {
+      const match = u.match(/upload_id=eq\.([^&]+)/);
+      const uploadId = match ? decodeURIComponent(match[1]) : '';
+      return jsonResponse(accountsByUpload[uploadId] || []);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') return jsonResponse([{ id: `run-overlap-${insertAttempts.length}`, ...JSON.parse(options.body)[0] }]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') return jsonResponse([{ id: 'run-patched', ...JSON.parse(options.body) }]);
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') {
+      // Reproduces the real on_conflict=user_id,event_fingerprint +
+      // ignore-duplicates upsert: a row whose (user_id, event_fingerprint)
+      // pair was already inserted earlier in this SAME invocation is
+      // silently skipped (not returned), exactly as Postgres/PostgREST
+      // would skip it — never as an application-level dedup shortcut.
+      const rows = JSON.parse(options.body);
+      insertAttempts.push(rows);
+      const seen = insertedFingerprintsByUser.get(userId) || new Set();
+      const genuinelyNew = rows.filter(row => !seen.has(row.event_fingerprint));
+      genuinelyNew.forEach(row => seen.add(row.event_fingerprint));
+      insertedFingerprintsByUser.set(userId, seen);
+      return jsonResponse(genuinelyNew);
+    }
+    if (u.includes('/api/research-batch')) return jsonResponse({ signals: [sharedSignal()], diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } } });
+    if (u === 'https://api.resend.com/emails' && method === 'POST') { const body = JSON.parse(options.body); emailCalls.push(body); return jsonResponse({ id: 'resend-id-overlap' }); }
+    throw new Error(`Unhandled fetch in overlapping-signal digest test mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetch; }
+
+  assert(res.statusCode === 200, 'the overlapping-signal invocation returns 200');
+  assert(insertAttempts.length === 2, 'both uploads genuinely attempted an ha_signals insert for their own discovery of the event (got ' + insertAttempts.length + ')');
+  const totalGenuinelyInserted = insertAttempts[0].length && insertedFingerprintsByUser.get(userId)?.size;
+  assert(insertedFingerprintsByUser.get(userId)?.size === 1, `required proof (no repeated digest entries from duplicate evidence): only ONE distinct event_fingerprint was ever genuinely inserted across both uploads, even though both attempted the same event (got ${insertedFingerprintsByUser.get(userId)?.size})`);
+  assert(emailCalls.length === 1, `exactly one digest email is sent for the user, not one per upload that rediscovered the same event (got ${emailCalls.length})`);
+  if (emailCalls.length === 1) {
+    assert(/1 new reason/i.test(emailCalls[0].subject), `required proof: the consolidated digest reports the event ONCE, not twice, even though it was discovered by two separate uploads (got subject: "${emailCalls[0].subject}")`);
+  }
+  assert(res.body?.digest?.[0]?.newSignals === 1, `the response's digest entry reports exactly 1 new signal for this user, not 2 (got ${res.body?.digest?.[0]?.newSignals})`);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness core validation, item 3 (required test): a second,
+// independent user processed in the same invocation remains fully isolated
+// from the first user's digest -- separate emails, no cross-contamination
+// of either recipient or content.
+// ---------------------------------------------------------------------------
+{
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userOneId = 'user-digest-multi-1';
+  const userTwoId = 'user-digest-multi-2';
+  const uploadOne = { id: 'upload-multi-1', user_id: userOneId, upload_name: 'Rep One List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userOneId, email: 'repone@example.com', name: 'Rep One', company: '' } };
+  const uploadTwo = { id: 'upload-multi-2', user_id: userTwoId, upload_name: 'Rep Two List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userTwoId, email: 'reptwo@example.com', name: 'Rep Two', company: '' } };
+  const accountsByUpload = {
+    'upload-multi-1': [{ id: 'acct-multi-1', account_name: 'Delta Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    'upload-multi-2': [{ id: 'acct-multi-2', account_name: 'Epsilon Co', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+  };
+  const emailCalls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadOne, uploadTwo]);
+    if (u.includes('/rest/v1/ha_accounts')) {
+      const match = u.match(/upload_id=eq\.([^&]+)/);
+      const uploadId = match ? decodeURIComponent(match[1]) : '';
+      return jsonResponse(accountsByUpload[uploadId] || []);
+    }
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') return jsonResponse([{ id: `run-multi-${Math.random()}`, ...JSON.parse(options.body)[0] }]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') return jsonResponse([{ id: 'run-patched', ...JSON.parse(options.body) }]);
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse(JSON.parse(options.body));
+    if (u.includes('/api/research-batch')) {
+      const body = JSON.parse(options.body);
+      const accountName = body.accounts?.[0]?.name || 'Unknown';
+      return jsonResponse({
+        signals: [{
+          accountName, signalType: 'Business Activity', signalTitle: `${accountName} business update`,
+          whatChanged: `${accountName} had a business update`, whyItMattersForPromo: 'Timely reason to reach out',
+          sourceUrl: `https://example.com/${accountName.toLowerCase().replace(/\s+/g, '-')}`, confidenceScore: 80,
+          publicationDate: new Date().toISOString()
+        }],
+        diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
+      });
+    }
+    if (u === 'https://api.resend.com/emails' && method === 'POST') { const body = JSON.parse(options.body); emailCalls.push(body); return jsonResponse({ id: `resend-id-${emailCalls.length}` }); }
+    throw new Error(`Unhandled fetch in multi-user digest test mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetch; }
+
+  assert(res.statusCode === 200, 'the two-different-users invocation returns 200');
+  assert(emailCalls.length === 2, `required proof (multiple users remain isolated): exactly 2 digest emails are sent, one per user, in a single invocation (got ${emailCalls.length})`);
+  const toRepOne = emailCalls.find(e => e.to === 'repone@example.com');
+  const toRepTwo = emailCalls.find(e => e.to === 'reptwo@example.com');
+  assert(!!toRepOne && !!toRepTwo, 'each user receives their own digest email at their own address');
+  if (toRepOne && toRepTwo) {
+    assert(toRepOne.html.includes('Delta Co') && !toRepOne.html.includes('Epsilon Co'), 'required proof (user isolation): Rep One\'s digest contains only Rep One\'s account (Delta Co), never Rep Two\'s (Epsilon Co)');
+    assert(toRepTwo.html.includes('Epsilon Co') && !toRepTwo.html.includes('Delta Co'), 'required proof (user isolation): Rep Two\'s digest contains only Rep Two\'s account (Epsilon Co), never Rep One\'s (Delta Co)');
+  }
+  assert(res.body?.digest?.length === 2, 'the response reports exactly 2 digest entries, one per user');
+  assert(res.body?.runs?.length === 2, 'both uploads (belonging to different users) are still reported in runs, confirming per-upload run tracking is unaffected by per-user digest grouping');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exitCode = failures === 0 ? 0 : 1;
