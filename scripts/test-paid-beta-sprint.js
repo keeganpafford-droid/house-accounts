@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3588, 4377, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 3603, 4485, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 25
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5766, 6668, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5874, 6955, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 5766, 6668, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 6785, 7251, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 7072, 7576, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2388, 2393, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2611, 2614, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 7819, 7822, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 5681, 5683, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 5686, 5688, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 8144, 8147, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 5789, 5791, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 5794, 5796, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2506, 2511, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2513, 2526, 'function uniqueDashboardOpportunities(');
 const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 2981, 2983, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2985, 3003, 'function renderCustomerDashboard(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 2985, 3018, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};
@@ -823,7 +823,12 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   assert(!rows.some(r => r.label.includes('Prior categories')), 'reconciliation item 5: Prior Categories row is hidden entirely -- no real historical categories exist for this account');
 
   const researchDetailsHtml = sandbox.renderSupportingResearchDetails(opp);
-  assert(/Suggested merchandise categories/.test(researchDetailsHtml) && researchDetailsHtml.includes('Executive Gifts'), 'reconciliation item 5: Suggested merchandise categories remains visible in Research Details, clearly labeled as inferred, independent of whether real order history exists');
+  // Commercial-readiness correction round, item 4: relabeled "Suggested
+  // merchandise categories" -> "Related suggested categories" so it reads
+  // as a clear pair with the new "Previously purchased categories" row
+  // (see renderSupportingResearchDetails()) -- still the same inferred-idea
+  // data, still visible in Research Details regardless of order history.
+  assert(/Related suggested categories/.test(researchDetailsHtml) && researchDetailsHtml.includes('Executive Gifts'), 'reconciliation item 5: Related suggested categories remains visible in Research Details, clearly labeled as inferred, independent of whether real order history exists');
 }
 
 // ---------------------------------------------------------------------------
@@ -2233,6 +2238,141 @@ function realFlagshipMergeCase(sandbox, account, investmentUrl, reopeningUrl){
     signalTitle: 'New Hope Network has acquired the assets of Nutrition Capital Network, expanding its portfolio.'
   });
   assert(legacy.canonicalEventType === 'ACQUISITION', `acceptance 9: legacy read-time classification remains correct after this round's changes (got "${legacy.canonicalEventType}")`);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round -- required test 8: purchased
+// categories and inferred ideas remain distinct in the SAME Evidence card
+// (not just in two separate places on the page).
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  sandbox.window.accountRadarAccounts = [
+    { name: 'Ridgeline Auto Group', categoryTypes: new Set(['Headwear']) }
+  ];
+  const opp = {
+    account: 'Ridgeline Auto Group', signalLayerType: 'Repeat / Pattern Signal', opportunityType: 'REPEAT PATTERN',
+    commonPromoCategories: ['caps', 'beanies', 'seasonal headwear', 'employee hats']
+  };
+  const html = sandbox.renderSupportingResearchDetails(opp);
+  assert(/Previously purchased categories/.test(html) && html.includes('Headwear'), `required test 8: Evidence shows "Previously purchased categories" with the real purchased category (got: "${html}")`);
+  assert(/Related suggested categories/.test(html) && html.includes('caps'), `required test 8: Evidence ALSO shows "Related suggested categories" with the inferred ideas, in the same card (got: "${html}")`);
+  assert(/\(from your uploaded order history\)/.test(html), 'required test 8: the purchased-categories row is explicitly labeled as coming from the uploaded order history');
+  assert(/\(inferred idea, not purchase history\)/.test(html), 'required test 8: the suggested-categories row is explicitly labeled as an inferred idea, not purchase history');
+  const purchasedIdx = html.indexOf('Previously purchased categories');
+  const suggestedIdx = html.indexOf('Related suggested categories');
+  assert(purchasedIdx !== -1 && suggestedIdx !== -1 && purchasedIdx < suggestedIdx, 'required test 8: the two rows appear as a distinct, ordered pair (purchased before suggested), never merged into one label');
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round -- required test 9: exact
+// Brightview-style duplicates (two generic Follow-Up-Signal templates for
+// the SAME single recent order) render once in Additional Opportunities.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const brightviewFollowUps = [
+    {
+      account: 'Brightview Dental Group', opportunity: 'Employee Recognition Program', opportunityName: 'Employee Recognition Program',
+      signalLayerType: 'Follow-Up Signal', opportunityType: 'HR', department: 'HR / People',
+      reasonToReachOut: 'Recent order delivered or completed', conversationStarter: 'Check in and ask how the recent order was received.',
+      confidence: 60, quickWinScore: 60, closeProbability: 55, estimatedValue: 3000, evidence: []
+    },
+    {
+      account: 'Brightview Dental Group', opportunity: 'New Provider Onboarding Kits', opportunityName: 'New Provider Onboarding Kits',
+      signalLayerType: 'Follow-Up Signal', opportunityType: 'Onboarding', department: 'HR / People',
+      reasonToReachOut: 'Recent order delivered or completed', conversationStarter: 'Check in and ask how the recent order was received.',
+      confidence: 58, quickWinScore: 58, closeProbability: 53, estimatedValue: 2800, evidence: []
+    }
+  ];
+  sandbox.window.accountRadarAccounts = [{ name: 'Brightview Dental Group', futureOpportunities: brightviewFollowUps }];
+  const cluster = sandbox.accountOpportunityCluster({ account: 'Brightview Dental Group' });
+  const followUpsInCluster = cluster.filter(o => o.signalLayerType === 'Follow-Up Signal');
+  assert(brightviewFollowUps.length === 2, 'sanity: the fixture really does start with 2 separate generic Follow-Up templates for the same order');
+  assert(followUpsInCluster.length === 1, `required test 9: Brightview's Additional Opportunities cluster renders the follow-up ONCE, not twice, even though two generic templates were generated for the same underlying order (got ${followUpsInCluster.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round -- required test 10: exact
+// Ridgeline-style duplicates (three generic Repeat/Pattern-Signal
+// templates that never became a real REPEAT PATTERN) render once, while
+// the genuine REPEAT PATTERN opportunity remains separate.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const genericTemplate = (name, category) => ({
+    account: 'Ridgeline Auto Group', opportunity: name, opportunityName: name,
+    signalLayerType: 'Repeat / Pattern Signal', opportunityType: 'EXPANSION', department: 'Operations / Facilities',
+    reasonToReachOut: 'Repeat or seasonal buying pattern', conversationStarter: 'Ask whether a similar program, order, or event is happening again.',
+    confidence: 60, quickWinScore: 60, closeProbability: 55, estimatedValue: 3000, evidence: [], buyingCategory: category
+  });
+  const ridgelineOpps = [
+    { ...genericTemplate('Service Department Apparel Program', 'Apparel / Headwear') },
+    { ...genericTemplate('Technician Onboarding Kits', 'Onboarding / Recruiting') },
+    { ...genericTemplate('Customer Appreciation Program', 'Client Gifts') },
+    {
+      account: 'Ridgeline Auto Group', opportunity: 'Headwear Program', opportunityName: 'Headwear Program',
+      signalLayerType: 'Repeat / Pattern Signal', opportunityType: 'REPEAT PATTERN', department: 'Marketing',
+      reasonToReachOut: 'Headwear Program may be coming up again', conversationStarter: 'Ask if the headwear program is happening again this year.',
+      confidence: 82, quickWinScore: 82, closeProbability: 77, estimatedValue: 3500, evidence: ['4 headwear orders found'], buyingCategory: 'Apparel / Headwear'
+    }
+  ];
+  sandbox.window.accountRadarAccounts = [{ name: 'Ridgeline Auto Group', futureOpportunities: ridgelineOpps }];
+  const cluster = sandbox.accountOpportunityCluster({ account: 'Ridgeline Auto Group' });
+  const genericRepeatInCluster = cluster.filter(o => o.signalLayerType === 'Repeat / Pattern Signal' && o.opportunityType !== 'REPEAT PATTERN');
+  const realPatternInCluster = cluster.filter(o => o.opportunityType === 'REPEAT PATTERN');
+  assert(ridgelineOpps.filter(o => o.opportunityType !== 'REPEAT PATTERN').length === 3, 'sanity: the fixture really does start with 3 separate generic Repeat/Pattern templates');
+  assert(genericRepeatInCluster.length === 1, `required test 10: Ridgeline's Additional Opportunities cluster collapses the 3 generic (non-grounded) Repeat/Pattern templates into ONE entry, not three (got ${genericRepeatInCluster.length})`);
+  assert(realPatternInCluster.length === 1, `required test 10: the genuine REPEAT PATTERN (headwear) opportunity remains its own separate entry, never collapsed into the generic bucket (got ${realPatternInCluster.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round -- required test 11: the SAME
+// collapse function that dedupes Additional Opportunities/the priorities
+// feed also prevents duplicate account-history entries from ever reaching
+// a digest-style consumer that iterates an account's collapsed
+// opportunities (the layer any future digest integration would draw from,
+// since account-history signals are not yet persisted into ha_signals --
+// see the accompanying report's honest statement of that gap).
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  const duplicateFollowUps = [
+    { account: 'Brightview Dental Group', opportunity: 'A', opportunityName: 'A', signalLayerType: 'Follow-Up Signal', reasonToReachOut: 'Recent order delivered or completed', conversationStarter: 'Check in and ask how the recent order was received.', confidence: 60, quickWinScore: 60, evidence: [] },
+    { account: 'Brightview Dental Group', opportunity: 'B', opportunityName: 'B', signalLayerType: 'Follow-Up Signal', reasonToReachOut: 'Recent order delivered or completed', conversationStarter: 'Check in and ask how the recent order was received.', confidence: 58, quickWinScore: 58, evidence: [] }
+  ];
+  const collapsed = sandbox.collapseDuplicateAccountHistorySignals(duplicateFollowUps);
+  const collapsedFollowUps = collapsed.filter(o => o.signalLayerType === 'Follow-Up Signal');
+  assert(collapsedFollowUps.length === 1, `required test 11: collapseDuplicateAccountHistorySignals() -- the same function accountOpportunityCluster() uses -- reduces duplicate account-history opportunities for one account to a single entry a digest-style consumer would see (got ${collapsedFollowUps.length})`);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial-readiness correction round -- required test 12: the Your
+// Accounts panel's heading/subtitle accurately reflects whether it is
+// showing one upload or accounts combined across multiple uploads.
+// ---------------------------------------------------------------------------
+{
+  const sandbox = makeSandbox();
+  sandbox.document.getElementById('customerDashboard').style = {};
+  const subtitleEl = sandbox.document.getElementById('customerDashboardSubtitle');
+  const singleUploadData = {
+    upload: { upload_name: 'QA List.csv' },
+    accounts: [{ name: 'A', uploadId: 'upload-1' }, { name: 'B', uploadId: 'upload-1' }],
+    signals: [], weeklyRuns: []
+  };
+  sandbox.renderCustomerDashboard(singleUploadData);
+  assert(subtitleEl.textContent.includes('QA List.csv'), `required test 12: a genuinely single-upload aggregate still names that one upload (got: "${subtitleEl.textContent}")`);
+  assert(!/combined across/.test(subtitleEl.textContent), 'required test 12: a single-upload aggregate never claims to be "combined across" multiple lists');
+
+  const multiUploadData = {
+    upload: { upload_name: 'QA List.csv' },
+    accounts: [{ name: 'A', uploadId: 'upload-old-qa' }, { name: 'B', uploadId: 'upload-new-fixture' }, { name: 'C', uploadId: 'upload-new-fixture' }],
+    signals: [], weeklyRuns: []
+  };
+  sandbox.renderCustomerDashboard(multiUploadData);
+  assert(!subtitleEl.textContent.includes('QA List.csv'), `required test 12: when accounts span multiple uploads, the subtitle no longer names just ONE of them by name -- avoids the exact mismatch reported (a stale upload name shown while the account/opportunity summary reflects a different, newer upload) (got: "${subtitleEl.textContent}")`);
+  assert(/combined across 2 uploaded lists/.test(subtitleEl.textContent), `required test 12: the subtitle instead clearly states the accounts are combined across multiple uploaded lists, with an accurate count (got: "${subtitleEl.textContent}")`);
+  assert(subtitleEl.textContent.includes('3'), `required test 12: the combined-accounts subtitle states the real total account count (3), not a stale/mismatched number (got: "${subtitleEl.textContent}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

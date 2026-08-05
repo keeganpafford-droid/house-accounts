@@ -58,30 +58,53 @@ const SRC = [
   extractLines('timebox-config', 2388, 2393, 'const TIMEBOX_CONFIG = {', '};'),
   extractLines('opportunity-identity-helpers', 2529, 2614, 'function cleanOpportunityToken(value){', '}'),
   extractLines('is-business-opportunity', 2945, 2947, 'function isBusinessOpportunity(opp){', '}'),
-  extractLines('signal-layer-label', 3595, 3605, 'function signalLayerLabel(opp){', '}'),
-  extractLines('is-likely-invalid-account-name', 3579, 3586, 'function isLikelyInvalidAccountName(name){', '}'),
-  extractLines('parse-csv', 3352, 3470, 'function parseCSV(text){', '}'),
-  extractLines('infer-promo-category', 3472, 3492, 'function inferPromoCategory(text){', '}'),
-  extractLines('infer-industry', 3494, 3502, 'function inferIndustry(client, projects){', '}'),
-  extractLines('opportunity-generation', 5629, 6125, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 6738, 6766, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 6785, 6800, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 6803, 6852, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 6904, 6975, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 7065, 7121, 'function monthIndexFromName(name){', '}')
+  extractLines('signal-layer-label', 3610, 3620, 'function signalLayerLabel(opp){', '}'),
+  extractLines('is-likely-invalid-account-name', 3594, 3601, 'function isLikelyInvalidAccountName(name){', '}'),
+  extractLines('parse-maybe-date', 3646, 3651, 'function parseMaybeDate(value){', '}'),
+  extractLines('parse-csv', 3367, 3485, 'function parseCSV(text){', '}'),
+  extractLines('infer-promo-category', 3487, 3507, 'function inferPromoCategory(text){', '}'),
+  extractLines('infer-industry', 3509, 3517, 'function inferIndustry(client, projects){', '}'),
+  // Commercial-readiness correction round: the account-history-specific
+  // status classification (isAccountHistoryOpportunity/reorderWindowStatus/
+  // accountHistoryStatusLine) that createRepeatPatternOpportunities() now
+  // calls to ground its reasonToReachOut/conversationStarter text -- and
+  // that this test also verifies directly for required tests 1-3.
+  extractLines('format-short-date', 4065, 4069, 'function formatShortDate(value){', '}'),
+  extractLines('account-history-status', 4100, 4165, 'function isAccountHistoryOpportunity(opp){', '}'),
+  extractLines('opportunity-generation', 5737, 6266, 'function estimateFutureValue(account, opportunityType){', '}'),
+  extractLines('order-history-filters', 7025, 7053, 'function isClosedHistoricalRecord(record){', '}'),
+  extractLines('normalize-signal-layer-type', 7072, 7087, 'function normalizeSignalLayerType(type){', '}'),
+  extractLines('recommendation-type', 7090, 7139, 'function daysSinceDate(value){', '}'),
+  extractLines('opportunity-scoring', 7191, 7262, 'function calculateOpportunityScore(opp){', '}'),
+  extractLines('timebox-classification', 7390, 7446, 'function monthIndexFromName(name){', '}'),
+  // Prepare for Call grounding -- required tests 4/5/6/7: proves the
+  // uploaded contact/real order history (not a generic public-signal
+  // department framing) drives the Conversation Starter/Best Next Move/
+  // email/call script/questions/subject for a real account-history
+  // opportunity. window.createSalesPlayPanel is defined in this range but
+  // never invoked below -- it is DOM-heavy (document.body...) and inert as
+  // long as it is only assigned, not called (same pattern already relied
+  // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
+  extractLines('sales-play-account-history-grounding', 6279, 6770, 'function cleanSalesPlayText(value){', '}')
 ].join('\n\n');
 
 const EXPORT_NAMES = [
-  'parseCSV', 'inferPromoCategory', 'inferIndustry', 'isLikelyInvalidAccountName',
+  'parseCSV', 'inferPromoCategory', 'inferIndustry', 'isLikelyInvalidAccountName', 'parseMaybeDate',
   'isClosedHistoricalRecord', 'isActivePipelineRecord', 'hasOrderHistoryEvidence', 'sumRevenue',
   'findRepeatPatternGroups', 'createRepeatPatternOpportunities', 'categoryToPromoSuggestions',
   'generateFutureOpportunities', 'createOpportunity',
   'signalLayerLabel', 'isBusinessOpportunity', 'isRecentAccountActivity',
+  'isAccountHistoryOpportunity', 'reorderWindowStatus', 'accountHistoryStatusLine', 'formatShortDate',
+  'accountHistoryPlayLabel', 'salesPlayModeLabelForOpp',
+  'groundedDepartmentForOpportunity', 'initiativeLeadIn', 'ownerAskPhrase', 'ideaOfferPhrase',
+  'accountHistoryLeadPhrase', 'accountHistoryAskPhrase', 'accountHistoryOfferPhrase',
+  'accountHistorySubject', 'accountHistoryEmail', 'accountHistoryCallScript', 'accountHistoryQuestions',
+  'buildAccountHistorySalesPlay', 'likelyKnownBuyer',
   'getRecommendationType', 'getOpportunityPlanningWindow', 'opportunityMatchesTimebox',
   'classifyMonthWindow', 'monthDistanceFromNow', 'inferPurchaseMonth'
 ];
 
-const sandbox = {};
+const sandbox = { window: {} };
 vm.createContext(sandbox);
 new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'dashboard-extract.js' }).runInContext(sandbox);
 const dash = sandbox.__exports;
@@ -204,6 +227,31 @@ console.log(`\n(Test run date: ${TODAY.toISOString().slice(0,10)} -- planning-wi
   assert(window === 'week', `scenario 1 required proof (approaching its expected window): the account's typical August reorder month matches the current month, so it lands in the "This Week" planning window (got "${window}")`);
   assert(dash.opportunityMatchesTimebox(opp, 'week') === true, 'the annual-reorder opportunity is included in the "This Week" timeframe filter');
   assert(opp.commonPromoCategories.every(c => !a.purchases.some(p => p.category === c)), `scenario 1 required proof (category provenance): inferred product suggestions (${JSON.stringify(opp.commonPromoCategories)}) never duplicate an actual prior-purchase category label`);
+
+  // Required test 2: repeat pattern displays a calculated reorder window,
+  // not the public-event status taxonomy.
+  const statusLine = dash.accountHistoryStatusLine(opp);
+  assert(!/Date unavailable/i.test(statusLine), `required test 2: the repeat-pattern card never renders "Date unavailable" (got: "${statusLine}")`);
+  assert(/reorder window/i.test(statusLine) && /August/.test(statusLine), `required test 2: the card displays a calculated reorder window using the real typical month (got: "${statusLine}")`);
+  assert(dash.reorderWindowStatus(opp) === 'current', `required test 2: reorderWindowStatus() reports "current" for a pattern whose typical month is this month (got "${dash.reorderWindowStatus(opp)}")`);
+
+  // Required test 7: no relationship-strength "Lukewarm Play"-style label
+  // on an account-history opportunity.
+  const playLabel = dash.salesPlayModeLabelForOpp(opp, 'Lukewarm');
+  assert(playLabel === 'Reorder Check-In', `required test 7: a genuine repeat-pattern opportunity is labeled "Reorder Check-In", never "Lukewarm Play" (got "${playLabel}")`);
+  assert(!/lukewarm/i.test(playLabel), `required test 7: "Lukewarm" never appears in the label shown for this account-history opportunity (got "${playLabel}")`);
+
+  // Required tests 4/6: uploaded contact (Dana Whitfield) drives the
+  // outreach, and it directly asks whether the headwear program is
+  // returning -- never a department-involvement question.
+  const play = dash.buildAccountHistorySalesPlay({
+    isAccountHistory: true, layer: opp.signalLayerType, orderCategory: 'Headwear', orderDateText: 'Aug 14, 2025',
+    reorderStatus: dash.reorderWindowStatus(opp), account: a.name, firstName: 'Dana', mode: 'Lukewarm'
+  });
+  const allOutreachText = `${play.bestNextMoveCombined} ${play.outreachEmail} ${play.callScript.join(' ')} ${play.questionsToAsk.join(' ')} ${play.emailSubject}`;
+  assert(!/department|is already involved|who else might be|right person to ask/i.test(allOutreachText), `required test 4: Ridgeline's outreach never asks the user to locate a department or "the right person" -- the uploaded contact (Dana Whitfield) is already known (got best-next-move: "${play.bestNextMoveCombined}")`);
+  assert(/headwear program/i.test(allOutreachText) && /returning|happening again/i.test(allOutreachText), `required test 6: Ridgeline's outreach directly references the historic headwear program and asks whether it is returning (got best-next-move: "${play.bestNextMoveCombined}")`);
+  assert(play.outreachEmail.includes('Dana'), `Ridgeline's outreach email greets the real uploaded contact by first name (got: "${play.outreachEmail}")`);
 }
 
 // ===========================================================================
@@ -241,6 +289,32 @@ console.log(`\n(Test run date: ${TODAY.toISOString().slice(0,10)} -- planning-wi
   assert(recType === 'Recent Project Follow-Up', `the follow-up opportunity's recommendation type is "Recent Project Follow-Up" (got "${recType}")`);
   const window = dash.getOpportunityPlanningWindow(followUps[0]);
   assert(window === 'week', `a 12-day-old fulfilled order lands in the "This Week" follow-up window (got "${window}")`);
+
+  // Required test 1: recent-order follow-up displays its order date, not
+  // "Date unavailable".
+  const followUpOpp = followUps[0];
+  const statusLine = dash.accountHistoryStatusLine(followUpOpp);
+  assert(!/Date unavailable/i.test(statusLine), `required test 1: Brightview's follow-up card never renders "Date unavailable" (got: "${statusLine}")`);
+  assert(/Customer follow-up due/i.test(statusLine) && /Jul 24, 2026/.test(statusLine), `required test 1: the card displays "Customer follow-up due" with the real order date (got: "${statusLine}")`);
+
+  // Required test 5: uploaded contact (Priya Nandakumar) drives the
+  // outreach, referencing the recent order and asking about fit/feedback/
+  // quantities/satisfaction/next steps -- never asking whether HR/People
+  // is involved.
+  const realCategory = a.purchases[0]?.category || '';
+  const play = dash.buildAccountHistorySalesPlay({
+    isAccountHistory: true, layer: 'Follow-Up Signal', orderCategory: realCategory, orderDateText: 'Jul 24, 2026',
+    reorderStatus: null, account: a.name, firstName: 'Priya', mode: 'Warm'
+  });
+  const allOutreachText = `${play.bestNextMoveCombined} ${play.outreachEmail} ${play.callScript.join(' ')} ${play.questionsToAsk.join(' ')}`;
+  assert(!/hr\s*\/\s*people|whether hr|human resources is already involved/i.test(allOutreachText), `required test 5: Brightview's outreach never asks whether HR / People is involved (got best-next-move: "${play.bestNextMoveCombined}")`);
+  assert(/order/i.test(allOutreachText), `required test 5: Brightview's outreach directly references the recent order (got best-next-move: "${play.bestNextMoveCombined}")`);
+  assert(/fit|feedback|quantities|anything else is needed|received/i.test(allOutreachText), `required test 5: Brightview's outreach asks about fit/feedback/quantities/next steps, not a discovery question (got best-next-move: "${play.bestNextMoveCombined}")`);
+  assert(play.outreachEmail.includes('Priya'), `Brightview's outreach email greets the real uploaded contact by first name (got: "${play.outreachEmail}")`);
+
+  // Required test 7 (Follow-Up variant): "Lukewarm Play" absent here too.
+  const playLabel = dash.salesPlayModeLabelForOpp(followUpOpp, 'Lukewarm');
+  assert(playLabel === 'Customer Follow-Up', `required test 7: a follow-up account-history opportunity is labeled "Customer Follow-Up", never "Lukewarm Play" (got "${playLabel}")`);
 }
 
 // ===========================================================================
@@ -258,8 +332,26 @@ console.log(`\n(Test run date: ${TODAY.toISOString().slice(0,10)} -- planning-wi
   assert(a.subscores.recency < 0.55, `the account's computed recency score is low enough that generic templates classify it as Repeat/Pattern rather than Follow-Up, consistent with being lapsed (got ${a.subscores.recency.toFixed(3)})`);
   const opp = a.futureOpportunities.find(o => o.opportunityType === 'REPEAT PATTERN');
   const window = dash.getOpportunityPlanningWindow(opp);
-  console.log(`NOTE (scenario 4, lapsed-timing limitation -- reported per task instructions, not fixed in this branch): getOpportunityPlanningWindow() classifies purely by month-distance-from-now modulo 12, with no concept of "overdue." Pinecrest's March pattern, now ${daysSinceLastOrder} days overdue, lands in planning window "${window}" -- the same bucket a not-yet-due March pattern would occupy from the opposite direction. The underlying cadence IS correctly detected (assertion above); surfacing "overdue" as more urgent than "upcoming" is a planning-window capability this branch does not add, per the instruction to report missing capabilities rather than expand scope.`);
+  console.log(`NOTE (scenario 4, remaining planning-window limitation -- getOpportunityPlanningWindow()/the This Week-Month-Quarter-Year TIMEBOX filter still classifies purely by month-distance-from-now modulo 12, with no "overdue" bucket of its own -- unchanged in this correction round, per "do not broaden this into general signal deduplication"): Pinecrest's March pattern, now ${daysSinceLastOrder} days overdue, still lands in TIMEBOX planning window "${window}". This is now a DIFFERENT question from the card's own STATUS LINE and outreach text, which (see the required test 3 assertions immediately below) correctly say "overdue"/"passed" rather than "coming up" -- the honesty fix landed at the status/copy layer, not the week/month/quarter/year bucket layer.`);
   assert(typeof window === 'string' && !!window, 'lapsed timing is recognized to the extent currently supported: a planning window is still assigned rather than the opportunity being dropped');
+
+  // Required test 3: lapsed pattern is labeled overdue -- on the card
+  // status line, in the grounded reasonToReachOut/conversationStarter, and
+  // in the outreach copy itself (never described as merely upcoming).
+  assert(dash.reorderWindowStatus(opp) === 'overdue', `required test 3: reorderWindowStatus() reports "overdue" for a pattern whose last order is ${daysSinceLastOrder} days old (got "${dash.reorderWindowStatus(opp)}")`);
+  const statusLine = dash.accountHistoryStatusLine(opp);
+  assert(/passed/i.test(statusLine), `required test 3: the card status line says the normal reorder window has passed (got: "${statusLine}")`);
+  assert(!/approaching|coming up/i.test(statusLine), `required test 3: the overdue card status line never says "approaching" or "coming up" (got: "${statusLine}")`);
+  assert(/timing has passed/i.test(opp.reasonToReachOut), `required test 3: the grounded reasonToReachOut says the normal timing has passed, not "may be coming up again" (got: "${opp.reasonToReachOut}")`);
+  assert(!/may be coming up again/i.test(opp.reasonToReachOut), `required test 3: an overdue pattern's reasonToReachOut never uses the upcoming-pattern phrasing (got: "${opp.reasonToReachOut}")`);
+  assert(/still something they need/i.test(opp.conversationStarter) && !/happening again this year/i.test(opp.conversationStarter), `required test 3: the overdue pattern's conversation starter asks if it's still needed, not whether it's "happening again this year" (got: "${opp.conversationStarter}")`);
+
+  const play = dash.buildAccountHistorySalesPlay({
+    isAccountHistory: true, layer: 'Repeat / Pattern Signal', orderCategory: 'Event / Giveaway', orderDateText: 'Mar 11, 2024',
+    reorderStatus: 'overdue', account: a.name, firstName: 'Pinecrest Contact', mode: 'Cold'
+  });
+  assert(!/coming up|happening again this year|returning this year/i.test(play.bestNextMoveCombined), `required test 3: overdue outreach copy never claims the program is "coming up"/"happening again this year" (got: "${play.bestNextMoveCombined}")`);
+  assert(/usual timing has already passed|still something they need/i.test(play.bestNextMoveCombined), `required test 3: overdue outreach copy honestly says the usual timing has passed (got: "${play.bestNextMoveCombined}")`);
 }
 
 // ===========================================================================

@@ -812,5 +812,10 @@ export {
   FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS, RESEARCH_FETCH_TIMEOUT_MS, STALE_RUN_THRESHOLD_MS,
   MAX_CHUNKS_SAFELY_PER_INVOCATION,
   computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult, accumulateProgress, decideFinalStatus,
-  safeSecretEqual
+  safeSecretEqual,
+  // Commercial-readiness correction round, item 8: exported (no behavior
+  // change -- these are unchanged) so a local, no-email preview tool can
+  // render the REAL production digest HTML instead of a mockup. See
+  // scripts/generate-digest-preview.js.
+  reportHtml, opportunityCardHtml, weeklySummaryFromSignals, weeklyBriefSubject, metricRows
 };

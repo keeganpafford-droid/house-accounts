@@ -2992,8 +2992,23 @@ function renderCustomerDashboard(data){
   panel.style.display = 'block';
   const subtitle = document.getElementById('customerDashboardSubtitle');
   if(subtitle){
-    const uploadName = data?.upload?.upload_name || 'your saved account list';
-    subtitle.textContent = `${uploadName} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
+    // Commercial-readiness correction round, item 7: data.upload is a
+    // SINGLE row (api/get-dashboard.js's aggregate path picks whichever
+    // upload was updated_at-most-recent), but data.accounts/the rest of
+    // this panel are the FULL aggregate across every upload the user owns.
+    // Naming the panel after that one upload previously implied the whole
+    // panel was scoped to it, which visibly disagreed with an opportunity
+    // summary computed across a different/newer upload. When accounts span
+    // more than one upload, say so plainly instead of naming just one of
+    // them; only use the single-upload phrasing when the aggregate really
+    // is a single list.
+    const distinctUploadIds = new Set(accounts.map(a => a?.uploadId).filter(Boolean));
+    if(distinctUploadIds.size > 1){
+      subtitle.textContent = `Showing ${pluralize(accounts.length, 'monitored account')} combined across ${distinctUploadIds.size} uploaded lists. House Accounts will keep monitoring them and surface the newest reasons to reach out.`;
+    } else {
+      const uploadName = data?.upload?.upload_name || 'your saved account list';
+      subtitle.textContent = `${uploadName} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
+    }
   }
   const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
   set('dashNewThisWeek', newlyDetectedCount(data));
@@ -4074,7 +4089,83 @@ function formatShortDate(value){
 // never render blank. Exact required formats: "Upcoming — Event date: X",
 // "Recent event — Event date: X", "Ongoing business change — Published: X",
 // "Date unavailable", "No longer current".
+// Commercial-readiness correction round: real order-history-derived
+// opportunities (Follow-Up Signal / Repeat-Pattern Signal, i.e. never a
+// public business signal) must never fall through to the public-event
+// status taxonomy (upcoming/stale/unknown-date/...) -- that taxonomy is
+// about a discovered article's event date, a concept these opportunities
+// don't have, which is exactly why they previously rendered the taxonomy's
+// honest-but-wrong default, "Date unavailable", even though a real order
+// date and calculated cadence were sitting right on the opportunity.
+function isAccountHistoryOpportunity(opp){
+  // opp.actionabilityStatus is set EXCLUSIVELY by the business-signal
+  // pipeline (makeSignal() in api/research-batch.js) -- an account-history
+  // opportunity (createOpportunity()/createRepeatPatternOpportunities())
+  // never sets it. Checking for its presence (not just isVerifiedSignal
+  // Opportunity/sourceUrl) is what keeps this from misclassifying a
+  // business-signal-shaped object that simply lacks those two fields (e.g.
+  // a test fixture, or an already-persisted legacy row) as account history.
+  if(!opp || opp.isVerifiedSignalOpportunity || opp.sourceUrl || opp.actionabilityStatus) return false;
+  const layer = signalLayerLabel(opp);
+  return layer === 'Follow-Up Signal' || layer === 'Repeat / Pattern Signal';
+}
+
+// Classifies a GROUNDED repeat pattern (opportunityType 'REPEAT PATTERN' --
+// i.e. an actual detected category cadence, never a generic industry
+// template) into 'approaching' / 'current' / 'overdue' using only the real
+// last-order date and the real calculated typical month already on the
+// opportunity (see createRepeatPatternOpportunities()) -- no new precision
+// is invented beyond what the order history already supports:
+//   - overdue: the account's own historical cadence is roughly annual, and
+//     it has now been over a year (with slack for month-to-month drift)
+//     since the last real order without a new one landing.
+//   - current: the typical month is THIS month.
+//   - approaching: the typical month is still ahead, and the last order
+//     isn't old enough yet to call the pattern missed.
+function reorderWindowStatus(opp){
+  const lastOrderDate = parseMaybeDate(opp.signalDate || opp.lastOrderDate || '');
+  if(!lastOrderDate) return null;
+  const daysSinceLastOrder = Math.max(0, Math.round((Date.now() - lastOrderDate.getTime()) / 86400000));
+  const purchaseMonth = Number.isInteger(opp.purchaseMonth) ? opp.purchaseMonth : inferPurchaseMonth(opp);
+  const monthDelta = monthDistanceFromNow(purchaseMonth);
+  if(daysSinceLastOrder > 395) return 'overdue';
+  if(monthDelta === 0) return 'current';
+  return 'approaching';
+}
+
+// Account-history-specific status states, using the actual order date(s)
+// and calculated cadence already present on the opportunity -- never the
+// public-event taxonomy (upcoming/stale/recent-past/unknown-date), which
+// describes a discovered article's event date, not a customer's own order
+// history.
+function accountHistoryStatusLine(opp){
+  const layer = signalLayerLabel(opp);
+  const orderDateText = formatShortDate(opp.signalDate || opp.lastOrderDate || opp.mostRecentDate || '');
+  if(layer === 'Follow-Up Signal'){
+    return orderDateText ? `Customer follow-up due — Order date: ${orderDateText}` : 'Customer follow-up due';
+  }
+  // Repeat / Pattern Signal.
+  if(opp.opportunityType === 'REPEAT PATTERN'){
+    const status = reorderWindowStatus(opp);
+    const windowText = opp.purchaseMonthLabel
+      ? (opp.years && opp.years.length ? `${opp.purchaseMonthLabel} (${opp.years[0]}–${opp.years[opp.years.length-1]} pattern)` : opp.purchaseMonthLabel)
+      : '';
+    if(status === 'overdue'){
+      return windowText ? `Normal reorder window has passed — Expected reorder window: ${windowText}` : 'Normal reorder window has passed';
+    }
+    if(status === 'current'){
+      return windowText ? `Currently in reorder window — Expected reorder window: ${windowText}` : 'Currently in reorder window';
+    }
+    return windowText ? `Reorder window approaching — Expected reorder window: ${windowText}` : 'Reorder window approaching';
+  }
+  // A generic account-history opportunity with no grounded pattern behind
+  // it (see accountOpportunityCluster()'s collapse of these) -- honest
+  // about what it actually is: prior order history, not a dated event.
+  return orderDateText ? `Account history — Order date: ${orderDateText}` : 'Account history';
+}
+
 function signalDateAndActionabilityLine(opp){
+  if(isAccountHistoryOpportunity(opp)) return accountHistoryStatusLine(opp);
   const status = opp.actionabilityStatus || {};
   const eventDate = opp.eventDate || opp.event_date || '';
   // QA final round, item 2: prefer the human-readable date RANGE (e.g.
@@ -4150,7 +4241,16 @@ function accountOpportunityCluster(opp){
   const accountName=String(opp?.account||opp?.accountName||'').trim().toLowerCase();
   const account=(window.accountRadarAccounts||[]).find(a=>String(a?.name||'').trim().toLowerCase()===accountName);
   const opportunities=account&&Array.isArray(account.futureOpportunities)?account.futureOpportunities:[];
-  return sortDailyReasons(dedupeOpportunities(opportunities)).filter(item=>!item?false:true);
+  // Commercial-readiness correction round, item 5: exact/near-exact
+  // account-history duplicates (the same underlying recent order rendered
+  // once per generic industry template, or the same account-level
+  // "Repeat / Pattern Signal" fallback rendered once per template) are
+  // collapsed here, BEFORE the existing department/category/buyer-keyed
+  // dedupeOpportunities() -- that dedup is correctly granular for genuinely
+  // different business initiatives/programs, but was never meant to (and
+  // does not) catch multiple generic templates describing the SAME single
+  // recent order or the SAME absence of a real repeat pattern.
+  return sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(opportunities))).filter(item=>!item?false:true);
 }
 
 function sameOpportunity(a,b){
@@ -4206,7 +4306,7 @@ function renderAccountContextSection(opp){
   const notes = String(account.notes || '').trim();
   const rows = [];
   if(orderCount) rows.push(`<div class="sales-play-detail-item"><strong>Previous orders</strong>${orderCount} order${orderCount===1?'':'s'} on file${revenue ? ` · ${escapeHtml(fmtMoney(revenue))} historical revenue` : ''}</div>`);
-  if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Historical categories</strong>${escapeHtml(categories.join(', '))}</div>`);
+  if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Previously purchased categories</strong>${escapeHtml(categories.join(', '))}</div>`);
   if(mostRecent) rows.push(`<div class="sales-play-detail-item"><strong>Cadence</strong>Most recent order ${escapeHtml(mostRecent)}</div>`);
   if(contacts.length) rows.push(`<div class="sales-play-detail-item"><strong>Uploaded contacts</strong>${escapeHtml(contacts.slice(0,3).map(c=>c.name||c.email).join(', '))}</div>`);
   if(notes) rows.push(`<div class="sales-play-detail-item"><strong>Account notes</strong>${escapeHtml(shortText(notes,180))}</div>`);
@@ -4249,11 +4349,19 @@ function renderCallPrepOpportunity(opp){
 function renderSupportingResearchDetails(opp){
   const teams=(opp.recommendedBuyingTeam||opp.likelyBuyers||[]).filter(Boolean).slice(0,3);
   const cats=(opp.commonPromoCategories||opp.suggestedProducts||[]).filter(Boolean).slice(0,5);
+  // Commercial-readiness correction round, item 4: real uploaded purchase
+  // categories (realPriorCategories -- account.categoryTypes, never
+  // opp.commonPromoCategories/suggestedProducts) shown in the SAME Evidence
+  // card as the inferred merchandise ideas, each under its own explicit
+  // label, so a rep reading Evidence never has to guess which row is a
+  // fact from the order history and which is a product suggestion.
+  const purchasedCategories = realPriorCategories(opp);
   const source=opp.sourceUrl?`<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName||sourceDomain(opp.sourceUrl)||'View source')}</a>`:escapeHtml(evidenceSourceLabel(opp)||'Account history');
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Evidence</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Event source</strong>${source}${opp.signalDate?` · ${escapeHtml(formatSignalAge(opp)||opp.signalDate)}`:''}</div>
     <div class="sales-play-detail-item"><strong>Recommended buying team</strong>${escapeHtml(teams.join(', ')||'Relevant department lead')}</div>
-    <div class="sales-play-detail-item"><strong>Suggested merchandise categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')} <span class="opp-inferred-note">(inferred, not purchase history)</span></div>
+    ${purchasedCategories.length ? `<div class="sales-play-detail-item"><strong>Previously purchased categories</strong>${escapeHtml(purchasedCategories.join(', '))} <span class="opp-purchased-note">(from your uploaded order history)</span></div>` : ''}
+    <div class="sales-play-detail-item"><strong>Related suggested categories</strong>${escapeHtml(cats.join(', ')||'No categories identified')} <span class="opp-inferred-note">(inferred idea, not purchase history)</span></div>
   </div></div>`;
 }
 
@@ -5780,6 +5888,27 @@ function salesPlayModeLabel(mode){
   return `${mode} Play`;
 }
 
+// Commercial-readiness correction round, item 3: a relationship-STRENGTH
+// label ("Lukewarm Play") makes no sense on an opportunity that is
+// literally grounded in a real, named customer with order history -- the
+// relevant fact there isn't how warm the relationship feels, it's that
+// they already are a customer. Business Activity Signal opportunities
+// (no order history backing them) keep the existing relationship-strength
+// label unchanged.
+function accountHistoryPlayLabel(opp){
+  if(!isAccountHistoryOpportunity(opp)) return null;
+  const layer = signalLayerLabel(opp);
+  if(layer === 'Follow-Up Signal') return 'Customer Follow-Up';
+  if(opp.opportunityType === 'REPEAT PATTERN') return 'Reorder Check-In';
+  return Number(opp.orderCount || opp.accountOrderCount || 0) > 0 || Number(opp.accountRevenue || 0) > 0
+    ? 'Existing Account'
+    : 'Past Customer Reconnect';
+}
+
+function salesPlayModeLabelForOpp(opp, mode){
+  return accountHistoryPlayLabel(opp) || salesPlayModeLabel(mode);
+}
+
 function createOpportunity(account, name, contactTitle, products, evidenceCats=[], baseConfidence=55, signalBased=false){
   const value = estimateFutureValue(account, name);
   const relationshipStrength = getRelationshipStrength(account);
@@ -5927,13 +6056,25 @@ function createRepeatPatternOpportunities(account){
     opp.estimatedValue = Math.round(valueBasis * 1.15);
     opp.signalLayerType = 'Repeat / Pattern Signal';
     opp.opportunityType = 'REPEAT PATTERN';
-    opp.reasonToReachOut = `${program} may be coming up again`;
     opp.whyNow = `${account.name} has ordered ${pattern.category.toLowerCase()} ${pattern.orderCount} times${pattern.years.length > 1 ? ` across ${pattern.years.length} years` : ''}${pattern.monthLabel ? `, with activity around ${pattern.monthLabel}` : ''}.`;
-    opp.conversationStarter = `Ask if the ${pattern.category.toLowerCase()} program is happening again this year.`;
     opp.signalDate = pattern.lastDate ? pattern.lastDate.toISOString() : '';
     opp.purchaseMonth = pattern.lastDate ? pattern.lastDate.getMonth() : monthIndexFromName(pattern.monthLabel);
     opp.purchaseMonthLabel = pattern.monthLabel || '';
     opp.planningWindow = classifyMonthWindow(opp.purchaseMonth);
+    opp.years = pattern.years;
+    // Commercial-readiness correction round, item 6: an overdue pattern
+    // (reorderWindowStatus() -- grounded in the real last-order date, not
+    // guessed) is never described as merely "coming up" or "happening
+    // again this year" -- that phrasing is reserved for a pattern that is
+    // actually approaching or currently in its typical window.
+    const windowStatus = reorderWindowStatus(opp);
+    if(windowStatus === 'overdue'){
+      opp.reasonToReachOut = `${program} normal timing has passed`;
+      opp.conversationStarter = `Ask if the ${pattern.category.toLowerCase()} program is still something they need — the usual timing has already passed.`;
+    } else {
+      opp.reasonToReachOut = `${program} may be coming up again`;
+      opp.conversationStarter = `Ask if the ${pattern.category.toLowerCase()} program is happening again this year.`;
+    }
     opp.confidence = Math.max(opp.confidence || 0, pattern.confidence);
     opp.quickWinScore = Math.max(opp.quickWinScore || 0, pattern.confidence);
     opp.closeProbability = Math.max(opp.closeProbability || 0, pattern.confidence - 5);
@@ -6249,6 +6390,17 @@ window.createSalesPlayPanel = function(opp, opts){
   // bucket signalType already uses (QA round 3, item 2 treats acquisition
   // as a form of expansion for that purpose).
   const canonicalKind = canonicalSignalKind(opp) || '';
+  // Commercial-readiness correction round, item 2: for a real order-history
+  // opportunity (Follow-Up / Repeat-Pattern Signal, never a business
+  // signal), the uploaded relationship context -- the real contact and the
+  // real purchased category/date -- must drive the whole outreach surface,
+  // never the generic public-signal department-involvement framing
+  // (buildConciseSalesPlay branches on isAccountHistory below to skip that
+  // framing entirely for these).
+  const isAccountHistory = isAccountHistoryOpportunity(opp);
+  const orderCategory = isAccountHistory ? (realPriorCategories(opp)[0] || '') : '';
+  const orderDateText = isAccountHistory ? formatShortDate(opp.signalDate || opp.lastOrderDate || opp.mostRecentDate || '') : '';
+  const reorderStatus = isAccountHistory && opp.opportunityType === 'REPEAT PATTERN' ? reorderWindowStatus(opp) : null;
 
   const play = buildConciseSalesPlay({
     account,
@@ -6265,17 +6417,22 @@ window.createSalesPlayPanel = function(opp, opts){
     initiativeTitle,
     isUpcoming,
     actionabilityTense,
-    hasKnownContact
+    hasKnownContact,
+    isAccountHistory,
+    layer: signalLayerLabel(opp),
+    orderCategory,
+    orderDateText,
+    reorderStatus
   });
 
-  const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode);
+  const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode, opp);
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
       <div class="sales-play-modal-content">
         <div class="sales-play-header">
           <div>
             <h2>Prepare for Call</h2>
-            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(salesPlayModeLabel(mode))}</span></div>
+            <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(salesPlayModeLabelForOpp(opp, mode))}</span></div>
           </div>
           <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
         </div>
@@ -6408,6 +6565,43 @@ function triggerPhraseForSignal(ctx){
   return 'a timely account signal';
 }
 
+// Commercial-readiness correction round, item 2: for a real order-history
+// opportunity, the lead-in is grounded ONLY in the real purchased category
+// and real order date already on the opportunity (see
+// createSalesPlayPanel()'s ctx.orderCategory/ctx.orderDateText) -- there is
+// no AI-signal initiativeTitle for these, and the uploaded relationship
+// context must take priority over any generic public-signal framing.
+function accountHistoryOrderPhrase(ctx){
+  const cat = String(ctx.orderCategory || '').trim();
+  return cat ? cat.toLowerCase() : 'recent order';
+}
+function accountHistoryLeadPhrase(ctx){
+  const cat = accountHistoryOrderPhrase(ctx);
+  if(ctx.layer === 'Follow-Up Signal'){
+    return ctx.orderDateText ? `the ${cat} order from ${ctx.orderDateText}` : `the recent ${cat} order`;
+  }
+  // Repeat / Pattern Signal.
+  if(ctx.orderCategory) return `the ${cat} program`;
+  return 'your order history with them';
+}
+// The natural question a rep would actually ask about THIS order/program --
+// never "is <department> already involved" (that framing assumes nobody
+// there knows about it yet, which makes no sense once they are already a
+// customer), and honest about a genuinely overdue pattern instead of
+// describing it as merely upcoming.
+function accountHistoryAskPhrase(ctx){
+  if(ctx.layer === 'Follow-Up Signal'){
+    return 'how it went — fit, feedback, quantities, or whether anything else is needed';
+  }
+  if(ctx.reorderStatus === 'overdue'){
+    return `whether the ${accountHistoryOrderPhrase(ctx)} program is still something they need, since the usual timing has already passed`;
+  }
+  return `whether the ${accountHistoryOrderPhrase(ctx)} program is returning this year`;
+}
+function accountHistoryOfferPhrase(){
+  return 'a few ideas for next time';
+}
+
 // The lead-in sentence fragment used across every outreach surface --
 // references the exact initiative, and only claims "coming up" when the
 // actionability state actually supports it. Deliberately preserves the
@@ -6416,6 +6610,7 @@ function triggerPhraseForSignal(ctx){
 // re-lowercase this, which previously mangled proper nouns like account
 // and initiative names ("new hope network").
 function initiativeLeadIn(ctx){
+  if(ctx.isAccountHistory) return accountHistoryLeadPhrase(ctx);
   const title = triggerPhraseForSignal(ctx);
   return ctx.isUpcoming ? `${title} coming up` : title;
 }
@@ -6456,6 +6651,11 @@ function leadWithAccountContext(ctx){
 // actually ask, and never claims the department is already involved (it's
 // phrased as an open question either way).
 function ownerAskPhrase(ctx){
+  // Commercial-readiness correction round, item 2: an account-history
+  // opportunity is never routed through the department-involvement framing
+  // below, department-known or not -- there is no department to "find" when
+  // a named uploaded contact and real order history already exist.
+  if(ctx.isAccountHistory) return accountHistoryAskPhrase(ctx);
   if(ctx.canonicalKind === 'acquisition') return `who on your team is leading the integration or communications around it`;
   if(ctx.department) return `whether ${ctx.department} is already involved, or who else might be`;
   return `who would be the right person to ask about that`;
@@ -6479,11 +6679,98 @@ const GROUNDED_OFFER_BY_KIND = {
   expansion: 'launch', recognition: 'employee', leadership: 'employee'
 };
 function ideaOfferPhrase(ctx){
+  if(ctx.isAccountHistory) return accountHistoryOfferPhrase();
   const cat = GROUNDED_OFFER_BY_KIND[ctx.canonicalKind] || '';
   return cat ? `a few ${cat}-related ideas` : 'a few relevant ideas';
 }
 
+// -----------------------------------------------------------------------
+// Commercial-readiness correction round, item 2: a fully separate outreach
+// build for real order-history opportunities (Follow-Up / Repeat-Pattern
+// Signal). Kept independent from buildConciseSalesPlay()'s business-signal
+// templates below rather than threading conditionals through them --
+// every sentence here is grounded in the real order category/date already
+// on the opportunity and the real uploaded contact, never in a generic
+// public-signal department-involvement framing. Item 6 (lapsed honesty):
+// ctx.reorderStatus ('approaching'/'current'/'overdue', from
+// reorderWindowStatus()) changes the tone -- an overdue pattern is never
+// described as merely upcoming.
+// -----------------------------------------------------------------------
+function accountHistorySubject(ctx){
+  const cat = accountHistoryOrderPhrase(ctx);
+  if(ctx.layer === 'Follow-Up Signal') return `Quick check-in on the recent ${cat} order`;
+  if(ctx.reorderStatus === 'overdue') return `Checking in on the ${cat} program`;
+  return `Is the ${cat} program returning this year?`;
+}
+function accountHistorySubjectRationale(){
+  return 'It names the actual order or program from their purchase history, so it reads as a specific, low-pressure check-in rather than a generic account touch.';
+}
+function accountHistoryEmail(ctx){
+  const lead = leadWithAccountContext(ctx);
+  const ask = accountHistoryAskPhrase(ctx);
+  const offer = accountHistoryOfferPhrase();
+  let email;
+  if(ctx.layer === 'Follow-Up Signal'){
+    email = `Hey ${ctx.firstName},\n\nWanted to check in on ${lead}.\n\nDo you know ${ask}?\n\nHappy to send over ${offer} if it would help — no pressure either way.\n\nBest,\n[Rep Name]`;
+  } else if(ctx.reorderStatus === 'overdue'){
+    email = `Hey ${ctx.firstName},\n\nIt's been a while since ${lead}, so wanted to check in.\n\nDo you know ${ask}?\n\nCan send over ${offer} if useful — just trying to see if there's a real conversation here first.\n\nBest,\n[Rep Name]`;
+  } else {
+    email = `Hey ${ctx.firstName},\n\nLooks like it's around the time for ${lead} again, so wanted to check in.\n\nDo you know ${ask}?\n\nHappy to send over ${offer} if it would help.\n\nBest,\n[Rep Name]`;
+  }
+  return normalizeOutreachText(email);
+}
+function accountHistoryCallScript(ctx){
+  const lead = leadWithAccountContext(ctx);
+  const ask = accountHistoryAskPhrase(ctx);
+  return [
+    `<strong>Open:</strong> "Hey ${ctx.firstName}, wanted to check in on ${lead}."`,
+    `<strong>Reason:</strong> "Wanted to ask ${ask}."`,
+    `<strong>Ask:</strong> "What's the best next step from here?"`
+  ].map(normalizeOutreachText);
+}
+function accountHistoryQuestions(ctx){
+  const ask = accountHistoryAskPhrase(ctx);
+  const statusQuestion = ctx.layer === 'Follow-Up Signal'
+    ? 'Was everything received on time and as expected?'
+    : (ctx.reorderStatus === 'overdue' ? 'Is this still a program you run, or has anything changed?' : 'What is the typical timing for this so we can plan ahead?');
+  return [
+    `Do you know ${ask}?`,
+    statusQuestion,
+    'Would it help to see a few ideas for next time?'
+  ].map(normalizeOutreachText);
+}
+function buildAccountHistorySalesPlay(ctx){
+  const lead = accountHistoryLeadPhrase(ctx);
+  const ask = accountHistoryAskPhrase(ctx);
+  const offer = accountHistoryOfferPhrase();
+  const capitalizedLead = lead.charAt(0).toUpperCase() + lead.slice(1);
+
+  const opportunitySummary = [
+    `${capitalizedLead} is the reason to reach out here — it comes directly from their own order history, not a guess.`,
+    'A known uploaded contact and real purchase history make this a warm, low-pressure check-in, not a cold outreach.',
+    'Goal is to confirm the order or program status and earn the next order or a referral.'
+  ].map(normalizeOutreachText);
+
+  const bestNextMove = normalizeOutreachText(`Call or email ${ctx.firstName} directly. Reference ${lead}. Ask ${ask}. Offer ${offer} if it's welcome.`);
+  const coachingNote = 'This is an existing, named customer — lead with the real order, not a discovery question, and skip any "who is the right person" framing since the contact is already known.';
+  const bestNextMoveCombined = normalizeOutreachText(`${bestNextMove} ${coachingNote}`);
+
+  return {
+    opportunitySummary,
+    bestNextMove,
+    bestNextMoveCombined,
+    emailSubject: normalizeOutreachText(accountHistorySubject(ctx)),
+    subjectRationale: accountHistorySubjectRationale(),
+    outreachEmail: normalizeOutreachText(trimToWords(accountHistoryEmail(ctx), 120)),
+    callScript: accountHistoryCallScript(ctx),
+    questionsToAsk: accountHistoryQuestions(ctx).slice(0, 3),
+    successLooksLike: ['Confirmation of how the order was received', 'A repeat order or renewed program', 'Referral to another buyer at the account'],
+    coachingNote
+  };
+}
+
 function buildConciseSalesPlay(ctx){
+  if(ctx.isAccountHistory) return buildAccountHistorySalesPlay(ctx);
   const isWarm = ctx.mode === 'Warm';
   const lead = initiativeLeadIn(ctx);
   const ask = ownerAskPhrase(ctx);
@@ -6667,9 +6954,9 @@ function inferSalesPlaySignalType(opp, reasonTitle, whyNow, category){
   return 'general';
 }
 
-function formatSalesPlayClipboard(play, account, reasonTitle, mode){
+function formatSalesPlayClipboard(play, account, reasonTitle, mode, opp){
   return [
-    `SALES PLAY: ${account} · ${reasonTitle} · ${salesPlayModeLabel(mode)}`,
+    `SALES PLAY: ${account} · ${reasonTitle} · ${salesPlayModeLabelForOpp(opp, mode)}`,
     '',
     'OPPORTUNITY SUMMARY',
     ...play.opportunitySummary.map(item => `- ${item}`),
@@ -7047,6 +7334,44 @@ function collapseDuplicateFollowUps(opps){
   return [...map.values(), ...passthrough];
 }
 
+function genericRepeatCollapseKey(opp){
+  return `${String(opp.account || '').toLowerCase().trim()}|generic-repeat`;
+}
+
+// Commercial-readiness correction round, item 5: a genuine REPEAT PATTERN
+// opportunity (opportunityType 'REPEAT PATTERN' -- an actual detected
+// category cadence; see createRepeatPatternOpportunities()) is always kept,
+// one per real historical program. A generic industry-template opportunity
+// that merely INHERITED the "Repeat / Pattern Signal" label via the
+// account's low recency score (see createOpportunity()) is not evidence of
+// a second, third, or fourth distinct historical program -- collapsing
+// these mirrors collapseDuplicateFollowUps() above, and for the same
+// reason: they read as identical, generic "is this happening again" text
+// to a rep, regardless of which arbitrary industry template produced them.
+function collapseDuplicateGenericRepeatSignals(opps){
+  const map = new Map();
+  const passthrough = [];
+  (opps || []).forEach(opp => {
+    if(signalLayerLabel(opp) !== 'Repeat / Pattern Signal' || opp.opportunityType === 'REPEAT PATTERN'){
+      passthrough.push(opp);
+      return;
+    }
+    const key = genericRepeatCollapseKey(opp);
+    const existing = map.get(key);
+    if(!existing || getDailyReasonScore(opp) > getDailyReasonScore(existing)) map.set(key, opp);
+  });
+  return [...map.values(), ...passthrough];
+}
+
+// Applies both account-history collapses together -- Follow-Up Signal
+// duplicates and generic (non-grounded) Repeat/Pattern Signal duplicates --
+// leaving Business Activity Signal opportunities and genuine REPEAT
+// PATTERN opportunities (each a real, distinct historical program)
+// untouched.
+function collapseDuplicateAccountHistorySignals(opps){
+  return collapseDuplicateGenericRepeatSignals(collapseDuplicateFollowUps(opps));
+}
+
 function limitReasonsPerAccount(opps, maxPerAccount=2){
   const counts = new Map();
   const selected = [];
@@ -7170,20 +7495,20 @@ function priorityEligibleOpportunities(opps){
 
 function prepareTimeboxReasons(opps, timebox=activeTimebox){
   const config = TIMEBOX_CONFIG[timebox] || TIMEBOX_CONFIG.week;
-  const collapsed = collapseDuplicateFollowUps(priorityEligibleOpportunities(opps));
+  const collapsed = collapseDuplicateAccountHistorySignals(priorityEligibleOpportunities(opps));
   const filtered = collapsed.filter(opp => opportunityMatchesTimebox(opp, timebox));
   const ranked = limitReasonsPerAccount(sortDailyReasons(filtered), 1);
   return ranked.slice(0, config.limit);
 }
 
 function prepareDailyReasons(opps, limit=WEEKLY_PRIORITY_LIMIT){
-  const collapsed = collapseDuplicateFollowUps(priorityEligibleOpportunities(opps));
+  const collapsed = collapseDuplicateAccountHistorySignals(priorityEligibleOpportunities(opps));
   const ranked = limitReasonsPerAccount(sortDailyReasons(collapsed), 1);
   return ranked.slice(0, limit);
 }
 
 function prepareAllOpportunities(opps){
-  return limitReasonsPerAccount(sortDailyReasons(collapseDuplicateFollowUps(priorityEligibleOpportunities(opps))), 1);
+  return limitReasonsPerAccount(sortDailyReasons(collapseDuplicateAccountHistorySignals(priorityEligibleOpportunities(opps))), 1);
 }
 
 function toggleWeeklyPrioritiesView(showAll){
