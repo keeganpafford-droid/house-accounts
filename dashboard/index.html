@@ -481,6 +481,19 @@
     margin:24px 0 32px;
     box-shadow:0 8px 24px rgba(23,50,77,0.06);
   }
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+  /* Stabilization round: neutral branded loading state -- shown while a
+     returning user's saved dashboard is being resolved, so the "Sample
+     Analysis" preview below never flashes on top of a real user's data. */
+  .dashboard-loading-skeleton{display:none;margin:24px 0 32px;}
+  .dashboard-loading-skeleton.active{display:block;}
+  .dashboard-loading-bar{background:linear-gradient(90deg,#F0F2F5 25%,#F7F8FA 37%,#F0F2F5 63%);background-size:400% 100%;animation:ha-skeleton-pulse 1.4s ease infinite;border-radius:6px;}
+  .dashboard-loading-bar-title{height:22px;width:220px;margin-bottom:12px;}
+  .dashboard-loading-bar-line{height:14px;width:340px;margin-bottom:20px;}
+  .dashboard-loading-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;}
+  .dashboard-loading-card{height:84px;background:linear-gradient(90deg,#F0F2F5 25%,#F7F8FA 37%,#F0F2F5 63%);background-size:400% 100%;animation:ha-skeleton-pulse 1.4s ease infinite;border:1px solid var(--line);border-radius:8px;}
+  @keyframes ha-skeleton-pulse{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
+  @media(prefers-reduced-motion:reduce){.dashboard-loading-bar,.dashboard-loading-card{animation:none;}}
   .example-opportunity-title{
     font-family:var(--display);
     font-size:1.6rem;
@@ -544,9 +557,6 @@
     line-height:1.45;
   }
 
-  .upload-zone.locked{
-    display:none;
-  }
   .beta-cta{
     background:#fff;
     border:2px solid var(--radar);
@@ -580,34 +590,38 @@
      (max-width:960px, its own border/background, centered with margin:auto)
      sitting in the page's normal document flow. It now lives inline inside
      the dashboard heading row's right side (.mvp-dashboard-heading-right),
-     so it is restyled compact -- no card chrome, no independent width. */
+     so it is restyled compact -- no card chrome, no independent width.
+     Stabilization round: restyled again into a true segmented control (one
+     shared outer border/background, the two options as halves of it) now
+     that the standalone "Team View" heading/description text next to it is
+     gone -- the selected half is the only scope indicator left. */
   .dashboard-view-switcher{
     display:none;
     align-items:center;
-    gap:10px;
-    flex-wrap:wrap;
   }
   .dashboard-view-switcher.active{display:flex;}
-  .view-toggle-buttons{display:flex;gap:6px;flex-wrap:wrap;}
-  .view-toggle-btn{
+  .view-toggle-buttons{
+    display:flex;
+    background:#F0F2F5;
     border:1px solid var(--line);
-    background:#fff;
-    color:var(--ink);
     border-radius:999px;
-    padding:6px 11px;
+    padding:3px;
+    gap:2px;
+  }
+  .view-toggle-btn{
+    border:0;
+    background:transparent;
+    color:var(--muted);
+    border-radius:999px;
+    padding:6px 13px;
     font-size:.82rem;
     font-weight:800;
     cursor:pointer;
   }
   .view-toggle-btn.active{
-    background:#eefdfb;
-    border-color:rgba(31,183,174,.35);
+    background:#fff;
     color:var(--radar);
-  }
-  .team-snapshot-note{
-    color:var(--muted);
-    font-size:.78rem;
-    font-weight:700;
+    box-shadow:0 1px 3px rgba(23,55,94,.16);
   }
   .member-empty-state{
     max-width:960px;
@@ -1913,8 +1927,21 @@
    plus the My View/Team View switcher, replacing the full-width trial
    banner and the standalone Team View panel that used to occupy their own
    rows below the heading. */
-.mvp-dashboard-heading-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end;}
-.dashboard-trial-status{font-size:.82rem;font-weight:700;color:var(--muted);white-space:nowrap;}
+.mvp-dashboard-heading-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;}
+/* Stabilization round: styled as an actual compact pill (background,
+   rounded, padded) rather than bare text, matching the segmented control
+   it now sits directly beside. */
+.dashboard-trial-status{
+  font-size:.78rem;
+  font-weight:800;
+  color:var(--ink);
+  white-space:nowrap;
+  background:#F7F8FA;
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:7px 13px;
+}
+.dashboard-trial-status:empty{display:none;}
 .mvp-dashboard-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--line);border-left:4px solid var(--signal);background:#fff8e8;color:var(--ink);font-weight:700;}
 .mvp-dashboard-notice.active{display:block;}
 .ha-mvp .opportunities-section{margin-top:18px;}
@@ -2031,6 +2058,12 @@
        full-width trial banner that used to sit below it (all three either
        duplicated what the Your Accounts card already shows, or took up a
        full row of vertical space for one short line of text). -->
+  <!-- Stabilization round: the standalone "Team View"/"My View" heading
+       text and its "Showing all organization recommendations."/"Showing
+       only recommendations created by you." explanatory line were removed
+       -- the segmented control's own selected state already communicates
+       which scope is active, so the two pieces of text next to it were
+       pure duplication that made this row visually crowded. -->
   <section class="mvp-dashboard-heading" aria-labelledby="mvpDashboardTitle">
     <div>
       <h2 id="mvpDashboardTitle">House Accounts</h2>
@@ -2039,11 +2072,7 @@
     <div class="mvp-dashboard-heading-right">
       <div class="dashboard-trial-status" id="dashboardTrialStatus"></div>
       <div class="dashboard-view-switcher" id="dashboardViewSwitcher">
-        <div>
-          <strong id="dashboardViewTitle">Team View</strong>
-          <div class="team-snapshot-note" id="dashboardTeamSnapshot"></div>
-        </div>
-        <div class="view-toggle-buttons" id="dashboardViewButtons">
+        <div class="view-toggle-buttons" id="dashboardViewButtons" role="group" aria-label="Dashboard view">
           <button class="view-toggle-btn" type="button" data-view="my">My View</button>
           <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
         </div>
@@ -2198,7 +2227,7 @@
       <h2 id="addCustomerDataModalTitle">Add Customer Data</h2>
       <p class="add-customer-data-modal-intro">Upload your existing customer or account list -- ideally with order history -- so House Accounts can find timely, real reasons to reach out.</p>
 
-      <div class="upload-zone locked" id="dropzone">
+      <div class="upload-zone" id="dropzone">
         <div class="upload-intro">
           <button class="btn" id="browseBtn" type="button">Choose Customer Order File</button>
           <input type="file" id="fileInput" accept=".csv">
@@ -2225,7 +2254,24 @@
     </div>
   </div>
 
-  <section class="example-opportunity" id="exampleOpportunity" aria-label="Example results preview">
+  <!-- Stabilization round: neutral branded loading state, shown by default
+       whenever a saved lead exists (i.e. we are about to try loading this
+       user's real saved dashboard) so Sample Analysis below never flashes
+       during that load -- see setLeadGateState()/loadSavedDashboard(). -->
+  <div class="dashboard-loading-skeleton" id="dashboardLoadingSkeleton" role="status" aria-live="polite">
+    <div class="dashboard-loading-bar dashboard-loading-bar-title"></div>
+    <div class="dashboard-loading-bar dashboard-loading-bar-line"></div>
+    <div class="dashboard-loading-cards">
+      <div class="dashboard-loading-card"></div>
+      <div class="dashboard-loading-card"></div>
+      <div class="dashboard-loading-card"></div>
+    </div>
+    <span class="sr-only">Loading your House Accounts dashboard…</span>
+  </div>
+  <!-- Hidden by default: only shown once loading is confirmed to have
+       completed AND there is genuinely no uploaded/saved data (never as a
+       default/flash state, and never for a user who has real data). -->
+  <section class="example-opportunity" id="exampleOpportunity" aria-label="Example results preview" style="display:none;">
     <div class="example-opportunity-title">Sample Analysis</div>
     <div class="example-opportunity-subtitle">Here’s an example of the kind of opportunity House Accounts can surface from past orders and public business activity.</div>
     <div class="example-card">
@@ -2545,11 +2591,21 @@ function renderDashboardUsage(){
   // after .workflow-switcher; it now just fills the compact status element
   // that already lives in the dashboard heading row (#dashboardTrialStatus),
   // so trial/usage status is visible without dominating the page.
+  //
+  // Stabilization round: shortened to a compact "<Plan> trial · N days
+  // left" style pill (required example: "Team trial · 26 days left")
+  // instead of a full sentence, so it fits cleanly next to the segmented
+  // My View/Team View control in the heading row.
   const el=document.getElementById('dashboardTrialStatus');
-  // Sprint 4.4.2: no longer appends a competing existing-customer/prospect count here.
-  // /api/usage remains the source for entitlement/plan-limit text only; the canonical
-  // customer account count is shown from /api/get-dashboard (see renderCustomerDashboard).
-  if(el) el.textContent=info.trialExpired?(info.trialUsed?`Your 30-day trial has already been used. Upgrade will be available soon.`:`Your trial has expired. Upgrade to continue monitoring unlimited companies.`):(info.isFree?`${info.used} / ${info.limit} companies monitored`:(info.trialDaysRemaining?`You're on a ${info.plan} trial. ${info.trialDaysRemaining} days remaining.`:`${info.used} companies monitored`));
+  if(!el) return;
+  const planLabel = info.plan ? info.plan.charAt(0).toUpperCase() + info.plan.slice(1) : 'Plan';
+  el.textContent = info.trialExpired
+    ? (info.trialUsed ? 'Trial used · Upgrade soon' : 'Trial expired · Upgrade to continue')
+    : (info.isFree
+      ? `Free · ${info.used}/${info.limit} companies`
+      : (info.trialDaysRemaining
+        ? `${planLabel} trial · ${info.trialDaysRemaining} day${info.trialDaysRemaining===1?'':'s'} left`
+        : `${info.used} companies monitored`));
 }
 function applyFreeCompanyLocksToCustomerAccounts(accounts){
   const info=dashboardUsageInfo();
@@ -2587,12 +2643,24 @@ function getSavedLead(){
 
 function setLeadGateState(){
   const saved = getSavedLead();
+  const example = document.getElementById('exampleOpportunity');
+  const skeleton = document.getElementById('dashboardLoadingSkeleton');
   if(saved && saved.email){
     currentLead = saved;
     const gate = document.getElementById('leadGate');
-    const dz = document.getElementById('dropzone');
     if(gate) gate.style.display = 'none';
-    if(dz) dz.classList.remove('locked');
+    // A saved lead means loadSavedDashboard() is about to run (see the
+    // DOMContentLoaded handler) -- keep Sample Analysis hidden and show a
+    // neutral loading state instead, until that resolves one way or
+    // another. Required: Sample Analysis must never flash while
+    // authentication/account/saved-dashboard data are unresolved.
+    if(skeleton) skeleton.classList.add('active');
+  } else {
+    // No saved lead at all -- this is the pre-auth marketing capture flow
+    // (#leadGate shown instead), where Sample Analysis has always served
+    // as a preview of the report. Nothing async is pending here, so
+    // showing it immediately is safe and not the flash this fix targets.
+    if(example) example.style.display = 'block';
   }
 }
 
@@ -3164,39 +3232,53 @@ function newlyDetectedCount(data){
   return uniqueDashboardOpportunities(dedupeOpportunities(data?.newThisWeek || [])).length;
 }
 
-function renderCustomerDashboard(data){
+// Stabilization round: the single place that actually shows/populates the
+// "Your Accounts" summary panel (#customerDashboard) -- extracted so both
+// the server-loaded path (renderCustomerDashboard(), below) and the
+// fresh-upload path (processData(), which previously never called either
+// and so never revealed this panel until the NEXT full page load) show the
+// exact same real DOM elements the same way. Every value is an explicit,
+// already-known number from the caller -- no new counting/ranking logic.
+function showCustomerDashboardPanel({subtitleText, newCount, accountCount, signalCount, lastScanLabel}){
   const panel = document.getElementById('customerDashboard');
   if(!panel) return;
+  panel.style.display = 'block';
+  const subtitle = document.getElementById('customerDashboardSubtitle');
+  if(subtitle && subtitleText != null) subtitle.textContent = subtitleText;
+  const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
+  if(newCount != null) set('dashNewThisWeek', newCount);
+  if(accountCount != null) set('dashSavedAccounts', accountCount);
+  if(signalCount != null) set('dashSavedSignals', signalCount);
+  if(lastScanLabel != null) set('dashLastScan', lastScanLabel);
+}
+
+function renderCustomerDashboard(data){
+  if(!document.getElementById('customerDashboard')) return;
   const accounts = data?.accounts || [];
   const signals = data?.signals || [];
   const weeklyRuns = data?.weeklyRuns || [];
   const latestRun = weeklyRuns[0] || null;
-  panel.style.display = 'block';
-  const subtitle = document.getElementById('customerDashboardSubtitle');
-  if(subtitle){
-    // Commercial-readiness correction round, item 7: data.upload is a
-    // SINGLE row (api/get-dashboard.js's aggregate path picks whichever
-    // upload was updated_at-most-recent), but data.accounts/the rest of
-    // this panel are the FULL aggregate across every upload the user owns.
-    // Naming the panel after that one upload previously implied the whole
-    // panel was scoped to it, which visibly disagreed with an opportunity
-    // summary computed across a different/newer upload. When accounts span
-    // more than one upload, say so plainly instead of naming just one of
-    // them; only use the single-upload phrasing when the aggregate really
-    // is a single list.
-    const distinctUploadIds = new Set(accounts.map(a => a?.uploadId).filter(Boolean));
-    if(distinctUploadIds.size > 1){
-      subtitle.textContent = `Showing ${pluralize(accounts.length, 'monitored account')} combined across ${distinctUploadIds.size} uploaded lists. House Accounts will keep monitoring them and surface the newest reasons to reach out.`;
-    } else {
-      const uploadName = data?.upload?.upload_name || 'your saved account list';
-      subtitle.textContent = `${uploadName} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
-    }
-  }
-  const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = value; };
-  set('dashNewThisWeek', newlyDetectedCount(data));
-  set('dashSavedAccounts', accounts.length);
-  set('dashSavedSignals', signals.length);
-  set('dashLastScan', formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at));
+  // Commercial-readiness correction round, item 7: data.upload is a
+  // SINGLE row (api/get-dashboard.js's aggregate path picks whichever
+  // upload was updated_at-most-recent), but data.accounts/the rest of
+  // this panel are the FULL aggregate across every upload the user owns.
+  // Naming the panel after that one upload previously implied the whole
+  // panel was scoped to it, which visibly disagreed with an opportunity
+  // summary computed across a different/newer upload. When accounts span
+  // more than one upload, say so plainly instead of naming just one of
+  // them; only use the single-upload phrasing when the aggregate really
+  // is a single list.
+  const distinctUploadIds = new Set(accounts.map(a => a?.uploadId).filter(Boolean));
+  const subtitleText = distinctUploadIds.size > 1
+    ? `Showing ${pluralize(accounts.length, 'monitored account')} combined across ${distinctUploadIds.size} uploaded lists. House Accounts will keep monitoring them and surface the newest reasons to reach out.`
+    : `${data?.upload?.upload_name || 'your saved account list'} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
+  showCustomerDashboardPanel({
+    subtitleText,
+    newCount: newlyDetectedCount(data),
+    accountCount: accounts.length,
+    signalCount: signals.length,
+    lastScanLabel: formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at)
+  });
 }
 
 let addCustomerDataModalTriggerEl = null;
@@ -3337,28 +3419,21 @@ function setDashboardView(mode){
   const email = currentDashboardData?.user?.email || currentLead?.email || document.getElementById('dashboardEmail')?.value || '';
   if(email) loadSavedDashboard(email);
 }
+// Stabilization round: this used to also fill a standalone "Team
+// View"/"My View"/"Organization Snapshot" heading and an explanatory line
+// ("Showing all organization recommendations."/etc) next to the segmented
+// control. Both were removed -- the segmented control's own selected
+// button already communicates the active scope, so that text was pure
+// duplication crowding the heading row. Permission gating (canTeam) and
+// the active-button toggle are otherwise unchanged.
 function renderDashboardViewSwitcher(){
   const wrap = document.getElementById('dashboardViewSwitcher');
   if(!wrap) return;
-  const snapshot = currentDashboardData?.organizationSnapshot || {};
   const canTeam = canCurrentUserViewTeam();
   dashboardCanViewTeam = canTeam;
   if(!currentDashboardData && !dashboardUsage){ wrap.classList.remove('active'); return; }
   wrap.classList.add('active');
-  const title = document.getElementById('dashboardViewTitle');
-  const snap = document.getElementById('dashboardTeamSnapshot');
   const buttons = document.getElementById('dashboardViewButtons');
-  // Sprint 4.4.2: only the canonical /api/get-dashboard organizationSnapshot count is used
-  // here; the /api/usage fallback (a competing count source) has been removed.
-  const hasCanonicalSnapshot = snapshot.customerCount !== undefined && snapshot.customerCount !== null;
-  const customerCount = Number(snapshot.customerCount ?? 0) || 0;
-  const prospectCount = Number(snapshot.prospectCount ?? 0) || 0;
-  if(title) title.textContent = canTeam ? (dashboardViewMode === 'team' ? 'Team View' : 'My View') : 'Organization Snapshot';
-  if(snap){
-    snap.textContent = canTeam
-      ? (dashboardViewMode === 'team' ? 'Showing all organization recommendations.' : 'Showing only recommendations created by you.')
-      : (hasCanonicalSnapshot ? `Your organization is monitoring ${customerCount} customer account${customerCount===1?'':'s'}.` : 'Your account view is loading.');
-  }
   if(buttons){
     buttons.style.display = canTeam ? 'flex' : 'none';
     buttons.querySelectorAll('[data-view]').forEach(btn => {
@@ -3380,12 +3455,23 @@ async function manualDashboardRefresh(){
   if(email) await loadSavedDashboard(email);
 }
 
+// Stabilization round: set the instant processData() has rendered a fresh
+// upload's results in THIS page visit. loadSavedDashboard() is also
+// auto-triggered 250ms after DOMContentLoaded (and may still be in flight
+// when a fast upload completes); once we know client-side that real data
+// exists, a late-arriving "no data yet" response from that unrelated,
+// earlier request must never hide/replace what the user is already looking
+// at -- see the personalEmpty/noData guards below.
+let freshUploadRenderedThisSession = false;
+
 async function loadSavedDashboard(email){
   const e = String(email || '').trim().toLowerCase();
   if(!e){ showError('Enter the email used for your House Accounts upload.'); return; }
   clearError();
   const banner = document.getElementById('savedDashboardBanner');
+  const skeleton = document.getElementById('dashboardLoadingSkeleton');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
+  if(skeleton) skeleton.classList.add('active');
   try{
     const headers = (window.HouseAuth&&HouseAuth.authHeadersAsync)?await HouseAuth.authHeadersAsync():{};
     if(!headers) return; // authHeadersAsync() already redirected to login
@@ -3399,6 +3485,11 @@ async function loadSavedDashboard(email){
     showJoinedWelcomeIfNeeded();
 
     if(data.personalEmpty === true){
+      if(skeleton) skeleton.classList.remove('active');
+      // A fresher upload already rendered client-side in this same visit --
+      // this response predates it server-side (replication/read lag), so it
+      // must not hide the dashboard the user is already looking at.
+      if(freshUploadRenderedThisSession) return;
       window.accountRadarAccounts = [];
       const memberEmpty = document.getElementById('memberEmptyState');
       const gate = document.getElementById('leadGate');
@@ -3409,7 +3500,9 @@ async function loadSavedDashboard(email){
       // No accounts uploaded yet -- the always-visible global "Add Customer
       // Data" CTA in the header is the single next action; the upload
       // control itself now only appears inside its modal (opened by that
-      // CTA), not auto-revealed inline on the page.
+      // CTA), not auto-revealed inline on the page. Loading is confirmed
+      // complete AND confirmed empty here, so Sample Analysis is safe to
+      // show now (never as a default/flash state).
       if(example) example.style.display = 'block';
       if(results) results.style.display = 'none';
       if(banner) banner.style.display = 'none';
@@ -3430,13 +3523,12 @@ async function loadSavedDashboard(email){
     };
     localStorage.setItem('houseAccountsLead', JSON.stringify(currentLead));
     const gate = document.getElementById('leadGate');
-    const dz = document.getElementById('dropzone');
     const example = document.getElementById('exampleOpportunity');
     const results = document.getElementById('results');
     if(gate) gate.style.display = 'none';
-    if(dz) dz.style.display = 'none';
     if(example) example.style.display = 'none';
     if(results) results.style.display = 'block';
+    if(skeleton) skeleton.classList.remove('active');
     const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     // Correction round: the "You're all set. Watching N accounts..." summary
     // that used to render here was removed -- it repeated the exact same
@@ -3448,15 +3540,22 @@ async function loadSavedDashboard(email){
     refreshOpportunityViews();
     window.scrollTo({top:0, behavior:'smooth'});
   }catch(err){
+    if(skeleton) skeleton.classList.remove('active');
     const isMember = !canCurrentUserViewTeam();
     const noData = /No existing customer dashboard data found yet|No saved dashboard found/i.test(String(err.message || ''));
     if(isMember && noData){
+      // Same stale-response guard as the personalEmpty branch above -- a
+      // fresher upload already rendered client-side, so this late "no
+      // data" error must not replace it.
+      if(freshUploadRenderedThisSession) return;
       const memberEmpty = document.getElementById('memberEmptyState');
+      const example = document.getElementById('exampleOpportunity');
       if(memberEmpty) memberEmpty.style.display = 'block';
       const gate = document.getElementById('leadGate');
       const results = document.getElementById('results');
       if(gate) gate.style.display = 'none';
       if(results) results.style.display = 'none';
+      if(example) example.style.display = 'block';
       if(banner) banner.style.display = 'none';
       renderDashboardViewSwitcher();
       return;
@@ -5397,9 +5496,20 @@ function getActiveResearchBreadcrumb(uploadId, researchRunId){
 }
 
 async function researchAccountFromManageModal(accountName, listId){
-  if(listId !== currentUploadId){
-    return {ok:false, outOfScope:true, error:'Open this list on the dashboard to research this account.'};
-  }
+  // Stabilization round: this used to refuse outright ("Open this list on
+  // the dashboard to research this account") whenever the account's list
+  // was not the one currently loaded into window.accountRadarAccounts,
+  // forcing the user to manually go activate that list and re-find the
+  // account. That refusal was never structurally necessary -- everything
+  // below (fetchUploadScopedSnapshot(), claimAutomaticResearchRun(),
+  // persistScopedResearchResult() further down) already takes listId as an
+  // explicit parameter and independently fetches/validates/saves scoped to
+  // THAT exact upload, never reading currentUploadId or
+  // window.accountRadarAccounts for the real work. Removing the gate lets
+  // any row's Research Account/Research Again button work directly --
+  // scoping happens automatically, with the same identity protections,
+  // rather than dead-ending the user.
+  //
   // Context captured ONCE, here. Everything below uses these two constants
   // and whatever fetchUploadScopedSnapshot() returns from them -- never
   // currentUploadId/currentUploadName/window.accountRadarAccounts again.
@@ -6124,10 +6234,14 @@ function refreshOpportunityViews(){
 // save has already succeeded; it only patches the main dashboard's
 // in-memory display copy of the SAME account with the SAME already-saved
 // result, purely so the existing render functions immediately reflect it.
-// researchAccountFromManageModal() only ever operates on an account whose
-// listId === currentUploadId (it returns outOfScope otherwise), so the
-// researched account is guaranteed to already exist in
-// window.accountRadarAccounts here -- this never invents a new entry.
+// Stabilization round: researchAccountFromManageModal() can now research
+// any list's account, not only the one currently loaded into
+// window.accountRadarAccounts -- so the researched account is NOT
+// guaranteed to already exist in this in-memory array. target ends up null
+// for a cross-list result, and this function simply no-ops (never invents
+// a new entry); the result itself is still fully saved server-side by
+// researchAccountFromManageModal()/persistScopedResearchResult() regardless
+// of whether the main dashboard's live view happens to reflect it.
 //
 // uploadId is REQUIRED and must be the caller's own explicit, immutable
 // scoped upload id (handleResearchClick's btn.dataset.listId, the SAME
@@ -7007,6 +7121,11 @@ function groundedInitiativeTitle(opp){
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp, opts){
   opts = opts || {};
+  // Required: close the Help dropdown and mobile nav before this panel
+  // opens, so no other application menu is left visibly open behind it.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+    window.HouseAccountsHeader.closeMenus();
+  }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
   // opp.contact/opp.contactTitle are often a department/role placeholder
@@ -7170,6 +7289,11 @@ window.createSalesPlayPanel = function(opp, opts){
     </div>`;
   document.body.insertAdjacentHTML('beforeend', html);
   const modal = document.body.lastElementChild;
+  // Move focus into the newly opened panel rather than leaving it on
+  // whatever "Prepare for Call" button triggered this, consistent with
+  // every other overlay in the app.
+  const salesPlayCloseBtn = modal.querySelector('.sales-play-close');
+  if(salesPlayCloseBtn) salesPlayCloseBtn.focus({preventScroll:true});
   modal.querySelectorAll('[data-copy-sales-play]').forEach(btn => {
     btn.addEventListener('click', () => {
       const field = btn.dataset.copySalesPlay;
@@ -8860,6 +8984,30 @@ function processData(records){
   document.getElementById('results').style.display = 'block';
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
+  const dashboardLoadingSkeletonEl = document.getElementById('dashboardLoadingSkeleton');
+  if(dashboardLoadingSkeletonEl) dashboardLoadingSkeletonEl.classList.remove('active');
+  // Stabilization round: populate and show the real "Your Accounts" panel
+  // immediately, using the same shared helper loadSavedDashboard() uses --
+  // previously this panel (and its own "Manage Customer Accounts" button)
+  // only appeared after a later full page reload triggered
+  // loadSavedDashboard(), so clicking "Manage Customer Accounts" from the
+  // upload-success actions right after a first upload had nothing real to
+  // click, and the account summary looked like it had "disappeared".
+  // Every value here is already computed above by this function's own
+  // unmodified pipeline -- no new counting/ranking logic. Signals/last-scan
+  // are honestly 0/"--" immediately post-upload since no research run has
+  // completed yet.
+  showCustomerDashboardPanel({
+    subtitleText: `${currentUploadName || 'Your customer list'} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`,
+    newCount: futureOpportunities.length,
+    accountCount: accounts.length,
+    signalCount: 0,
+    lastScanLabel: '—'
+  });
+  // A fresh upload just rendered client-side -- any still-in-flight or
+  // future "no data yet" response from the unrelated initial auto-load
+  // must never hide/replace it (see loadSavedDashboard()'s guards).
+  freshUploadRenderedThisSession = true;
   // The upload succeeded -- close the Add Customer Data modal so the
   // branded success panel and refreshed dashboard underneath are visible
   // immediately, instead of leaving the user looking at the modal.
@@ -8960,16 +9108,15 @@ else wireUploadSuccessStateControls();
  // existing token set and .btn family -- see the .acct-mgr-* rules added
  // near the top of this file's <style> block.
  //
- // inScope gates the Research action to accounts belonging to the upload
- // currently loaded into window.accountRadarAccounts (currentUploadId,
- // declared in the main dashboard <script> above -- classic inline scripts
- // in the same document share one top-level let/const scope, so it is
- // directly readable here without a window. prefix). This modal can list
- // accounts from OTHER uploaded lists that were never loaded into that
- // in-memory snapshot; researching one of those without first loading it
- // is exactly the cross-list gap the review flagged, and is explicitly out
- // of scope for this patch -- those rows show a disabled, clearly-labeled
- // action instead of silently failing.
+ // Stabilization round: the Research action used to be gated to only the
+ // upload currently loaded into window.accountRadarAccounts (currentUploadId)
+ // -- any other list's accounts showed a disabled "Open this list to
+ // research" button, forcing the user to manually activate that list and
+ // re-find the account. researchAccountFromManageModal() (main script) no
+ // longer requires that -- it always scopes itself to the row's own
+ // listId, automatically, via fetchUploadScopedSnapshot(listId) -- so every
+ // row now gets the same real action regardless of which list is "active"
+ // on the dashboard behind this modal.
  // ROUND 12: list.researchRunState comes straight from
  // api/monitoring-lists.js's summarizeResearchRunState() -- a plain,
  // side-effect-free read of the latest ha_research_runs row for this
@@ -8982,17 +9129,21 @@ else wireUploadSuccessStateControls();
  // just with a generic phrase instead of the account name.
  function accountRow(list, a){
    const paused = a.monitoringStatus === 'paused';
-   const inScope = typeof currentUploadId !== 'undefined' && list.id === currentUploadId;
    const researched = !!a.lastResearchedAt;
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
    const activeAccountName = runActive ? getActiveResearchBreadcrumb(list.id, runState.researchRunId) : '';
    const isBeingResearched = runActive && activeAccountName === a.name;
-   const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Research Again' : 'Research');
-   const researchDisabled = !inScope || runActive;
+   // Required: "Research Account" for a never-researched account,
+   // "Research Again" once it has been, "Researching…" only for the
+   // specific account currently being researched -- disabling the row
+   // action only while THAT exact account is in flight, or while another
+   // account in the same list has an active run (the server only allows
+   // one run per list at a time).
+   const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Research Again' : 'Research Account');
+   const researchDisabled = runActive;
    let researchTitle = '';
-   if(!inScope) researchTitle = 'Open this list on the dashboard to research this account.';
-   else if(runActive) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
+   if(runActive) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
    const metaParts = [
      a.industry ? esc(a.industry) : '',
      a.domain ? esc(a.domain) : 'No domain on file',
@@ -9007,7 +9158,7 @@ else wireUploadSuccessStateControls();
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
-      <button type="button" class="acct-mgr-action${inScope?'':' acct-mgr-action-secondary'}" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${inScope?researchLabel:'Open this list to research'}</button>
+      <button type="button" class="acct-mgr-action" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${researchLabel}</button>
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
@@ -9094,8 +9245,26 @@ else wireUploadSuccessStateControls();
    }
    scheduleResearchPollIfNeeded();
  }
- function open(){document.getElementById('accountManagerModal').style.display='block';load()}
- function close(){closeAllMenus();stopResearchPoll();document.getElementById('accountManagerModal').style.display='none'}
+ let accountManagerTriggerEl = null;
+ function open(){
+   // Required: close the Help dropdown and mobile nav before this modal
+   // opens, so no other application menu is left visibly open behind it.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+     window.HouseAccountsHeader.closeMenus();
+   }
+   accountManagerTriggerEl = document.activeElement;
+   document.getElementById('accountManagerModal').style.display='block';
+   const closeBtn = document.getElementById('closeAccountManagerBtn');
+   if(closeBtn) closeBtn.focus({preventScroll:true});
+   load();
+ }
+ function close(){
+   closeAllMenus();
+   stopResearchPoll();
+   document.getElementById('accountManagerModal').style.display='none';
+   if(accountManagerTriggerEl && typeof accountManagerTriggerEl.focus === 'function') accountManagerTriggerEl.focus();
+   accountManagerTriggerEl = null;
+ }
 
  // Overflow menus -- position:fixed (computed from the trigger's own
  // bounding rect) so they float above the modal's scroll container instead
@@ -9261,6 +9430,11 @@ else wireUploadSuccessStateControls();
  // true/false). Traps Tab within the two buttons, closes and restores
  // focus to the triggering element on Escape/backdrop-click/Cancel.
  function showDestructiveConfirm({title, bodyHtml, confirmLabel}){
+   // Required: close the Help dropdown and mobile nav before this dialog
+   // opens, so no other application menu is left visibly open behind it.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+     window.HouseAccountsHeader.closeMenus();
+   }
    return new Promise(resolve => {
      const triggerEl = document.activeElement;
      const backdrop = document.createElement('div');
@@ -9308,6 +9482,11 @@ else wireUploadSuccessStateControls();
  // "cannot be undone" warning line, since nothing destructive happened.
  // Used to replace window.alert() for the HA004 server rejection.
  function showInfoDialog({title, bodyHtml, okLabel}){
+   // Required: close the Help dropdown and mobile nav before this dialog
+   // opens, so no other application menu is left visibly open behind it.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+     window.HouseAccountsHeader.closeMenus();
+   }
    return new Promise(resolve => {
      const triggerEl = document.activeElement;
      const backdrop = document.createElement('div');

@@ -32,13 +32,13 @@ function extractLines(label, startLine, endLine, expectedFirst){
 }
 
 const SRC = [
-  extractLines('currentUploadName', 2386, 2386, "let currentUploadName"),
-  extractLines('add-customer-data-modal-and-route', 3202, 3320, 'let addCustomerDataModalTriggerEl = null;'),
-  extractLines('guided-tour', 3491, 3832, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
-  extractLines('beta-welcome-modal', 3834, 3846, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 8685, 8730, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 8886, 8889, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 8891, 8920, 'function dismissUploadSuccessState(){')
+  extractLines('currentUploadName', 2432, 2432, "let currentUploadName"),
+  extractLines('add-customer-data-modal-and-route', 3284, 3402, 'let addCustomerDataModalTriggerEl = null;'),
+  extractLines('guided-tour', 3590, 3931, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
+  extractLines('beta-welcome-modal', 3933, 3945, 'function showBetaWelcomeModal(){'),
+  extractLines('upload-success-state', 8809, 8854, 'const MISSING_FIELD_LABELS = {'),
+  extractLines('escapeHtml', 9034, 9037, 'function escapeHtml(text){'),
+  extractLines('dismissUploadSuccessState-and-wiring', 9039, 9070, 'function dismissUploadSuccessState(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------

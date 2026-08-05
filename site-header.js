@@ -40,9 +40,14 @@
   // goes. "Add Customer Data" is no longer a plain nav link -- it is the
   // global teal CTA rendered in the account-actions cluster below, using
   // the single canonical add-data action (see ADD_CUSTOMER_DATA_HREF).
+  // Stabilization round: Pricing is restored to the authenticated nav
+  // (previously only reachable from the public header) -- it was dropped
+  // for authenticated users during an earlier round, which meant a
+  // signed-in user had no way back to /pricing.html from inside the app.
   const appLinks=[
     {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']}
+    {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
+    {label:'Pricing',href:'/pricing.html',group:'workflow',match:['/pricing','/pricing.html']}
   ];
 
   // Single canonical URL+action contract for "Add Customer Data" -- every
@@ -55,13 +60,18 @@
   // Minimal authenticated application footer -- product pages only, never
   // injected for signed-out visitors (those keep whatever static marketing
   // footer the page already has). Deliberately does not repeat the header
-  // nav; only real, existing destinations.
+  // nav; only real, existing destinations. Stabilization round: Pricing and
+  // Data Security were missing from this list (both real, existing pages)
+  // -- restored so the footer covers the same trust/legal routes the old
+  // per-page static footers used to.
   const footerLinks=[
+    {label:'Pricing',href:'/pricing.html'},
     {label:'Export Guides',href:'/export-guides/'},
     {label:'Upload Troubleshooting',href:'/export-guides/#troubleshooting'},
-    {label:'Contact / Feedback',href:'/contact.html'},
+    {label:'Data Security',href:'/security.html'},
     {label:'Privacy',href:'/privacy.html'},
-    {label:'Terms',href:'/terms.html'}
+    {label:'Terms',href:'/terms.html'},
+    {label:'Contact / Feedback',href:'/contact.html'}
   ];
 
   function read(key){
@@ -196,10 +206,17 @@
 
     const helpToggle=wrapper.querySelector('#haHelpToggle');
     const helpDropdown=wrapper.querySelector('#haHelpDropdown');
-    const closeHelp=()=>{
+    // blurToggle is true only when an overlay elsewhere on the page is
+    // about to take focus (see closeMenus() below) -- a focused-but-hidden
+    // Help button has no visible effect on its own (there is no
+    // :focus-within rule keeping the dropdown painted), but explicitly
+    // blurring it here means focus is never left dangling on a control
+    // that is about to be visually and functionally superseded by a modal.
+    const closeHelp=(blurToggle)=>{
       if(!helpToggle||!helpDropdown) return;
       helpDropdown.hidden=true;
       helpToggle.setAttribute('aria-expanded','false');
+      if(blurToggle && typeof helpToggle.blur==='function') helpToggle.blur();
     };
     if(helpToggle && helpDropdown){
       helpToggle.addEventListener('click',e=>{
@@ -225,13 +242,15 @@
       });
     }
 
-    // Exposed so other scripts on the page (the dashboard's Welcome modal
-    // and guided tour) can close every open header menu before presenting
-    // their own overlay -- required so the Help dropdown never remains
-    // visibly open behind the Welcome modal or the tour.
+    // Exposed so other scripts on the page (the dashboard's Welcome modal,
+    // guided tour, Add Customer Data modal, Manage Customer Accounts modal,
+    // Prepare for Call panel, and the branded confirm/info dialogs) can
+    // close every open header menu before presenting their own overlay --
+    // required so the Help dropdown never remains visibly open behind any
+    // of them, on both desktop and the mobile hamburger nav.
     window.HouseAccountsHeader={
       closeMenus(){
-        closeHelp();
+        closeHelp(true);
         closeMobileNav();
       }
     };

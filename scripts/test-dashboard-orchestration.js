@@ -96,33 +96,33 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // numbers were re-derived mechanically (brace-depth scan from each
 // function's real signature line), not hand-counted.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2423, 2433, {async: true}),
-  extractFn('heartbeatCurrentResearchRun', 2453, 2470, {async: true}),
-  extractFn('reportResearchRunOutcome', 2484, 2509, {async: true}),
-  extractFn('normalizeSavedAccount', 2623, 2685),
-  extractFn('accountCardFor', 4212, 4214),
-  extractFn('accountSignalsPanel', 4215, 4218),
-  extractFn('fetchUploadScopedSnapshot', 5274, 5296, {async: true}),
-  extractFn('persistScopedResearchResult', 5304, 5349, {async: true}),
-  extractFn('researchAccountFromManageModal', 5399, 5503, {async: true}),
-  extractFn('researchAccountByName', 5523, 5663, {async: true}),
-  extractFn('getAccountsForResearch', 5668, 5681),
-  extractFn('batchPayloadForAccounts', 5683, 5727),
-  extractFn('applyBusinessSignalAccountBoost', 5730, 5738),
-  extractFn('researchAccountsBatch', 5740, 5829, {async: true}),
-  extractFn('signalTopicKeyClient', 5831, 5839),
-  extractFn('dedupeSignalsClient', 5841, 5854),
-  extractFn('researchTopAccounts', 5856, 5986, {async: true}),
-  extractFn('refreshOpportunityViews', 6087, 6107),
-  extractFn('renderDetailedAccountViews', 8261, 8329),
-  extractFn('serializeAccountForStorage', 8339, 8398),
-  extractFn('performSaveCurrentUpload', 8408, 8508, {async: true}),
-  extractFn('saveCurrentUpload', 8517, 8521),
-  extractFn('toggleAccountMetadataEdit', 8529, 8535),
-  extractFn('saveAccountMetadataEdit', 8558, 8594, {async: true}),
-  extractRaw('delegatedClickListener', 8612, 8634, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 8647, 8663),
-  extractFn('escapeHtml', 8886, 8889)
+  extractFn('claimAutomaticResearchRun', 2469, 2479, {async: true}),
+  extractFn('heartbeatCurrentResearchRun', 2499, 2516, {async: true}),
+  extractFn('reportResearchRunOutcome', 2530, 2555, {async: true}),
+  extractFn('normalizeSavedAccount', 2691, 2753),
+  extractFn('accountCardFor', 4311, 4313),
+  extractFn('accountSignalsPanel', 4314, 4317),
+  extractFn('fetchUploadScopedSnapshot', 5373, 5395, {async: true}),
+  extractFn('persistScopedResearchResult', 5403, 5448, {async: true}),
+  extractFn('researchAccountFromManageModal', 5498, 5613, {async: true}),
+  extractFn('researchAccountByName', 5633, 5773, {async: true}),
+  extractFn('getAccountsForResearch', 5778, 5791),
+  extractFn('batchPayloadForAccounts', 5793, 5837),
+  extractFn('applyBusinessSignalAccountBoost', 5840, 5848),
+  extractFn('researchAccountsBatch', 5850, 5939, {async: true}),
+  extractFn('signalTopicKeyClient', 5941, 5949),
+  extractFn('dedupeSignalsClient', 5951, 5964),
+  extractFn('researchTopAccounts', 5966, 6096, {async: true}),
+  extractFn('refreshOpportunityViews', 6197, 6217),
+  extractFn('renderDetailedAccountViews', 8385, 8453),
+  extractFn('serializeAccountForStorage', 8463, 8522),
+  extractFn('performSaveCurrentUpload', 8532, 8632, {async: true}),
+  extractFn('saveCurrentUpload', 8641, 8645),
+  extractFn('toggleAccountMetadataEdit', 8653, 8659),
+  extractFn('saveAccountMetadataEdit', 8682, 8718, {async: true}),
+  extractRaw('delegatedClickListener', 8736, 8758, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 8771, 8787),
+  extractFn('escapeHtml', 9034, 9037)
 ].join('\n\n');
 
 // ===========================================================================
@@ -1086,15 +1086,41 @@ async function testScopedResearchAbortsIfUploadIdChangedDuringRefresh(){
   assert(researchWorkCalls(fetchImpl.calls).length === 0, 'scoped 5: NO provider-facing research request was sent');
 }
 
-async function testScopedResearchRefusesCrossListWithoutAnyFetch(){
+// Stabilization round: cross-list research (the row's own listId differs
+// from the currently-loaded currentUploadId) is no longer refused -- the
+// operation scopes itself automatically to the row's listId, exactly like
+// scoped test 1 above, just with UPLOAD_B as the target instead of the
+// currently-loaded UPLOAD_A. This proves the removed listId!==currentUploadId
+// gate was never load-bearing: every fetch below is still explicitly scoped
+// to UPLOAD_B by fetchUploadScopedSnapshot(expectedUploadId)/the claim/the
+// provider call/the final save, none of which ever reads currentUploadId.
+async function testScopedResearchSucceedsForCrossListAccount(){
   const fetchImpl = makeFetch((call) => {
-    throw new Error(`researchAccountFromManageModal() must refuse a cross-list request before ever calling fetch; got ${call.url}`);
+    if(call.url.startsWith('/api/get-dashboard')){
+      assert(call.url.includes(`uploadId=${UPLOAD_B}`), 'scoped 6: the refresh request explicitly includes uploadId=upload-b, the row\'s own list, not the currently-loaded upload-a');
+      return getDashboardResponse(UPLOAD_B, 'Some Other List', [scopedAccount('Beta One', UPLOAD_B)]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      assert(call.body.uploadId === UPLOAD_B, 'scoped 6: the claim targets upload-b explicitly');
+      return jsonResponse({outcome:'claimed-new', researchRunId:'run-b', attemptId:'attempt-b'});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      assert(call.body.uploadId === UPLOAD_B, 'scoped 6: the provider request targets upload-b explicitly');
+      assert(call.body.accounts.length === 1 && call.body.accounts[0].name === 'Beta One', 'scoped 6: only the ONE selected cross-list account is ever sent to the provider');
+      return jsonResponse({byAccount: {'Beta One': [{isReal:true, sourceUrl:'https://example.com/b', signalType:'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      return jsonResponse({ok:true, uploadId:UPLOAD_B, runStatus:'completed'});
+    }
+    throw new Error(`unexpected fetch in testScopedResearchSucceedsForCrossListAccount: ${call.url} ${JSON.stringify(call.body)}`);
   });
   const sandbox = createSandbox({accounts: [], currentUploadId: UPLOAD_A, fetchImpl});
-  const result = await sandbox.researchAccountFromManageModal('SomeOtherListAccount', UPLOAD_B);
+  const result = await sandbox.researchAccountFromManageModal('Beta One', UPLOAD_B);
 
-  assert(result.ok === false && result.outOfScope === true, 'scoped 6 (cross-list research is explicitly out of scope for this patch): a request for an account belonging to a DIFFERENT upload than currentUploadId is refused immediately');
-  assert(fetchImpl.calls.length === 0, 'scoped 6: refusing a cross-list request never calls fetch at all -- not even the freshness refresh');
+  assert(result.ok === true, 'scoped 6 (Section 5 requirement): a row action for an account belonging to a DIFFERENT upload than the currently-loaded currentUploadId succeeds, scoped automatically to its own list');
+  const save = saveUploadCalls(fetchImpl.calls)[0];
+  assert(!!save && save.body.uploadId === UPLOAD_B, 'scoped 6: the final save targets upload-b, the row\'s own list -- not the stale currentUploadId (upload-a)');
+  assert(sandbox.currentUploadId === UPLOAD_A, 'scoped 6: currentUploadId (the currently-loaded/active list on the dashboard) is left untouched by researching a different list\'s account');
 }
 
 async function testScopedResearchStaleAttemptRejectedAtSave(){
@@ -1173,7 +1199,7 @@ async function main(){
   await testScopedResearchIgnoresGlobalMutationDuringProviderCall();
   await testScopedResearchAbortsIfAccountDeletedDuringRefresh();
   await testScopedResearchAbortsIfUploadIdChangedDuringRefresh();
-  await testScopedResearchRefusesCrossListWithoutAnyFetch();
+  await testScopedResearchSucceedsForCrossListAccount();
   await testScopedResearchStaleAttemptRejectedAtSave();
   await testScopedResearchSnapshotMismatchSurfacedFromServer();
 

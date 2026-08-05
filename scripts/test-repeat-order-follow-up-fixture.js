@@ -55,28 +55,28 @@ function extractLines(label, startLine, endLine, expectedFirst, expectedLast){
 }
 
 const SRC = [
-  extractLines('timebox-config', 2570, 2575, 'const TIMEBOX_CONFIG = {', '};'),
-  extractLines('opportunity-identity-helpers', 2711, 2796, 'function cleanOpportunityToken(value){', '}'),
-  extractLines('is-business-opportunity', 3127, 3129, 'function isBusinessOpportunity(opp){', '}'),
-  extractLines('signal-layer-label', 4245, 4255, 'function signalLayerLabel(opp){', '}'),
-  extractLines('is-likely-invalid-account-name', 4229, 4236, 'function isLikelyInvalidAccountName(name){', '}'),
-  extractLines('parse-maybe-date', 4281, 4286, 'function parseMaybeDate(value){', '}'),
-  extractLines('parse-csv', 4002, 4120, 'function parseCSV(text){', '}'),
-  extractLines('infer-promo-category', 4122, 4142, 'function inferPromoCategory(text){', '}'),
-  extractLines('infer-industry', 4144, 4152, 'function inferIndustry(client, projects){', '}'),
+  extractLines('timebox-config', 2626, 2631, 'const TIMEBOX_CONFIG = {', '};'),
+  extractLines('opportunity-identity-helpers', 2779, 2864, 'function cleanOpportunityToken(value){', '}'),
+  extractLines('is-business-opportunity', 3195, 3197, 'function isBusinessOpportunity(opp){', '}'),
+  extractLines('signal-layer-label', 4344, 4354, 'function signalLayerLabel(opp){', '}'),
+  extractLines('is-likely-invalid-account-name', 4328, 4335, 'function isLikelyInvalidAccountName(name){', '}'),
+  extractLines('parse-maybe-date', 4380, 4385, 'function parseMaybeDate(value){', '}'),
+  extractLines('parse-csv', 4101, 4219, 'function parseCSV(text){', '}'),
+  extractLines('infer-promo-category', 4221, 4241, 'function inferPromoCategory(text){', '}'),
+  extractLines('infer-industry', 4243, 4251, 'function inferIndustry(client, projects){', '}'),
   // Commercial-readiness correction round: the account-history-specific
   // status classification (isAccountHistoryOpportunity/reorderWindowStatus/
   // accountHistoryStatusLine) that createRepeatPatternOpportunities() now
   // calls to ground its reasonToReachOut/conversationStarter text -- and
   // that this test also verifies directly for required tests 1-3.
-  extractLines('format-short-date', 4712, 4716, 'function formatShortDate(value){', '}'),
-  extractLines('account-history-status', 4747, 4812, 'function isAccountHistoryOpportunity(opp){', '}'),
-  extractLines('opportunity-generation', 6384, 6924, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 7709, 7737, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 7756, 7762, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 7774, 7873, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 7875, 7946, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 8073, 8129, 'function monthIndexFromName(name){', '}'),
+  extractLines('format-short-date', 4811, 4815, 'function formatShortDate(value){', '}'),
+  extractLines('account-history-status', 4846, 4911, 'function isAccountHistoryOpportunity(opp){', '}'),
+  extractLines('opportunity-generation', 6498, 7038, 'function estimateFutureValue(account, opportunityType){', '}'),
+  extractLines('order-history-filters', 7833, 7861, 'function isClosedHistoricalRecord(record){', '}'),
+  extractLines('normalize-signal-layer-type', 7880, 7886, 'function normalizeSignalLayerType(type){', '}'),
+  extractLines('recommendation-type', 7898, 7997, 'function daysSinceDate(value){', '}'),
+  extractLines('opportunity-scoring', 7999, 8070, 'function calculateOpportunityScore(opp){', '}'),
+  extractLines('timebox-classification', 8197, 8253, 'function monthIndexFromName(name){', '}'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the
   // uploaded contact/real order history (not a generic public-signal
   // department framing) drives the Conversation Starter/Best Next Move/
@@ -85,7 +85,7 @@ const SRC = [
   // never invoked below -- it is DOM-heavy (document.body...) and inert as
   // long as it is only assigned, not called (same pattern already relied
   // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
-  extractLines('sales-play-account-history-grounding', 6926, 7454, 'function cleanSalesPlayText(value){', '}')
+  extractLines('sales-play-account-history-grounding', 7040, 7578, 'function cleanSalesPlayText(value){', '}')
 ].join('\n\n');
 
 const EXPORT_NAMES = [
