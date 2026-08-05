@@ -34,10 +34,34 @@
     {label:'Feedback',href:'/contact.html',match:['/feedback','/contact','/contact.html']}
   ];
 
+  // Correction round: "House Accounts" was renamed to "Dashboard" here --
+  // the logo/brand link (.ha-brand-link, always "House Accounts") already
+  // identifies the product, so the nav item only needs to say where it
+  // goes. "Add Customer Data" is no longer a plain nav link -- it is the
+  // global teal CTA rendered in the account-actions cluster below, using
+  // the single canonical add-data action (see ADD_CUSTOMER_DATA_HREF).
   const appLinks=[
-    {label:'House Accounts',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Add Customer Data',href:'/dashboard/#add-customer-data',group:'workflow',match:[]},
+    {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
     {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']}
+  ];
+
+  // Single canonical URL+action contract for "Add Customer Data" -- every
+  // authenticated entry point (header CTA, Help routes, Export Guides
+  // upload links, the guided tour, the post-upload "Upload Another List"
+  // action) must resolve to this exact destination so the dashboard only
+  // ever has one code path that opens the upload modal.
+  const ADD_CUSTOMER_DATA_HREF='/dashboard/?action=add-data';
+
+  // Minimal authenticated application footer -- product pages only, never
+  // injected for signed-out visitors (those keep whatever static marketing
+  // footer the page already has). Deliberately does not repeat the header
+  // nav; only real, existing destinations.
+  const footerLinks=[
+    {label:'Export Guides',href:'/export-guides/'},
+    {label:'Upload Troubleshooting',href:'/export-guides/#troubleshooting'},
+    {label:'Contact / Feedback',href:'/contact.html'},
+    {label:'Privacy',href:'/privacy.html'},
+    {label:'Terms',href:'/terms.html'}
   ];
 
   function read(key){
@@ -65,15 +89,21 @@
     return Boolean(read(SESSION_KEY)?.access_token);
   }
 
-  function removeLegacy(){
-    document.querySelectorAll([
+  function removeLegacy(includeFooter){
+    const selectors=[
       'body > .beta-top-banner',
       'body > .beta-banner',
       'body > header:not(.ha-ignore-shared-header)',
       'body > nav.topnav',
       'body > .topnav',
       '#haAuthNav'
-    ].join(',')).forEach(el=>el.remove());
+    ];
+    // The static per-page marketing-style footer (Pricing/FAQ/Security/...)
+    // is only removed once we know we are about to replace it with the
+    // standardized authenticated application footer -- signed-out visitors
+    // keep the existing static footer untouched.
+    if(includeFooter) selectors.push('body > footer:not(.ha-ignore-shared-footer)');
+    document.querySelectorAll(selectors.join(',')).forEach(el=>el.remove());
   }
 
   function redirectHiddenMvpRoute(authenticated){
@@ -123,7 +153,7 @@
                       <a role="menuitem" href="/export-guides/#troubleshooting">Upload Troubleshooting</a>
                       <a role="menuitem" href="/contact.html">Contact / Feedback</a>
                     </div>
-                   </div><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`
+                   </div><a class="ha-action-link ha-cta" id="haAddCustomerDataCta" href="${ADD_CUSTOMER_DATA_HREF}">Add Customer Data</a><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`
                 : `<a class="ha-action-link ha-secondary" href="/login">Log In</a><a class="ha-action-link ha-primary" href="/signup">Start Free</a>`}
             </div>
           </div>
@@ -139,8 +169,25 @@
 
     document.body.insertBefore(wrapper,document.body.firstChild);
 
+    if(authenticated){
+      removeLegacy(true);
+      const existingFooter=document.getElementById('haSharedFooter');
+      if(!existingFooter){
+        const footer=document.createElement('footer');
+        footer.id='haSharedFooter';
+        footer.className='ha-site-footer';
+        footer.innerHTML=`<div class="ha-site-footer-links">${footerLinks.map(l=>`<a href="${l.href}">${l.label}</a>`).join('')}</div>`;
+        document.body.appendChild(footer);
+      }
+    }
+
     const siteHeader=wrapper.querySelector('.ha-site-header');
     const menu=wrapper.querySelector('.ha-menu-button');
+    const closeMobileNav=()=>{
+      siteHeader.classList.remove('is-open');
+      menu.setAttribute('aria-expanded','false');
+      menu.textContent='☰';
+    };
     menu.addEventListener('click',()=>{
       const open=siteHeader.classList.toggle('is-open');
       menu.setAttribute('aria-expanded',String(open));
@@ -149,11 +196,12 @@
 
     const helpToggle=wrapper.querySelector('#haHelpToggle');
     const helpDropdown=wrapper.querySelector('#haHelpDropdown');
+    const closeHelp=()=>{
+      if(!helpToggle||!helpDropdown) return;
+      helpDropdown.hidden=true;
+      helpToggle.setAttribute('aria-expanded','false');
+    };
     if(helpToggle && helpDropdown){
-      const closeHelp=()=>{
-        helpDropdown.hidden=true;
-        helpToggle.setAttribute('aria-expanded','false');
-      };
       helpToggle.addEventListener('click',e=>{
         e.stopPropagation();
         const open=helpDropdown.hidden;
@@ -164,6 +212,11 @@
           if(first) first.focus();
         }
       });
+      // Dropdown items are same-document hash/anchor links to /dashboard/ --
+      // when already on that page, clicking one changes the hash without a
+      // full reload, so the dropdown must be closed explicitly rather than
+      // relying on navigation to tear it down.
+      helpDropdown.querySelectorAll('a').forEach(a=>a.addEventListener('click',closeHelp));
       document.addEventListener('click',e=>{
         if(!helpDropdown.hidden && !helpDropdown.contains(e.target) && e.target!==helpToggle) closeHelp();
       });
@@ -171,6 +224,17 @@
         if(e.key==='Escape' && !helpDropdown.hidden){ closeHelp(); helpToggle.focus(); }
       });
     }
+
+    // Exposed so other scripts on the page (the dashboard's Welcome modal
+    // and guided tour) can close every open header menu before presenting
+    // their own overlay -- required so the Help dropdown never remains
+    // visibly open behind the Welcome modal or the tour.
+    window.HouseAccountsHeader={
+      closeMenus(){
+        closeHelp();
+        closeMobileNav();
+      }
+    };
 
     const logout=wrapper.querySelector('[data-ha-logout]');
     if(logout){

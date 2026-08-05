@@ -450,7 +450,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4035, 4929, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4238, 5132, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -462,7 +462,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4035, 4929, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2683, 3101, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2711, 3129, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -473,7 +473,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 26
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 6318, 7436, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 6521, 7639, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,20 +482,20 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 6318, 7436, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 7553, 8056, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 7756, 8259, 'function normalizeSignalLayerType(');
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2542, 2547, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2765, 2768, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 8679, 8682, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 6233, 6235, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 6238, 6240, 'function clampScore(');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2570, 2575, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2793, 2796, 'function isRelationshipExpansionOpportunity(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 8886, 8889, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 6436, 6438, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 6441, 6443, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
-const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2660, 2665, 'function formatDashboardScanDate(');
-const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2667, 2680, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 3135, 3137, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 3139, 3172, 'function renderCustomerDashboard(');
+const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2688, 2693, 'function formatDashboardScanDate(');
+const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2695, 2708, 'function uniqueDashboardOpportunities(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 3163, 3165, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 3167, 3200, 'function renderCustomerDashboard(');
 
 function makeSandbox(){
   const domElements = {};

@@ -128,6 +128,27 @@
   .upload-progress-steps li::before{content:'•'; color:var(--signal); font-weight:900; margin-right:8px;}
   @media(max-width:760px){.upload-helper,.upload-trust-list,.upload-progress-steps{grid-template-columns:1fr}.upload-zone{padding:36px 20px}}
 
+  /* Correction round: Add Customer Data modal -- simplified container for
+     the existing #dropzone upload control. z-index sits above ordinary
+     page content and the beta welcome modal, but below the guided tour
+     overlay, since the two are mutually exclusive (each closes the other
+     before opening) and this keeps a stray render ordering harmless. */
+  .add-customer-data-backdrop{display:none;position:fixed;inset:0;z-index:9000;background:rgba(23,55,94,.55);align-items:center;justify-content:center;padding:20px;overflow-y:auto;}
+  .add-customer-data-backdrop:not([hidden]){display:flex;}
+  .add-customer-data-modal{position:relative;background:#fff;border-radius:14px;padding:32px;max-width:640px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.3);margin:auto;}
+  .add-customer-data-modal-close{position:absolute;top:14px;right:14px;background:none;border:0;font-size:1.5rem;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px;}
+  .add-customer-data-modal-close:hover{color:var(--ink);}
+  .add-customer-data-modal h2{font-family:var(--display);font-size:1.6rem;margin:0 0 10px;color:var(--ink);}
+  .add-customer-data-modal-intro{color:var(--muted);font-size:.92rem;margin:0 0 20px;line-height:1.5;}
+  .add-customer-data-modal .upload-zone{padding:32px 24px;}
+  .add-customer-data-modal .upload-intro{max-width:100%;}
+  .upload-intro-hint{color:var(--muted);font-size:.84rem;margin-top:10px;}
+  .add-customer-data-modal-fields{margin:18px 0 0;font-size:.86rem;color:var(--muted);}
+  .add-customer-data-modal-links{display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;}
+  .add-customer-data-modal-links a{color:var(--ink);font-weight:700;text-decoration:none;border-bottom:1px solid var(--radar);font-size:.88rem;}
+  .add-customer-data-modal-links a:hover{color:var(--radar);}
+  @media(max-width:640px){.add-customer-data-modal{padding:24px;}}
+
   .workflow-switcher{max-width:960px;margin:28px auto 18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}
   .workflow-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.07);text-decoration:none;color:inherit;display:block;transition:.15s ease;}
   .workflow-card:hover{transform:translateY(-1px);border-color:var(--radar);box-shadow:0 14px 34px rgba(23,55,94,.10);}
@@ -555,27 +576,26 @@
   }
 
 
+  /* Correction round: this panel used to be a full-width standalone card
+     (max-width:960px, its own border/background, centered with margin:auto)
+     sitting in the page's normal document flow. It now lives inline inside
+     the dashboard heading row's right side (.mvp-dashboard-heading-right),
+     so it is restyled compact -- no card chrome, no independent width. */
   .dashboard-view-switcher{
     display:none;
-    max-width:960px;
-    margin:0 auto 12px;
-    padding:10px 12px;
-    border:1px solid var(--line);
-    border-radius:10px;
-    background:#fff;
     align-items:center;
-    justify-content:space-between;
-    gap:12px;
+    gap:10px;
     flex-wrap:wrap;
   }
   .dashboard-view-switcher.active{display:flex;}
-  .view-toggle-buttons{display:flex;gap:8px;flex-wrap:wrap;}
+  .view-toggle-buttons{display:flex;gap:6px;flex-wrap:wrap;}
   .view-toggle-btn{
     border:1px solid var(--line);
     background:#fff;
     color:var(--ink);
     border-radius:999px;
-    padding:8px 12px;
+    padding:6px 11px;
+    font-size:.82rem;
     font-weight:800;
     cursor:pointer;
   }
@@ -586,7 +606,7 @@
   }
   .team-snapshot-note{
     color:var(--muted);
-    font-size:.9rem;
+    font-size:.78rem;
     font-weight:700;
   }
   .member-empty-state{
@@ -1889,11 +1909,21 @@
 .ha-mvp .mvp-dashboard-heading{display:flex;}
 .mvp-dashboard-heading h2{font-family:var(--display);font-size:2rem;line-height:1.05;color:var(--ink);margin:0 0 7px;}
 .mvp-dashboard-heading p{margin:0;color:var(--muted);font-size:.95rem;}
+/* Correction round: right side of the heading row -- compact trial status
+   plus the My View/Team View switcher, replacing the full-width trial
+   banner and the standalone Team View panel that used to occupy their own
+   rows below the heading. */
+.mvp-dashboard-heading-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end;}
+.dashboard-trial-status{font-size:.82rem;font-weight:700;color:var(--muted);white-space:nowrap;}
 .mvp-dashboard-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--line);border-left:4px solid var(--signal);background:#fff8e8;color:var(--ink);font-weight:700;}
 .mvp-dashboard-notice.active{display:block;}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
-@media(max-width:760px){.mvp-dashboard-heading{align-items:stretch;flex-direction:column}.mvp-dashboard-heading .btn{width:100%}}
+@media(max-width:760px){
+  .mvp-dashboard-heading{align-items:stretch;flex-direction:column}
+  .mvp-dashboard-heading .btn{width:100%}
+  .mvp-dashboard-heading-right{justify-content:flex-start;}
+}
 
 /* Manage Customer Accounts modal -- compact branded refinement. Reuses the
    existing token set (--ink navy, --radar teal, --signal orange, --paper /
@@ -1992,17 +2022,33 @@
 
 <main>
 
+  <!-- Correction round: consolidated heading row. The page-level "Add
+       Customer Data" button was already removed (the header CTA in
+       site-header.js is the single entry point) -- this round additionally
+       moves the compact trial status and the My View/Team View controls
+       into the right side of this same row, and removes the standalone
+       "You're all set" strip, the standalone Team View panel, and the
+       full-width trial banner that used to sit below it (all three either
+       duplicated what the Your Accounts card already shows, or took up a
+       full row of vertical space for one short line of text). -->
   <section class="mvp-dashboard-heading" aria-labelledby="mvpDashboardTitle">
     <div>
       <h2 id="mvpDashboardTitle">House Accounts</h2>
       <p>Who should I contact next, and why?</p>
     </div>
-    <!-- QA round 2, item 8: the page-level "Add Customer Data" button here was
-         a second entry point alongside the nav's own "Add Customer Data" link
-         (site-header.js), which already opens this same upload flow via the
-         #add-customer-data hash handler (see handleMvpDashboardRoute() below).
-         The nav entry is now the single primary entry point; the underlying
-         openLightweightCustomerUpload() flow is unchanged and unremoved. -->
+    <div class="mvp-dashboard-heading-right">
+      <div class="dashboard-trial-status" id="dashboardTrialStatus"></div>
+      <div class="dashboard-view-switcher" id="dashboardViewSwitcher">
+        <div>
+          <strong id="dashboardViewTitle">Team View</strong>
+          <div class="team-snapshot-note" id="dashboardTeamSnapshot"></div>
+        </div>
+        <div class="view-toggle-buttons" id="dashboardViewButtons">
+          <button class="view-toggle-btn" type="button" data-view="my">My View</button>
+          <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
+        </div>
+      </div>
+    </div>
   </section>
   <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
 
@@ -2108,7 +2154,7 @@
 
 
   <section class="workflow-switcher" aria-label="Choose analysis workflow">
-    <a class="workflow-card active" href="/dashboard/#dropzone">
+    <a class="workflow-card active" href="/dashboard/?action=add-data">
       <div class="workflow-label">Current workflow</div>
       <div class="workflow-title">Existing Customers</div>
       <div class="workflow-copy">Upload customer order history to find repeat buying patterns, follow-ups, and timely reasons to reconnect.</div>
@@ -2140,56 +2186,43 @@
     <div id="customerListGrid" class="monitor-list-grid"></div>
   </section>
 
-  <div class="upload-zone locked" id="dropzone">
-    <div class="upload-intro">
-      <div class="upload-eyebrow">Customer Order History</div>
-      <h2>Upload Your Customer Order History</h2>
-      <p>Upload your customer order history to discover who deserves your attention this week — and why.</p>
-      <button class="btn" id="browseBtn" type="button">Choose Customer Order File</button>
-      <input type="file" id="fileInput" accept=".csv">
-      <div class="export-guide-note">Need help finding the right file? <a href="/export-guides">View import guides →</a></div>
-    </div>
+  <!-- Correction round: Add Customer Data is now a real modal, opened only
+       through the single canonical action (openAddCustomerDataModal(), see
+       handleMvpDashboardRoute() below) rather than an always-in-page section
+       that was revealed and scrolled to. The long-form export instructions
+       previously duplicated here now live on the Export Guides page --
+       this modal only needs enough to get a file chosen and uploaded. -->
+  <div class="ha-modal-backdrop add-customer-data-backdrop" id="addCustomerDataModal" role="dialog" aria-modal="true" aria-labelledby="addCustomerDataModalTitle" hidden>
+    <div class="add-customer-data-modal">
+      <button type="button" class="add-customer-data-modal-close" id="addCustomerDataModalClose" aria-label="Close">&times;</button>
+      <h2 id="addCustomerDataModalTitle">Add Customer Data</h2>
+      <p class="add-customer-data-modal-intro">Upload your existing customer or account list -- ideally with order history -- so House Accounts can find timely, real reasons to reach out.</p>
 
-    <div class="upload-helper">
-      <div class="upload-helper-card">
-        <h3>Most customer exports work without any changes.</h3>
-        <div class="field-chip-list">
-          <span class="field-chip">Customer / Company Name</span>
-          <span class="field-chip">Order Date</span>
-          <span class="field-chip">Project or Order Name</span>
-          <span class="field-chip">Revenue</span>
+      <div class="upload-zone locked" id="dropzone">
+        <div class="upload-intro">
+          <button class="btn" id="browseBtn" type="button">Choose Customer Order File</button>
+          <input type="file" id="fileInput" accept=".csv">
+          <p class="upload-intro-hint">or drag and drop a CSV file here</p>
         </div>
-      </div>
-      <div class="upload-helper-card">
-        <h3>Helpful if available</h3>
-        <div class="field-chip-list">
-          <span class="field-chip">Contact Name</span>
-          <span class="field-chip">Contact Email</span>
-          <span class="field-chip">Margin</span>
+        <div class="upload-progress" id="uploadProgress" aria-live="polite">
+          <div class="upload-progress-title">Building your House Accounts view...</div>
+          <ul class="upload-progress-steps">
+            <li>Reading customer history</li>
+            <li>Finding buying patterns</li>
+            <li>Searching recent business activity</li>
+            <li>Building your priority list</li>
+          </ul>
         </div>
+        <div id="error"></div>
+      </div>
+
+      <p class="add-customer-data-modal-fields">Most useful: company name, order date, and revenue. Contact name, contact email, and margin help too.</p>
+
+      <div class="add-customer-data-modal-links">
+        <a href="/export-guides/" id="addCustomerDataViewGuidesLink">View Export Guides</a>
+        <a href="/export-guides/sample-customer-order-history.csv" download>Download Template</a>
       </div>
     </div>
-
-    <div class="upload-trust-card">
-      <div class="upload-trust-title"><span aria-hidden="true">🔒</span> Your data stays yours.</div>
-      <ul class="upload-trust-list">
-        <li>Encrypted during upload</li>
-        <li>Never sold or shared</li>
-        <li>Used only to generate your House Accounts insights</li>
-        <li>Delete your data at any time</li>
-      </ul>
-    </div>
-
-    <div class="upload-progress" id="uploadProgress" aria-live="polite">
-      <div class="upload-progress-title">Building your House Accounts view...</div>
-      <ul class="upload-progress-steps">
-        <li>Reading customer history</li>
-        <li>Finding buying patterns</li>
-        <li>Searching recent business activity</li>
-        <li>Building your priority list</li>
-      </ul>
-    </div>
-    <div id="error"></div>
   </div>
 
   <section class="example-opportunity" id="exampleOpportunity" aria-label="Example results preview">
@@ -2217,17 +2250,14 @@
     </div>
   </section>
 
+  <!-- savedDashboardBanner is kept (not a standalone card any more) for the
+       joined-organization welcome message and load-error text only -- the
+       redundant "You're all set. Watching N accounts..." metrics summary
+       that used to render here was removed since the Your Accounts card
+       below already shows those same numbers (loadSavedDashboard()). The
+       standalone Team View panel that used to sit here has moved into the
+       heading row above (#dashboardViewSwitcher). -->
   <div class="saved-dashboard-banner" id="savedDashboardBanner"></div>
-  <div class="dashboard-view-switcher" id="dashboardViewSwitcher">
-    <div>
-      <strong id="dashboardViewTitle">Team View</strong>
-      <div class="team-snapshot-note" id="dashboardTeamSnapshot"></div>
-    </div>
-    <div class="view-toggle-buttons" id="dashboardViewButtons">
-      <button class="view-toggle-btn" type="button" data-view="my">My View</button>
-      <button class="view-toggle-btn" type="button" data-view="team">Team View</button>
-    </div>
-  </div>
   <div class="member-empty-state" id="memberEmptyState" style="display:none;">
     <strong>My View</strong><br>
     You haven't uploaded any customer accounts yet.<br>
@@ -2511,13 +2541,11 @@ async function loadDashboardUsage(){
 }
 function renderDashboardUsage(){
   const info=dashboardUsageInfo();
-  let el=document.getElementById('dashboardUsageNote');
-  if(!el){
-    el=document.createElement('div');
-    el.id='dashboardUsageNote';
-    el.style.cssText='max-width:960px;margin:0 auto 12px;padding:8px 12px;border:1px solid #D8DEE9;border-radius:10px;background:#fff;font-weight:800;color:#17375E;font-size:.85rem;';
-    const switcher=document.querySelector('.workflow-switcher'); if(switcher&&switcher.parentNode) switcher.parentNode.insertBefore(el,switcher.nextSibling);
-  }
+  // Correction round: this used to create and insert a full-width block
+  // after .workflow-switcher; it now just fills the compact status element
+  // that already lives in the dashboard heading row (#dashboardTrialStatus),
+  // so trial/usage status is visible without dominating the page.
+  const el=document.getElementById('dashboardTrialStatus');
   // Sprint 4.4.2: no longer appends a competing existing-customer/prospect count here.
   // /api/usage remains the source for entitlement/plan-limit text only; the canonical
   // customer account count is shown from /api/get-dashboard (see renderCustomerDashboard).
@@ -3171,26 +3199,84 @@ function renderCustomerDashboard(data){
   set('dashLastScan', formatDashboardScanDate(latestRun?.finished_at || latestRun?.started_at || data?.upload?.updated_at));
 }
 
-function openLightweightCustomerUpload(){
-  const gate = document.getElementById('leadGate');
-  const dz = document.getElementById('dropzone');
+let addCustomerDataModalTriggerEl = null;
+let addCustomerDataModalOpenedForAction = false;
+
+function addCustomerDataModalKeydownHandler(e){
+  if(e.key === 'Escape'){ e.preventDefault(); closeAddCustomerDataModal(); }
+}
+
+function openAddCustomerDataModal(){
+  const modal = document.getElementById('addCustomerDataModal');
   const fileInput = document.getElementById('fileInput');
-
-  // Existing authenticated users already have their profile and ownership context.
-  // Reuse the normal customer upload zone instead of reopening onboarding.
-  if(gate) gate.style.display = 'none';
-  if(dz){
-    dz.style.display = 'block';
-    dz.classList.remove('locked', 'upload-hidden');
-    dz.scrollIntoView({behavior:'smooth', block:'start'});
+  if(!modal) return;
+  // Required: close the Help dropdown, the mobile nav menu, the Welcome
+  // modal, and the guided tour before this modal opens, so no other
+  // application menu or modal remains visibly open behind it.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+    window.HouseAccountsHeader.closeMenus();
   }
-
+  const welcomeModal = document.getElementById('betaWelcomeModal');
+  if(welcomeModal) welcomeModal.classList.remove('active');
+  if(guidedTourActive) closeGuidedTour();
+  addCustomerDataModalTriggerEl = document.activeElement;
+  modal.hidden = false;
+  document.addEventListener('keydown', addCustomerDataModalKeydownHandler, true);
+  const closeBtn = document.getElementById('addCustomerDataModalClose');
+  if(closeBtn) closeBtn.focus({preventScroll:true});
   // Reset the browser file control so choosing the same file again still fires change.
   if(fileInput) fileInput.value = '';
 }
 
+function closeAddCustomerDataModal(){
+  const modal = document.getElementById('addCustomerDataModal');
+  if(!modal || modal.hidden) return;
+  modal.hidden = true;
+  document.removeEventListener('keydown', addCustomerDataModalKeydownHandler, true);
+  if(addCustomerDataModalTriggerEl && typeof addCustomerDataModalTriggerEl.focus === 'function') addCustomerDataModalTriggerEl.focus();
+  addCustomerDataModalTriggerEl = null;
+}
+
+function wireAddCustomerDataModalControls(){
+  const modal = document.getElementById('addCustomerDataModal');
+  const closeBtn = document.getElementById('addCustomerDataModalClose');
+  if(closeBtn) closeBtn.addEventListener('click', closeAddCustomerDataModal);
+  // Clicking the dimmed backdrop (not the dialog itself) closes the modal,
+  // same as the guided tour and the confirmation dialog pattern.
+  if(modal) modal.addEventListener('click', e => { if(e.target === modal) closeAddCustomerDataModal(); });
+  // Required: View Export Guides closes this modal first, then performs
+  // one clean navigation -- it must never also trigger the uploader or
+  // leave this modal visible behind the destination page. A plain anchor
+  // with a real href already does exactly one navigation on click; this
+  // listener only needs to close the modal first and must not call
+  // preventDefault(), or the navigation itself would be the thing broken.
+  const viewGuidesLink = document.getElementById('addCustomerDataViewGuidesLink');
+  if(viewGuidesLink) viewGuidesLink.addEventListener('click', () => closeAddCustomerDataModal());
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireAddCustomerDataModalControls);
+else wireAddCustomerDataModalControls();
+
+// Single canonical entry point every "Add Customer Data" control in the
+// app now calls, whether triggered by a click handler on this page or by
+// routing in from the canonical URL below.
+function openLightweightCustomerUpload(){
+  openAddCustomerDataModal();
+}
+
 function scrollToUploadForNewList(){
   openLightweightCustomerUpload();
+}
+
+// Waits for authentication/initialization to be ready before opening the
+// modal -- required: "do not open the modal before its required data/UI
+// state is ready." HouseAuth.authHeadersAsync() resolves only after any
+// needed token refresh completes, which is the same readiness signal the
+// rest of the dashboard's authenticated requests already wait on.
+function openAddCustomerDataModalWhenReady(){
+  const ready = (window.HouseAuth && typeof HouseAuth.authHeadersAsync === 'function')
+    ? HouseAuth.authHeadersAsync().catch(() => null)
+    : Promise.resolve(null);
+  ready.then(() => openAddCustomerDataModal());
 }
 
 function handleMvpDashboardRoute(){
@@ -3200,8 +3286,24 @@ function handleMvpDashboardRoute(){
     notice.textContent = 'That feature is not part of the current House Accounts MVP. Your saved data is still available, and you can continue from the House Accounts dashboard.';
     notice.classList.add('active');
   }
+  // Correction round: single canonical Add Customer Data action --
+  // /dashboard/?action=add-data. Every authenticated entry point (header
+  // CTA, Export Guides links, the guided tour's target, "Upload Another
+  // List") resolves to this exact destination. The action is consumed
+  // (stripped from the URL via replaceState) immediately, before the modal
+  // even opens, so a browser refresh never re-triggers it.
+  if(params.get('action') === 'add-data' && !addCustomerDataModalOpenedForAction){
+    addCustomerDataModalOpenedForAction = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('action');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    openAddCustomerDataModalWhenReady();
+  }
+  // Legacy hash links (older bookmarks/cached pages) still route through
+  // the same single canonical modal-open path rather than a second
+  // implementation.
   if(window.location.hash === '#add-customer-data' || window.location.hash === '#dropzone'){
-    window.setTimeout(openLightweightCustomerUpload, 0);
+    openAddCustomerDataModalWhenReady();
   }
   // "Restart Product Tour" (Help menu, available site-wide via
   // site-header.js) links to /dashboard/#restart-tour -- the tour only
@@ -3300,12 +3402,14 @@ async function loadSavedDashboard(email){
       window.accountRadarAccounts = [];
       const memberEmpty = document.getElementById('memberEmptyState');
       const gate = document.getElementById('leadGate');
-      const dz = document.getElementById('dropzone');
       const example = document.getElementById('exampleOpportunity');
       const results = document.getElementById('results');
       if(memberEmpty) memberEmpty.style.display = 'block';
       if(gate) gate.style.display = 'none';
-      if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
+      // No accounts uploaded yet -- the always-visible global "Add Customer
+      // Data" CTA in the header is the single next action; the upload
+      // control itself now only appears inside its modal (opened by that
+      // CTA), not auto-revealed inline on the page.
       if(example) example.style.display = 'block';
       if(results) results.style.display = 'none';
       if(banner) banner.style.display = 'none';
@@ -3334,16 +3438,12 @@ async function loadSavedDashboard(email){
     if(example) example.style.display = 'none';
     if(results) results.style.display = 'block';
     const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
-    if(banner){
-      // QA round 3, item 4: use the exact same deduped count the
-      // dashboard metric tile shows (newlyDetectedCount()) instead of the
-      // raw data.newThisWeek.length -- previously this banner counted raw
-      // signal rows while the tile counted deduped initiatives, which is
-      // what produced the "18 newly detected" vs "17 newly detected"
-      // mismatch between the two.
-      const newCount = newlyDetectedCount(data);
-      banner.innerHTML = `<strong>You're all set.</strong> Watching ${escapeHtml(accounts.length)} account${accounts.length===1?'':'s'} · ${escapeHtml((data.signals || []).length)} reason${(data.signals || []).length===1?'':'s'} to reach out · ${escapeHtml(newCount)} newly detected.`;
-    }
+    // Correction round: the "You're all set. Watching N accounts..." summary
+    // that used to render here was removed -- it repeated the exact same
+    // monitored-account/saved-signal/newly-detected numbers the Your
+    // Accounts card below shows via renderCustomerDashboard() (dashSavedAccounts,
+    // dashSavedSignals, dashNewThisWeek), just in a second, redundant banner.
+    if(banner){ banner.style.display = 'none'; banner.innerHTML = ''; }
     renderCustomerDashboard(data);
     refreshOpportunityViews();
     window.scrollTo({top:0, behavior:'smooth'});
@@ -3354,10 +3454,8 @@ async function loadSavedDashboard(email){
       const memberEmpty = document.getElementById('memberEmptyState');
       if(memberEmpty) memberEmpty.style.display = 'block';
       const gate = document.getElementById('leadGate');
-      const dz = document.getElementById('dropzone');
       const results = document.getElementById('results');
       if(gate) gate.style.display = 'none';
-      if(dz){ dz.style.display = 'block'; dz.classList.remove('locked','upload-hidden'); }
       if(results) results.style.display = 'none';
       if(banner) banner.style.display = 'none';
       renderDashboardViewSwitcher();
@@ -3429,7 +3527,12 @@ function guidedTourStatus(){
 const GUIDED_TOUR_STEPS = [
   {
     id: 'add-customer-data',
-    target: '#dropzone',
+    // Correction round: Add Customer Data is now the global teal CTA in the
+    // shared header (site-header.js), which opens the upload modal from any
+    // authenticated page -- step 1 spotlights that CTA instead of #dropzone,
+    // which now only exists inside the modal and is not part of the normal
+    // page layout.
+    target: '#haAddCustomerDataCta',
     eyebrow: 'Step 1 of 5',
     title: 'Add Customer Data',
     body: 'Start by uploading your existing customer and order history -- not a cold prospect list. House Accounts uses the relationships you already have to find timely, real reasons to reach out.'
@@ -3468,6 +3571,7 @@ let guidedTourStepIndex = 0;
 let guidedTourActive = false;
 let guidedTourTriggerEl = null;
 let guidedTourResizeHandlerBound = false;
+let guidedTourScrollLock = null;
 
 function guidedTourElements(){
   return {
@@ -3495,6 +3599,47 @@ function isElementVisibleForTour(el){
   return rect.width > 0 && rect.height > 0;
 }
 
+// Correction round: Preview found the underlying page could be scrolled
+// manually while a tour step was open, and since the spotlight/card are
+// position:fixed (viewport-relative), that let the highlighted screen
+// position drift onto a completely different element once the user
+// scrolled (Step 3 landing on "Last Weekly Scan" instead of Manage
+// Customer Accounts). Locking page scroll for the duration of a step means
+// the rect measured when the step opened stays correct until the next
+// step explicitly unlocks, re-scrolls, and re-measures.
+function lockGuidedTourScroll(){
+  if(guidedTourScrollLock) return;
+  const scrollY = window.scrollY || window.pageYOffset || 0;
+  guidedTourScrollLock = {
+    scrollY,
+    bodyPosition: document.body.style.position,
+    bodyTop: document.body.style.top,
+    bodyWidth: document.body.style.width,
+    bodyOverflow: document.body.style.overflow,
+    htmlOverflow: document.documentElement.style.overflow
+  };
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${scrollY}px`;
+  document.body.style.width = '100%';
+  document.body.style.overflow = 'hidden';
+  document.documentElement.style.overflow = 'hidden';
+}
+
+function unlockGuidedTourScroll(){
+  if(!guidedTourScrollLock) return;
+  const { scrollY, bodyPosition, bodyTop, bodyWidth, bodyOverflow, htmlOverflow } = guidedTourScrollLock;
+  document.body.style.position = bodyPosition;
+  document.body.style.top = bodyTop;
+  document.body.style.width = bodyWidth;
+  document.body.style.overflow = bodyOverflow;
+  document.documentElement.style.overflow = htmlOverflow;
+  guidedTourScrollLock = null;
+  window.scrollTo(0, scrollY);
+}
+
+// Safe minimum distance a tour card must keep from every viewport edge.
+const GUIDED_TOUR_VIEWPORT_MARGIN = 12;
+
 function positionGuidedTourCard(target){
   const { spotlight, card } = guidedTourElements();
   if(!card) return;
@@ -3506,7 +3651,7 @@ function positionGuidedTourCard(target){
   }
   card.classList.remove('centered');
   const rect = target.getBoundingClientRect();
-  const margin = 12;
+  const margin = GUIDED_TOUR_VIEWPORT_MARGIN;
   if(spotlight){
     spotlight.hidden = false;
     spotlight.style.top = `${Math.max(rect.top - margin, 4)}px`;
@@ -3515,25 +3660,37 @@ function positionGuidedTourCard(target){
     spotlight.style.height = `${rect.height + margin * 2}px`;
   }
   // Prefer placing the card below the target; flip above if there is not
-  // enough room; clamp horizontally so the card can never render partially
-  // off-screen on a laptop or mobile viewport.
-  const cardWidth = Math.min(360, window.innerWidth - 32);
+  // enough room; clamp horizontally and vertically so the card can never
+  // render partially off-screen (or touching the very edge) on a laptop
+  // or mobile viewport.
+  const cardWidth = Math.min(360, window.innerWidth - margin * 2);
   const spaceBelow = window.innerHeight - rect.bottom;
   const placeAbove = spaceBelow < 220 && rect.top > 220;
-  let top = placeAbove ? Math.max(rect.top - margin - 10, 12) : rect.bottom + margin + 10;
+  let top = placeAbove ? Math.max(rect.top - margin - 10, margin) : rect.bottom + margin + 10;
   if(!placeAbove) top = Math.min(top, window.innerHeight - 60);
+  top = Math.max(margin, Math.min(top, window.innerHeight - margin));
   let left = rect.left;
-  left = Math.max(12, Math.min(left, window.innerWidth - cardWidth - 12));
+  left = Math.max(margin, Math.min(left, window.innerWidth - cardWidth - margin));
   card.style.top = `${top}px`;
   card.style.left = `${left}px`;
   if(placeAbove){
     // Anchor the bottom of the card to just above the target instead of
     // the top, so a tall card never overlaps the spotlighted element.
     card.style.top = 'auto';
-    card.style.bottom = `${Math.max(window.innerHeight - rect.top + margin + 10, 12)}px`;
+    card.style.bottom = `${Math.max(window.innerHeight - rect.top + margin + 10, margin)}px`;
   } else {
     card.style.bottom = 'auto';
   }
+}
+
+// Waits one frame (so a scrollIntoView the browser just performed has
+// actually applied and layout has settled) before measuring geometry and
+// invoking the callback. Falls back to a synchronous call when
+// requestAnimationFrame is unavailable, which also keeps this
+// deterministic for automated tests.
+function settleThenRunGuidedTourStep(cb){
+  const raf = typeof window.requestAnimationFrame === 'function' ? window.requestAnimationFrame.bind(window) : (fn => fn());
+  raf(() => raf(cb));
 }
 
 function renderGuidedTourStep(){
@@ -3548,9 +3705,25 @@ function renderGuidedTourStep(){
   }
   if(backBtn) backBtn.disabled = guidedTourStepIndex === 0;
   if(nextBtn) nextBtn.textContent = guidedTourStepIndex === GUIDED_TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+
+  // Required behavior: resolve the live target, scroll it into view when
+  // needed, wait for scroll/layout to finish, calculate the target's
+  // current bounding rect, and position from that live rect -- then lock
+  // scroll again so nothing can go stale while this step is on screen.
+  // Unlocking first (a no-op on step 1, since nothing is locked yet) is
+  // what lets this step scroll its own target into view at all.
+  unlockGuidedTourScroll();
   const target = step.target ? document.querySelector(step.target) : null;
-  positionGuidedTourCard(target);
-  if(card) card.focus({preventScroll:true});
+  if(target && isElementVisibleForTour(target)){
+    target.scrollIntoView({block: 'center', behavior: 'auto'});
+  }
+  settleThenRunGuidedTourStep(() => {
+    // Bail if the tour moved on or closed while this frame was pending.
+    if(!guidedTourActive || GUIDED_TOUR_STEPS[guidedTourStepIndex] !== step) return;
+    positionGuidedTourCard(target);
+    lockGuidedTourScroll();
+    if(card) card.focus({preventScroll:true});
+  });
 }
 
 function guidedTourKeydownHandler(e){
@@ -3577,9 +3750,28 @@ function guidedTourResizeHandler(){
   positionGuidedTourCard(target);
 }
 
+// Safety net: page scroll is locked during a step (lockGuidedTourScroll
+// above), but if any scroll still slips through -- a stray programmatic
+// scroll from elsewhere on the page, momentum scrolling on mobile before
+// the lock style applies -- this re-measures from a fresh rect immediately
+// rather than leaving the spotlight pointing at stale coordinates.
+function guidedTourScrollHandler(){
+  if(!guidedTourActive) return;
+  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const target = step && step.target ? document.querySelector(step.target) : null;
+  positionGuidedTourCard(target);
+}
+
 function launchGuidedTour(){
   const { overlay } = guidedTourElements();
   if(!overlay) return;
+  // Required: close the Help dropdown, the mobile nav menu, and the Add
+  // Customer Data modal before the tour opens, so no other application
+  // menu or modal is left visibly open behind it.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+    window.HouseAccountsHeader.closeMenus();
+  }
+  if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
   guidedTourTriggerEl = document.activeElement;
   guidedTourActive = true;
   guidedTourStepIndex = 0;
@@ -3588,6 +3780,7 @@ function launchGuidedTour(){
   document.addEventListener('keydown', guidedTourKeydownHandler, true);
   if(!guidedTourResizeHandlerBound){
     window.addEventListener('resize', guidedTourResizeHandler);
+    window.addEventListener('scroll', guidedTourScrollHandler, {passive:true});
     guidedTourResizeHandlerBound = true;
   }
   renderGuidedTourStep();
@@ -3599,6 +3792,9 @@ function closeGuidedTour(){
   if(overlay){ overlay.classList.remove('active'); overlay.setAttribute('aria-hidden', 'true'); }
   if(spotlight) spotlight.hidden = true;
   document.removeEventListener('keydown', guidedTourKeydownHandler, true);
+  // Escape and every exit path (Skip, Finish) restore the user's normal
+  // scrolling -- the lock must never outlive the tour itself.
+  unlockGuidedTourScroll();
   if(guidedTourTriggerEl && typeof guidedTourTriggerEl.focus === 'function') guidedTourTriggerEl.focus();
   guidedTourTriggerEl = null;
 }
@@ -3639,6 +3835,13 @@ function showBetaWelcomeModal(){
   const modal = document.getElementById('betaWelcomeModal');
   if(!modal) return;
   if(localStorage.getItem('houseAccountsBetaWelcomeDismissed') === 'true') return;
+  // Required: close the Help dropdown, the mobile nav menu, and the Add
+  // Customer Data modal before the Welcome modal opens, so no other
+  // application menu or modal is left visibly open behind it.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
+    window.HouseAccountsHeader.closeMenus();
+  }
+  if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
   modal.classList.add('active');
 }
 
@@ -8657,6 +8860,10 @@ function processData(records){
   document.getElementById('results').style.display = 'block';
   const exampleOpportunity = document.getElementById('exampleOpportunity');
   if(exampleOpportunity) exampleOpportunity.style.display = 'none';
+  // The upload succeeded -- close the Add Customer Data modal so the
+  // branded success panel and refreshed dashboard underneath are visible
+  // immediately, instead of leaving the user looking at the modal.
+  if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
   renderUploadSuccessState(records, accounts);
 
   lastAnalysisSummary = {

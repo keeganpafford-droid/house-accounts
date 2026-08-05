@@ -160,6 +160,14 @@ body > .topnav{display:none !important;}
   border-radius:5px;
 }
 .ha-action-link.ha-secondary.is-active{border-color:var(--ha-teal);box-shadow:inset 0 -2px 0 var(--ha-teal)}
+.ha-action-link.ha-cta{
+  background:var(--ha-teal);
+  color:#fff;
+  padding:10px 14px;
+  border-radius:5px;
+  font-weight:900;
+}
+.ha-action-link.ha-cta:hover{background:#189e96;color:#fff}
 
 .ha-header-right{
   justify-self:end;
@@ -283,3 +291,18 @@ body > .topnav{display:none !important;}
   .ha-brand-link{font-size:1.5rem}
   .ha-product-label{font-size:.53rem;letter-spacing:.11em}
 }
+
+.ha-site-footer{
+  max-width:1080px;
+  margin:32px auto 0;
+  padding:20px 32px 32px;
+  border-top:1px solid var(--ha-border);
+  font-family:var(--ha-mono);
+  font-size:.76rem;
+  color:var(--ha-muted);
+  text-align:center;
+}
+.ha-site-footer-links{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;}
+.ha-site-footer-links a{color:var(--ha-muted);text-decoration:none;}
+.ha-site-footer-links a:hover{color:var(--ha-teal);}
+@media(max-width:560px){.ha-site-footer{padding:16px 20px 26px;}}
