@@ -32,13 +32,13 @@ function extractLines(label, startLine, endLine, expectedFirst){
 }
 
 const SRC = [
-  extractLines('currentUploadName', 2432, 2432, "let currentUploadName"),
-  extractLines('add-customer-data-modal-and-route', 3284, 3402, 'let addCustomerDataModalTriggerEl = null;'),
-  extractLines('guided-tour', 3590, 3931, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
-  extractLines('beta-welcome-modal', 3933, 3945, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 8809, 8854, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 9034, 9037, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 9039, 9070, 'function dismissUploadSuccessState(){')
+  extractLines('currentUploadName', 2443, 2443, "let currentUploadName"),
+  extractLines('add-customer-data-modal-and-route', 3295, 3418, 'let addCustomerDataModalTriggerEl = null;'),
+  extractLines('guided-tour', 3650, 3993, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
+  extractLines('beta-welcome-modal', 3995, 4008, 'function showBetaWelcomeModal(){'),
+  extractLines('upload-success-state', 9105, 9150, 'const MISSING_FIELD_LABELS = {'),
+  extractLines('escapeHtml', 9345, 9348, 'function escapeHtml(text){'),
+  extractLines('dismissUploadSuccessState-and-wiring', 9350, 9379, 'function dismissUploadSuccessState(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------
@@ -217,6 +217,8 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
   };
   let currentUser = userEmail ? { email: userEmail } : null;
   const closeMenusCalls = [];
+  const beginOverlayCalls = [];
+  const endOverlayCalls = [];
   const scrollToCalls = [];
   const replaceStateCalls = [];
   const fakeWindow = {
@@ -233,7 +235,15 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
     history: { replaceState: (...args) => { replaceStateCalls.push(args); } },
     URLSearchParams,
     URL,
-    HouseAccountsHeader: { closeMenus: () => { closeMenusCalls.push(true); } }
+    // Follow-up round: launchGuidedTour()/showBetaWelcomeModal() now call
+    // beginOverlay() (the counted overlay-open API) instead of the old
+    // one-shot closeMenus() -- both still close the Help dropdown/mobile
+    // nav, so both are tracked here.
+    HouseAccountsHeader: {
+      closeMenus: () => { closeMenusCalls.push(true); },
+      beginOverlay: () => { beginOverlayCalls.push(true); },
+      endOverlay: () => { endOverlayCalls.push(true); }
+    }
   };
   const houseAuth = { getUser: () => currentUser, authHeadersAsync: () => Promise.resolve({ Authorization: 'Bearer test' }) };
   fakeWindow.HouseAuth = houseAuth;
@@ -252,7 +262,7 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
   return {
     dash: sandbox.__exports, dom, setUser: u => { currentUser = u; }, setHash: h => { fakeWindow.location.hash = h; },
     setSearch: s => { fakeWindow.location.search = s; fakeWindow.location.href = `https://app.example.com/dashboard/${s}`; },
-    fakeWindow, closeMenusCalls, scrollToCalls, replaceStateCalls
+    fakeWindow, closeMenusCalls, beginOverlayCalls, endOverlayCalls, scrollToCalls, replaceStateCalls
   };
 }
 
@@ -438,24 +448,28 @@ assert(/could not find a company\/account column[\s\S]{0,200}Export Guides/.test
 
 // 1. Opening Welcome closes the Help dropdown.
 {
-  const { dash, closeMenusCalls } = makeSandbox();
+  // Follow-up round: showBetaWelcomeModal() now calls the counted
+  // beginOverlay() API instead of the old one-shot closeMenus() -- it
+  // still closes the Help dropdown/mobile nav (see site-header.js's
+  // beginOverlay()), and additionally joins the shared overlay-open state.
+  const { dash, beginOverlayCalls } = makeSandbox();
   dash.showBetaWelcomeModal();
-  assert(closeMenusCalls.length === 1, 'correction test 1: opening the Welcome modal calls window.HouseAccountsHeader.closeMenus() (closes the Help dropdown and any other open menu)');
+  assert(beginOverlayCalls.length === 1, 'correction test 1: opening the Welcome modal calls window.HouseAccountsHeader.beginOverlay() (closes the Help dropdown/mobile nav and joins the shared overlay-open state)');
 }
 
 // 2. Starting/restarting the tour closes the Help dropdown.
 {
-  const { dash, closeMenusCalls } = makeSandbox();
+  const { dash, beginOverlayCalls } = makeSandbox();
   dash.launchGuidedTour();
-  assert(closeMenusCalls.length === 1, 'correction test 2: launchGuidedTour() calls window.HouseAccountsHeader.closeMenus() before opening');
+  assert(beginOverlayCalls.length === 1, 'correction test 2: launchGuidedTour() calls window.HouseAccountsHeader.beginOverlay() before opening');
 }
 {
   // Restarting via the #restart-tour route goes through the same
-  // launchGuidedTour(), so the same close-menus call happens.
-  const { dash, setHash, closeMenusCalls } = makeSandbox();
+  // launchGuidedTour(), so the same beginOverlay() call happens.
+  const { dash, setHash, beginOverlayCalls } = makeSandbox();
   setHash('#restart-tour');
   dash.handleMvpDashboardRoute();
-  assert(closeMenusCalls.length === 1, 'correction test 2: restarting the tour from Help also closes the Help dropdown first');
+  assert(beginOverlayCalls.length === 1, 'correction test 2: restarting the tour from Help also closes the Help dropdown first');
 }
 
 // 3. Body/document scrolling is locked during the tour.

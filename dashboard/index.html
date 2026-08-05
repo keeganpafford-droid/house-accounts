@@ -1989,6 +1989,12 @@
 .acct-mgr-menu button:hover,.acct-mgr-menu button:focus-visible{background:#F7F8FA;}
 .acct-mgr-menu button.acct-mgr-danger-item{color:var(--danger);}
 .acct-mgr-menu button.acct-mgr-danger-item:hover,.acct-mgr-menu button.acct-mgr-danger-item:focus-visible{background:var(--danger-surface);}
+/* Follow-up round: visually separates Delete Uploaded List (the sole
+   remaining destructive action) from Research Entire List above it. */
+.acct-mgr-menu-separator{height:1px;background:var(--line);margin:5px 4px;}
+.acct-mgr-list-status{font-size:.82rem;color:var(--muted);margin:8px 0 2px;line-height:1.4;}
+.acct-mgr-list-status.is-error{color:var(--danger);}
+.acct-mgr-list-status.is-success{color:#0d9488;}
 @media(max-width:900px){
   .acct-mgr-row{grid-template-columns:1fr auto auto;row-gap:8px;}
   .acct-mgr-toggle span.acct-toggle-label{display:none;}
@@ -2029,7 +2035,12 @@
 .ha-confirm-cancel:hover{border-color:var(--ink);}
 .ha-confirm-danger-btn{background:var(--danger);color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--body);}
 .ha-confirm-danger-btn:hover{background:#8f1c17;}
-.ha-confirm-cancel:focus-visible,.ha-confirm-danger-btn:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
+/* Follow-up round: neutral/primary confirm button for non-destructive
+   confirm dialogs (Research Entire List) -- same shape as
+   .ha-confirm-danger-btn, teal instead of red. */
+.ha-confirm-primary-btn{background:var(--radar);color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--body);}
+.ha-confirm-primary-btn:hover{background:#0e9e96;}
+.ha-confirm-cancel:focus-visible,.ha-confirm-danger-btn:focus-visible,.ha-confirm-primary-btn:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
 </style>
 <script src="/auth-client.js"></script>
 <link rel="stylesheet" href="/site-header.css">
@@ -3292,14 +3303,21 @@ function openAddCustomerDataModal(){
   const modal = document.getElementById('addCustomerDataModal');
   const fileInput = document.getElementById('fileInput');
   if(!modal) return;
-  // Required: close the Help dropdown, the mobile nav menu, the Welcome
-  // modal, and the guided tour before this modal opens, so no other
-  // application menu or modal remains visibly open behind it.
-  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-    window.HouseAccountsHeader.closeMenus();
+  // Follow-up round: beginOverlay() closes the Help dropdown/mobile nav
+  // exactly like closeMenus() used to, and additionally sets the shared
+  // body.ha-overlay-open state so CSS -- not JS event ordering -- is what
+  // guarantees the dropdown can never be visibly open behind this modal.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
   }
   const welcomeModal = document.getElementById('betaWelcomeModal');
-  if(welcomeModal) welcomeModal.classList.remove('active');
+  // Direct DOM close (not dismissBetaWelcomeModal()) -- deliberately does
+  // NOT persist "dismissed" to localStorage, unchanged from before; only
+  // balances the overlay counter for the overlay this bypasses.
+  if(welcomeModal && welcomeModal.classList.contains('active')){
+    welcomeModal.classList.remove('active');
+    if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+  }
   if(guidedTourActive) closeGuidedTour();
   addCustomerDataModalTriggerEl = document.activeElement;
   modal.hidden = false;
@@ -3317,6 +3335,7 @@ function closeAddCustomerDataModal(){
   document.removeEventListener('keydown', addCustomerDataModalKeydownHandler, true);
   if(addCustomerDataModalTriggerEl && typeof addCustomerDataModalTriggerEl.focus === 'function') addCustomerDataModalTriggerEl.focus();
   addCustomerDataModalTriggerEl = null;
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 }
 
 function wireAddCustomerDataModalControls(){
@@ -3464,17 +3483,28 @@ async function manualDashboardRefresh(){
 // at -- see the personalEmpty/noData guards below.
 let freshUploadRenderedThisSession = false;
 
-async function loadSavedDashboard(email){
+// Follow-up round: single aggregate-dashboard fetch+render core, used by
+// BOTH loadSavedDashboard() (page load / manual "load my dashboard") and
+// refreshAggregateDashboard() (post-upload, post-research) -- both read
+// from the SAME /api/get-dashboard aggregate source (every uploaded list
+// the user owns, not any one of them) and populate
+// window.accountRadarAccounts / renderCustomerDashboard() identically, so
+// "Your Accounts" can never differ depending on which caller triggered the
+// refresh. silent=true skips the loading skeleton/banner and the
+// gate/results/memberEmpty visibility toggles -- used by callers that
+// already have their own success UI on screen (the upload-success panel,
+// a research-completion toast) and must not flash a loading state or
+// example-opportunity/empty-state over it.
+async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
   const e = String(email || '').trim().toLowerCase();
-  if(!e){ showError('Enter the email used for your House Accounts upload.'); return; }
-  clearError();
-  const banner = document.getElementById('savedDashboardBanner');
-  const skeleton = document.getElementById('dashboardLoadingSkeleton');
+  if(!e) return {ok:false, error:'Missing email'};
+  const banner = silent ? null : document.getElementById('savedDashboardBanner');
+  const skeleton = silent ? null : document.getElementById('dashboardLoadingSkeleton');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
   if(skeleton) skeleton.classList.add('active');
   try{
     const headers = (window.HouseAuth&&HouseAuth.authHeadersAsync)?await HouseAuth.authHeadersAsync():{};
-    if(!headers) return; // authHeadersAsync() already redirected to login
+    if(!headers) return {ok:false, error:'auth-redirect'}; // authHeadersAsync() already redirected to login
     const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
@@ -3489,24 +3519,26 @@ async function loadSavedDashboard(email){
       // A fresher upload already rendered client-side in this same visit --
       // this response predates it server-side (replication/read lag), so it
       // must not hide the dashboard the user is already looking at.
-      if(freshUploadRenderedThisSession) return;
-      window.accountRadarAccounts = [];
-      const memberEmpty = document.getElementById('memberEmptyState');
-      const gate = document.getElementById('leadGate');
-      const example = document.getElementById('exampleOpportunity');
-      const results = document.getElementById('results');
-      if(memberEmpty) memberEmpty.style.display = 'block';
-      if(gate) gate.style.display = 'none';
-      // No accounts uploaded yet -- the always-visible global "Add Customer
-      // Data" CTA in the header is the single next action; the upload
-      // control itself now only appears inside its modal (opened by that
-      // CTA), not auto-revealed inline on the page. Loading is confirmed
-      // complete AND confirmed empty here, so Sample Analysis is safe to
-      // show now (never as a default/flash state).
-      if(example) example.style.display = 'block';
-      if(results) results.style.display = 'none';
-      if(banner) banner.style.display = 'none';
-      return;
+      if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
+      if(!silent){
+        window.accountRadarAccounts = [];
+        const memberEmpty = document.getElementById('memberEmptyState');
+        const gate = document.getElementById('leadGate');
+        const example = document.getElementById('exampleOpportunity');
+        const results = document.getElementById('results');
+        if(memberEmpty) memberEmpty.style.display = 'block';
+        if(gate) gate.style.display = 'none';
+        // No accounts uploaded yet -- the always-visible global "Add Customer
+        // Data" CTA in the header is the single next action; the upload
+        // control itself now only appears inside its modal (opened by that
+        // CTA), not auto-revealed inline on the page. Loading is confirmed
+        // complete AND confirmed empty here, so Sample Analysis is safe to
+        // show now (never as a default/flash state).
+        if(example) example.style.display = 'block';
+        if(results) results.style.display = 'none';
+        if(banner) banner.style.display = 'none';
+      }
+      return {ok:true, empty:true};
     }
 
     const accounts = (data.accounts || []).map(normalizeSavedAccount);
@@ -3522,14 +3554,16 @@ async function loadSavedDashboard(email){
       crmErp: data.user?.crm_erp || ''
     };
     localStorage.setItem('houseAccountsLead', JSON.stringify(currentLead));
-    const gate = document.getElementById('leadGate');
-    const example = document.getElementById('exampleOpportunity');
-    const results = document.getElementById('results');
-    if(gate) gate.style.display = 'none';
-    if(example) example.style.display = 'none';
-    if(results) results.style.display = 'block';
+    if(!silent){
+      const gate = document.getElementById('leadGate');
+      const example = document.getElementById('exampleOpportunity');
+      const results = document.getElementById('results');
+      if(gate) gate.style.display = 'none';
+      if(example) example.style.display = 'none';
+      if(results) results.style.display = 'block';
+      const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
+    }
     if(skeleton) skeleton.classList.remove('active');
-    const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
     // Correction round: the "You're all set. Watching N accounts..." summary
     // that used to render here was removed -- it repeated the exact same
     // monitored-account/saved-signal/newly-detected numbers the Your
@@ -3538,7 +3572,7 @@ async function loadSavedDashboard(email){
     if(banner){ banner.style.display = 'none'; banner.innerHTML = ''; }
     renderCustomerDashboard(data);
     refreshOpportunityViews();
-    window.scrollTo({top:0, behavior:'smooth'});
+    return {ok:true, data, accounts};
   }catch(err){
     if(skeleton) skeleton.classList.remove('active');
     const isMember = !canCurrentUserViewTeam();
@@ -3547,21 +3581,47 @@ async function loadSavedDashboard(email){
       // Same stale-response guard as the personalEmpty branch above -- a
       // fresher upload already rendered client-side, so this late "no
       // data" error must not replace it.
-      if(freshUploadRenderedThisSession) return;
-      const memberEmpty = document.getElementById('memberEmptyState');
-      const example = document.getElementById('exampleOpportunity');
-      if(memberEmpty) memberEmpty.style.display = 'block';
-      const gate = document.getElementById('leadGate');
-      const results = document.getElementById('results');
-      if(gate) gate.style.display = 'none';
-      if(results) results.style.display = 'none';
-      if(example) example.style.display = 'block';
-      if(banner) banner.style.display = 'none';
-      renderDashboardViewSwitcher();
-      return;
+      if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
+      if(!silent){
+        const memberEmpty = document.getElementById('memberEmptyState');
+        const example = document.getElementById('exampleOpportunity');
+        if(memberEmpty) memberEmpty.style.display = 'block';
+        const gate = document.getElementById('leadGate');
+        const results = document.getElementById('results');
+        if(gate) gate.style.display = 'none';
+        if(results) results.style.display = 'none';
+        if(example) example.style.display = 'block';
+        if(banner) banner.style.display = 'none';
+        renderDashboardViewSwitcher();
+      }
+      return {ok:true, empty:true};
     }
-    if(banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }
+    if(!silent && banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }
+    return {ok:false, error: (err && err.message) || 'Could not load dashboard'};
   }
+}
+
+async function loadSavedDashboard(email){
+  const e = String(email || '').trim().toLowerCase();
+  if(!e){ showError('Enter the email used for your House Accounts upload.'); return; }
+  clearError();
+  const result = await fetchAndRenderAggregateDashboard(e, {silent:false});
+  if(result.ok && !result.empty) window.scrollTo({top:0, behavior:'smooth'});
+}
+
+// Follow-up round: single user-level aggregate refresh entry point for
+// every caller OTHER than the initial page load -- after a fresh upload
+// saves, and after any account/list research completes. Deliberately
+// silent (no skeleton/banner, no gate/results visibility changes, no
+// scroll) so it can run underneath whatever success UI (upload-success
+// panel, research-completion toast) the caller already has on screen,
+// without ever flashing Sample Analysis or the loading skeleton over it.
+// Resolves the signed-in email itself so callers never need to thread one
+// through.
+async function refreshAggregateDashboard(){
+  const email = (currentLead && currentLead.email) || (typeof getSavedLead === 'function' ? (getSavedLead() || {}).email : '') || '';
+  if(!email) return {ok:false, error:'No signed-in lead email available.'};
+  return fetchAndRenderAggregateDashboard(email, {silent:true});
 }
 
 
@@ -3864,11 +3924,11 @@ function guidedTourScrollHandler(){
 function launchGuidedTour(){
   const { overlay } = guidedTourElements();
   if(!overlay) return;
-  // Required: close the Help dropdown, the mobile nav menu, and the Add
-  // Customer Data modal before the tour opens, so no other application
-  // menu or modal is left visibly open behind it.
-  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-    window.HouseAccountsHeader.closeMenus();
+  // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+  // call -- it closes the Help dropdown/mobile nav the same way, and also
+  // joins the shared overlay-open counted state (see site-header.js).
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
   }
   if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
   guidedTourTriggerEl = document.activeElement;
@@ -3886,6 +3946,7 @@ function launchGuidedTour(){
 }
 
 function closeGuidedTour(){
+  const wasActive = guidedTourActive;
   const { overlay, spotlight } = guidedTourElements();
   guidedTourActive = false;
   if(overlay){ overlay.classList.remove('active'); overlay.setAttribute('aria-hidden', 'true'); }
@@ -3896,6 +3957,7 @@ function closeGuidedTour(){
   unlockGuidedTourScroll();
   if(guidedTourTriggerEl && typeof guidedTourTriggerEl.focus === 'function') guidedTourTriggerEl.focus();
   guidedTourTriggerEl = null;
+  if(wasActive && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 }
 
 function nextGuidedTourStep(){
@@ -3934,11 +3996,12 @@ function showBetaWelcomeModal(){
   const modal = document.getElementById('betaWelcomeModal');
   if(!modal) return;
   if(localStorage.getItem('houseAccountsBetaWelcomeDismissed') === 'true') return;
-  // Required: close the Help dropdown, the mobile nav menu, and the Add
-  // Customer Data modal before the Welcome modal opens, so no other
-  // application menu or modal is left visibly open behind it.
-  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-    window.HouseAccountsHeader.closeMenus();
+  // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+  // call -- see openAddCustomerDataModal()'s comment for why this is now
+  // the guaranteed-correct way to keep Help from surviving behind this
+  // modal.
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
   }
   if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
   modal.classList.add('active');
@@ -3947,7 +4010,9 @@ function showBetaWelcomeModal(){
 function dismissBetaWelcomeModal(){
   localStorage.setItem('houseAccountsBetaWelcomeDismissed', 'true');
   const modal = document.getElementById('betaWelcomeModal');
+  const wasActive = !!(modal && modal.classList.contains('active'));
   if(modal) modal.classList.remove('active');
+  if(wasActive && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 }
 
 function maybeShowBetaWelcomeForSignedInUser(){
@@ -5117,7 +5182,7 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
   return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
     const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Prep this call →</button></div>`;
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -5576,6 +5641,20 @@ async function researchAccountFromManageModal(accountName, listId){
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
       : (Array.isArray(data.signals) ? data.signals : []);
     account.lastResearchedAt = new Date().toISOString();
+    // Follow-up round root-cause fix: every OTHER production research path
+    // (researchAccountsBatch(), researchTopAccounts()) calls
+    // addSignalDerivedOpportunities() immediately after setting
+    // account.signals, so the account's own account.futureOpportunities
+    // reflects the fresh signals BEFORE anything downstream (this
+    // function's own persistScopedResearchResult() call below, and later
+    // View Opportunities) ever reads it. This call site was the one place
+    // that skipped it -- account.futureOpportunities stayed exactly
+    // whatever it was BEFORE this run, so persistScopedResearchResult()
+    // saved stale/empty opportunities regardless of how many real signals
+    // the provider just returned, and nothing (a reload, an aggregate
+    // refresh, View Opportunities) could ever show the new result. Same
+    // function, same scoring, just now actually called here too.
+    addSignalDerivedOpportunities(account, account.signals);
 
     // Persist using the EXPLICIT expectedUploadId and the EXPLICIT
     // freshUploadScopedAccounts array -- this is the exact call the audit's
@@ -5605,6 +5684,132 @@ async function researchAccountFromManageModal(accountName, listId){
     // is needed here either.
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
     return {ok:true, account};
+  }catch(err){
+    await reportResearchRunOutcome('fail', err, runContext);
+    clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+    return {ok:false, error: (err && err.message) || 'Research failed. Please try again.'};
+  }
+}
+
+// Follow-up round item 1: list-level research ("Research Entire List" /
+// "Research Entire List Again") for the Manage Customer Accounts modal.
+// Deliberately built from the SAME production primitives
+// researchAccountFromManageModal() above uses -- fetchUploadScopedSnapshot()
+// for a fresh, explicitly-scoped snapshot; claimAutomaticResearchRun() for
+// the one-run-per-list server claim; the SAME /api/research-batch (warm/mixed
+// accounts, batched in one call via batchPayloadForAccounts(), exactly like
+// a single-account request just with more accounts in the array) and
+// /api/research-account (historical accounts, one call per account, the
+// identical payload shape researchAccountFromManageModal() sends) endpoints;
+// addSignalDerivedOpportunities() for scoring; persistScopedResearchResult()
+// for the single save at the end. No second research engine -- this is the
+// existing single-account path generalized to N accounts.
+async function researchListFromManageModal(listId){
+  const expectedUploadId = listId;
+  const snapshot = await fetchUploadScopedSnapshot(expectedUploadId);
+  if(!snapshot.ok) return {ok:false, error: snapshot.error};
+  const expectedUploadName = snapshot.uploadName;
+  const allAccounts = snapshot.accounts;
+  // Required: "never include paused or deleted accounts" -- deleted rows
+  // are never present in a scoped snapshot at all (server-excluded);
+  // paused ones are excluded here explicitly, the same monitoringStatus
+  // field accountRow()'s own pause/resume toggle already reads.
+  const activeAccounts = allAccounts.filter(a => a.monitoringStatus !== 'paused');
+  if(!activeAccounts.length) return {ok:false, error:'This list has no active accounts to research.'};
+
+  const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
+  const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
+  if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
+    return {ok:false, error:'Another research run is currently active for this list. Please wait for it to finish before researching the entire list again.'};
+  }
+  const researchRunId = claim.data.researchRunId;
+  const attemptId = claim.data.attemptId;
+  const runContext = { researchRunId, attemptId, uploadId: expectedUploadId };
+  // List-level run -- no single account name to attach to the breadcrumb
+  // (unlike the single-account claim above), so getActiveResearchBreadcrumb()
+  // falls back to its generic "an account in this list" phrasing.
+  setActiveResearchBreadcrumb(expectedUploadId, researchRunId, null);
+
+  let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0;
+  try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) throw new Error('Your session has expired. Please log in again.');
+
+    // Same per-account routing decision researchAccountFromManageModal()
+    // makes for one account, applied to the whole list: warm/mixed accounts
+    // go through ONE batched /api/research-batch call; historical accounts
+    // (real order history, no public-signal research needed) go through
+    // /api/research-account individually, same as a single "Research
+    // Account" click would for each of them.
+    const enhancedGroup = activeAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
+    const historicalGroup = activeAccounts.filter(a => !enhancedGroup.includes(a));
+
+    if(enhancedGroup.length){
+      const res = await fetch('/api/research-batch', {
+        method:'POST',
+        headers,
+        body: JSON.stringify({
+          mode:'warm-account',
+          researchRunId,
+          attemptId,
+          uploadId: expectedUploadId,
+          accounts: batchPayloadForAccounts(enhancedGroup)
+        })
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || 'Batch research failed');
+      enhancedGroup.forEach(account => {
+        attempted += 1;
+        const signals = (data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : [];
+        account.signals = signals;
+        account.lastResearchedAt = new Date().toISOString();
+        if(signals.length){ withSignals += 1; totalSignals += signals.length; }
+        addSignalDerivedOpportunities(account, account.signals);
+      });
+    }
+    for(const account of historicalGroup){
+      attempted += 1;
+      try{
+        const payload = {
+          accountName: account.name,
+          industry: account.industry,
+          cityState: account.purchases?.[0]?.location || account.location || '',
+          emailDomain: extractEmailDomain(account.contactEmail),
+          website: account.website || '',
+          contactName: account.contactName || '',
+          contacts: account.contacts || [],
+          intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account),
+          notes: account.notes || '',
+          employees: account.employees || '',
+          categories: [...(account.categoryTypes || [])],
+          projects: account.projects || []
+        };
+        const res = await fetch('/api/research-account', {method:'POST', headers, body: JSON.stringify(payload)});
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error || 'Research failed');
+        account.signals = Array.isArray(data.signals) ? data.signals : [];
+        account.lastResearchedAt = new Date().toISOString();
+        if(account.signals.length){ withSignals += 1; totalSignals += account.signals.length; }
+        addSignalDerivedOpportunities(account, account.signals);
+      }catch(err){
+        failures += 1;
+      }
+    }
+
+    const saveResult = await persistScopedResearchResult({
+      uploadId: expectedUploadId,
+      uploadName: expectedUploadName,
+      accounts: allAccounts,
+      researchRunId,
+      attemptId
+    });
+    if(!saveResult.ok){
+      await reportResearchRunOutcome('fail', saveResult.error, runContext);
+      clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+      return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
+    }
+    clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+    return {ok:true, attempted, withSignals, totalSignals, failures, accountCount: activeAccounts.length};
   }catch(err){
     await reportResearchRunOutcome('fail', err, runContext);
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
@@ -6329,6 +6534,80 @@ function scrollToAccountResult(uploadId, accountName){
   if(target){ target.scrollIntoView({behavior:'smooth', block:'center'}); highlightResultElement(target); }
 }
 
+// Follow-up round: the single production "View Opportunities" handoff --
+// used identically by the research-completion toast and by the Recently
+// Researched row's own "View opportunities" button (requirement 8) --
+// replacing scrollToAccountResult() for this purpose (requirement 9: this
+// must not merely scroll to or outline a row). Deliberately does NOT
+// depend on timebox eligibility at all (requirement: must work "even when
+// the researched signal qualifies for This Week/Month/Quarter/Year" or
+// for none of them) -- it opens the real Prepare for Call experience
+// directly from the account's own persisted opportunities, the same
+// account.futureOpportunities every other view (dashboard cards, digest)
+// is built from.
+async function openResearchedAccountOpportunities(uploadId, accountName){
+  // Step 1 of the required flow ("refresh the aggregate saved-dashboard
+  // state") -- re-fetches the same aggregate source loadSavedDashboard()
+  // uses, so window.accountRadarAccounts reflects the just-persisted
+  // result regardless of which list it belongs to (the account may not be
+  // in the currently-loaded view at all -- see researchAccountFromManageModal()'s
+  // cross-list support).
+  const refresh = typeof refreshAggregateDashboard === 'function' ? await refreshAggregateDashboard() : {ok:false};
+  // Close Manage Customer Accounts (requirement 4) whether or not it
+  // happens to be open right now -- the Recently Researched row can be
+  // clicked from the main dashboard, with the modal already closed.
+  if(window.HouseAccountManager && typeof window.HouseAccountManager.close === 'function' && window.HouseAccountManager.isOpen()){
+    window.HouseAccountManager.close();
+  }
+  const showUnresolvable = async () => {
+    if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
+      await window.HouseAccountManager.showError({
+        title: 'Could not open these results',
+        bodyHtml: `We couldn't load ${escapeHtml(accountName)}'s research results just now. Your saved data is safe -- refreshing the dashboard should bring them back.`,
+        okLabel: 'Refresh Dashboard'
+      });
+    }
+    if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+  };
+  if(!refresh.ok && !refresh.empty){
+    await showUnresolvable();
+    return;
+  }
+  // Step 3 ("keep the exact researched account and returned opportunity
+  // IDs/fingerprints") -- the aggregate refresh just repopulated
+  // window.accountRadarAccounts from the SAME persisted data this research
+  // run just wrote (via persistScopedResearchResult()/addSignalDerivedOpportunities()),
+  // so looking the account up here by its composite (uploadId, name)
+  // identity IS the exact result just returned -- nothing is
+  // recomputed/re-derived here.
+  const account = (window.accountRadarAccounts || []).find(a => a.name === accountName && a.uploadId === uploadId);
+  if(!account){
+    await showUnresolvable();
+    return;
+  }
+  // Requirement 7: independent of timebox eligibility -- every opportunity
+  // this account has, sorted by the same score every other view uses, with
+  // no timebox/date filtering applied here at all.
+  const opportunities = (account.futureOpportunities || []).slice().sort((a, b) => getOpportunityScore(b) - getOpportunityScore(a));
+  if(!opportunities.length){
+    if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
+      await window.HouseAccountManager.showError({
+        title: 'No specific opportunity to show',
+        bodyHtml: `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`,
+        okLabel: 'Got it'
+      });
+    }
+    return;
+  }
+  // Requirement 5 & 6: open Prepare for Call for the top result; every
+  // other newly returned opportunity is picked up automatically by
+  // createSalesPlayPanel()'s own existing "Additional Opportunities Found"
+  // section (accountOpportunityCluster() -> additionalOpportunitiesFor()),
+  // which reads the SAME window.accountRadarAccounts this refresh just
+  // populated -- no separate list is threaded through here.
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0]);
+}
+
 // Recently Researched -- compact, temporary, ADDITIVE section above This
 // Week's Priorities. Sourced entirely from window.accountRadarAccounts'
 // persisted lastResearchedAt/signals (never a transient "just clicked"
@@ -6483,7 +6762,10 @@ document.addEventListener('click', (event) => {
   const uploadId = card.dataset.uploadId;
   const accountName = card.dataset.accountName;
   if(!uploadId || !accountName) return;
-  if(event.target.closest('.rr-view-btn')){ scrollToAccountResult(uploadId, accountName); return; }
+  if(event.target.closest('.rr-view-btn')){
+    if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(uploadId, accountName);
+    return;
+  }
   if(event.target.closest('.rr-dismiss-btn')){
     // data-completed-at is the exact lastResearchedAt this card was
     // rendered with -- records "I dismissed THIS completed result", so a
@@ -7118,13 +7400,27 @@ function groundedInitiativeTitle(opp){
   return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '').replace(/[.!?]+$/, '');
 }
 
+// Closes the Prepare for Call panel and balances the shared overlay-open
+// counter -- the single close path both the "×" button and the backdrop
+// click use, so neither can leave body.ha-overlay-open set after the last
+// sales-play-modal is gone.
+window.closeSalesPlayModal = function(el){
+  const modal = el && el.closest ? el.closest('.sales-play-modal') : null;
+  if(modal) modal.remove();
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+};
+
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp, opts){
   opts = opts || {};
-  // Required: close the Help dropdown and mobile nav before this panel
-  // opens, so no other application menu is left visibly open behind it.
-  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-    window.HouseAccountsHeader.closeMenus();
+  // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+  // call, except for an in-place swap ("Prep this call" from within
+  // Additional Opportunities, which removes the currently-open panel and
+  // opens a new one for a different opportunity in the same click) -- that
+  // must not double-count as a second overlay open, since a sales-play-modal
+  // is never absent from the DOM in between.
+  if(!opts.isSwap && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
   }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
@@ -7193,14 +7489,14 @@ window.createSalesPlayPanel = function(opp, opts){
 
   const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode, opp);
   const html = `
-    <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') this.remove()">
+    <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') closeSalesPlayModal(this)">
       <div class="sales-play-modal-content">
         <div class="sales-play-header">
           <div>
             <h2>Prepare for Call</h2>
             <div class="sales-play-subheader">${escapeHtml(account)} · ${escapeHtml(reasonTitle)} <span class="relationship-badge">${escapeHtml(salesPlayModeLabelForOpp(opp, mode))}</span></div>
           </div>
-          <button class="sales-play-close" onclick="this.closest('.sales-play-modal').remove()">×</button>
+          <button class="sales-play-close" onclick="closeSalesPlayModal(this)">×</button>
         </div>
         <div class="sales-play-output">
 
@@ -9028,7 +9324,22 @@ function processData(records){
   // independently with no ordering guarantee between them -- usually the
   // save won the race, but nothing enforced it. Chaining explicitly closes
   // that latent race rather than continuing to rely on timing.
-  saveCurrentUpload('uploaded').then(() => autoResearchTopAccountsOnce());
+  //
+  // Follow-up round: the showCustomerDashboardPanel() call above is an
+  // honest, immediate SINGLE-UPLOAD snapshot shown while the save is still
+  // in flight (0 uploaded lists, 0 accounts is the wrong impression to
+  // leave the user with even for a second) -- but it must never be the
+  // state the user is left looking at. The instant the save resolves,
+  // refreshAggregateDashboard() re-fetches the same aggregate
+  // /api/get-dashboard source loadSavedDashboard() uses and redraws Your
+  // Accounts/totals/combined-list context/Recently Researched/priorities
+  // from the FULL aggregate (every uploaded list, including this new one) --
+  // silently, without touching the upload-success panel still on screen or
+  // showing the loading skeleton/Sample Analysis over it.
+  saveCurrentUpload('uploaded').then(async () => {
+    if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+    autoResearchTopAccountsOnce();
+  });
 }
 
 function escapeHtml(text){
@@ -9185,9 +9496,23 @@ else wireUploadSuccessStateControls();
    const who = name ? esc(name) : 'The last research run for this list';
    return `<div class="acct-mgr-run-banner acct-mgr-run-banner-error" role="alert">${who} research failed${state.errorMessage ? ': ' + esc(state.errorMessage) : '.'} You can try again below.</div>`;
  }
+ // Follow-up round item 1: list-level research. Dynamic label mirrors
+ // accountRow()'s own never-researched/researched distinction (Research
+ // Account/Research Again) at the list scope: Research Entire List once
+ // for a list where no account has ever been researched, Research Entire
+ // List Again once any account in it has. Disabled while the SAME
+ // server-owned researchRunState accountRow()/researchRunBanner() already
+ // read is active, for the same reason an individual account's button is
+ // disabled then -- the server only allows one run per list at a time.
  function listCard(list){
    const paused = list.status === 'paused';
-   return `<section class="acct-mgr-list">
+   const accounts = list.accounts || [];
+   const activeAccounts = accounts.filter(a => a.monitoringStatus !== 'paused');
+   const everResearched = accounts.some(a => a.lastResearchedAt);
+   const runState = list.researchRunState || {status:'idle'};
+   const runActive = runState.status === 'active';
+   const listResearchLabel = everResearched ? 'Research Entire List Again' : 'Research Entire List';
+   return `<section class="acct-mgr-list" data-list-id="${esc(list.id)}">
       <div class="acct-mgr-list-head">
         <div>
           <h3 class="acct-mgr-list-title">${esc(list.name)}</h3>
@@ -9200,12 +9525,15 @@ else wireUploadSuccessStateControls();
           <div class="acct-mgr-menu-wrap">
             <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(list.name)}">⋯</button>
             <div class="acct-mgr-menu" role="menu">
+              <button type="button" role="menuitem" data-list-research-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${runActive?' disabled':''}${runActive?' title="Another research run is currently active for this list."':''}>${listResearchLabel}</button>
+              <div class="acct-mgr-menu-separator" role="separator"></div>
               <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}">Delete Uploaded List</button>
             </div>
           </div>
         </div>
       </div>
       ${researchRunBanner(list)}
+      <div class="acct-mgr-list-status" data-list-status hidden></div>
       <div>${(list.accounts||[]).map(a=>accountRow(list,a)).join('') || '<div class="acct-mgr-empty">No customer accounts in this list.</div>'}</div>
     </section>`;
  }
@@ -9247,10 +9575,12 @@ else wireUploadSuccessStateControls();
  }
  let accountManagerTriggerEl = null;
  function open(){
-   // Required: close the Help dropdown and mobile nav before this modal
-   // opens, so no other application menu is left visibly open behind it.
-   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-     window.HouseAccountsHeader.closeMenus();
+   // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+   // call -- see openAddCustomerDataModal()'s comment (main script) for why
+   // this is now the guaranteed-correct way to keep Help from surviving
+   // behind this modal.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+     window.HouseAccountsHeader.beginOverlay();
    }
    accountManagerTriggerEl = document.activeElement;
    document.getElementById('accountManagerModal').style.display='block';
@@ -9259,12 +9589,25 @@ else wireUploadSuccessStateControls();
    load();
  }
  function close(){
+   const wasOpen = isModalOpen();
    closeAllMenus();
    stopResearchPoll();
    document.getElementById('accountManagerModal').style.display='none';
    if(accountManagerTriggerEl && typeof accountManagerTriggerEl.focus === 'function') accountManagerTriggerEl.focus();
    accountManagerTriggerEl = null;
+   if(wasOpen && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
  }
+ // Exposed globally so the main script's shared "View Opportunities" handoff
+ // (openResearchedAccountOpportunities(), which must close this modal before
+ // opening Prepare for Call whether or not it happens to be open right now,
+ // and show an honest branded error if the result can no longer be
+ // resolved) can reach this IIFE's own open()/close()/showInfoDialog()
+ // without duplicating them.
+ window.HouseAccountManager = {
+   close(){ close(); },
+   isOpen(){ return isModalOpen(); },
+   showError(opts){ return showInfoDialog(opts); }
+ };
 
  // Overflow menus -- position:fixed (computed from the trigger's own
  // bounding rect) so they float above the modal's scroll container instead
@@ -9370,17 +9713,77 @@ else wireUploadSuccessStateControls();
      // ranking.
      if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);
      else if(typeof renderRecentlyResearchedSection === 'function') renderRecentlyResearchedSection();
+     // Follow-up round: dashboard counts/saved signals must update without a
+     // manual refresh regardless of whether the user ever clicks "View
+     // opportunities" -- refreshAggregateDashboard() re-fetches the same
+     // aggregate source loadSavedDashboard() uses (silently, this modal
+     // stays open/unaffected) so Your Accounts/totals/Recently Researched
+     // are correct the moment research completes.
+     if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
      const toastMessage = signalCount
        ? `${signalCount} verified signal${signalCount===1?'':'s'} found for ${accountName}.`
        : `Research complete for ${accountName} — no verified signals found.`;
      showToast(toastMessage, signalCount ? {
        label:'View opportunities',
-       fn: () => { close(); if(typeof scrollToAccountResult === 'function') scrollToAccountResult(listId, accountName); }
+       // Requirements 8/9: the SAME production function the Recently
+       // Researched row's own "View opportunities" button calls -- opens
+       // Prepare for Call directly (never merely scrolls/highlights), and
+       // closes this modal itself as part of that shared flow.
+       fn: () => { if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(listId, accountName); }
      } : null, 8000);
    }catch(err){
      setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');
      btn.disabled = false;
      btn.textContent = originalLabel;
+   }
+ }
+
+ // Follow-up round item 1: Research Entire List / Research Entire List
+ // Again. Confirms (naming the list and its active-account count, and that
+ // this may take a few minutes), then runs researchListFromManageModal()
+ // (the main script's list-scoped batch/per-account research, built from
+ // the same primitives the single-account path uses). Progress and the
+ // final per-list summary (attempted/with signals/signals found/failures)
+ // render into that list's own [data-list-status] line; individual account
+ // rows pick up the running/disabled state on the SAME server-owned
+ // researchRunState accountRow() already reads, via the early load() call
+ // below and the existing 6s poll -- no separate disabling logic needed.
+ async function handleListResearchClick(btn){
+   const listId = btn.dataset.listId;
+   const listName = btn.dataset.listName || 'this list';
+   const listEntry = cachedLists.find(l => l.id === listId);
+   const activeAccounts = ((listEntry && listEntry.accounts) || []).filter(a => a.monitoringStatus !== 'paused');
+   const confirmed = await showResearchConfirm({
+     title: `Research ${esc(listName)}?`,
+     bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeAccounts.length} account${activeAccounts.length===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
+     confirmLabel: 'Research Entire List'
+   });
+   if(!confirmed) return;
+   // Kicks an early re-render so the list-level control, and every account
+   // row in it, reflects the running state (via researchRunBanner()/
+   // accountRow()'s existing server-truth rendering) as soon as possible,
+   // rather than waiting for the next scheduled poll tick.
+   load();
+   let result;
+   try{
+     if(typeof researchListFromManageModal !== 'function') throw new Error('Research is not available on this page.');
+     result = await researchListFromManageModal(listId);
+   }catch(err){
+     result = {ok:false, error: (err && err.message) || 'List research failed. Please try again.'};
+   }
+   // Re-render AFTER the run resolves so accountRow()'s researched/Research
+   // Again labels and the list's runActive state are current, then locate
+   // the (freshly rendered) status line for this exact list to report the
+   // outcome -- the earlier statusEl reference would be a detached node by
+   // now, since load() replaced the whole list card.
+   await load();
+   const statusEl = document.querySelector(`.acct-mgr-list[data-list-id="${CSS.escape(listId)}"] [data-list-status]`);
+   if(result.ok){
+     const summary = `Research complete — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}.`;
+     if(statusEl){ statusEl.hidden = false; statusEl.classList.remove('is-error'); statusEl.classList.add('is-success'); statusEl.textContent = summary; }
+     if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+   }else{
+     if(statusEl){ statusEl.hidden = false; statusEl.classList.remove('is-success'); statusEl.classList.add('is-error'); statusEl.textContent = result.error || 'List research failed.'; }
    }
  }
 
@@ -9430,10 +9833,15 @@ else wireUploadSuccessStateControls();
  // true/false). Traps Tab within the two buttons, closes and restores
  // focus to the triggering element on Escape/backdrop-click/Cancel.
  function showDestructiveConfirm({title, bodyHtml, confirmLabel}){
-   // Required: close the Help dropdown and mobile nav before this dialog
-   // opens, so no other application menu is left visibly open behind it.
-   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-     window.HouseAccountsHeader.closeMenus();
+   // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+   // call -- see openAddCustomerDataModal()'s comment (main script) for why
+   // this is now the guaranteed-correct way to keep Help from surviving
+   // behind this dialog. Nested case: this dialog can open ON TOP OF an
+   // already-open Manage Customer Accounts modal (e.g. Delete Uploaded
+   // List) -- the counted overlay state means closing this dialog alone
+   // does not remove body.ha-overlay-open while that modal is still open.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+     window.HouseAccountsHeader.beginOverlay();
    }
    return new Promise(resolve => {
      const triggerEl = document.activeElement;
@@ -9458,6 +9866,58 @@ else wireUploadSuccessStateControls();
        document.removeEventListener('keydown', onKeydown, true);
        backdrop.remove();
        if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+       if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+       resolve(result);
+     }
+     function onKeydown(e){
+       if(e.key === 'Escape'){ e.preventDefault(); close(false); return; }
+       if(e.key === 'Tab'){
+         const idx = focusable.indexOf(document.activeElement);
+         if(e.shiftKey && idx <= 0){ e.preventDefault(); focusable[focusable.length - 1].focus(); }
+         else if(!e.shiftKey && idx === focusable.length - 1){ e.preventDefault(); focusable[0].focus(); }
+       }
+     }
+     cancelBtn.addEventListener('click', () => close(false));
+     confirmBtn.addEventListener('click', () => close(true));
+     backdrop.addEventListener('click', e => { if(e.target === backdrop) close(false); });
+     document.addEventListener('keydown', onKeydown, true);
+     confirmBtn.focus();
+   });
+ }
+
+ // Follow-up round: branded, non-destructive CONFIRM dialog (proceed/cancel,
+ // unlike showInfoDialog's single acknowledgement button) for Research
+ // Entire List / Research Entire List Again -- reuses the same .ha-confirm-*
+ // CSS as showDestructiveConfirm() above, but omits the "cannot be undone"
+ // warning (research is not destructive) and uses a neutral/primary confirm
+ // button instead of the red danger one.
+ function showResearchConfirm({title, bodyHtml, confirmLabel}){
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+     window.HouseAccountsHeader.beginOverlay();
+   }
+   return new Promise(resolve => {
+     const triggerEl = document.activeElement;
+     const backdrop = document.createElement('div');
+     backdrop.className = 'ha-confirm-backdrop';
+     backdrop.innerHTML = `
+       <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haResearchConfirmTitle" aria-describedby="haResearchConfirmBody">
+         <h3 class="ha-confirm-title" id="haResearchConfirmTitle">${esc(title)}</h3>
+         <p class="ha-confirm-body" id="haResearchConfirmBody">${bodyHtml}</p>
+         <div class="ha-confirm-actions">
+           <button type="button" class="ha-confirm-cancel">Cancel</button>
+           <button type="button" class="ha-confirm-primary-btn">${esc(confirmLabel || 'Start Research')}</button>
+         </div>
+       </div>`;
+     document.body.appendChild(backdrop);
+     const cancelBtn = backdrop.querySelector('.ha-confirm-cancel');
+     const confirmBtn = backdrop.querySelector('.ha-confirm-primary-btn');
+     const focusable = [cancelBtn, confirmBtn];
+
+     function close(result){
+       document.removeEventListener('keydown', onKeydown, true);
+       backdrop.remove();
+       if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+       if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
        resolve(result);
      }
      function onKeydown(e){
@@ -9482,10 +9942,10 @@ else wireUploadSuccessStateControls();
  // "cannot be undone" warning line, since nothing destructive happened.
  // Used to replace window.alert() for the HA004 server rejection.
  function showInfoDialog({title, bodyHtml, okLabel}){
-   // Required: close the Help dropdown and mobile nav before this dialog
-   // opens, so no other application menu is left visibly open behind it.
-   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.closeMenus === 'function'){
-     window.HouseAccountsHeader.closeMenus();
+   // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
+   // call -- see showDestructiveConfirm()'s comment above.
+   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+     window.HouseAccountsHeader.beginOverlay();
    }
    return new Promise(resolve => {
      const triggerEl = document.activeElement;
@@ -9506,6 +9966,7 @@ else wireUploadSuccessStateControls();
        document.removeEventListener('keydown', onKeydown, true);
        backdrop.remove();
        if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+       if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
        resolve();
      }
      function onKeydown(e){
@@ -9581,6 +10042,14 @@ else wireUploadSuccessStateControls();
          catch(err){ alert(err.message); }
        });
      }catch(err){ alert(err.message); }
+     return;
+   }
+
+   const listResearchBtn = e.target.closest('[data-list-research-act="research"]');
+   if(listResearchBtn){
+     if(listResearchBtn.disabled) return;
+     closeAllMenus();
+     await handleListResearchClick(listResearchBtn);
      return;
    }
 

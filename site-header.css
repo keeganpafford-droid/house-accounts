@@ -222,6 +222,15 @@ body > .topnav{display:none !important;}
 }
 .ha-help-dropdown a:hover,
 .ha-help-dropdown a:focus-visible{background:var(--ha-bg);color:var(--ha-teal);outline:none}
+/* Follow-up round: while ANY application overlay is open (Welcome, guided
+   tour, Add Customer Data, Manage Customer Accounts, Prepare for Call, or
+   any branded confirm/info dialog -- see site-header.js's beginOverlay()/
+   endOverlay()), the Help dropdown and the mobile nav shell are forced
+   hidden here, in CSS, regardless of their own hidden attribute/open
+   class or any JS event-ordering race that might otherwise leave one of
+   them visibly open behind the overlay. */
+body.ha-overlay-open .ha-help-dropdown,
+body.ha-overlay-open .ha-site-header.is-open .ha-nav-shell{display:none !important;}
 @media(max-width:1260px){
   .ha-help-menu{width:100%}
   .ha-help-dropdown{position:static;box-shadow:none;border:0;padding:0 0 0 12px;margin-top:2px}

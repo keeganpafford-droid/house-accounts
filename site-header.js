@@ -242,17 +242,51 @@
       });
     }
 
+    // Follow-up round: per-call-site closeMenus() additions (still called
+    // below, unchanged) were necessary but not sufficient -- Preview QA
+    // still found Help visible behind the Welcome modal and Add Customer
+    // Data. JS-timing/event-order races (a click that opens an overlay
+    // arriving in a different tick than the closeMenus() call, a menu
+    // reopened by a later handler on the same event, etc.) can still win
+    // the race against a one-shot imperative close. A global, counted
+    // overlay-open state plus a CSS rule that forces the dropdown hidden
+    // whenever ANY overlay is open removes the dependency on event
+    // ordering entirely -- the dropdown cannot be visibly open while
+    // body.ha-overlay-open is set, full stop, regardless of what sequence
+    // of clicks/timeouts got it into that state.
+    //
+    // A counter (not a boolean) supports nested/overlapping overlays --
+    // e.g. a destructive-confirm dialog opened from within the still-open
+    // Manage Customer Accounts modal -- so the class is only removed once
+    // every open overlay has closed, not the first time any one of them
+    // does.
+    let overlayDepth=0;
+    const beginOverlay=()=>{
+      overlayDepth+=1;
+      closeHelp(true);
+      closeMobileNav();
+      document.body.classList.add('ha-overlay-open');
+    };
+    const endOverlay=()=>{
+      overlayDepth=Math.max(0,overlayDepth-1);
+      if(overlayDepth===0) document.body.classList.remove('ha-overlay-open');
+    };
+
     // Exposed so other scripts on the page (the dashboard's Welcome modal,
     // guided tour, Add Customer Data modal, Manage Customer Accounts modal,
     // Prepare for Call panel, and the branded confirm/info dialogs) can
-    // close every open header menu before presenting their own overlay --
-    // required so the Help dropdown never remains visibly open behind any
-    // of them, on both desktop and the mobile hamburger nav.
+    // close every open header menu before presenting their own overlay,
+    // and participate in the shared overlay-open state above. closeMenus()
+    // is kept for any caller that only wants the one-shot close (no
+    // counted overlay state) -- beginOverlay()/endOverlay() are the pair
+    // every real overlay open/close should call instead.
     window.HouseAccountsHeader={
       closeMenus(){
         closeHelp(true);
         closeMobileNav();
-      }
+      },
+      beginOverlay,
+      endOverlay
     };
 
     const logout=wrapper.querySelector('[data-ha-logout]');
