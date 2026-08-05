@@ -4471,11 +4471,25 @@ function renderSignalCard(signal){
 // embedding an arbitrary string in a CSS selector) so an account name
 // containing quotes or other selector-special characters can never break
 // out of the attribute-value match or be interpreted as selector syntax.
-function accountCardFor(accountName){
-  return document.querySelector(`.account-card[data-account-name="${CSS.escape(String(accountName || ''))}"]`);
+//
+// FR3 round: uploadId is optional but should be passed by every NEW caller.
+// Two different uploads can legitimately contain accounts with the exact
+// same name (a duplicate customer name across two separately-uploaded
+// lists) -- a name-only match here would silently resolve to whichever of
+// those cards happens to be first in document order, potentially rendering
+// one upload's research result into a completely different upload's card.
+// When uploadId is provided, the match requires BOTH attributes to agree;
+// existing name-only call sites keep their prior (pre-existing, narrower)
+// behavior unchanged.
+function accountCardFor(accountName, uploadId){
+  const nameSelector = `.account-card[data-account-name="${CSS.escape(String(accountName || ''))}"]`;
+  if(uploadId){
+    return document.querySelector(`${nameSelector}[data-upload-id="${CSS.escape(String(uploadId))}"]`);
+  }
+  return document.querySelector(nameSelector);
 }
-function accountSignalsPanel(accountName){
-  const card = accountCardFor(accountName);
+function accountSignalsPanel(accountName, uploadId){
+  const card = accountCardFor(accountName, uploadId);
   return card ? card.querySelector('.signal-research-panel') : null;
 }
 
@@ -5740,7 +5754,7 @@ async function researchAccountFromManageModal(accountName, listId){
   const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
-    return {ok:false, error:'Another research run is currently active for this list. Please wait for it to finish before researching an individual account.'};
+    return {ok:false, error:'Another research run is currently active for this uploaded list. Please wait for it to finish.'};
   }
   const researchRunId = claim.data.researchRunId;
   const attemptId = claim.data.attemptId;
@@ -5865,7 +5879,7 @@ async function researchListFromManageModal(listId){
   const claim = await claimAutomaticResearchRun('manual-rerun', expectedUploadId);
   const claimOutcome = claim.ok && claim.data ? claim.data.outcome : null;
   if(!claim.ok || claimOutcome === 'attached-active' || claimOutcome === 'completed'){
-    return {ok:false, error:'Another research run is currently active for this list. Please wait for it to finish before researching the entire list again.'};
+    return {ok:false, error:'Another research run is currently active for this uploaded list. Please wait for it to finish.'};
   }
   const researchRunId = claim.data.researchRunId;
   const attemptId = claim.data.attemptId;
@@ -5989,6 +6003,19 @@ async function researchListFromManageModal(listId){
 // saving anything -- the button is simply unavailable while another run
 // owns the upload, by design (see the item-2 "no untracked bypass"
 // requirement).
+//
+// FR3 round: the main dashboard's "Research Account" card button no longer
+// calls this function (see researchAccountFromCard() above, now the click
+// listener's target) -- that path always operates on the clicked card's
+// OWN upload id via researchAccountFromManageModal()'s scoped snapshot,
+// which this function's currentUploadId/window.accountRadarAccounts
+// name-only lookup could not guarantee for a duplicate-named account in a
+// different upload. This function's only remaining caller is
+// researchTopAccounts()'s own fallback loop below, which already passes
+// options.attemptId/researchRunId for accounts it just uploaded itself
+// (so the claim branch below never runs for that caller, and
+// currentUploadId is genuinely that same upload at that point in the
+// flow) -- left unchanged, since that usage was confirmed safe.
 async function researchAccountByName(accountName, options = {}){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
@@ -6002,7 +6029,7 @@ async function researchAccountByName(accountName, options = {}){
     const claim = await claimAutomaticResearchRun('manual-rerun');
     const outcome = claim.ok && claim.data ? claim.data.outcome : null;
     if(!claim.ok || outcome === 'attached-active' || outcome === 'completed'){
-      if(panel) panel.innerHTML = `<div class="no-signals-message">Another research run is currently active for this account list. Please wait for it to finish before researching an individual account.</div>`;
+      if(panel) panel.innerHTML = `<div class="no-signals-message">Another research run is currently active for this uploaded list. Please wait for it to finish.</div>`;
       return;
     }
     runId = claim.data.researchRunId;
@@ -6618,6 +6645,55 @@ function applyModalResearchResultToDashboard(freshAccount, uploadId){
   addSignalDerivedOpportunities(target, target.signals);
   refreshOpportunityViews();
   return target;
+}
+
+// FR3 round root-cause fix: single, scoped account-research entry point for
+// the main dashboard's per-card "Research Account" / "Research Again"
+// button. Built directly on researchAccountFromManageModal() -- the SAME
+// already-upload-scoped engine the Manage Customer Accounts modal's row
+// action uses (fetchUploadScopedSnapshot(uploadId) fetches a fresh,
+// server-verified snapshot of exactly that upload; claim/provider-call/save
+// are all keyed to that exact uploadId throughout) -- rather than
+// duplicating that logic a second time. This function only adds the
+// dashboard-card-specific UI: the inline signals panel, the in-memory
+// display patch via applyModalResearchResultToDashboard(), the aggregate
+// refresh, and a completion toast -- the same UI responsibilities the
+// modal's own handleResearchClick() wrapper performs for its row.
+//
+// uploadId MUST be the clicked card's own data-upload-id (its click
+// listener below is this function's only caller) -- never currentUploadId,
+// which can point at a different upload than the one the clicked card
+// actually belongs to. This is what makes two identically-named accounts
+// in two separate uploads stay independent: researching one can never
+// resolve, claim, or persist against the other.
+async function researchAccountFromCard(accountName, uploadId){
+  const panel = accountSignalsPanel(accountName, uploadId);
+  if(panel) panel.innerHTML = `<div class="signal-loading">Researching ${escapeHtml(accountName)} across public sources...</div>`;
+  const result = await researchAccountFromManageModal(accountName, uploadId);
+  if(!result.ok){
+    // result.error is always one of this codebase's own branded/static
+    // messages (safeParseResearchResponse's branded parse-failure message,
+    // this function's own "another run active" message, or a server
+    // application error string) -- never raw parser output -- but it is
+    // still escaped here before going into innerHTML, matching this file's
+    // convention for any dynamic text rendered this way.
+    if(panel) panel.innerHTML = `<div class="no-signals-message">${escapeHtml(result.error || "We couldn't complete research for this account. Please try again.")}</div>`;
+    return;
+  }
+  const fresh = result.account;
+  if(panel) panel.innerHTML = renderVerifiedSignals(fresh.signals || []);
+  applyModalResearchResultToDashboard(fresh, uploadId);
+  if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+  const signalCount = Array.isArray(fresh.signals) ? fresh.signals.length : 0;
+  const toastMessage = signalCount
+    ? `${signalCount} verified signal${signalCount === 1 ? '' : 's'} found for ${accountName}.`
+    : `Research complete for ${accountName} — no verified signals found.`;
+  if(typeof showToast === 'function'){
+    showToast(toastMessage, signalCount ? {
+      label: 'View opportunities',
+      fn: () => { if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(uploadId, accountName); }
+    } : null, 8000);
+  }
 }
 
 // Normalizes an account name for composite-key comparison ONLY (trim +
@@ -9187,7 +9263,24 @@ document.addEventListener('click', (event) => {
   if(researchBtn){
     const card = researchBtn.closest('.account-card');
     const accountName = card ? card.dataset.accountName : null;
-    if(accountName) researchAccountByName(accountName);
+    // FR3 round root-cause fix: read the CLICKED card's own upload id and
+    // pass it through explicitly -- researchAccountFromCard() (main script)
+    // scopes the entire claim/research/save/refresh lifecycle to this exact
+    // upload, never the possibly-stale/possibly-different-list global
+    // currentUploadId. This is what keeps two identically-named accounts in
+    // two separate uploads independent of each other.
+    const uploadId = card ? card.dataset.uploadId : null;
+    if(accountName && uploadId){
+      researchAccountFromCard(accountName, uploadId);
+    }else if(accountName){
+      // Every server-provided account row carries its own upload id (see
+      // normalizeSavedAccount()/opp.uploadId's identical fallback comment
+      // above) -- an empty data-upload-id here means this card's data is
+      // unexpectedly incomplete. Fail visibly rather than silently doing
+      // nothing or guessing an upload via the global currentUploadId.
+      const panel = accountSignalsPanel(accountName);
+      if(panel) panel.innerHTML = `<div class="no-signals-message">This account is missing the information needed to research it safely. Please refresh the dashboard and try again.</div>`;
+    }
     return;
   }
   const toggleBtn = event.target.closest('.toggle-account-edit-btn');
@@ -9702,7 +9795,7 @@ else wireUploadSuccessStateControls();
           <div class="acct-mgr-menu-wrap">
             <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(list.name)}">⋯</button>
             <div class="acct-mgr-menu" role="menu">
-              <button type="button" role="menuitem" data-list-research-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${runActive?' disabled':''}${runActive?' title="Another research run is currently active for this list."':''}>${listResearchLabel}</button>
+              <button type="button" role="menuitem" data-list-research-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${runActive?' disabled':''}${runActive?' title="Another research run is currently active for this uploaded list."':''}>${listResearchLabel}</button>
               <div class="acct-mgr-menu-separator" role="separator"></div>
               <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}">Delete Uploaded List</button>
             </div>

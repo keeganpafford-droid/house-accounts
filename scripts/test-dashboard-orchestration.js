@@ -95,47 +95,65 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // closing-brace checks are the actual guarantee of correctness -- these
 // numbers were re-derived mechanically (brace-depth scan from each
 // function's real signature line), not hand-counted.
-// FR2 round: line ranges re-derived after this round's guided-tour-focus,
-// safe-response-parsing, aggregate-dashboard-lifecycle, and list-research
-// completion-workflow changes shifted almost every function below.
-// extractFn()/extractRaw()'s own signature/closing-brace checks are the
-// actual guarantee of correctness -- these numbers were re-derived
-// mechanically (parse-complete scan from each function's real signature
-// line), not hand-counted.
+// FR3 round: line ranges re-derived after this round's Help-dropdown CSS
+// fix (no line-count effect on this file) and the researchAccountByName()
+// identity fix -- accountCardFor()/accountSignalsPanel() gained an optional
+// uploadId parameter, two new functions were added
+// (applyModalResearchResultToDashboard(), researchAccountFromCard() -- the
+// card click listener's new, consolidated, upload-scoped target), and the
+// delegated click listener itself changed to read/pass the clicked card's
+// own data-upload-id. extractFn()/extractRaw()'s own signature/
+// closing-brace checks are the actual guarantee of correctness -- these
+// numbers were re-derived mechanically (parse-complete scan from each
+// function's real signature line), not hand-counted.
 const REAL_SOURCE = [
   extractFn('claimAutomaticResearchRun', 2480, 2490, {async: true}),
   extractFn('heartbeatCurrentResearchRun', 2510, 2527, {async: true}),
   extractFn('reportResearchRunOutcome', 2541, 2566, {async: true}),
   extractFn('normalizeSavedAccount', 2702, 2764),
-  extractFn('accountCardFor', 4474, 4476),
-  extractFn('accountSignalsPanel', 4477, 4480),
+  extractFn('accountCardFor', 4484, 4490),
+  extractFn('accountSignalsPanel', 4491, 4494),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 5672, 5707, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 5536, 5558, {async: true}),
-  extractFn('persistScopedResearchResult', 5566, 5611, {async: true}),
-  extractFn('researchAccountFromManageModal', 5709, 5837, {async: true}),
-  extractFn('researchAccountByName', 5992, 6131, {async: true}),
-  extractFn('getAccountsForResearch', 6136, 6149),
-  extractFn('batchPayloadForAccounts', 6151, 6195),
-  extractFn('applyBusinessSignalAccountBoost', 6198, 6206),
-  extractFn('researchAccountsBatch', 6208, 6297, {async: true}),
-  extractFn('signalTopicKeyClient', 6299, 6307),
-  extractFn('dedupeSignalsClient', 6309, 6322),
-  extractFn('researchTopAccounts', 6324, 6454, {async: true}),
-  extractFn('refreshOpportunityViews', 6555, 6575),
-  extractFn('renderDetailedAccountViews', 8834, 8902),
-  extractFn('serializeAccountForStorage', 8912, 8971),
-  extractFn('performSaveCurrentUpload', 8981, 9081, {async: true}),
-  extractFn('saveCurrentUpload', 9090, 9094),
-  extractFn('toggleAccountMetadataEdit', 9102, 9108),
-  extractFn('saveAccountMetadataEdit', 9131, 9167, {async: true}),
-  extractRaw('delegatedClickListener', 9185, 9207, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 9220, 9236),
-  extractFn('escapeHtml', 9522, 9525)
+  extractFn('safeParseResearchResponse', 5686, 5721, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 5550, 5572, {async: true}),
+  extractFn('persistScopedResearchResult', 5580, 5625, {async: true}),
+  extractFn('researchAccountFromManageModal', 5723, 5851, {async: true}),
+  extractFn('researchAccountByName', 6019, 6158, {async: true}),
+  extractFn('getAccountsForResearch', 6163, 6176),
+  extractFn('batchPayloadForAccounts', 6178, 6222),
+  extractFn('applyBusinessSignalAccountBoost', 6225, 6233),
+  extractFn('researchAccountsBatch', 6235, 6324, {async: true}),
+  extractFn('signalTopicKeyClient', 6326, 6334),
+  extractFn('dedupeSignalsClient', 6336, 6349),
+  extractFn('researchTopAccounts', 6351, 6481, {async: true}),
+  extractFn('refreshOpportunityViews', 6582, 6602),
+  // FR3 round: display-only patch of window.accountRadarAccounts after a
+  // scoped save has already succeeded -- researchAccountFromCard() below
+  // calls this exactly like the Manage Customer Accounts modal's own
+  // handleResearchClick() wrapper does (that wrapper lives in the OTHER
+  // inline <script>, not extracted here; its own dedicated coverage is the
+  // scoped-research family of tests further down this file).
+  extractFn('applyModalResearchResultToDashboard', 6638, 6648),
+  // FR3 round root-cause fix: the dashboard card's "Research Account" /
+  // "Research Again" button's new, single target -- built directly on the
+  // already-scoped researchAccountFromManageModal() above instead of the
+  // name-only/currentUploadId-dependent researchAccountByName(). This is
+  // the function under test in the collision/duplicate-name scenarios
+  // below.
+  extractFn('researchAccountFromCard', 6669, 6697, {async: true}),
+  extractFn('renderDetailedAccountViews', 8910, 8978),
+  extractFn('serializeAccountForStorage', 8988, 9047),
+  extractFn('performSaveCurrentUpload', 9057, 9157, {async: true}),
+  extractFn('saveCurrentUpload', 9166, 9170),
+  extractFn('toggleAccountMetadataEdit', 9178, 9184),
+  extractFn('saveAccountMetadataEdit', 9207, 9243, {async: true}),
+  extractRaw('delegatedClickListener', 9261, 9300, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 9313, 9329),
+  extractFn('escapeHtml', 9615, 9618)
 ].join('\n\n');
 
 // ===========================================================================
@@ -828,6 +846,13 @@ async function testMarkupIdsNeverCollide(){
 // a hand-built DOM mirroring exactly what renderDetailedAccountViews()
 // emits (class names, data attributes) -- Part A above is the separate
 // proof that the real markup generator emits exactly this shape.
+//
+// FR3 round: the click listener now routes through researchAccountFromCard()
+// -> researchAccountFromManageModal(), which fetches a fresh upload-scoped
+// snapshot via /api/get-dashboard?uploadId=... instead of reading the
+// module's window.accountRadarAccounts/currentUploadId directly -- so this
+// scenario's mock now needs to serve that endpoint too, exactly like the
+// testScopedResearch* family further down this file.
 // ===========================================================================
 async function testResearchButtonTargetsCorrectAccountUnderCollision(){
   const accounts = [
@@ -836,6 +861,13 @@ async function testResearchButtonTargetsCorrectAccountUnderCollision(){
   ];
   const researchedNames = [];
   const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      assert(call.url.includes('uploadId=upload-1'), 'j) collision-safe routing: the freshness refresh explicitly requests upload-1, the clicked card\'s own data-upload-id');
+      return getDashboardResponse('upload-1', 'Test List', [
+        scopedAccount('A&B Co', 'upload-1', {intelligenceMode: 'warm'}),
+        scopedAccount('A B Co', 'upload-1', {intelligenceMode: 'warm'})
+      ]);
+    }
     if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
       return jsonResponse({outcome: 'claimed-new', researchRunId: 'run-x', attemptId: 'attempt-x'});
     }
@@ -853,14 +885,14 @@ async function testResearchButtonTargetsCorrectAccountUnderCollision(){
     throw new Error(`unexpected fetch in testResearchButtonTargetsCorrectAccountUnderCollision: ${call.url} ${JSON.stringify(call.body)}`);
   });
 
-  function buildResearchCard(name, uiKey){
+  function buildResearchCard(name, uploadId, uiKey){
     const researchBtn = new FakeEl('button', {class: 'btn btn-secondary research-account-btn'});
     const panel = new FakeEl('div', {class: 'signal-research-panel', id: `signals-${uiKey}`});
-    const card = new FakeEl('div', {class: 'account-card', 'data-account-name': name}, [researchBtn, panel]);
+    const card = new FakeEl('div', {class: 'account-card', 'data-account-name': name, 'data-upload-id': uploadId}, [researchBtn, panel]);
     return {card, researchBtn};
   }
-  const first = buildResearchCard('A&B Co', 0);
-  const second = buildResearchCard('A B Co', 1);
+  const first = buildResearchCard('A&B Co', 'upload-1', 0);
+  const second = buildResearchCard('A B Co', 'upload-1', 1);
   const root = new FakeEl('body', {}, [first.card, second.card]);
   const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl, fakeDomRoot: root});
 
@@ -870,6 +902,80 @@ async function testResearchButtonTargetsCorrectAccountUnderCollision(){
 
   assert(researchedNames.length === 1, 'j) collision-safe routing: exactly one account was researched');
   assert(researchedNames[0] === 'A B Co', `j) collision-safe routing: clicking the SECOND card researched the SECOND account (A B Co), not a colliding one -- got "${researchedNames[0]}"`);
+}
+
+// ===========================================================================
+// Scenario (j2) -- the core FR3 defect this round fixes: TWO accounts with
+// the EXACT SAME name in two DIFFERENT uploads (the real-world "L.L.Bean
+// uploaded twice" shape), both rendered on the same aggregate/team-view
+// dashboard. Clicking one card's "Research Account" button must claim,
+// research, and save ONLY that card's own upload -- never the other
+// upload's identically-named account -- and must never resolve the account
+// via a name-only match against the shared window.accountRadarAccounts
+// aggregate (the exact bug researchAccountByName() had). Exercises the REAL
+// delegated click listener -> researchAccountFromCard() ->
+// researchAccountFromManageModal() chain end to end.
+// ===========================================================================
+async function testResearchButtonCrossUploadDuplicateNameIndependence(){
+  const DUP_NAME = 'L.L.Bean';
+  const UPLOAD_X = 'upload-x';
+  const UPLOAD_Z = 'upload-z';
+  // The stale/shared aggregate the OLD researchAccountByName() name-only
+  // lookup would have searched -- both entries share the exact same name,
+  // only their uploadId (and object identity) distinguish them.
+  const accountX = fixtureAccount(DUP_NAME, {uploadId: UPLOAD_X, signals: [], lastResearchedAt: ''});
+  const accountZ = fixtureAccount(DUP_NAME, {uploadId: UPLOAD_Z, signals: [], lastResearchedAt: ''});
+  const accounts = [accountX, accountZ];
+
+  const providerCalls = [];
+  const fetchImpl = makeFetch((call) => {
+    if(call.url.startsWith('/api/get-dashboard')){
+      assert(call.url.includes(`uploadId=${UPLOAD_Z}`), 'j2) cross-upload duplicate name: the freshness refresh targets upload-z, the clicked card\'s own upload -- never upload-x');
+      return getDashboardResponse(UPLOAD_Z, 'Upload Z', [scopedAccount(DUP_NAME, UPLOAD_Z, {intelligenceMode: 'warm'})]);
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'claim'){
+      assert(call.body.uploadId === UPLOAD_Z, 'j2) cross-upload duplicate name: the claim targets upload-z explicitly');
+      return jsonResponse({outcome: 'claimed-new', researchRunId: 'run-z', attemptId: 'attempt-z'});
+    }
+    if(call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat'){
+      return jsonResponse({ok: true});
+    }
+    if(call.url === '/api/research-batch' && !call.body.researchRunAction){
+      assert(call.body.uploadId === UPLOAD_Z, 'j2) cross-upload duplicate name: the provider request targets upload-z explicitly');
+      providerCalls.push(call);
+      return jsonResponse({byAccount: {[DUP_NAME]: [{isReal: true, sourceUrl: 'https://example.com/z', signalType: 'Hiring'}]}, signals: []});
+    }
+    if(call.url === '/api/save-upload'){
+      assert(call.body.uploadId === UPLOAD_Z, 'j2) cross-upload duplicate name: the save targets upload-z explicitly');
+      return jsonResponse({ok: true, uploadId: UPLOAD_Z, runStatus: 'completed'});
+    }
+    throw new Error(`unexpected fetch in testResearchButtonCrossUploadDuplicateNameIndependence: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+
+  function buildResearchCard(name, uploadId, uiKey){
+    const researchBtn = new FakeEl('button', {class: 'btn btn-secondary research-account-btn'});
+    const panel = new FakeEl('div', {class: 'signal-research-panel', id: `signals-${uiKey}`});
+    const card = new FakeEl('div', {class: 'account-card', 'data-account-name': name, 'data-upload-id': uploadId}, [researchBtn, panel]);
+    return {card, researchBtn};
+  }
+  const cardX = buildResearchCard(DUP_NAME, UPLOAD_X, 0);
+  const cardZ = buildResearchCard(DUP_NAME, UPLOAD_Z, 1);
+  const root = new FakeEl('body', {}, [cardX.card, cardZ.card]);
+  const sandbox = createSandbox({accounts, currentUploadId: UPLOAD_X, fetchImpl, fakeDomRoot: root});
+
+  // Click the upload-z card -- currentUploadId is deliberately upload-x, the
+  // OTHER upload, mirroring the exact scenario the old bug got wrong (the
+  // active/last-loaded list is not necessarily the clicked card's own list).
+  sandbox.__clickHandler({target: cardZ.researchBtn});
+  await waitUntil(() => saveUploadCalls(fetchImpl.calls).length > 0);
+
+  const calls = fetchImpl.calls;
+  assert(getDashboardCalls(calls).length === 1, 'j2) cross-upload duplicate name: exactly one freshness refresh fired');
+  assert(claimCalls(calls).length === 1, 'j2) cross-upload duplicate name: exactly one claim fired, for upload-z only');
+  assert(providerCalls.length === 1, 'j2) cross-upload duplicate name: exactly one provider request fired, for upload-z only');
+  assert(saveUploadCalls(calls).length === 1, 'j2) cross-upload duplicate name: exactly one save fired, for upload-z only');
+  assert(accountZ.signals.length === 1 && accountZ.lastResearchedAt !== '', 'j2) cross-upload duplicate name: the CLICKED upload\'s in-memory account (upload-z) is updated with the fresh research result');
+  assert(accountX.signals.length === 0 && accountX.lastResearchedAt === '', 'j2) cross-upload duplicate name: the OTHER, identically-named upload\'s account (upload-x) is left completely untouched -- researching one never marks or persists to the other');
 }
 
 // ===========================================================================
@@ -1214,6 +1320,7 @@ async function main(){
   await testMarkupNeverContainsExecutableAccountNames();
   await testMarkupIdsNeverCollide();
   await testResearchButtonTargetsCorrectAccountUnderCollision();
+  await testResearchButtonCrossUploadDuplicateNameIndependence();
   await testEditFormTargetsCorrectAccountUnderCollision();
   await testScopedResearchTargetsExactUploadOnly();
   await testScopedResearchAbortsOnMixedUploadResponse();

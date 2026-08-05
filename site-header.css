@@ -222,6 +222,21 @@ body > .topnav{display:none !important;}
 }
 .ha-help-dropdown a:hover,
 .ha-help-dropdown a:focus-visible{background:var(--ha-bg);color:var(--ha-teal);outline:none}
+/* FR3 round root-cause fix: .ha-help-dropdown's own `display:flex` above is
+   an author-origin declaration, and author declarations always win over the
+   browser's built-in `[hidden]{display:none}` user-agent rule, regardless
+   of selector specificity -- so the `hidden` attribute this dropdown's own
+   JS state (site-header.js's closeHelp()) has always correctly set/cleared
+   never actually controlled its rendering. The dropdown was ALWAYS
+   display:flex, at every point in the page lifecycle, including on a fresh
+   page load before Help was ever clicked; the only thing that ever visibly
+   hid it was the body.ha-overlay-open rule below, active only while some
+   other overlay (the tour, a modal) happens to be open. This explicit
+   [hidden] override makes the attribute -- and the JS that already sets it
+   correctly -- actually work, standing on its own without depending on any
+   overlay being active. Confirmed via a real Chromium render (not just
+   source-text inspection) in scripts/test-help-dropdown-visibility.js. */
+.ha-help-dropdown[hidden]{display:none !important;}
 /* Follow-up round: while ANY application overlay is open (Welcome, guided
    tour, Add Customer Data, Manage Customer Accounts, Prepare for Call, or
    any branded confirm/info dialog -- see site-header.js's beginOverlay()/

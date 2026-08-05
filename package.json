@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "bash scripts/run-all-tests.sh",
+    "test:help-dropdown-visibility": "node scripts/test-help-dropdown-visibility.js",
     "test:mvp": "node scripts/test-mvp-navigation.js",
     "test:public-mvp": "node scripts/test-public-mvp.js",
     "test:sprint-4.3c": "node scripts/test-sprint-4-3c.js",
@@ -21,5 +23,8 @@
     "test:signal-benchmark": "node scripts/run-signal-benchmark.js",
     "research:benchmark": "node scripts/run-live-research.js",
     "research:all": "node scripts/run-live-research.js --all"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }
