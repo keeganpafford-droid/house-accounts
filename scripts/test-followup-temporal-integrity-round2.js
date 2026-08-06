@@ -39,14 +39,14 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2682, 2687, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2917, 2920, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3281, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4587, 5701, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7643, 8933, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8936, 9439, 'function normalizeSignalLayerType(');
-const RR_BLOCK = extractBlock('recently-researched', 7424, 7484, 'function getRecentlyResearchedAccounts(){');
-const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 7228, 7323, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10146, 10149, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7558, 7560, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7563, 7565, 'function clampScore(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4587, 5757, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7675, 8965, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8968, 9471, 'function normalizeSignalLayerType(');
+const RR_BLOCK = extractBlock('recently-researched', 7456, 7516, 'function getRecentlyResearchedAccounts(){');
+const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 7260, 7355, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10178, 10181, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7590, 7592, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7595, 7597, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -198,17 +198,17 @@ function realBusinessOpp(overrides = {}){
   });
   assert(sandbox.isReferralFirstPosture(neuralTrustOpp) === true, 'sanity: NeuralTrust (relationshipStrength 5) is a referral-first/first-contact posture');
   assert(
-    sandbox.mentionsProductOrMerchOffer(neuralTrustOpp.conversationStarter) && !sandbox.hasReferralFirstFraming(neuralTrustOpp.conversationStarter),
-    'sanity: the confirmed production Conversation Starter text pitches products with no referral-first framing'
+    sandbox.mentionsProductOrMerchOffer(neuralTrustOpp.conversationStarter),
+    'sanity: the confirmed production Conversation Starter text pitches products directly'
   );
   assert(
     sandbox.isGroundedOpener(neuralTrustOpp.conversationStarter, neuralTrustOpp) === false,
-    'required test 6: the cached, product-pitching Conversation Starter is rejected as ungrounded for a referral-first opportunity -- getSuggestedOpener() cannot return it verbatim'
+    'required test 6: the cached, product-pitching Conversation Starter is rejected as ungrounded -- getSuggestedOpener() cannot return it verbatim'
   );
   const opener = sandbox.getSuggestedOpener(neuralTrustOpp);
   assert(
-    !sandbox.mentionsProductOrMerchOffer(opener) || sandbox.hasReferralFirstFraming(opener),
-    `required test 6: the actual opener getSuggestedOpener() returns never leads with a direct product/merch pitch for a first-contact opportunity (got: "${opener}")`
+    !sandbox.mentionsProductOrMerchOffer(opener),
+    `required test 6: the actual opener getSuggestedOpener() returns never leads with a direct product/merch pitch, for any posture (got: "${opener}")`
   );
 
   // required test 7: Best Next Move (buildConciseSalesPlay's Cold branch)

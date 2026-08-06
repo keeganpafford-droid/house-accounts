@@ -4812,9 +4812,18 @@ function businessSuggestedOpener(opp){
   if(!detail || detail.length < 8){
     return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
   }
-  const specific = shortText(detail, 90);
+  // R7 follow-up: shortText() appends a real ellipsis when it truncates --
+  // fine as a standalone evidence-bullet marker, but disqualifying when it
+  // lands mid-sentence inside a generated Conversation Starter (isGroundedOpener()
+  // now rejects ANY ellipsis in this field). Stripped here since more
+  // sentence text always follows immediately in the same template.
+  const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
   if(kind === 'hiring') return `Hey ${contact} — saw ${specific}. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
-  if(kind === 'event') return `Hey ${contact} — saw ${specific}. Is there anything coming up where it would help to think through merch, attendee gifts, or staff gear?`;
+  // R7 follow-up: no longer names merch/attendee gifts/staff gear directly --
+  // the permanent Conversation Starter rule bans a direct product ask here
+  // regardless of posture; a product idea can still be offered later, once
+  // ownership/context is established, via Email/Call Script/Best Next Move.
+  if(kind === 'event') return `Hey ${contact} — saw ${specific}. Is there anything coming up that your team is already planning around?`;
   if(kind === 'expansion') return `Hey ${contact} — saw ${specific}. Is that creating any internal or customer-facing needs we should be thinking about?`;
   if(kind === 'recognition') return `Hey ${contact} — saw ${specific}. Anything coming up where employee or customer appreciation would be useful?`;
   if(kind === 'leadership') return `Hey ${contact} — saw ${specific}. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
@@ -4925,11 +4934,25 @@ function isReferralFirstPosture(opp){
 // permission-based offer -- the same structure every deterministic
 // referral-first template already uses (ask first, offer only "if useful"/
 // "once I know more"/"if it's welcome").
+// R7 follow-up (Preview QA): widened from the original narrow product-phrase
+// list -- confirmed production cases (Kiniksa Pharmaceuticals: "Would you be
+// interested in discussing promotional materials for the event?"; Sandwich
+// Stampede: "...discussing event merchandise or VIP gifts for attendees?")
+// used phrasings ("promotional materials," "event merchandise," "VIP gifts")
+// the old regex never covered, so these direct first-contact product pitches
+// silently passed as "grounded." Covers every category the permanent
+// Conversation Starter rule names: promotional products/materials, branded
+// merchandise/apparel, giveaways, gifts, event materials, product
+// categories, and placing an order.
 function mentionsProductOrMerchOffer(text){
-  return /\b(promotional products?|custom merchandise|merchandise options|branded (?:items?|merchandise|products?)|merch\b|swag\b)\b/i.test(text);
+  return /\b(promotional (?:products?|materials?|items?)|custom merchandise|merchandise options|event merchandise|branded (?:items?|merchandise|products?|apparel)|merch\b|swag\b|apparel\b|giveaways?\b|(?:vip |attendee )?gifts?\b|staff gear|event materials?|product categor(?:y|ies)|plac(?:e|ing) an order)\b/i.test(text);
 }
-function hasReferralFirstFraming(text){
-  return /\b(right person|who('?s| is| would be)|do you know|no pressure|once i know more|if (it'?s )?(useful|welcome)|before (?:selling|pitching|a pitch)|not trying to jump straight to a pitch)\b/i.test(text);
+// R7 follow-up: the Conversation Starter field specifically must always be
+// a real, answerable question -- a stored/generated opener with no "?" at
+// all is a statement, not the low-pressure open-ended question the
+// permanent Conversation Starter rule requires.
+function isMeaningfulConversationQuestion(text){
+  return /\?/.test(String(text || ''));
 }
 function isGroundedOpener(text, opp){
   const t = String(text || '').trim();
@@ -4962,11 +4985,20 @@ function isGroundedOpener(text, opp){
     /celebrat\w+ this (milestone|acquisition|integration) with (custom |branded )?merchandise/i
   ];
   if(UNGROUNDED_LEGACY_PATTERNS.some(p => p.test(t))) return false;
-  // Follow-up temporal-integrity round: posture-level check, generalized
-  // across any phrasing rather than one more exact pattern (see
-  // isReferralFirstPosture()'s header comment for the confirmed production
-  // case this closes).
-  if(isReferralFirstPosture(opp) && mentionsProductOrMerchOffer(t) && !hasReferralFirstFraming(t)) return false;
+  // R7 follow-up (Preview QA): the permanent Conversation Starter rule --
+  // this field must never directly pitch a product/merchandise category,
+  // for EVERY signal type and EVERY account, not only a Cold/referral-first
+  // posture (confirmed production cases: Kiniksa Pharmaceuticals and
+  // Sandwich Stampede both pitched products directly in an already-
+  // established-relationship posture too). Unlike the email/call-script/
+  // LinkedIn channels -- which may still frame a later, low-pressure product
+  // offer -- the Conversation Starter itself is the FIRST question asked, so
+  // no framing exception applies here; a product mention anywhere in it is
+  // always disqualifying.
+  if(mentionsProductOrMerchOffer(t)) return false;
+  // R7 follow-up: a Conversation Starter with no question at all is a
+  // statement, not the open-ended question the permanent rule requires.
+  if(!isMeaningfulConversationQuestion(t)) return false;
   // Malformed punctuation (a doubled terminal period that isn't a genuine
   // 3-dot ellipsis, or a doubled/spaced-out hyphen artifact) or a duplicated
   // account mention -- the same artifact classes normalizeOutreachText()

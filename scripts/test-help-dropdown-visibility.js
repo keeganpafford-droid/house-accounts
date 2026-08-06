@@ -83,13 +83,13 @@ const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3368
 // stays empty (the one fetch load() attempts fails safely in this
 // environment), so they are never invoked.
 const MANAGE_MODAL_SRC = [
-  extractLines('cachedLists', 10189, 10189, 'let cachedLists=[];'),
-  extractLines('request', 10198, 10215, 'async function request(method,body){'),
-  extractLines('renderManager', 10341, 10341, 'function renderManager(){'),
-  extractLines('research-poll-block', 10350, 10366, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
-  extractLines('load', 10367, 10376, 'async function load(){'),
-  extractLines('open-close', 10377, 10400, 'let accountManagerTriggerEl = null;'),
-  extractLines('closeAllMenus', 10419, 10425, 'function closeAllMenus(){')
+  extractLines('cachedLists', 10221, 10221, 'let cachedLists=[];'),
+  extractLines('request', 10230, 10247, 'async function request(method,body){'),
+  extractLines('renderManager', 10373, 10373, 'function renderManager(){'),
+  extractLines('research-poll-block', 10382, 10398, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
+  extractLines('load', 10399, 10408, 'async function load(){'),
+  extractLines('open-close', 10409, 10432, 'let accountManagerTriggerEl = null;'),
+  extractLines('closeAllMenus', 10451, 10457, 'function closeAllMenus(){')
 ].join('\n');
 
 // Real markup for the tour overlay, the Add Customer Data modal (minimal --

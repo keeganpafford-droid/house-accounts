@@ -81,10 +81,10 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2682, 2687, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2917, 2920, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3281, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4587, 5701, 'function confidenceLabel(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8936, 9439, 'function normalizeSignalLayerType(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7558, 7560, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7563, 7565, 'function clampScore(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4587, 5757, 'function confidenceLabel(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8968, 9471, 'function normalizeSignalLayerType(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7590, 7592, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7595, 7597, 'function clampScore(');
 
 function makeSandbox(){
   const sandbox = {
@@ -131,7 +131,8 @@ function makeSandbox(){
         whatChanged: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods.',
         sourceName: 'Santa Cruz Works',
         sourceUrl: 'https://santacruzworks.org/dispatch-goods-follow-on-investment',
-        eventDate: '2026-06-23',
+        eventDate: '2026-06-23', eventDateConfidence: 'exact',
+        publicationDate: '2026-06-22', publishedDate: '2026-06-22',
         actionabilityStatus: { status: 'recent-past', tense: 'past', isPriorityEligible: true },
         confidence: 82, commercialScore: 82
       }]

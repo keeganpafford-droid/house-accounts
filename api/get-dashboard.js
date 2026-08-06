@@ -308,6 +308,40 @@ function signalToOpportunity(row){
   };
 }
 
+// R7 follow-up (Preview QA): raw_data.existingSignals holds already-built
+// opportunity OBJECTS persisted directly at a PRIOR research/save time --
+// unlike ha_signals ROWS, these never pass through rowToSignal(), so
+// classifyLegacySignalActionability()'s "trust but verify" date
+// reconciliation (added for legacy ha_signals rows) never reached them.
+// Confirmed production defect (Avidia Bank): a pre-fix run persisted
+// eventDate=2026-06-22 (Eventbrite's listing date) directly into
+// existingSignals with exact confidence; every later dashboard load kept
+// serving that wrong date verbatim because nothing ever re-examined it.
+// A second, independent defect shares this exact boundary: existingSignals
+// entries written before isVerifiedSignalOpportunity/signalLayerType were
+// set on every opportunity object (an even older shape) silently fail
+// isBusinessSignalOpportunity()/isBusinessOpportunity() (both here and in
+// dashboard/index.html), which defeats resolveOpportunityEvents()'s and the
+// client's business-signal identity merge entirely for that one persisted
+// object -- a freshly re-derived ha_signals row for the SAME real-world
+// event then survives alongside it as an apparent duplicate (confirmed
+// production case: Dispatch Goods' "Follow-on Investment from Santa Cruz
+// Ventures"). Reconciling every existingSignals entry through the SAME
+// classifyLegacySignalActionability() used for ha_signals rows, and
+// re-asserting the two identity flags every CURRENT signal always carries,
+// closes both gaps at their one shared hydration boundary -- no database
+// write, no provider call, applies on the very next dashboard read.
+function reconcileStoredOpportunity(opp){
+  if(!opp || typeof opp !== 'object') return opp;
+  const legacyFields = classifyLegacySignalActionability(opp);
+  return {
+    ...opp,
+    ...legacyFields,
+    isVerifiedSignalOpportunity: true,
+    signalLayerType: opp.signalLayerType || 'Business Activity Signal'
+  };
+}
+
 // Real-world, web-research-derived business-activity events only -- never
 // historical/repeat-pattern opportunities (order-history-derived, with no
 // canonical event identity to resolve). Mirrors dashboard/index.html's own
@@ -369,7 +403,7 @@ function buildAccountsFromRows(accountRows, signalRows){
       status: p.status || 'Historical'
     }));
     const storedOpps = [
-      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals : []),
+      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.map(reconcileStoredOpportunity) : []),
       ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
     ];
     byAccount.set(a.account_name, {
