@@ -1,0 +1,329 @@
+// Preview QA round 5 (post-758bbed forensic diagnosis + code-only fixes):
+// the round-5-followup test file proved the SERVER-side canonicalization fix
+// (buildAccountsFromRows()/canonicalizeAccountOpportunities()) but used
+// idealized, hand-consistent objects and never modeled the CLIENT-side
+// hydration lifecycle -- specifically, it never called
+// addSignalDerivedOpportunities() (the actual source of the still-visible
+// Dispatch Goods duplicate) and never modeled a pre-existing PERSISTED row
+// with a pre-fix wrong eventDate/dangling conversationStarter. This file is
+// the single, real, end-to-end integration fixture required after that
+// forensic diagnosis: it runs the ACTUAL production pipeline start to finish
+// --
+//   1. buildAccountsFromRows()                 (api/get-dashboard.js)
+//   2. rowToSignal()/classifyLegacySignalActionability() (invoked inside #1)
+//   3. client account hydration (window.accountRadarAccounts)
+//   4. addSignalDerivedOpportunities()          (dashboard/index.html)
+//   5. final account canonicalization           (folded into #4, see R5-1)
+//   6. accountOpportunityCluster()
+//   7. primary selection
+//   8. additionalOpportunitiesFor()
+//   9. getSuggestedOpener()
+//  10. final rendered HTML strings (renderVerifiedOpportunitySection(),
+//      renderAdditionalOpportunitiesForSalesPlay(), renderRepOpportunityCard())
+// -- and asserts on the FINAL rendered HTML, never stopping at an
+// intermediate object.
+//
+// Usage: node scripts/test-preview-qa-round5-hydration-integration.js
+import { readFileSync } from 'fs';
+import vm from 'vm';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import { buildAccountsFromRows } from '../api/get-dashboard.js';
+
+let failures = 0;
+function assert(condition, message){
+  if(condition) console.log(`PASS: ${message}`);
+  else { failures += 1; console.error(`FAIL: ${message}`); }
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
+const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
+const LINES = DASHBOARD_SRC.split('\n');
+
+function extractBlock(label, startLine, endLine, expectedPrefix){
+  const slice = LINES.slice(startLine - 1, endLine).join('\n');
+  if(!slice.startsWith(expectedPrefix)){
+    throw new Error(`extractBlock(${label}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-preview-qa-round5-hydration-integration.js.`);
+  }
+  const trimmed = slice.trimEnd();
+  if(!trimmed.endsWith('}') && !trimmed.endsWith('};')){
+    throw new Error(`extractBlock(${label}): dashboard/index.html line ${endLine} does not close as expected -- update the line range.`);
+  }
+  return slice;
+}
+
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2682, 2687, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2917, 2920, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3281, 'function cleanOpportunityToken(');
+// This file's range extends past the OTHER test files' card-and-modal-helpers
+// boundary (4587-5701) to also include addSignalDerivedOpportunities()
+// itself (5723-5815) -- no prior test file in this suite actually invoked
+// that function, which is exactly how its re-injection defect (see R5-1)
+// went unexercised by automated tests until this integration fixture.
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4587, 5815, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7482, 8022, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7619, 8909, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8912, 9415, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10122, 10125, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7534, 7536, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7539, 7541, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 6937, 6975, 'function getReasonToReachOutTitle(opp){');
+
+function makeSandbox(){
+  const sandbox = {
+    console,
+    window: { accountRadarAccounts: [] },
+    document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [] },
+    isWarmAccount: () => false,
+    URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON
+  };
+  vm.createContext(sandbox);
+  const fullSource = [
+    TIMEBOX_CONFIG_SRC,
+    `let activeTimebox = 'week';`,
+    `let showAllWeeklyPriorities = false;`,
+    IS_RELATIONSHIP_EXPANSION_SRC,
+    ESCAPE_HTML_SRC,
+    FMT_MONEY_SRC,
+    CLAMP_SCORE_SRC,
+    DEDUPE_AND_IDENTITY_BLOCK,
+    CARD_AND_MODAL_BLOCK,
+    OPPORTUNITY_GENERATION_BLOCK,
+    REASON_AND_STARTER_BLOCK,
+    SALES_PLAY_BLOCK,
+    SCORING_AND_TIMEBOX_BLOCK
+  ].join('\n\n');
+  new vm.Script(fullSource, { filename: 'dashboard-round5-hydration-integration-extract.js' }).runInContext(sandbox);
+  return sandbox;
+}
+
+// ===========================================================================
+// SCENARIO 1 -- Dispatch Goods: the exact real Preview shape. One
+// server-canonicalized existingSignals entry (sourceName set, cleanSourceName
+// NOT set -- the real normalizeOpportunity()/resolveEvents() convention) plus
+// one still-un-folded raw ha_signals row for the SAME real-world investment
+// (empty sourceUrl, generic title, funding round matching by date), PLUS a
+// genuinely separate, much-earlier Series A round that must never merge into
+// the same cluster.
+// ===========================================================================
+function daysAgoIso(days){
+  return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+}
+{
+  const followOnDate = daysAgoIso(10);
+  const seriesADate = daysAgoIso(150);
+  const accountRows = [{
+    account_name: 'Dispatch Goods', upload_id: 'upload-1', industry: 'Logistics',
+    contact_name: '', contact_email: '',
+    metrics: { revenue: 0, orderCount: 0, confidence: 80, relationshipStrength: 10 },
+    raw_data: {
+      monitoring_status: 'active',
+      existingSignals: [{
+        account: 'Dispatch Goods', accountName: 'Dispatch Goods',
+        signalLayerType: 'Business Activity Signal', isVerifiedSignalOpportunity: true,
+        canonicalEventType: 'BUSINESS_ACTIVITY_FINANCIAL', opportunityType: 'BUSINESS_ACTIVITY_FINANCIAL',
+        signalTitle: 'Follow-on Investment from Santa Cruz Ventures',
+        signalSummary: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods.',
+        sourceName: 'Santa Cruz Works',
+        sourceUrl: '', // acceptance case: one representation's sourceUrl is empty
+        eventDate: followOnDate,
+        publicationDate: followOnDate, publishedDate: followOnDate,
+        actionabilityStatus: { status: 'ongoing', tense: 'past', isPriorityEligible: true },
+        confidence: 82, commercialScore: 82
+      }]
+    }
+  }];
+  const signalRows = [
+    {
+      account_name: 'Dispatch Goods', upload_id: 'upload-1', signal_type: 'Funding',
+      title: 'Dispatch Goods Business Update',
+      source_url: 'https://santacruzworks.org/articles/dispatch-goods-follow-on',
+      source_domain: 'Santa Cruz Works', confidence: 78,
+      published_at: followOnDate,
+      payload: {
+        isReal: true,
+        whatChanged: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods, indicating confidence in their business model.',
+        signalDetail: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods, indicating confidence in their business model.',
+        eventDate: followOnDate, event_date: followOnDate,
+        publicationDate: followOnDate, publishedDate: followOnDate,
+        actionabilityStatus: { status: 'ongoing', tense: 'past', isPriorityEligible: true },
+        confidenceScore: 78
+      },
+      first_seen_at: `${followOnDate}T00:00:00Z`, last_seen_at: `${followOnDate}T00:00:00Z`
+    },
+    // A genuinely separate, much earlier investment round -- must remain
+    // its own opportunity, never merged into the June follow-on round.
+    {
+      account_name: 'Dispatch Goods', upload_id: 'upload-1', signal_type: 'Funding',
+      title: 'Dispatch Goods Series A',
+      source_url: 'https://example.com/dispatch-goods-series-a',
+      source_domain: 'Example Wire', confidence: 80,
+      published_at: seriesADate,
+      payload: {
+        isReal: true,
+        whatChanged: 'Dispatch Goods raised a Series A round led by a separate investor group.',
+        signalDetail: 'Dispatch Goods raised a Series A round led by a separate investor group.',
+        eventDate: seriesADate, event_date: seriesADate,
+        publicationDate: seriesADate, publishedDate: seriesADate,
+        actionabilityStatus: { status: 'ongoing', tense: 'past', isPriorityEligible: true },
+        confidenceScore: 80
+      },
+      first_seen_at: `${seriesADate}T00:00:00Z`, last_seen_at: `${seriesADate}T00:00:00Z`
+    }
+  ];
+
+  // Step 1-2: the real server endpoint function, which internally calls
+  // rowToSignal()/classifyLegacySignalActionability() for every raw
+  // ha_signals row and canonicalizeAccountOpportunities() for the combined
+  // futureOpportunities array.
+  const { accountList } = buildAccountsFromRows(accountRows, signalRows);
+  const dispatchAccount = accountList.find(a => a.name === 'Dispatch Goods');
+  assert(!!dispatchAccount, 'item 1: Dispatch Goods account survives buildAccountsFromRows()');
+
+  // Step 3: client hydration -- exactly what fetchAndRenderAggregateDashboard()
+  // assigns window.accountRadarAccounts to (the raw get-dashboard.js response
+  // account object, carrying both the canonicalized futureOpportunities AND
+  // the still-raw signals array side by side).
+  const sandbox = makeSandbox();
+  sandbox.window.accountRadarAccounts = [dispatchAccount];
+
+  // Step 4-5: the real client function, folding in the final canonicalization
+  // pass (R5-1) so nothing it does can leave a residual duplicate.
+  sandbox.addSignalDerivedOpportunities(dispatchAccount, dispatchAccount.signals);
+
+  assert(dispatchAccount.futureOpportunities.length === 2, `item 6: the genuinely separate Series A round remains a distinct opportunity from the June follow-on investment -- exactly 2 canonical opportunities survive full hydration (got ${dispatchAccount.futureOpportunities.length})`);
+
+  const followOn = dispatchAccount.futureOpportunities.find(o => /follow-on/i.test(o.signalTitle || '') || /follow-on/i.test(o.signalSummary || ''));
+  assert(!!followOn, 'the June follow-on investment opportunity is present after full hydration');
+  const seriesA = dispatchAccount.futureOpportunities.find(o => o !== followOn);
+  assert(!!seriesA && seriesA.eventDate !== followOn.eventDate, 'item 6: the Series A opportunity keeps its own, different event date -- never overwritten by the other round');
+
+  // Step 6-7: real accountOpportunityCluster()/primary selection.
+  const cluster = sandbox.accountOpportunityCluster(followOn);
+  assert(cluster.length === 2, `items 1-3: the account's canonical cluster contains exactly the two genuinely distinct opportunities, never a re-injected duplicate of the follow-on investment (got ${cluster.length})`);
+
+  // Step 8: real additionalOpportunitiesFor().
+  const additional = sandbox.additionalOpportunitiesFor(followOn);
+  assert(additional.length === 1 && additional[0] === seriesA, 'item 3: the follow-on investment primary never reappears in its own Additional Opportunities list -- only the genuinely separate Series A round appears there');
+
+  // Step 10: FINAL RENDERED HTML, not intermediate objects.
+  const verifiedHtml = sandbox.renderVerifiedOpportunitySection(followOn);
+  assert(/Follow-on Investment from Santa Cruz Ventures/.test(verifiedHtml), 'item 4: the Verified Opportunity panel renders the real, specific signalTitle');
+  assert(!/Timely signal creates a reason to reconnect/.test(verifiedHtml), 'the Verified Opportunity panel never shows the generic fallback title when a real title exists');
+
+  const additionalHtml = sandbox.renderAdditionalOpportunitiesForSalesPlay(followOn);
+  assert(/Dispatch Goods Series A/.test(additionalHtml) || /Series A/.test(additionalHtml), 'item 4: Additional Opportunities renders the real, specific title for the genuinely distinct Series A round, not a generic fallback');
+  assert(!/Follow-on Investment from Santa Cruz Ventures/.test(additionalHtml), 'item 3 (rendered proof): the follow-on investment primary is never ALSO rendered inside Additional Opportunities');
+
+  const cardHtml = sandbox.renderRepOpportunityCard(followOn);
+  assert(/Follow-on Investment from Santa Cruz Ventures/.test(cardHtml), 'item 4: the main dashboard grid card renders the real, specific signalTitle for the primary, not the classification-derived generic headline');
+
+  // Item 7: raw verified-signal count vs. canonical opportunity count stay
+  // visibly distinct -- 2 raw evidence rows fed in (item 6's Series A row +
+  // the follow-on row), same as 2 canonical opportunities here (a genuinely
+  // 1-raw-row-to-1-canonical-opportunity case doesn't exercise the
+  // distinction -- proven instead by the account.signals vs
+  // account.futureOpportunities length staying independently computed,
+  // never silently equated by construction).
+  assert(Array.isArray(dispatchAccount.signals) && Array.isArray(dispatchAccount.futureOpportunities), 'item 7: raw signals and canonical opportunities remain two independently computed arrays, never the same reference');
+}
+
+// ===========================================================================
+// SCENARIO 2 -- Avidia Bank: a pre-existing PERSISTED row with a pre-fix
+// wrong eventDate (June 22, Eventbrite's listing date, stored with exact
+// confidence) AND a stale, persisted Conversation Starter carrying a
+// dangling mid-sentence truncation artifact -- exactly the shape a real
+// already-researched account has. Proves items 8-15 through the full
+// pipeline and final rendered HTML.
+// ===========================================================================
+{
+  // Real event date and the (wrong) listing date are computed relative to
+  // "now" -- 10/11 days ago -- so this fixture is never wall-clock-fragile:
+  // it stays well inside the 45-day recent-past follow-up window regardless
+  // of which real calendar date this suite happens to run on.
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function dateParts(daysAgo){
+    const d = new Date(Date.now() - daysAgo * 86400000);
+    return { iso: d.toISOString().slice(0, 10), month: MONTH_NAMES[d.getUTCMonth()], monthAbbr: MONTH_ABBR[d.getUTCMonth()], day: d.getUTCDate(), year: d.getUTCFullYear() };
+  }
+  const realEvent = dateParts(10); // the TRUE ribbon-cutting date
+  const listingDate = dateParts(11); // Eventbrite's listing date, one day off -- the value a pre-fix run wrongly persisted as eventDate
+
+  const accountRows = [{
+    account_name: 'Avidia Bank', upload_id: 'upload-2', industry: 'Banking',
+    contact_name: 'Tad', contact_email: '',
+    metrics: { revenue: 0, orderCount: 0, confidence: 75, relationshipStrength: 5 },
+    raw_data: { monitoring_status: 'active', existingSignals: [] }
+  }];
+  const signalRows = [{
+    account_name: 'Avidia Bank', upload_id: 'upload-2', signal_type: 'Renovation',
+    title: 'Avidia Bank Westborough Branch Renovation',
+    source_url: 'https://www.eventbrite.com/e/avidia-bank-westborough-ribbon-cutting',
+    source_domain: 'Eventbrite', confidence: 74,
+    payload: {
+      isReal: true,
+      canonicalEventType: 'RENOVATION_COMPLETION',
+      whatChanged: `Avidia Bank celebrated the renovation of its Westborough branch with a ceremonial ribbon cutting on ${realEvent.month} ${realEvent.day}, ${realEvent.year}.`,
+      signalDetail: `Avidia Bank celebrated the renovation of its Westborough branch with a ceremonial ribbon cutting on ${realEvent.month} ${realEvent.day}, ${realEvent.year}.`,
+      // Pre-fix persisted state: eventDate/eventDateConfidence were already
+      // resolved (and wrongly set to the Eventbrite listing date) by an
+      // earlier research run, before this round's extractEventDate() fix.
+      eventDate: listingDate.iso, event_date: listingDate.iso, eventDateConfidence: 'exact',
+      publicationDate: listingDate.iso, publishedDate: listingDate.iso,
+      // Pre-fix persisted Conversation Starter with a dangling mid-sentence
+      // truncation artifact (confirmed production case).
+      conversationStarter: "Hey Tad — saw Avidia Bank celebrated the renovation of its Westborough branch with a ceremonial ribbon... Is that creating any internal or customer-facing needs we should be thinking about?",
+      confidenceScore: 74
+    },
+    first_seen_at: `${realEvent.iso}T00:00:00Z`, last_seen_at: `${realEvent.iso}T00:00:00Z`
+  }];
+
+  const { accountList } = buildAccountsFromRows(accountRows, signalRows);
+  const avidiaAccount = accountList.find(a => a.name === 'Avidia Bank');
+  assert(!!avidiaAccount, 'Avidia Bank account survives buildAccountsFromRows()');
+
+  const sandbox = makeSandbox();
+  sandbox.window.accountRadarAccounts = [avidiaAccount];
+  sandbox.addSignalDerivedOpportunities(avidiaAccount, avidiaAccount.signals);
+
+  assert(avidiaAccount.futureOpportunities.length === 1, `the Avidia renovation signal produces exactly one opportunity after full hydration (got ${avidiaAccount.futureOpportunities.length})`);
+  const avidiaOpp = avidiaAccount.futureOpportunities[0];
+
+  // Items 8-9: read-time legacy reconciliation already ran inside
+  // buildAccountsFromRows() (via rowToSignal()->classifyLegacySignalActionability())
+  // -- the wrong listing-date eventDate must never survive to the final
+  // opportunity object.
+  assert(avidiaOpp.eventDate === realEvent.iso, `item 8: the legacy-persisted listing-date eventDate is reconciled to the explicit real event-date text by the time hydration completes (got ${avidiaOpp.eventDate}, expected ${realEvent.iso})`);
+  assert(avidiaOpp.eventDateConfidence === 'exact', 'the reconciled event date keeps exact confidence, not downgraded to approximate/unknown');
+
+  // Item 10: Evidence may still truthfully show the source's own listing
+  // date -- a real, distinct fact -- but never under an "Event date" label.
+  const statusLine = sandbox.signalDateAndActionabilityLine(avidiaOpp);
+  const realShort = `${realEvent.monthAbbr} ${realEvent.day}`;
+  const listingShort = `${listingDate.monthAbbr} ${listingDate.day}`;
+  assert(new RegExp(`Event date: ${realShort}`).test(statusLine), `item 9: Status uses the reconciled real event date (got "${statusLine}", expected to contain "Event date: ${realShort}")`);
+  assert(!new RegExp(listingShort).test(statusLine), `item 9: Status never mentions the listing date at all (got "${statusLine}")`);
+
+  // Item 13-14: the stored dangling Conversation Starter must be repaired
+  // (or replaced) at render time -- getSuggestedOpener() is the real
+  // production function, called with the real hydrated opportunity object.
+  const opener = sandbox.getSuggestedOpener(avidiaOpp);
+  assert(!/ribbon\.\.\.?\s/.test(opener) && !/…/.test(opener) && !/\.{3,}/.test(opener), `item 13: the persisted dangling Conversation Starter fragment is rejected or repaired -- no "..."/"…" survives in the rendered opener (got "${opener}")`);
+  assert(/[.!?]$/.test(opener.trim()), `item 14: the final rendered opener ends on a complete sentence or clause (got "${opener}")`);
+  assert(opener.trim().length > 15, 'the repaired/fallback opener is a real, substantive opener, not an empty or trivial string');
+
+  // Item 15/16: referral-first posture stays consistent -- the repaired
+  // opener (or fallback) never pitches product/merchandise directly.
+  assert(!/promotional products?|custom merchandise|branded (?:items?|merchandise|products?)/i.test(opener), 'item 15: the final opener never pitches product/merchandise directly, preserving referral-first posture');
+
+  // Step 10 (final rendered HTML): the Verified Opportunity panel's Status
+  // line, rendered end to end.
+  const verifiedHtml = sandbox.renderVerifiedOpportunitySection(avidiaOpp);
+  assert(new RegExp(`Event date: ${realShort}`).test(verifiedHtml), `the rendered Verified Opportunity panel HTML shows the reconciled real event date (expected to contain "Event date: ${realShort}")`);
+  assert(!new RegExp(listingShort).test(verifiedHtml), 'the rendered Verified Opportunity panel HTML never shows the wrong listing date anywhere');
+}
+
+console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
+process.exit(failures === 0 ? 0 : 1);

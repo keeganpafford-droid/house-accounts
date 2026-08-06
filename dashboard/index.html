@@ -3056,8 +3056,19 @@ function opportunitiesLikelySameInitiative(a, b){
   // by itself -- the human-readable publisher name plus a close/matching
   // date is an equally strong, generalized same-event signal, independent of
   // any title/summary wording difference between the two objects.
-  const sourceNameA = cleanOpportunityToken(a?.cleanSourceName || '');
-  const sourceNameB = cleanOpportunityToken(b?.cleanSourceName || '');
+  // R5 follow-up: api/signal-intelligence.js's normalizeOpportunity()/
+  // resolveEvents() write the human-readable publisher name onto `sourceName`,
+  // never `cleanSourceName` -- so a server-canonicalized opportunity (from
+  // raw_data.existingSignals, the object this function most needs to match
+  // against) routinely has `cleanSourceName` empty even though it has a real
+  // source name. Reading `cleanSourceName` alone therefore silently defeated
+  // this exact check for a canonical primary object every time, which is why
+  // the Dispatch Goods duplicate survived: the sourceUrl-domain path failed
+  // too (one representation's sourceUrl differed/was empty), leaving no
+  // remaining path to a match. Falling back to `sourceName` closes that gap
+  // without weakening the check for objects that only ever had `sourceName`.
+  const sourceNameA = cleanOpportunityToken(a?.cleanSourceName || a?.sourceName || '');
+  const sourceNameB = cleanOpportunityToken(b?.cleanSourceName || b?.sourceName || '');
   const sameSourceName = Boolean(sourceNameA) && sourceNameA === sourceNameB;
   // Positive-agreement requirement, same spirit as the server-side event
   // resolver: the same publisher/source alone is enough (e.g. "multiple
@@ -4710,6 +4721,28 @@ const CANONICAL_KIND_BY_EVENT_TYPE = {
   PARTNERSHIP: 'business',
   REBRAND: 'business'
 };
+// R5 follow-up (Preview QA): api/signal-intelligence.js's resolveEventType()
+// falls back to a generic BUSINESS_ACTIVITY_<FAMILY> type (e.g.
+// BUSINESS_ACTIVITY_FINANCIAL) whenever no narrower named type matches --
+// financial/funding/investment signals ALWAYS land here, since there is no
+// dedicated named type for "raised a funding round"/"received an
+// investment". CANONICAL_KIND_BY_EVENT_TYPE above had no entry for any
+// BUSINESS_ACTIVITY_* bucket at all, so canonicalSignalKind() returned null
+// for every financial signal, businessSignalKind() fell through to its
+// raw-text regex fallback (which has no financial/funding pattern either),
+// and opportunityHeadline() -- called with no signalTitle fallback at two
+// of its three call sites -- rendered the final generic default string
+// regardless of how specific and grounded the real signalTitle was
+// (confirmed production case: Dispatch Goods' "Follow-on Investment from
+// Santa Cruz Ventures" rendering as "Timely signal creates a reason to
+// reconnect" once it appeared as an Additional Opportunity). Every family
+// classifySignalFamily() (api/signal-intelligence.js) can produce is mapped
+// here so no BUSINESS_ACTIVITY_* type is ever left unmapped.
+const BUSINESS_ACTIVITY_FAMILY_KIND = {
+  FINANCIAL: 'business', GROWTH: 'expansion', EVENTS: 'event', PRODUCT: 'launch',
+  PARTNERSHIP: 'business', LEADERSHIP: 'leadership', AWARD: 'recognition',
+  HIRING: 'hiring', COMMUNITY: 'event', REBRAND: 'business', UNKNOWN: 'business'
+};
 function canonicalSignalKind(opp){
   // QA final round, item 1: opp.opportunityType also doubles as a generic
   // display-category label ('SIGNAL-DRIVEN'/'REPEAT PATTERN') for
@@ -4718,7 +4751,12 @@ function canonicalSignalKind(opp){
   // checked first, or a truthy display label silently blocks the real
   // lookup below every time.
   const canonicalType = opp?.canonicalEventType || opp?.opportunityType || '';
-  return CANONICAL_KIND_BY_EVENT_TYPE[canonicalType] || null;
+  if(CANONICAL_KIND_BY_EVENT_TYPE[canonicalType]) return CANONICAL_KIND_BY_EVENT_TYPE[canonicalType];
+  if(canonicalType.startsWith('BUSINESS_ACTIVITY_')){
+    const family = canonicalType.slice('BUSINESS_ACTIVITY_'.length);
+    return BUSINESS_ACTIVITY_FAMILY_KIND[family] || 'business';
+  }
+  return null;
 }
 
 function businessSignalKind(opp){
@@ -4936,11 +4974,21 @@ function isGroundedOpener(text, opp){
   // silently rewritten; it is simply rejected here.
   if(/\.\.(?!\.)/.test(t)) return false;
   if(/-\s+-/.test(t)) return false;
-  // Round 6 correction, item 3: a trailing unicode ellipsis character is a
-  // separate codepoint from "..", so the doubled-period check above never
-  // catches it -- this is the same clipped-source-excerpt artifact class
-  // (see stripTrailingTruncation()), just a different character.
-  if(/…\s*$/.test(t)) return false;
+  // R5 follow-up (Preview QA): a literal 3-dot ellipsis ("...") or a real
+  // unicode ellipsis character ("…") ANYWHERE in the text -- not just a
+  // trailing unicode one -- marks a dangling truncation artifact. The
+  // previous checks only caught an exact doubled period (never three
+  // literal dots, which this negative lookahead deliberately excludes) and
+  // a unicode ellipsis specifically at the string's end, so a mid-sentence
+  // cutoff like "...with a ceremonial ribbon... Is that creating..."
+  // (confirmed production case: a persisted Avidia Bank Conversation
+  // Starter) was silently treated as grounded and returned verbatim.
+  // getSuggestedOpener() attempts a targeted repair (dropping only the
+  // incomplete clause) before falling back to the deterministic template --
+  // this check is what makes that repair attempt necessary in the first
+  // place, for both the raw stored text and, if repair fails, the final
+  // decision to discard it.
+  if(/\.{3,}|…/.test(t)) return false;
   const account = String(opp?.account || opp?.accountName || '').trim();
   if(account && account.length > 2){
     const escaped = account.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -4949,8 +4997,40 @@ function isGroundedOpener(text, opp){
   return true;
 }
 
+// R5 follow-up (Preview QA): a defensive render-time repair for a
+// persisted Conversation Starter carrying a dangling truncation artifact
+// (a literal "..." or unicode "…" mid-sentence, not just at the very end --
+// confirmed production case: "...with a ceremonial ribbon... Is that
+// creating any internal or customer-facing needs..."). Splits the stored
+// text on every ellipsis marker and keeps only the resulting segments that
+// are themselves complete, grammatical sentences (end in . ! or ?) --
+// dropping the incomplete clause the ellipsis was standing in for, never
+// inventing new words to bridge it. Returns '' (never repairable) when
+// nothing complete survives or what survives is too short to stand alone
+// as an opener, so the caller can fall back to the deterministic template
+// instead of showing a barely-there fragment. This never mutates
+// opp.conversationStarter itself -- storage is untouched, exactly like
+// isGroundedOpener()'s own read-only quality gate.
+function repairDanglingOpener(text){
+  const t = String(text || '').trim();
+  if(!t) return '';
+  const segments = t.split(/\.{3,}|…/).map(s => s.trim()).filter(Boolean);
+  const complete = segments.filter(s => /[.!?]$/.test(s));
+  const repaired = complete.join(' ').replace(/\s+/g, ' ').trim();
+  return repaired.length >= 20 ? repaired : '';
+}
+
 function getSuggestedOpener(opp){
   if(isGroundedOpener(opp.conversationStarter, opp)) return opp.conversationStarter;
+  // R5 follow-up: before falling all the way back to the fully generic
+  // deterministic template below, try to salvage the real, grounded stored
+  // text when the ONLY reason it failed the groundedness gate is a
+  // dangling ellipsis artifact -- the repaired text still has to pass the
+  // exact same groundedness/posture checks (isGroundedOpener()) before it
+  // is trusted, so a repair that happens to expose some OTHER problem
+  // (e.g. a referral-first violation) is still rejected, same as before.
+  const repaired = repairDanglingOpener(opp.conversationStarter);
+  if(repaired && isGroundedOpener(repaired, opp)) return repaired;
   // QA round 3, item 5: same fix as businessSuggestedOpener() -- never
   // greet with a department/role placeholder from opp.contact.
   const knownContact = likelyKnownBuyer(opp);
@@ -5028,6 +5108,13 @@ function opportunityHeadline(opp){
     return 'Event activity creates a relevant opening';
   }
   if(kind === 'expansion') return 'Growth activity creates a reason to reach out';
+  // R5 follow-up: financial/funding/investment, partnership, and rebrand
+  // signals classify as 'business' (see BUSINESS_ACTIVITY_FAMILY_KIND above)
+  // -- this is the specific, understandable label those types were missing
+  // entirely; signalTitle is still preferred over this at every render call
+  // site (see renderVerifiedOpportunitySection()/renderAdditionalOpportunitiesForSalesPlay()/
+  // renderRepOpportunityCard()), so this only surfaces when no real title exists.
+  if(kind === 'business') return 'Recent business activity creates a reason to reach out';
   if(layer === 'Follow-Up Signal') return 'Past order history suggests a follow-up opportunity';
   if(layer === 'Repeat / Pattern Signal') return 'Historical timing suggests a repeat opportunity';
   return 'Timely signal creates a reason to reconnect';
@@ -5471,7 +5558,14 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
   return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
     const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
+    // R5 follow-up: prefer the real, specific signalTitle over the
+    // classification-derived opportunityHeadline() fallback -- the same
+    // fallback order renderVerifiedOpportunitySection() already uses for
+    // the primary card. Without this, a grounded title like "Follow-on
+    // Investment from Santa Cruz Ventures" was silently discarded in favor
+    // of a generic classification-bucket label the instant the SAME real
+    // opportunity was displayed here instead of as the primary.
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(item.signalTitle || opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -5505,7 +5599,7 @@ function renderRepOpportunityCard(opp){
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
         <div class="opp-section">
           <div class="opp-label">Signal</div>
-          <div class="opp-content"><strong>${escapeHtml(opportunityHeadline(opp))}</strong></div>
+          <div class="opp-content"><strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</strong></div>
         </div>
         <div class="opp-section signal-date-line"><div class="opp-label">Status</div><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>
         <div class="opp-section">
@@ -5606,8 +5700,27 @@ function isSignalPriorityEligible(signal){
   return signal?.actionabilityStatus?.isPriorityEligible !== false;
 }
 
+// R5 follow-up (Preview QA): this function used to guard against re-adding
+// the same event with a WEAK title-text key (`signalLayerType|signalType|
+// title-slice-80`), compared only against the account's futureOpportunities
+// as they stood BEFORE this call. A raw ha_signals-shaped candidate's own
+// title/detail text routinely differs from a server-canonicalized
+// opportunity's real signalTitle (confirmed production case: Dispatch
+// Goods' "Follow-on Investment from Santa Cruz Ventures" primary vs. a raw
+// signal titled "Dispatch Goods Business Update" describing the identical
+// investment) -- the weak key never matched, so this function silently
+// unshifted a second opportunity object for an event the server had already
+// canonicalized to one. It now uses the same canonical-identity check
+// (opportunitiesLikelySameInitiative()) every other dedup pass in this file
+// relies on -- checked against the LIVE, growing account.futureOpportunities
+// array so a match against either a pre-existing (server-canonicalized)
+// entry or an opportunity built earlier in this same call is caught -- and,
+// as a final safety net, runs the exact same canonicalization pass
+// accountOpportunityCluster() uses immediately after every signal-derived
+// candidate has been considered, so nothing this function (or any of its
+// six call sites) does can leave a residual duplicate for a later render to
+// pick up.
 function addSignalDerivedOpportunities(account, signals){
-  const existing = new Set((account.futureOpportunities || []).map(o => `${o.signalLayerType || ''}|${o.signalType || ''}|${String(o.signalTitle || o.opportunity || '').toLowerCase().slice(0,80)}`));
   (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl && isSignalPriorityEligible(signal)).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
@@ -5621,9 +5734,7 @@ function addSignalDerivedOpportunities(account, signals){
     const multiSignalBonus = businessSignalCount > 2 ? 10 : businessSignalCount > 1 ? 6 : 0;
     const base = (type.includes('Hiring') ? 82 : type.includes('Event') ? 80 : type.includes('Expansion') ? 83 : type.includes('Award') ? 78 : 76) + multiSignalBonus;
 
-    const sigKey = `${signal.signalLayerType || 'Business Activity Signal'}|${signal.signalType || type}|${String(signal.signalDetail || signal.title || name).toLowerCase().slice(0,80)}`;
-    if(!name || existing.has(sigKey)) return;
-    existing.add(sigKey);
+    if(!name) return;
     const opp = createOpportunity(account, name, contactTitle, products, [], base, true);
     const hasHistory = Number(account.revenue || 0) > 0 || Number(account.orderCount || 0) > 0;
     opp.isVerifiedSignalOpportunity = true;
@@ -5689,9 +5800,18 @@ function addSignalDerivedOpportunities(account, signals){
     opp.canonicalEventType = signal.canonicalEventType || '';
     opp.relationshipMode = getRelationshipMode(account);
     assignOpportunityScore(opp, account);
-    account.futureOpportunities.unshift(opp);
-    existing.add(name);
+    // Canonical-identity guard (see this function's header comment): only
+    // unshift a freshly-built candidate when no existing opportunity --
+    // whether server-canonicalized or built earlier in this same pass --
+    // already represents the same real-world event.
+    const alreadyRepresented = (account.futureOpportunities || []).some(existingOpp => opportunitiesLikelySameInitiative(existingOpp, opp));
+    if(!alreadyRepresented) account.futureOpportunities.unshift(opp);
   });
+  // Final canonicalization boundary: run the same pipeline
+  // accountOpportunityCluster() uses so any residual duplicate the per-item
+  // guard above didn't catch (e.g. a title-overlap-only match with no
+  // shared source/date) is still collapsed before any card renders.
+  account.futureOpportunities = dedupeOpportunities(collapseDuplicateAccountHistorySignals(account.futureOpportunities || []));
 }
 
 function normalizeResearchDiagnostics(value){

@@ -15,6 +15,7 @@ import {
   resolveEventType,
   displayLabelForEventType,
   extractEventDate,
+  findPublicationContextDate,
   resolveOpportunityEvents
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
@@ -1536,16 +1537,9 @@ function classifyLegacySignalActionability(payload = {}) {
   const storedEventField = payload.event_date || payload.eventDate || '';
   const storedConfidence = payload.eventDateConfidence || '';
   // A stored eventDate identical to the publication date is the fingerprint
-  // of the old publication-date-fallback bug -- untrusted either way, same
-  // as before. Otherwise: a stored dateConfidence (any value including
-  // 'unknown') is trusted as-is rather than re-derived, because re-parsing
-  // an already-resolved ISO date string through resolveSignalEventDate()
-  // would risk silently upgrading a genuinely 'approximate' evidence-based
-  // date to 'exact' merely because it is now ISO-formatted. Only a signal
-  // with NO stored confidence at all (true legacy, pre-dating this field)
-  // falls back to full text-based re-derivation.
+  // of the old publication-date-fallback bug.
   const looksLikeOldBug = Boolean(storedEventField) && storedEventField === publicationDate;
-  let eventDate = looksLikeOldBug ? '' : storedEventField;
+  let eventDate = storedEventField;
   let dateConfidence = storedConfidence;
   let eventDateDisplay = clean(payload.eventDateDisplay || '');
   if (!dateConfidence) {
@@ -1554,13 +1548,62 @@ function classifyLegacySignalActionability(payload = {}) {
     // search can actually reach whatChanged/whyItMattersForPromo/summary/
     // signalDetail/source evidence text on legacy rows too, not just
     // concreteTrigger/title/businessContext.
-    const resolved = resolveSignalEventDate({ ...payload, event_date: eventDate }, concreteTrigger, title, businessContext, eventCategory);
+    const resolved = resolveSignalEventDate({ ...payload, event_date: looksLikeOldBug ? '' : eventDate }, concreteTrigger, title, businessContext, eventCategory);
     eventDate = resolved.eventDate || '';
     dateConfidence = resolved.dateConfidence;
     eventDateDisplay = resolved.displayEventDate || '';
-  } else if (looksLikeOldBug) {
-    dateConfidence = 'unknown';
-    eventDateDisplay = '';
+  } else if (eventDate) {
+    // R5 follow-up (Preview QA): "trust but verify" legacy reconciliation.
+    // A stored eventDate with an already-set confidence is normally trusted
+    // as-is, because re-parsing an already-resolved ISO date string would
+    // risk silently upgrading a genuinely 'approximate' evidence-based date
+    // to 'exact' merely because it is now ISO-formatted. But a stored value
+    // can also be wrong in the opposite direction: exact-confidence, yet
+    // actually the source's publication/listing date rather than the real
+    // event date (confirmed production case: Avidia Bank's stored eventDate
+    // was Eventbrite's June 22 listing date while the signal's own
+    // description explicitly named June 23 as the ribbon-cutting date --
+    // persisted by an earlier, pre-fix run of the SAME extractEventDate()
+    // this file already trusts for fresh signals). This is the SAME defect
+    // class the old looksLikeOldBug guard already detected via one narrow
+    // signature (stored eventDate === publicationDate exactly) -- that
+    // guard used to just discard the date to 'unknown' rather than recover
+    // the real one; it's folded into this broader, evidence-based
+    // reconciliation below so a recoverable explicit event date is used
+    // instead of being thrown away.
+    //
+    // Re-run the corrected, publication-context-aware extractEventDate()
+    // against the same grounded text every fresh signal is classified
+    // from, and override the stored value ONLY when both:
+    //   (a) the text names a different, explicit (non-publication-context)
+    //       event date, AND
+    //   (b) the stored value is independently explainable as a
+    //       publication/listing date -- either it equals the signal's own
+    //       publicationDate field, or the text itself states that exact
+    //       date in publication-context language ("posted", "dated", etc).
+    // A vague/ambiguous disagreement (no explicit differing date, or a
+    // differing date with no evidence the STORED one was the wrong kind)
+    // never overrides the stored value -- conservative and deterministic,
+    // and never invents precision beyond what the text already states. If
+    // reconciliation finds nothing better, the old looksLikeOldBug
+    // signature alone is still enough to distrust an unrecoverable stored
+    // date entirely, matching prior behavior.
+    const wideText = clean([
+      concreteTrigger, title, businessContext,
+      payload.whatChanged, payload.whyItMattersForPromo, payload.whyItMatters, payload.summary,
+      payload.signalDetail, payload.details, payload.sourceTitle, payload.evidence
+    ].filter(Boolean).join(' '));
+    const textDate = extractEventDate(wideText);
+    const storedLooksLikePublicationDate = looksLikeOldBug || findPublicationContextDate(wideText) === eventDate;
+    if (storedLooksLikePublicationDate && textDate.eventDate && textDate.dateConfidence === 'exact' && textDate.eventDate !== eventDate) {
+      eventDate = textDate.eventDate;
+      dateConfidence = 'exact';
+      eventDateDisplay = textDate.displayEventDate || '';
+    } else if (looksLikeOldBug) {
+      eventDate = '';
+      dateConfidence = 'unknown';
+      eventDateDisplay = '';
+    }
   }
   const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
   return {

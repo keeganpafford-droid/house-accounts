@@ -640,6 +640,30 @@ function firstNonPublicationMatch(text, regex) {
   return nonPubMatch || null;
 }
 
+// R5 follow-up: the inverse of firstNonPublicationMatch() above -- finds a
+// date that IS immediately preceded by publication/listing language, so a
+// read-time legacy-data reconciliation pass (classifyLegacySignalActionability()
+// in api/research-batch.js) can check whether an already-persisted eventDate
+// value matches a publication-context date in the source text, rather than
+// a real event-date statement. Returns the parsed ISO date string, or null
+// if no publication-context date is present at all.
+function findPublicationContextDate(text = '') {
+  const t = clean(text);
+  const patterns = [
+    /\b(20\d{2}-\d{2}-\d{2})\b/g,
+    /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/gi
+  ];
+  for (const re of patterns) {
+    const matches = Array.from(t.matchAll(re));
+    const pubMatch = matches.find(m => isPublicationDateContext(t, m.index));
+    if (pubMatch) {
+      const parsed = parseDate(pubMatch[1] || pubMatch[0]);
+      if (parsed) return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
 function extractEventDate(text = '') {
   const t = clean(text);
   const isoMatch = firstNonPublicationMatch(t, /\b(20\d{2}-\d{2}-\d{2})\b/g);
@@ -975,6 +999,7 @@ export {
   entityMatch, eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
+  findPublicationContextDate,
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
   resolveOpportunityEvents, dedupeByEventFingerprint,
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType
