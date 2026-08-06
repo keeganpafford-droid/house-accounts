@@ -40,13 +40,13 @@ const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2682, 2687, 'const TIM
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2917, 2920, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3281, 'function cleanOpportunityToken(');
 const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4587, 5701, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7619, 8909, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8912, 9415, 'function normalizeSignalLayerType(');
-const RR_BLOCK = extractBlock('recently-researched', 7400, 7460, 'function getRecentlyResearchedAccounts(){');
-const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 7204, 7299, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10122, 10125, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7534, 7536, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7539, 7541, 'function clampScore(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7643, 8933, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8936, 9439, 'function normalizeSignalLayerType(');
+const RR_BLOCK = extractBlock('recently-researched', 7424, 7484, 'function getRecentlyResearchedAccounts(){');
+const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 7228, 7323, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10146, 10149, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7558, 7560, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7563, 7565, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};

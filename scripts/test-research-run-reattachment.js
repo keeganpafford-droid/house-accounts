@@ -341,44 +341,44 @@ async function runServerTests(){
 // shifted the file further -- extractFn()/extractRaw()'s own signature/
 // closing checks are the actual correctness guarantee, not these numbers.
 const REAL_SOURCE = [
-  extractRaw('ACTIVE_RESEARCH_BREADCRUMB_KEY', 5968, 5968, 'const ACTIVE_RESEARCH_BREADCRUMB_KEY'),
-  extractFn('setActiveResearchBreadcrumb', 5969, 5975),
-  extractFn('clearActiveResearchBreadcrumb', 5976, 5987),
-  extractFn('getActiveResearchBreadcrumb', 5988, 5995),
-  extractFn('applyModalResearchResultToDashboard', 7065, 7075),
-  extractFn('normalizeAccountNameForKey', 7129, 7129),
-  extractFn('recentlyResearchedKey', 7134, 7134),
-  extractFn('findTimeboxForAccountOpportunity', 7142, 7149),
-  extractFn('highlightResultElement', 7151, 7157),
-  extractFn('scrollToAccountResult', 7171, 7191),
-  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 7313, 7313, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
-  extractRaw('DISMISSED_RESEARCH_STORAGE_PREFIX', 7342, 7342, 'const DISMISSED_RESEARCH_STORAGE_PREFIX'),
-  extractRaw('DISMISSED_RESEARCH_PRUNE_AFTER_MS', 7349, 7349, 'const DISMISSED_RESEARCH_PRUNE_AFTER_MS'),
-  extractFn('dismissedResearchNamespace', 7350, 7356),
-  extractFn('dismissedResearchStorageKey', 7357, 7357),
-  extractFn('readDismissedResearchMap', 7358, 7367),
-  extractFn('writeDismissedResearchMap', 7368, 7371),
-  extractFn('pruneDismissedResearchMap', 7372, 7379),
-  extractFn('isResearchResultDismissed', 7384, 7392),
-  extractFn('dismissResearchResult', 7393, 7397),
-  extractFn('getRecentlyResearchedAccounts', 7400, 7426),
-  extractFn('relativeResearchTimeLabel', 7427, 7434),
-  extractFn('renderRecentlyResearchedSection', 7435, 7460),
-  extractRaw('recentlyResearchedClickListener', 7461, 7479, "document.addEventListener('click', (event) => {"),
-  extractFn('escapeHtml', 10122, 10125),
-  extractRaw('modalFmtEsc', 10163, 10164, "const fmt=d=>"),
-  extractFn('request', 10174, 10191, {async: true}),
-  extractFn('accountRow', 10218, 10259),
-  extractFn('researchRunBanner', 10264, 10275),
-  extractFn('listCard', 10284, 10316),
-  extractRaw('renderManager', 10317, 10317, 'function renderManager(){'),
-  extractFn('isModalOpen', 10328, 10331),
-  extractFn('anyListHasActiveRun', 10332, 10334),
-  extractFn('stopResearchPoll', 10335, 10337),
-  extractFn('scheduleResearchPollIfNeeded', 10338, 10342),
-  extractFn('load', 10343, 10352, {async: true}),
-  extractRaw('openClose', 10354, 10367, "function open(){"),
-  extractFn('showInfoDialog', 10784, 10823)
+  extractRaw('ACTIVE_RESEARCH_BREADCRUMB_KEY', 5992, 5992, 'const ACTIVE_RESEARCH_BREADCRUMB_KEY'),
+  extractFn('setActiveResearchBreadcrumb', 5993, 5999),
+  extractFn('clearActiveResearchBreadcrumb', 6000, 6011),
+  extractFn('getActiveResearchBreadcrumb', 6012, 6019),
+  extractFn('applyModalResearchResultToDashboard', 7089, 7099),
+  extractFn('normalizeAccountNameForKey', 7153, 7153),
+  extractFn('recentlyResearchedKey', 7158, 7158),
+  extractFn('findTimeboxForAccountOpportunity', 7166, 7173),
+  extractFn('highlightResultElement', 7175, 7181),
+  extractFn('scrollToAccountResult', 7195, 7215),
+  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 7337, 7337, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
+  extractRaw('DISMISSED_RESEARCH_STORAGE_PREFIX', 7366, 7366, 'const DISMISSED_RESEARCH_STORAGE_PREFIX'),
+  extractRaw('DISMISSED_RESEARCH_PRUNE_AFTER_MS', 7373, 7373, 'const DISMISSED_RESEARCH_PRUNE_AFTER_MS'),
+  extractFn('dismissedResearchNamespace', 7374, 7380),
+  extractFn('dismissedResearchStorageKey', 7381, 7381),
+  extractFn('readDismissedResearchMap', 7382, 7391),
+  extractFn('writeDismissedResearchMap', 7392, 7395),
+  extractFn('pruneDismissedResearchMap', 7396, 7403),
+  extractFn('isResearchResultDismissed', 7408, 7416),
+  extractFn('dismissResearchResult', 7417, 7421),
+  extractFn('getRecentlyResearchedAccounts', 7424, 7450),
+  extractFn('relativeResearchTimeLabel', 7451, 7458),
+  extractFn('renderRecentlyResearchedSection', 7459, 7484),
+  extractRaw('recentlyResearchedClickListener', 7485, 7503, "document.addEventListener('click', (event) => {"),
+  extractFn('escapeHtml', 10146, 10149),
+  extractRaw('modalFmtEsc', 10187, 10188, "const fmt=d=>"),
+  extractFn('request', 10198, 10215, {async: true}),
+  extractFn('accountRow', 10242, 10283),
+  extractFn('researchRunBanner', 10288, 10299),
+  extractFn('listCard', 10308, 10340),
+  extractRaw('renderManager', 10341, 10341, 'function renderManager(){'),
+  extractFn('isModalOpen', 10352, 10355),
+  extractFn('anyListHasActiveRun', 10356, 10358),
+  extractFn('stopResearchPoll', 10359, 10361),
+  extractFn('scheduleResearchPollIfNeeded', 10362, 10366),
+  extractFn('load', 10367, 10376, {async: true}),
+  extractRaw('openClose', 10378, 10391, "function open(){"),
+  extractFn('showInfoDialog', 10808, 10847)
 ].join('\n\n');
 
 // Static regression proof for requirement 1: nothing in dashboard/index.html
@@ -389,7 +389,7 @@ const REAL_SOURCE = [
 // provider-facing research request.
 assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.html contains no AbortController/abort() anywhere -- an in-flight provider request cannot be cancelled by ANY client action, including closing the modal');
 {
-  const closeSrc = extractRaw('closeOnly', 10368, 10376, "function close(){");
+  const closeSrc = extractRaw('closeOnly', 10392, 10400, "function close(){");
   assert(!/abort/i.test(closeSrc) && !/fetch\(/.test(closeSrc), '1) close()\'s own source contains no abort/cancel/fetch call');
   assert(/stopResearchPoll\(\)/.test(closeSrc), '1) close() stops only the modal\'s own UI polling loop (stopResearchPoll()), not the provider request');
 }
@@ -399,7 +399,7 @@ assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.htm
 // identity-locked, and only falls back to alert() in the else branch (never
 // unconditionally) -- extracted directly from the real click handler.
 {
-  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 10844, 10873, "if(action==='delete-account'){");
+  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 10868, 10897, "if(action==='delete-account'){");
   assert(/if\(err\.identityLocked\)\{/.test(deleteAccountBranch), '6) the delete-account catch branch checks err.identityLocked');
   assert(/showInfoDialog\(/.test(deleteAccountBranch), '6) the identityLocked branch calls showInfoDialog(), the branded non-destructive dialog');
   assert(/\}else\{\s*alert\(err\.message\);\s*\}/.test(deleteAccountBranch), '6) alert() is reached ONLY in the else branch -- never unconditionally for this rejection');
@@ -421,7 +421,7 @@ assert(!/AbortController|\.abort\(/.test(DASHBOARD_SRC), '1) dashboard/index.htm
   // accountName) internally -- see the "durable" checks below for the
   // direct proof of that call site.
   assert(/!isResearchResultDismissed\(a\.uploadId, a\.name, a\.lastResearchedAt\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() filters using the composite (uploadId, name) identity, not account name alone');
-  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 10491, 10509, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
+  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 10515, 10533, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
   // Follow-up round: the toast's "View opportunities" action now calls the
   // shared openResearchedAccountOpportunities() production function (same
@@ -714,7 +714,7 @@ async function runClientTests(){
   // reopening can never itself claim another run or call a provider.
   // ---------------------------------------------------------------------
   {
-    const loadSrc = extractFn('load', 10343, 10352, { async: true });
+    const loadSrc = extractFn('load', 10367, 10376, { async: true });
     assert(/request\('GET'\)/.test(loadSrc), "5) load() calls request('GET')");
     assert(!/researchRunAction/.test(loadSrc) && !/claim/i.test(loadSrc), '5) load() never references a claim/researchRunAction -- reopening the modal cannot itself start or attach to a run beyond reading its state');
   }
@@ -830,7 +830,7 @@ async function runClientTests(){
     // ranking comparator -- applyModalResearchResultToDashboard() only
     // patches signals/lastResearchedAt/futureOpportunities and calls the
     // existing render pipeline; it contains no sort/comparator of its own.
-    const src = extractFn('applyModalResearchResultToDashboard', 7065, 7075);
+    const src = extractFn('applyModalResearchResultToDashboard', 7089, 7099);
     assert(!/\.sort\(/.test(src), '9) applyModalResearchResultToDashboard() itself performs no sorting -- it cannot distort priority order, by construction');
   }
   {

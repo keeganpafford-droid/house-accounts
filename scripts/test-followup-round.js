@@ -39,7 +39,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // Required tests 1-5: list-level research labels, active-account scoping,
 // disabled-while-running, and Delete Uploaded List staying separate.
 // ---------------------------------------------------------------------------
-const listCardSrc = extractLines('listCard', 10284, 10316, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 10308, 10340, 'function listCard(list){');
 assert(
   /const everResearched = accounts\.some\(a => a\.lastResearchedAt\);/.test(listCardSrc),
   'listCard() determines the list-level research label from whether ANY account in the list has ever been researched'
@@ -83,7 +83,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 6198, 6366, 'async function researchListFromManageModal(listId){');
+const researchListSrc = extractLines('researchListFromManageModal', 6222, 6390, 'async function researchListFromManageModal(listId){');
 assert(
   /const activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -120,7 +120,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 10528, 10623, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines("handleListResearchClick", 10552, 10647, "async function handleListResearchClick(btn){");
 assert(
   /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeAccounts\.length\} account/.test(handleListResearchClickSrc),
   'the confirmation dialog names the list and states its active-account count'
@@ -156,7 +156,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7204, 7299, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7228, 7323, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'

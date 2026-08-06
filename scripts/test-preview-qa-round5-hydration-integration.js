@@ -61,14 +61,14 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 28
 // itself (5723-5815) -- no prior test file in this suite actually invoked
 // that function, which is exactly how its re-injection defect (see R5-1)
 // went unexercised by automated tests until this integration fixture.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4587, 5815, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7482, 8022, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7619, 8909, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8912, 9415, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10122, 10125, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7534, 7536, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7539, 7541, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 6937, 6975, 'function getReasonToReachOutTitle(opp){');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4587, 5839, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7506, 8046, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7643, 8933, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8936, 9439, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10146, 10149, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7558, 7560, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7563, 7565, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 6961, 6999, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   const sandbox = {
@@ -323,6 +323,101 @@ function daysAgoIso(days){
   const verifiedHtml = sandbox.renderVerifiedOpportunitySection(avidiaOpp);
   assert(new RegExp(`Event date: ${realShort}`).test(verifiedHtml), `the rendered Verified Opportunity panel HTML shows the reconciled real event date (expected to contain "Event date: ${realShort}")`);
   assert(!new RegExp(listingShort).test(verifiedHtml), 'the rendered Verified Opportunity panel HTML never shows the wrong listing date anywhere');
+
+  // R6 follow-up: the final opener must never be an orphaned pronoun-led
+  // fragment standing alone -- if the repaired text keeps an "Is that..."
+  // clause, its antecedent (the grounded event) must appear earlier in the
+  // SAME returned string, never rely on text that was already dropped.
+  assert(
+    !/^(is|are|does|do|did|would|could|will|has|have)\s+(that|it|this|they|there)\b/i.test(opener.trim()) &&
+    !/^(this|that|it|they|there)\s+(is|are|could|would|might|will|creates?|means?|sounds?)\b/i.test(opener.trim()),
+    `R6: the final opener never OPENS with an orphaned pronoun-led clause (got "${opener}")`
+  );
+}
+
+// ===========================================================================
+// SCENARIO 3 -- R6 follow-up: orphaned pronoun-led fragment detection and
+// repair-versus-fallback rules, exercised directly against the real
+// isContextDependentFragment()/repairDanglingOpener()/getSuggestedOpener()/
+// businessSuggestedOpener() production functions. Confirmed defect: a
+// grammatically complete trailing clause ("Is that creating any internal or
+// customer-facing needs we should be thinking about?") was kept by
+// repairDanglingOpener() even though its only antecedent ("that") lived in
+// the exact clause the ellipsis had just dropped -- complete punctuation is
+// not the same as independently understandable.
+// ===========================================================================
+{
+  const sandbox = makeSandbox();
+  const account = 'Riverside Fitness';
+
+  // Items 1-3: a pronoun-led clause whose antecedent was removed must never
+  // survive repair alone -- covers the verb-led ("Is/Does/Would/Are/Could/
+  // Will/Has that/it/this/they/there") and subject-led ("This/That/It/
+  // They/There could/would/is/are/creates/means...") forms named in the
+  // spec, plus the "Anything there..." form.
+  const orphanCases = [
+    { text: "Hey Sam — saw the new location announcement... Is that creating any internal or customer-facing needs we should be thinking about?", label: '"Is that..."' },
+    { text: "Hey Sam — saw the new location announcement... Does that change how your team is staffing up?", label: '"Does that..."' },
+    { text: "Hey Sam — saw the new location announcement... Would that be worth a quick conversation?", label: '"Would that..."' },
+    { text: "Hey Sam — saw the new location announcement... Are they planning to expand the team as a result?", label: '"Are they..."' },
+    { text: "Hey Sam — saw the new location announcement... Is it something your team is already working through?", label: '"Is it..."' },
+    { text: "Hey Sam — saw the new location announcement... Would it help to connect on this soon?", label: '"Would it..."' },
+    { text: "Hey Sam — saw the new location announcement... This could open up some new needs on your end.", label: '"This could..."' },
+    { text: "Hey Sam — saw the new location announcement... That could be worth a conversation.", label: '"That could..."' },
+    { text: "Hey Sam — saw the new location announcement... Anything there worth a quick chat?", label: '"Anything there..."' }
+  ];
+  for(const { text, label } of orphanCases){
+    const repaired = sandbox.repairDanglingOpener(text);
+    assert(repaired === '', `items 1-3: a stored opener whose only complete segment is an orphaned ${label} clause is never returned alone by repairDanglingOpener() (got "${repaired}")`);
+    const opp = { account, contactName: 'Sam', conversationStarter: text, canonicalEventType: 'NEW_LOCATION_OPENING', signalTitle: `${account} New Location Announcement` };
+    const finalOpener = sandbox.getSuggestedOpener(opp);
+    assert(
+      !/^(is|are|does|do|did|would|could|will|has|have)\s+(that|it|this|they|there)\b/i.test(finalOpener.trim()) &&
+      !/^(this|that|it|they|there)\s+(is|are|could|would|might|will|creates?|means?|sounds?)\b/i.test(finalOpener.trim()) &&
+      !/^anything\s+(here|there)\b/i.test(finalOpener.trim()),
+      `items 1-3: getSuggestedOpener() falls back to the deterministic template instead of surfacing the orphaned ${label} clause (got "${finalOpener}")`
+    );
+  }
+
+  // Item 10: a genuinely self-contained sentence before a dangling artifact
+  // must still be preserved -- repairDanglingOpener() must not reject every
+  // stored opener merely for containing an ellipsis.
+  const selfContainedText = "Hey Jess — congrats on the Riverside Fitness grand reopening! ... Great to see the whole block filled with people that morning.";
+  const selfContainedRepaired = sandbox.repairDanglingOpener(selfContainedText);
+  assert(
+    selfContainedRepaired.length > 0 && !/\.{3,}|…/.test(selfContainedRepaired),
+    `item 10: a stored opener with two genuinely self-contained sentences separated by an ellipsis is repaired (kept), not discarded (got "${selfContainedRepaired}")`
+  );
+  assert(/Riverside Fitness grand reopening/.test(selfContainedRepaired), 'item 10: the repaired text retains its explicit subject and event');
+
+  // Items 4-8: the deterministic fallback itself -- grounded in the real
+  // event, keeps a known first name, referral-first, no direct product
+  // pitch, and past/follow-up framing for an already-occurred event.
+  const fallbackOpp = {
+    account, contactName: 'Priya',
+    conversationStarter: '', // forces the deterministic path directly
+    canonicalEventType: 'NEW_LOCATION_OPENING',
+    signalTitle: `${account} Grand Reopening Celebration`,
+    actionabilityStatus: { status: 'recent-past', tense: 'past' }
+  };
+  const fallback = sandbox.businessSuggestedOpener(fallbackOpp);
+  assert(/^Hey Priya\b/.test(fallback), `item 5: the fallback preserves the known contact's first name when available (got "${fallback}")`);
+  assert(/Riverside Fitness Grand Reopening Celebration/.test(fallback), `item 4: the fallback names the grounded business event clearly (got "${fallback}")`);
+  assert(!/promotional products?|custom merchandise|branded (?:items?|merchandise|products?)/i.test(fallback), `item 7: the fallback never pitches products/merchandise directly (got "${fallback}")`);
+  assert(/\b(is that|anything coming up|is there anything)\b/i.test(fallback), `item 8: the fallback asks a low-pressure, referral-first question rather than a direct pitch (got "${fallback}")`);
+  assert(/[.!?]$/.test(fallback.trim()), `the fallback ends on a complete sentence or question (got "${fallback}")`);
+
+  // Item 6: referral-first posture -- no fallback opener anywhere in this
+  // scenario ever asserts an established relationship or leads with product.
+  for(const { text } of orphanCases){
+    const opp = { account, contactName: 'Sam', conversationStarter: text, canonicalEventType: 'NEW_LOCATION_OPENING', signalTitle: `${account} New Location Announcement` };
+    const finalOpener = sandbox.getSuggestedOpener(opp);
+    assert(!/promotional products?|custom merchandise|branded (?:items?|merchandise|products?)/i.test(finalOpener), `item 6/7: the fallback used for an orphaned opener stays referral-first, never pitching product directly (got "${finalOpener}")`);
+  }
+
+  // Negative control: isContextDependentFragment() must not reject an
+  // ordinary grounded sentence that happens to start with a real subject.
+  assert(!sandbox.isContextDependentFragment('Saw the news about the new branch opening downtown.'), 'a normal grounded sentence is never misclassified as an orphaned pronoun-led fragment');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

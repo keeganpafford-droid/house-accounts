@@ -4997,25 +4997,49 @@ function isGroundedOpener(text, opp){
   return true;
 }
 
+// R6 follow-up (Preview QA): a surviving segment can be grammatically
+// "complete" (ends in . ! or ?) while still being contextually orphaned --
+// a pronoun- or deictic-led clause ("Is that creating...", "Would it help
+// if...", "This could mean...") whose only antecedent lived in the exact
+// clause the ellipsis just dropped. Confirmed production case: repairing
+// "...with a ceremonial ribbon... Is that creating any internal or
+// customer-facing needs..." previously kept "Is that creating any internal
+// or customer-facing needs we should be thinking about?" verbatim -- a
+// complete sentence, but "that" no longer refers to anything the reader can
+// see. Detects sentence-initial forms of this shape (both verb-led --
+// "Is/Are/Does/Would/Could/Will/Has that/it/this/they/there" -- and
+// subject-led -- "This/That/It/They/There could/would/is/are/creates/
+// means...", plus "Anything here/there...") so such a fragment is treated
+// the same as an incomplete one: dropped, never returned alone.
+function isContextDependentFragment(text){
+  const t = String(text || '').trim();
+  if(!t) return false;
+  if(/^(is|are|does|do|did|would|could|will|has|have)\s+(that|it|this|they|there)\b/i.test(t)) return true;
+  if(/^(this|that|it|they|there)\s+(is|are|could|would|might|will|creates?|means?|sounds?)\b/i.test(t)) return true;
+  if(/^anything\s+(here|there)\b/i.test(t)) return true;
+  return false;
+}
 // R5 follow-up (Preview QA): a defensive render-time repair for a
 // persisted Conversation Starter carrying a dangling truncation artifact
 // (a literal "..." or unicode "…" mid-sentence, not just at the very end --
 // confirmed production case: "...with a ceremonial ribbon... Is that
 // creating any internal or customer-facing needs..."). Splits the stored
 // text on every ellipsis marker and keeps only the resulting segments that
-// are themselves complete, grammatical sentences (end in . ! or ?) --
-// dropping the incomplete clause the ellipsis was standing in for, never
+// are themselves complete, grammatical sentences (end in . ! or ?) AND
+// independently understandable (not a pronoun-led fragment whose antecedent
+// was in a dropped clause -- see isContextDependentFragment()) -- dropping
+// the incomplete/orphaned clause the ellipsis was standing in for, never
 // inventing new words to bridge it. Returns '' (never repairable) when
-// nothing complete survives or what survives is too short to stand alone
-// as an opener, so the caller can fall back to the deterministic template
-// instead of showing a barely-there fragment. This never mutates
-// opp.conversationStarter itself -- storage is untouched, exactly like
-// isGroundedOpener()'s own read-only quality gate.
+// nothing complete-and-self-contained survives or what survives is too
+// short to stand alone as an opener, so the caller can fall back to the
+// deterministic template instead of showing an orphaned or barely-there
+// fragment. This never mutates opp.conversationStarter itself -- storage is
+// untouched, exactly like isGroundedOpener()'s own read-only quality gate.
 function repairDanglingOpener(text){
   const t = String(text || '').trim();
   if(!t) return '';
   const segments = t.split(/\.{3,}|…/).map(s => s.trim()).filter(Boolean);
-  const complete = segments.filter(s => /[.!?]$/.test(s));
+  const complete = segments.filter(s => /[.!?]$/.test(s) && !isContextDependentFragment(s));
   const repaired = complete.join(' ').replace(/\s+/g, ' ').trim();
   return repaired.length >= 20 ? repaired : '';
 }
