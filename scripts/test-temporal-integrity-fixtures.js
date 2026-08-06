@@ -252,15 +252,15 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4559, 5521, 'function confidenceLabel(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3253, 'function cleanOpportunityToken(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7380, 8522, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8639, 9142, 'function normalizeSignalLayerType(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4576, 5607, 'function confidenceLabel(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2835, 3270, 'function cleanOpportunityToken(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7499, 8789, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8792, 9295, 'function normalizeSignalLayerType(');
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2682, 2687, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2917, 2920, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 9849, 9852, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7295, 7297, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7300, 7302, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10002, 10005, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7414, 7416, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7419, 7421, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -402,7 +402,7 @@ function asBusinessOpportunity(opp){
 
   const realDateOpp = { signalDate: daysAgo(5) };
   const realAge = sandbox.formatSignalAge(realDateOpp);
-  assert(/Detected 5 days ago/.test(realAge), `formatSignalAge() still correctly reports age from a real date (got "${realAge}")`);
+  assert(/Dated 5 days ago/.test(realAge), `formatSignalAge() still correctly reports age from a real date, using the Preview-QA-clarified "Dated" wording (got "${realAge}")`);
 }
 
 // ---------------------------------------------------------------------------

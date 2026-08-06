@@ -3043,6 +3043,22 @@ function opportunitiesLikelySameInitiative(a, b){
   const dateA = parseMaybeDate(a?.eventDate || a?.publishedDate || a?.signalDate);
   const dateB = parseMaybeDate(b?.eventDate || b?.publishedDate || b?.signalDate);
   const closeDate = Boolean(dateA && dateB) && Math.abs(dateA.getTime() - dateB.getTime()) <= 45 * 86400000;
+  // Follow-up temporal-integrity round: two representations of the SAME
+  // event can independently reach this comparison with an empty/differently-
+  // formed sourceUrl on one side (e.g. one built from a live research
+  // response, the other from an already-persisted signal whose sourceUrl
+  // failed to carry through some intermediate mapping) even though both
+  // display the identical publisher name (confirmed production case:
+  // Dispatch Goods' "Follow-on Investment from Santa Cruz Ventures" primary
+  // card and its "Timely signal creates a reason to reconnect" Additional
+  // Opportunity both showed "Santa Cruz Works" as the source). sourceDomain()
+  // equality alone is therefore not a reliable enough "same source" signal
+  // by itself -- the human-readable publisher name plus a close/matching
+  // date is an equally strong, generalized same-event signal, independent of
+  // any title/summary wording difference between the two objects.
+  const sourceNameA = cleanOpportunityToken(a?.cleanSourceName || '');
+  const sourceNameB = cleanOpportunityToken(b?.cleanSourceName || '');
+  const sameSourceName = Boolean(sourceNameA) && sourceNameA === sourceNameB;
   // Positive-agreement requirement, same spirit as the server-side event
   // resolver: the same publisher/source alone is enough (e.g. "multiple
   // Press Herald results with the same source/date"); otherwise a strong
@@ -3051,6 +3067,7 @@ function opportunitiesLikelySameInitiative(a, b){
   // itself -- it must combine with the account+type+source/date evidence
   // above.
   if(sameSource) return true;
+  if(sameSourceName && closeDate) return true;
   if(overlap >= 0.7) return true;
   if(overlap >= 0.5 && closeDate) return true;
   // Round 5 correction, item 1: 50%+ title-token overlap is treated as the
@@ -4621,16 +4638,27 @@ function parseMaybeDate(value){
 // these exist, this returns '' and callers correctly show nothing here,
 // deferring to signalDateAndActionabilityLine()'s own conservative "Date
 // unavailable" status line instead of implying a false recency.
+// Preview QA item 4: this value is a real publication/event/order date (see
+// this function's header comment above), never a discovery timestamp -- but
+// the word "Detected" reads exactly like discovery language, and on the
+// Evidence card it sits directly next to the Status line's own "Event date:
+// ..." text (renderVerifiedOpportunitySection()/signalDateAndActionabilityLine()),
+// where the two dates can legitimately differ by a day or two across a
+// merged multi-source event (confirmed observed case: "Eventbrite ·
+// Detected Jun 22" beside "Event date: Jun 23"). "Dated" is accurate for
+// every source of this value (a source's own publication date, an account's
+// real order/activity date) and does not imply House Accounts' own
+// discovery activity the way "Detected" does.
 function formatSignalAge(opp){
   const raw = opp.signalDate || opp.lastActivityDate || opp.orderDate || '';
   const d = parseMaybeDate(raw);
   if(!d) return '';
   const now = new Date();
   const days = Math.max(0, Math.floor((now - d) / (1000*60*60*24)));
-  if(days === 0) return 'Detected today';
-  if(days === 1) return 'Detected 1 day ago';
-  if(days <= 30) return `Detected ${days} days ago`;
-  return `Detected ${d.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
+  if(days === 0) return 'Dated today';
+  if(days === 1) return 'Dated 1 day ago';
+  if(days <= 30) return `Dated ${days} days ago`;
+  return `Dated ${d.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
 }
 
 
@@ -4828,6 +4856,43 @@ function getRepEvidenceBullets(opp){
 // is only preferred when it survives every check below; storage is never
 // touched (no row is rewritten) -- a rejected value simply falls through to
 // the grounded deterministic generator that already exists below.
+// Follow-up temporal-integrity round: ONE shared, generalized outreach-
+// posture decision every outreach channel (Conversation Starter, Best Next
+// Move, email, call script, LinkedIn, Questions to Ask) must agree with --
+// consolidates the SAME relationship-strength signal salesPlayModeFromOpp()
+// already computes (mode==='Cold' already means "no meaningful existing
+// relationship", i.e. first-contact) rather than inventing a second,
+// independently-derived classification. A known uploaded/discovered contact
+// name (hasKnownContact, computed separately at the call sites above) does
+// NOT change this posture -- knowing a name is not the same as knowing that
+// person owns or wants this opportunity, so personalization must never
+// silently upgrade a referral-first play to an already-established one.
+function isReferralFirstPosture(opp){
+  return salesPlayModeFromOpp(opp || {}) === 'Cold';
+}
+// Confirmed production case (Neural Trust): a cached, provider-generated
+// conversationStarter directly pitched "how we can support your upcoming
+// initiatives with promotional products" while the SAME opportunity's
+// deterministically-computed Best Next Move/email correctly said "keep the
+// first ask small and referral-focused... do not lead with product ideas
+// yet" -- a real, contradictory mismatch between channels. The narrow
+// UNGROUNDED_LEGACY_PATTERNS regexes below require the product phrase to sit
+// immediately next to "discuss"/"interested in", so a paraphrase with
+// intervening words ("discuss how we can support ... with promotional
+// products") silently passed as "grounded" and was trusted verbatim. Rather
+// than growing an ever-longer list of exact phrasings (the same failure
+// mode that let this one through), a referral-first opportunity's cached
+// opener is rejected whenever it mentions offering/pitching products or
+// merchandise AT ALL unless it is clearly framed as a later, low-pressure,
+// permission-based offer -- the same structure every deterministic
+// referral-first template already uses (ask first, offer only "if useful"/
+// "once I know more"/"if it's welcome").
+function mentionsProductOrMerchOffer(text){
+  return /\b(promotional products?|custom merchandise|merchandise options|branded (?:items?|merchandise|products?)|merch\b|swag\b)\b/i.test(text);
+}
+function hasReferralFirstFraming(text){
+  return /\b(right person|who('?s| is| would be)|do you know|no pressure|once i know more|if (it'?s )?(useful|welcome)|before (?:selling|pitching|a pitch)|not trying to jump straight to a pitch)\b/i.test(text);
+}
 function isGroundedOpener(text, opp){
   const t = String(text || '').trim();
   if(!t) return false;
@@ -4859,6 +4924,11 @@ function isGroundedOpener(text, opp){
     /celebrat\w+ this (milestone|acquisition|integration) with (custom |branded )?merchandise/i
   ];
   if(UNGROUNDED_LEGACY_PATTERNS.some(p => p.test(t))) return false;
+  // Follow-up temporal-integrity round: posture-level check, generalized
+  // across any phrasing rather than one more exact pattern (see
+  // isReferralFirstPosture()'s header comment for the confirmed production
+  // case this closes).
+  if(isReferralFirstPosture(opp) && mentionsProductOrMerchOffer(t) && !hasReferralFirstFraming(t)) return false;
   // Malformed punctuation (a doubled terminal period that isn't a genuine
   // 3-dot ellipsis, or a doubled/spaced-out hyphen artifact) or a duplicated
   // account mention -- the same artifact classes normalizeOutreachText()
@@ -5249,6 +5319,22 @@ function accountOpportunityCluster(opp){
 }
 
 function sameOpportunity(a,b){
+  // Follow-up temporal-integrity round: opportunityDedupeKey() is a
+  // BUYING-CONVERSATION identity (department/category/buyer/topic-token
+  // derived) -- useful for collapsing several distinct historical/repeat-
+  // pattern recommendations that would create the same sales conversation,
+  // but it is NOT a canonical real-world-event identity. Two representations
+  // of the exact same sourced business event (e.g. one built from a live
+  // research response, one from an already-persisted signal) can carry
+  // genuinely different topic text (a real headline vs. a generic
+  // classification fallback) and therefore different dedupe keys, even
+  // though they are the same event. For business-activity opportunities,
+  // canonical event identity (opportunitiesLikelySameInitiative() -- the
+  // SAME account+type+source/date evidence the merge/clustering pass
+  // already trusts) is checked FIRST and is authoritative; only when it does
+  // not apply (non-business opportunities, or business opportunities that
+  // are genuinely unrelated events) does the buying-conversation key decide.
+  if(isBusinessOpportunity(a) && isBusinessOpportunity(b) && opportunitiesLikelySameInitiative(a, b)) return true;
   return opportunityDedupeKey(a||{})===opportunityDedupeKey(b||{});
 }
 
@@ -7036,23 +7122,44 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
     return;
   }
   // Requirement 7: independent of TIMEBOX eligibility (Week/Month/Quarter/
-  // Year) -- every opportunity this account has, sorted by the same score
-  // every other view uses, with no timebox/date-window filtering applied
-  // here. Temporal-integrity round: this is NOT the same thing as
-  // ACTIONABILITY eligibility -- a signal marked "Date unavailable" or "No
-  // longer current" must never become the opened Verified Opportunity/
-  // active Prepare for Call play merely because it scored highest and this
-  // path (unlike the main grid) previously applied no eligibility filter at
-  // all (confirmed production case: an acquisition marked "No longer
-  // current" was opened here as an active play with "recent acquisition"
-  // outreach language). priorityEligibleOpportunities() is the SAME
-  // centralized eligibility decision used everywhere else.
-  const allOpportunities = (account.futureOpportunities || []).slice().sort((a, b) => getOpportunityScore(b) - getOpportunityScore(a));
-  const opportunities = priorityEligibleOpportunities(allOpportunities);
+  // Year) -- every opportunity this account has, with no timebox/date-window
+  // filtering applied here. Temporal-integrity round: this is NOT the same
+  // thing as ACTIONABILITY eligibility -- a signal marked "Date unavailable"
+  // or "No longer current" must never become the opened Verified
+  // Opportunity/active Prepare for Call play merely because it scored
+  // highest.
+  //
+  // Follow-up temporal-integrity round: this must build its candidate list
+  // through the EXACT SAME dedupe/merge/sort pipeline accountOpportunityCluster()
+  // uses (dedupeOpportunities(collapseDuplicateAccountHistorySignals(...)),
+  // then priorityEligibleOpportunities()) rather than filtering the raw,
+  // unmerged account.futureOpportunities directly -- previously this path
+  // and additionalOpportunitiesFor() (which DOES go through
+  // accountOpportunityCluster()) could select from two different
+  // representations of the account's opportunities, so a duplicate pair of
+  // the same real event (one merge-eligible, one not yet merged into the
+  // selected primary) could show the winning/primary copy on the Prepare for
+  // Call card and the OTHER, un-merged copy under Additional Opportunities
+  // (confirmed production case: Dispatch Goods' "Follow-on Investment from
+  // Santa Cruz Ventures" investment signal appeared as both the primary
+  // Verified Opportunity and, under a generic classification-fallback title,
+  // an Additional Opportunity). Using the identical canonical cluster here
+  // guarantees the primary IS a member of the exact same deduped set
+  // additionalOpportunitiesFor() filters against, so sameOpportunity() can
+  // never fail to recognize it.
+  const rawOpportunities = (account.futureOpportunities || []).slice();
+  const dedupedCluster = sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(rawOpportunities)));
+  const opportunities = priorityEligibleOpportunities(dedupedCluster);
   if(!opportunities.length){
     if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
-      const bodyHtml = allOpportunities.length
-        ? `Research completed for ${escapeHtml(accountName)}, but the signal found is not currently active (its date is unavailable or it's no longer current), so it isn't shown as a live opportunity. The account's saved data has been refreshed.`
+      // Preview QA item 5: keep "verified signal(s) found" and "active
+      // opportunity" honestly distinct -- researchedSignalCount reflects
+      // everything actually verified/persisted for this account (dedupedCluster,
+      // before the eligibility filter above removes the non-current ones),
+      // never conflated with the zero that remain eligible as a live play.
+      const researchedSignalCount = dedupedCluster.length;
+      const bodyHtml = researchedSignalCount
+        ? `Research found ${researchedSignalCount} verified signal${researchedSignalCount === 1 ? '' : 's'} for ${escapeHtml(accountName)}, but none ${researchedSignalCount === 1 ? 'is' : 'are'} currently active enough to recommend as a live opportunity. The research has been saved and will continue to be monitored.`
         : `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`;
       await window.HouseAccountManager.showError({
         title: 'No active opportunity to show',
@@ -7179,7 +7286,19 @@ function getRecentlyResearchedAccounts(){
       uploadId: a.uploadId,
       name: a.name,
       ts: new Date(a.lastResearchedAt).getTime(),
-      signalCount: dedupeVerifiedSignals(a.signals || []).length
+      // Preview QA item 5: verified-signal count and active-opportunity
+      // count are two genuinely different facts and must never be
+      // conflated -- signalCount is everything actually verified/persisted
+      // for this account (dedupeVerifiedSignals(a.signals)), while
+      // activeOpportunityCount runs the SAME canonical dedupe/eligibility
+      // pipeline accountOpportunityCluster()/openResearchedAccountOpportunities()
+      // use (dedupeOpportunities(collapseDuplicateAccountHistorySignals(...)),
+      // then priorityEligibleOpportunities()) on a.futureOpportunities, so a
+      // researched account can honestly show verified signals with zero
+      // currently-active opportunities (confirmed production case:
+      // Weatherby Healthcare -- 3 verified signals, 0 eligible plays).
+      signalCount: dedupeVerifiedSignals(a.signals || []).length,
+      activeOpportunityCount: priorityEligibleOpportunities(dedupeOpportunities(collapseDuplicateAccountHistorySignals((a.futureOpportunities || []).slice()))).length
     }))
     .filter(e => Number.isFinite(e.ts) && e.ts >= cutoff)
     .sort((a, b) => b.ts - a.ts)
@@ -7213,7 +7332,7 @@ function renderRecentlyResearchedSection(){
             <div class="rr-meta">${e.signalCount ? `${e.signalCount} verified signal${e.signalCount === 1 ? '' : 's'} found` : 'No verified signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
           </div>
           <div class="rr-actions">
-            ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">View opportunities</button>` : ''}
+            ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">${e.activeOpportunityCount ? 'View opportunities' : 'View research'}</button>` : ''}
             <button type="button" class="rr-dismiss-btn" aria-label="Dismiss ${escapeHtml(e.name)} from Recently Researched">✕</button>
           </div>
         </div>`).join('')}
@@ -7908,6 +8027,12 @@ window.createSalesPlayPanel = function(opp, opts){
   const initiativeTitle = groundedInitiativeTitle(opp) || reasonTitle;
   const isUpcoming = opp.actionabilityStatus?.status === 'upcoming';
   const actionabilityTense = opp.actionabilityStatus?.tense || '';
+  // Follow-up temporal-integrity round: the real event date, needed by
+  // ideaOfferPhrase() to distinguish "still within the immediate launch
+  // follow-up window" from "an older but still-eligible follow-up" -- see
+  // isWithinLaunchFollowupWindow()'s header comment for the documented
+  // threshold and reasoning.
+  const eventDate = opp.eventDate || opp.event_date || '';
   const hasKnownContact = Boolean(likelyKnownBuyer(opp) || opp.suggestedContactDetails?.name || opp.suggested_contact_details?.name);
   // QA round 3, item 5: the precise canonical kind (e.g. distinguishing
   // "acquisition" from a plain "expansion") so subject lines/asks can be
@@ -7942,6 +8067,7 @@ window.createSalesPlayPanel = function(opp, opts){
     initiativeTitle,
     isUpcoming,
     actionabilityTense,
+    eventDate,
     hasKnownContact,
     isAccountHistory,
     layer: signalLayerLabel(opp),
@@ -8242,9 +8368,36 @@ const GROUNDED_OFFER_BY_KIND = {
   event: 'event', hiring: 'onboarding', launch: 'launch',
   expansion: 'launch', recognition: 'employee', leadership: 'employee'
 };
+// Follow-up temporal-integrity round: "launch-related ideas" reads
+// naturally in a launch/opening/renovation event's immediate aftermath, but
+// the SAME wording stops being temporally honest well before the event
+// falls out of eligibility entirely -- FOLLOW_UP_WINDOW_DAYS (45 days,
+// api/research-batch.js's computeActionability()) is the outer boundary for
+// remaining an active "recent event (follow up)" opportunity at all, not a
+// window in which "launch" specifically still reads as current. A launch
+// follow-up window roughly a third of that length is a generalized,
+// documented threshold: still recent enough that grand-opening-style ideas
+// (signage, ribbon-cutting favors, opening-week promotion) are genuinely
+// relevant, without needing to know the exact event. Beyond that -- but
+// still inside the eligible follow-up window -- durable "post-event"/
+// "what came next" language is used instead, which never implies the event
+// itself is still freshly launching or still upcoming.
+const LAUNCH_FOLLOWUP_WINDOW_DAYS = 14;
+function isWithinLaunchFollowupWindow(ctx){
+  const d = parseMaybeDate(ctx.eventDate || '');
+  // No parseable event date to measure against -- this is evidence-absence,
+  // not evidence that the window has closed, so the existing (launch)
+  // wording is kept rather than guessed away.
+  if(!d) return true;
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  return days <= LAUNCH_FOLLOWUP_WINDOW_DAYS;
+}
 function ideaOfferPhrase(ctx){
   if(ctx.isAccountHistory) return accountHistoryOfferPhrase();
   const cat = GROUNDED_OFFER_BY_KIND[ctx.canonicalKind] || '';
+  if(cat === 'launch' && ctx.actionabilityTense === 'past' && !isWithinLaunchFollowupWindow(ctx)){
+    return 'a few post-event follow-up ideas';
+  }
   return cat ? `a few ${cat}-related ideas` : 'a few relevant ideas';
 }
 
