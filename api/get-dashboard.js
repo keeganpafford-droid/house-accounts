@@ -236,7 +236,12 @@ function signalToOpportunity(row){
     signalSummary: s.signalDetail || s.title,
     sourceUrl: s.sourceUrl,
     cleanSourceName: s.cleanSourceName,
-    signalDate: s.publishedDate || s.firstSeenAt || s.lastSeenAt || new Date().toISOString(),
+    // Temporal-integrity round: only a real publication/event date -- never
+    // firstSeenAt/lastSeenAt (when House Accounts' own pipeline discovered/
+    // last touched this row, not when the underlying event happened) and
+    // never a fabricated "now" fallback. See dashboard/index.html's
+    // formatSignalAge() for the client-side half of this fix.
+    signalDate: s.publishedDate || s.eventDate || '',
     firstSeenAt: s.firstSeenAt,
     // QA round 2, item 1/5: carry the (normalized-if-legacy) actionability
     // fields through so the dashboard's priorities filter and the "Date/

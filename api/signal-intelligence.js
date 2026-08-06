@@ -464,7 +464,24 @@ function resolveEventType(text = '', family = '') {
   // (open house, festival, tournament, rodeo) must never be silently
   // downgraded to an ongoing business change just because its wording didn't
   // happen to match one of the narrower event categories above.
-  if (/community event|golf tournament|\btournaments?\b|\b5k\b|fundraiser|\bcharity\b|\bsponsor|\bopen house(?:s|es)?\b|\bfestivals?\b|\brodeos?\b/i.test(t)) {
+  //
+  // Temporal-integrity round: "open house" is also the single most common
+  // way a real branch opening/reopening/renovation-reveal event is phrased
+  // ("ribbon cutting and open house celebration for our new Westborough
+  // branch"). Two write-ups of the SAME real location event, phrased
+  // slightly differently, must not receive incompatible canonical types
+  // merely because one happens to use "open house" language and the other
+  // doesn't -- that mismatch is exactly what breaks resolveEvents()'s
+  // typesCompatible() merge check downstream, producing duplicate
+  // opportunities for one real event (confirmed production case: two
+  // Avidia Bank Westborough branch write-ups). A genuine location-opening
+  // signal (ribbon cutting/grand opening, or a new/reopened/renovated
+  // branch qualifier) always takes precedence over the generic community-
+  // event bucket, mirroring the acquisition-vs-funding disambiguation
+  // pattern above. A bare community/charity event with no location-opening
+  // language is unaffected.
+  if (/community event|golf tournament|\btournaments?\b|\b5k\b|fundraiser|\bcharity\b|\bsponsor|\bopen house(?:s|es)?\b|\bfestivals?\b|\brodeos?\b/i.test(t)
+      && !mentionsRibbonOrGrandOpening && !hasNewQualifier && !hasReopenQualifier && !hasRenovationQualifier && !mentionsBranchOpening) {
     return { primaryType: 'EVENT_COMMUNITY', candidateTypes: ['EVENT_COMMUNITY'], recurring: true };
   }
   if (/product launch|\blaunches\b|\blaunched\b|\bunveil|new product|new service/i.test(t)) {

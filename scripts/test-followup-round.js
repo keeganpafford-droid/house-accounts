@@ -39,7 +39,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // Required tests 1-5: list-level research labels, active-account scoping,
 // disabled-while-running, and Delete Uploaded List staying separate.
 // ---------------------------------------------------------------------------
-const listCardSrc = extractLines('listCard', 9927, 9959, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 10011, 10043, 'function listCard(list){');
 assert(
   /const everResearched = accounts\.some\(a => a\.lastResearchedAt\);/.test(listCardSrc),
   'listCard() determines the list-level research label from whether ANY account in the list has ever been researched'
@@ -83,7 +83,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 5921, 6089, 'async function researchListFromManageModal(listId){');
+const researchListSrc = extractLines('researchListFromManageModal', 5992, 6160, 'async function researchListFromManageModal(listId){');
 assert(
   /const activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -120,7 +120,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines('handleListResearchClick', 10171, 10266, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines('handleListResearchClick', 10255, 10350, "async function handleListResearchClick(btn){");
 assert(
   /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeAccounts\.length\} account/.test(handleListResearchClickSrc),
   'the confirmation dialog names the list and states its active-account count'
@@ -156,10 +156,10 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 6927, 6988, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 6998, 7072, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
-  'required test 8: openResearchedAccountOpportunities() never calls any timebox-matching/eligibility helper at all -- it cannot depend on whether a result qualifies for This Week/Month/Quarter/Year (comments discussing the requirement do not count as a dependency)'
+  'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'
 );
 assert(
   /const refresh = typeof refreshAggregateDashboard === 'function' \? await refreshAggregateDashboard\(\) : \{ok:false\};/.test(openResearchedSrc),
@@ -170,8 +170,9 @@ assert(
   'required test: Manage Customer Accounts is closed as part of this shared handoff, whether or not it happens to be open'
 );
 assert(
-  /const opportunities = \(account\.futureOpportunities \|\| \[\]\)\.slice\(\)\.sort\(\(a, b\) => getOpportunityScore\(b\) - getOpportunityScore\(a\)\);/.test(openResearchedSrc),
-  'every one of the account\'s persisted opportunities is considered, ranked by score, with no timebox/date filter applied'
+  /const allOpportunities = \(account\.futureOpportunities \|\| \[\]\)\.slice\(\)\.sort\(\(a, b\) => getOpportunityScore\(b\) - getOpportunityScore\(a\)\);/.test(openResearchedSrc) &&
+  /const opportunities = priorityEligibleOpportunities\(allOpportunities\);/.test(openResearchedSrc),
+  'temporal-integrity: every one of the account\'s persisted opportunities is ranked by score, then passed through the SAME centralized priorityEligibleOpportunities() actionability gate the main Priorities grid uses -- this path can no longer open a stale/expired/"no longer current" opportunity as an active Verified Opportunity merely because it scored highest'
 );
 assert(
   /if\(typeof createSalesPlayPanel === 'function'\) createSalesPlayPanel\(opportunities\[0\]\);/.test(openResearchedSrc),

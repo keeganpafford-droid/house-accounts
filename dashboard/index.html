@@ -4606,8 +4606,23 @@ function parseMaybeDate(value){
   return isNaN(d) ? null : d;
 }
 
+// Temporal-integrity round, item 3: opp.signalDate is now populated ONLY
+// from a real publication/event date (see addSignalDerivedOpportunities()
+// and api/get-dashboard.js's signalToOpportunity()) -- never from
+// detectedAt/dateFound (House Accounts' own discovery/research timestamp,
+// always "now" at research time) or firstSeenAt/lastSeenAt (persistence
+// discovery bookkeeping). Discovery time is never proof the underlying
+// event itself is current, so it is deliberately excluded from this
+// function's date sources entirely (confirmed production case: "Detected
+// today" appeared for a signal with no trustworthy event or publication
+// date at all, merely because discovery time silently substituted for it).
+// lastActivityDate/orderDate remain -- both are real dates for
+// account-history opportunities, not discovery artifacts. When none of
+// these exist, this returns '' and callers correctly show nothing here,
+// deferring to signalDateAndActionabilityLine()'s own conservative "Date
+// unavailable" status line instead of implying a false recency.
 function formatSignalAge(opp){
-  const raw = opp.signalDate || opp.detectedAt || opp.dateFound || opp.lastActivityDate || opp.orderDate || '';
+  const raw = opp.signalDate || opp.lastActivityDate || opp.orderDate || '';
   const d = parseMaybeDate(raw);
   if(!d) return '';
   const now = new Date();
@@ -5218,7 +5233,19 @@ function accountOpportunityCluster(opp){
   // different business initiatives/programs, but was never meant to (and
   // does not) catch multiple generic templates describing the SAME single
   // recent order or the SAME absence of a real repeat pattern.
-  return sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(opportunities))).filter(item=>!item?false:true);
+  //
+  // Temporal-integrity round: this cluster feeds BOTH the Prepare for Call
+  // primary-opportunity selection (openResearchedAccountOpportunities()) and
+  // Additional Opportunities (additionalOpportunitiesFor()) -- the two
+  // surfaces the forensic review found were bypassing eligibility entirely.
+  // priorityEligibleOpportunities() is the SAME centralized eligibility
+  // decision the main dashboard grid already uses (isPriorityEligibleOpportunity()
+  // below): a business-signal opportunity labeled "Date unavailable" or "No
+  // longer current" can never appear here, regardless of its internal score.
+  // Historical/repeat-pattern opportunities (not signal-derived) are
+  // unaffected -- priorityEligibleOpportunities() only gates
+  // isBusinessOpportunity() items.
+  return priorityEligibleOpportunities(sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(opportunities)))).filter(item=>!item?false:true);
 }
 
 function sameOpportunity(a,b){
@@ -5333,13 +5360,32 @@ function renderSupportingResearchDetails(opp){
   </div></div>`;
 }
 
+// Temporal-integrity round, item 5: a qualitative, status-grounded timing
+// label -- never a raw internal ranking number. getOpportunityScore() is a
+// pure internal sort metric with no customer-facing meaning (confirmed
+// production case: "Why Now 34"/"Why Now 11" rendered directly as visible
+// text). By the time an opportunity reaches this card it has already passed
+// priorityEligibleOpportunities() (see accountOpportunityCluster()), so
+// status is always one of upcoming/recent-past/ongoing (or account-history,
+// handled separately) -- never stale/expired/date-unavailable.
+function opportunityTimingLabel(opp){
+  if(isAccountHistoryOpportunity(opp)) return 'Account Activity';
+  const status = (opp.actionabilityStatus || {}).status;
+  switch(status){
+    case 'upcoming': return 'Upcoming Event';
+    case 'recent-past': return 'Follow-Up Opportunity';
+    case 'ongoing': return 'Recent Business Activity';
+    default: return 'Timely Opportunity';
+  }
+}
+
 function renderAdditionalOpportunitiesForSalesPlay(opp){
   const items=additionalOpportunitiesFor(opp);
   if(!items.length) return '';
   return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
     const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · Why Now ${Math.round(getOpportunityScore(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -5399,6 +5445,7 @@ function renderRepOpportunityCard(opp){
 function renderSingleVerifiedSignal(signal){
   const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
   const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
+  const eligible = isSignalPriorityEligible(signal);
   // Round 5 correction, item 2: this "likely conversations" fallback used to
   // read signal.conversationStarter directly -- Research Details' per-signal
   // preview is a displayed Conversation Starter surface just like the card
@@ -5409,14 +5456,23 @@ function renderSingleVerifiedSignal(signal){
   const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
     ? signal.likelyConversations
     : [signal.opportunityCategory || getSuggestedOpener(signal) || signal.whyNow || 'Relevant account conversation'];
-  return `
-    <div class="verified-signal-simple">
-      <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
-      <div class="verified-signal-meta">
-        ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
-      </div>
-      ${!isSignalPriorityEligible(signal) ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
-      <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
+  // Temporal-integrity round, item 4: this is the one venue an ineligible
+  // (stale/expired/date-unavailable) signal is still allowed to appear at
+  // all -- Research Details/account history, as clearly labeled historical
+  // context (accountOpportunityCluster() and the direct-open path both now
+  // exclude it from every ACTIVE surface -- Prepare for Call, Additional
+  // Opportunities, Recently Researched, the priorities grid). But "No
+  // longer current" must never sit directly above cached active-tense
+  // AI-generated outreach copy ("Why it matters," "Likely conversations,"
+  // a suggested contact framed for outreach) -- that contradiction is
+  // exactly the confirmed production defect (an acquisition marked "No
+  // longer current" still paired with "recent acquisition" active
+  // outreach language). Rather than attempting to parse/rewrite arbitrary
+  // AI free text for tense, this deterministically suppresses the
+  // outreach-copy rows entirely for an ineligible signal and replaces them
+  // with one honest, generalized historical note -- never a per-account or
+  // per-source special case.
+  const outreachRows = eligible ? `
       <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
       <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
       <div class="verified-signal-row"><strong>Suggested Contact:</strong> ${escapeHtml(signal.suggestedContactDetails?.name || 'No verified individual identified')}${signal.suggestedContactDetails?.title ? ` — ${escapeHtml(signal.suggestedContactDetails.title)}` : ''}</div>
@@ -5425,6 +5481,18 @@ function renderSingleVerifiedSignal(signal){
         <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
       </div>
       ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
+  ` : `
+      <div class="verified-signal-row verified-signal-historical-note">Shown for account history only -- not a current reason to reach out.</div>
+  `;
+  return `
+    <div class="verified-signal-simple">
+      <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
+      <div class="verified-signal-meta">
+        ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
+      </div>
+      ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
+      <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
+      ${outreachRows}
     </div>`;
 }
 
@@ -5479,7 +5547,10 @@ function addSignalDerivedOpportunities(account, signals){
     opp.shortSummary = cleanBusinessText(signal.shortSummary || signal.signalSnippet || '');
     opp.cleanSourceName = signal.cleanSourceName || '';
     opp.signalType = type;
-    opp.signalDate = signal.publishedDate || signal.signalDate || signal.dateFound || signal.detectedAt || new Date().toISOString();
+    // Temporal-integrity round: only real publication/event dates -- never
+    // dateFound/detectedAt (discovery time) and never a fabricated "now"
+    // fallback. See formatSignalAge()'s own header comment.
+    opp.signalDate = signal.publishedDate || signal.eventDate || signal.event_date || signal.publicationDate || '';
     opp.sourceUrl = signal.sourceUrl;
     opp.whyNow = signal.whyNow || `Verified signal found: ${signal.signalDetail || signal.title || type}`;
     opp.valueSource = hasHistory ? 'Historical Orders + Verified Signal' : (signal.valueSource || 'Signal Only');
@@ -6964,15 +7035,28 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
     await showUnresolvable();
     return;
   }
-  // Requirement 7: independent of timebox eligibility -- every opportunity
-  // this account has, sorted by the same score every other view uses, with
-  // no timebox/date filtering applied here at all.
-  const opportunities = (account.futureOpportunities || []).slice().sort((a, b) => getOpportunityScore(b) - getOpportunityScore(a));
+  // Requirement 7: independent of TIMEBOX eligibility (Week/Month/Quarter/
+  // Year) -- every opportunity this account has, sorted by the same score
+  // every other view uses, with no timebox/date-window filtering applied
+  // here. Temporal-integrity round: this is NOT the same thing as
+  // ACTIONABILITY eligibility -- a signal marked "Date unavailable" or "No
+  // longer current" must never become the opened Verified Opportunity/
+  // active Prepare for Call play merely because it scored highest and this
+  // path (unlike the main grid) previously applied no eligibility filter at
+  // all (confirmed production case: an acquisition marked "No longer
+  // current" was opened here as an active play with "recent acquisition"
+  // outreach language). priorityEligibleOpportunities() is the SAME
+  // centralized eligibility decision used everywhere else.
+  const allOpportunities = (account.futureOpportunities || []).slice().sort((a, b) => getOpportunityScore(b) - getOpportunityScore(a));
+  const opportunities = priorityEligibleOpportunities(allOpportunities);
   if(!opportunities.length){
     if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
+      const bodyHtml = allOpportunities.length
+        ? `Research completed for ${escapeHtml(accountName)}, but the signal found is not currently active (its date is unavailable or it's no longer current), so it isn't shown as a live opportunity. The account's saved data has been refreshed.`
+        : `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`;
       await window.HouseAccountManager.showError({
-        title: 'No specific opportunity to show',
-        bodyHtml: `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`,
+        title: 'No active opportunity to show',
+        bodyHtml,
         okLabel: 'Got it'
       });
     }

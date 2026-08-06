@@ -14,7 +14,8 @@ import {
   dedupeOpportunities,
   resolveEventType,
   displayLabelForEventType,
-  extractEventDate
+  extractEventDate,
+  resolveOpportunityEvents
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -2721,7 +2722,26 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
-    const signals = dedupeOpportunities(dedupeSignals(validMappedSignals)).slice(0, 80);
+    // Temporal-integrity round: dedupeSignals()/dedupeOpportunities() above
+    // are cheap first-pass collapses (same-account+type+topic-keywords, then
+    // a legacy per-title fingerprint) that reduce the candidate count, but
+    // neither considers canonical event type + location/date agreement --
+    // two write-ups of the SAME real event with slightly different phrasing
+    // could survive both and appear as two separate opportunities (confirmed
+    // production case: duplicate Avidia Bank Westborough branch write-ups,
+    // one becoming the primary opportunity and the other an Additional
+    // Opportunity). resolveOpportunityEvents() is the SAME canonical
+    // event-resolution engine api/weekly-scan.js and api/save-upload.js
+    // already run immediately before persistence (see its own header
+    // comment in signal-intelligence.js) -- running it here too, on the live
+    // response, is what makes live dashboard output and persisted/digest
+    // output use one shared identity system instead of two independently
+    // -derived ones. It operates on the same normalizeOpportunity()-shaped
+    // objects already produced above (headline/whatChanged/sourceUrl/
+    // canonicalEventType are already present), so no field adaptation is
+    // needed, and it never introduces fuzzy company matching -- grouping is
+    // still normalizeCompany()-exact, per account, unchanged.
+    const signals = resolveOpportunityEvents(dedupeOpportunities(dedupeSignals(validMappedSignals))).slice(0, 80);
     // Phase 2A / Correction 1 instrumentation — records the pipeline stage
     // counts requested for forensic classification of any future
     // accepted-vs-persisted discrepancy: raw model signals (what the AI
