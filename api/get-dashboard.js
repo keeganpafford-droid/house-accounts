@@ -12,6 +12,26 @@
 // it never mutates the stored row, and it returns fresh signals' own
 // metadata unchanged.
 import { classifyLegacySignalActionability } from './research-batch.js';
+// Follow-up temporal-integrity round (Preview QA): buildAccountsFromRows()
+// below assembles each account's futureOpportunities from TWO independent
+// sources -- the already-canonicalized snapshot stored on the account row
+// (raw_data.existingSignals, written by resolveOpportunityEvents() at
+// weekly-scan.js/save-upload.js persistence time) and a fresh
+// signalToOpportunity() built from EVERY row still in ha_signals (deduped
+// only WITHIN itself, by uniqueSignalRows()'s title-text key) -- with no
+// dedup pass EVER run BETWEEN the two sources. A signal whose event was
+// already canonicalized into the snapshot can therefore also survive as its
+// own raw ha_signals row and reappear a second time, under whatever generic
+// title it happened to be stored with (confirmed production case: Dispatch
+// Goods' Santa Cruz Ventures investment rendering as both the primary
+// Verified Opportunity and, under a classification-fallback title, an
+// Additional Opportunity). resolveOpportunityEvents() is the SAME canonical
+// event-resolution engine already used at persistence time -- reusing it
+// here, once, on the complete combined candidate set for each account
+// (before the payload is ever split into primary/Additional/Research
+// Details/Recently Researched on the client) is the single shared
+// canonicalization boundary this round's forensic review required.
+import { resolveOpportunityEvents } from './signal-intelligence.js';
 
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
@@ -288,6 +308,42 @@ function signalToOpportunity(row){
   };
 }
 
+// Real-world, web-research-derived business-activity events only -- never
+// historical/repeat-pattern opportunities (order-history-derived, with no
+// canonical event identity to resolve). Mirrors dashboard/index.html's own
+// isBusinessOpportunity() partition exactly, so the client's later dedup
+// pass and this server-side canonicalization agree on which items are
+// "the same kind of thing" to begin with.
+function isBusinessSignalOpportunity(o){
+  return Boolean(o) && (o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity === true);
+}
+// Follow-up temporal-integrity round (Preview QA): the single canonicalization
+// boundary for one account's futureOpportunities, run ONCE here -- before the
+// payload is split, on the client, into primary opportunity, Additional
+// Opportunities, Research Details, and the Recently Researched handoff -- so
+// none of those surfaces can ever see two different representations of the
+// same real-world event. resolveOpportunityEvents() (api/signal-intelligence.js)
+// is the SAME canonical event-resolution engine already trusted at
+// persistence time; accountName/companyName are normalized onto every
+// candidate first because signalToOpportunity() (below) sets `account`, not
+// `accountName`/`companyName` -- resolveEvents() groups by companyName/
+// accountName, so a mismatched field name would silently prevent every
+// candidate from ever matching anything (each becoming its own "event").
+// Historical/repeat-pattern opportunities are passed through untouched --
+// they have no canonical event identity for this engine to resolve.
+function canonicalizeAccountOpportunities(account){
+  const opps = Array.isArray(account.futureOpportunities) ? account.futureOpportunities : [];
+  const businessOpps = opps.filter(isBusinessSignalOpportunity).map(o => ({
+    ...o,
+    accountName: o.accountName || o.account || account.name,
+    companyName: o.companyName || o.accountName || o.account || account.name
+  }));
+  const otherOpps = opps.filter(o => !isBusinessSignalOpportunity(o));
+  const resolved = businessOpps.length ? resolveOpportunityEvents(businessOpps) : businessOpps;
+  account.futureOpportunities = [...resolved, ...otherOpps];
+  return account;
+}
+
 // Shared by both the aggregate (my/team view) path and the single-upload
 // (uploadId=) path below -- the SAME account-shaping logic, fed rows that
 // are ALREADY scoped by whatever query built accountRows/signalRows. This
@@ -361,6 +417,7 @@ function buildAccountsFromRows(accountRows, signalRows){
   }
   return {
     accountList: Array.from(byAccount.values()).map(a => {
+      canonicalizeAccountOpportunities(a);
       if(a.futureOpportunities.length){
         a.confidence = Math.max(a.confidence || 0, ...a.futureOpportunities.map(o => Number(o.confidence || 0)));
       }
@@ -561,3 +618,8 @@ export default async function handler(req, res){
     return json(res, 500, {error: err.message || 'Dashboard lookup failed'});
   }
 }
+
+export {
+  rowToSignal, signalToOpportunity, uniqueSignalRows, uniqueAccountRows,
+  buildAccountsFromRows, canonicalizeAccountOpportunities, isBusinessSignalOpportunity
+};

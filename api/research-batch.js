@@ -84,10 +84,36 @@ function clean(text = '') {
     .trim();
 }
 
+// Problem 3 (Preview QA follow-up round): every AI-generated free-text field
+// -- Conversation Starter, why-now copy, business context, etc. -- is capped
+// through this single function, which previously always hard-cut at exactly
+// `max` characters and only backed off to the nearest earlier WORD boundary,
+// never a sentence or clause boundary. That reliably produces fragment
+// endings mid-thought (confirmed production case: an Avidia Conversation
+// Starter cut to "...saw Avidia Bank celebrated the renovation of its
+// Westborough branch with a ceremonial ribbon..." -- a grammatically
+// dangling clause, not a usable opener). Prefer the last real sentence
+// ending (. ! ?) inside the window, then the last clause boundary (comma,
+// semicolon, colon, em/en dash), and only fall back to a bare word boundary
+// when neither exists reasonably close to `max` -- "reasonably close" is
+// enforced by MIN_KEEP_RATIO so a sentence/clause break very early in the
+// text (which would silently produce a much shorter result than the caller
+// asked for) is never preferred over the fuller word-boundary cut.
+const COMPACT_MIN_KEEP_RATIO = 0.6;
 function compact(text = '', max = 240) {
   const t = clean(text);
   if (!t) return '';
-  return t.length > max ? t.slice(0, max).replace(/\s+\S*$/, '') + '…' : t;
+  if (t.length <= max) return t;
+  const window = t.slice(0, max);
+  const minKeep = Math.floor(max * COMPACT_MIN_KEEP_RATIO);
+
+  const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '));
+  if (sentenceEnd >= minKeep) return window.slice(0, sentenceEnd + 1).trim();
+
+  const clauseEnd = Math.max(window.lastIndexOf(', '), window.lastIndexOf('; '), window.lastIndexOf(': '), window.lastIndexOf(' — '), window.lastIndexOf(' - '));
+  if (clauseEnd >= minKeep) return window.slice(0, clauseEnd).trim() + '…';
+
+  return window.replace(/\s+\S*$/, '') + '…';
 }
 
 function parseJsonLoose(text = '') {
@@ -2955,7 +2981,7 @@ export {
   makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic,
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
-  salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES,
+  salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES, compact,
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,

@@ -605,10 +605,45 @@ function normalizeMonthName(raw = '') {
 const MONTH_TOKEN = '(January|Jan\\.?|February|Feb\\.?|March|Mar\\.?|April|Apr\\.?|May|June|Jun\\.?|July|Jul\\.?|August|Aug\\.?|September|Sept\\.?|Sep\\.?|October|Oct\\.?|November|Nov\\.?|December|Dec\\.?)';
 const DATE_RANGE_RE = new RegExp(`\\b${MONTH_TOKEN}\\s+(\\d{1,2})\\s*(?:[-–—]|through|to)\\s*(\\d{1,2}),?\\s+(20\\d{2})\\b`, 'i');
 
+// Problem 2 (Preview QA follow-up round): the free text this function mines
+// routinely contains TWO different kinds of date -- when the real-world
+// event happened/happens, and when a SOURCE recorded/listed/posted its
+// write-up (an Eventbrite listing's own "posted"/"dated" timestamp is the
+// classic case, and it is very often a day or two off from the event it
+// describes). extractEventDate() previously grabbed whichever date pattern
+// matched FIRST in the concatenated text with no way to tell the two kinds
+// apart, so a listing site's own dateline could silently outrank -- or
+// simply arrive before, in string order -- the sentence that actually named
+// the event date (confirmed production case: "ceremonial ribbon cutting on
+// June 23, 2026" in the signal's own description, while a nearby "Eventbrite
+// ... dated Jun 22" listing timestamp was the value that ended up in
+// eventDate). A date immediately preceded by publication/listing language
+// ("posted", "published", "dated", "listed", "updated", "created", "added")
+// is never treated as the event date -- callers needing that value read
+// publicationDate/publishedAt instead, which are populated separately and
+// were never at risk from this bug.
+const PUBLICATION_DATE_CONTEXT_RE = /\b(?:posted|published|dated|listed|updated|created|added)\b\s*(?:on|:)?\s*$/i;
+function isPublicationDateContext(text, matchIndex) {
+  const before = text.slice(Math.max(0, matchIndex - 30), matchIndex);
+  return PUBLICATION_DATE_CONTEXT_RE.test(before);
+}
+// Returns the first match (by string order) from `regex` (which must be
+// global) whose immediately-preceding text is NOT publication/listing
+// language, or null if every match found is publication-context. Preferring
+// "first non-publication match" over "first match" is what lets a genuine
+// event-date sentence win even when a listing site's dateline happens to
+// appear earlier in the concatenated text.
+function firstNonPublicationMatch(text, regex) {
+  const matches = Array.from(text.matchAll(regex));
+  if (!matches.length) return null;
+  const nonPubMatch = matches.find(m => !isPublicationDateContext(text, m.index));
+  return nonPubMatch || null;
+}
+
 function extractEventDate(text = '') {
   const t = clean(text);
-  const isoMatch = t.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  const monthDayYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/i);
+  const isoMatch = firstNonPublicationMatch(t, /\b(20\d{2}-\d{2}-\d{2})\b/g);
+  const monthDayYear = firstNonPublicationMatch(t, /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/gi);
   // Common date-range phrasing ("September 18-20, 2026", "September 18–20,
   // 2026", "Sep. 18 through 20, 2026") -- extractEventDate() previously only
   // matched a single day, so a real, explicit range like an L.L.Bean grand
@@ -770,7 +805,22 @@ function resolveEvents(candidates = []) {
       ? { primaryType: c.canonicalEventType, candidateTypes: [c.canonicalEventType], recurring: RECURRING_EVENT_TYPES.has(c.canonicalEventType) }
       : resolveEventType(text, family);
     const { subjectEntity, location, role } = extractEventEntities(c.title || c.headline || '', c.snippet || '', c.rawContent || c.pageContent || '');
-    const { eventDate, dateConfidence, year: dateYear } = extractEventDate(text);
+    // Prefer the candidate's own structured event date (already resolved by
+    // an upstream stage — e.g. research-batch.js's makeSignal() or a
+    // previously-persisted opportunity's eventDate) over re-deriving one by
+    // mining free text. Two representations of the same real-world event
+    // routinely differ in prose (one restates "June 23, 2026" in a sentence,
+    // another's snippet never mentions a date at all) even though both
+    // objects already agree, structurally, on when the event happened. Text
+    // mining is the correct fallback only when no structured date exists;
+    // using it as the primary source discarded that agreement and was the
+    // root cause of two representations of one event never satisfying
+    // resolveEvents()'s "positive agreement" merge gate below.
+    const structuredDate = parseDate(c.eventDate || c.event_date || '');
+    const textDate = extractEventDate(text);
+    const eventDate = structuredDate ? structuredDate.toISOString().slice(0, 10) : textDate.eventDate;
+    const dateConfidence = structuredDate ? 'exact' : textDate.dateConfidence;
+    const dateYear = structuredDate ? structuredDate.getUTCFullYear() : textDate.year;
     const companyDisplay = clean(c.companyName || c.accountName || '');
     const company = normalizeCompany(companyDisplay);
     const year = dateYear || extractYearFallback(text, c.publishedAt);
