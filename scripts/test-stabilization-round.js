@@ -84,7 +84,7 @@ assert(
   dashboardHtml.includes('<div class="dashboard-loading-skeleton" id="dashboardLoadingSkeleton"'),
   '#dashboardLoadingSkeleton neutral branded loading state exists in the page markup'
 );
-const setLeadGateSrc = extractLines('setLeadGateState', 2708, 2729, 'function setLeadGateState(){');
+const setLeadGateSrc = extractLines('setLeadGateState', 2748, 2769, 'function setLeadGateState(){');
 assert(
   /if\(skeleton\) skeleton\.classList\.add\('active'\);/.test(setLeadGateSrc) && !/example\.style\.display = 'block';[\s\S]*if\(saved && saved\.email\)/.test(setLeadGateSrc),
   'setLeadGateState() shows the loading skeleton (not Sample Analysis) whenever a saved lead exists'
@@ -94,7 +94,7 @@ assert(
 // refreshAggregateDashboard() for post-upload/post-research) -- the
 // personalEmpty/noData/skeleton logic these tests verify all now lives
 // there; loadSavedDashboard() itself is a thin email-validation wrapper.
-const loadSavedDashboardSrc = extractLines('fetchAndRenderAggregateDashboard', 3629, 3734, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const loadSavedDashboardSrc = extractLines('fetchAndRenderAggregateDashboard', 3669, 3774, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /if\(skeleton\) skeleton\.classList\.add\('active'\);/.test(loadSavedDashboardSrc),
   'fetchAndRenderAggregateDashboard() shows the skeleton immediately on every call (a no-op when silent, since skeleton is null then), before any network round trip resolves'
@@ -166,7 +166,7 @@ assert(
   /<div class="ha-modal-backdrop add-customer-data-backdrop" id="addCustomerDataModal"[^>]*hidden>[\s\S]{0,700}?<div class="upload-zone" id="dropzone">/.test(dashboardHtml),
   '#dropzone is permanently mounted as a direct descendant of #addCustomerDataModal in the page markup (not moved/borrowed elsewhere)'
 );
-const addDataModalSrc = extractLines('add-customer-data-modal-and-route', 3376, 3499, 'let addCustomerDataModalTriggerEl = null;');
+const addDataModalSrc = extractLines('add-customer-data-modal-and-route', 3416, 3539, 'let addCustomerDataModalTriggerEl = null;');
 assert(
   /function openAddCustomerDataModalWhenReady\(\)\{\s*const ready = \(window\.HouseAuth && typeof HouseAuth\.authHeadersAsync/.test(addDataModalSrc),
   'openAddCustomerDataModalWhenReady() waits for HouseAuth.authHeadersAsync() (required init) before opening the modal'
@@ -186,7 +186,7 @@ assert(
 // Manage Customer Accounts, Upload Another List) never hide/replace the
 // dashboard, and closing either modal restores it unchanged.
 // ---------------------------------------------------------------------------
-const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 10239, 10264, 'function wireUploadSuccessStateControls(){');
+const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 10585, 10635, 'function wireUploadSuccessStateControls(){');
 assert(
   /viewPrioritiesBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*const header = document\.getElementById\('timeboxSectionHeader'\);\s*if\(header\) header\.scrollIntoView/.test(uploadSuccessWiringSrc),
   'View Priorities only dismisses the upload-success panel and scrolls to This Week\'s Priorities -- it never touches dashboard/account-card state'
@@ -199,7 +199,7 @@ assert(
   /anotherBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*openLightweightCustomerUpload\(\);/.test(uploadSuccessWiringSrc),
   'Upload Another List only dismisses the upload-success panel and opens the stable Add Customer Data modal -- no dashboard/account-card clearing call'
 );
-const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 10633, 10663, 'let accountManagerTriggerEl = null;');
+const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 11074, 11104, 'let accountManagerTriggerEl = null;');
 assert(
   /function open\(\)\{[\s\S]*document\.getElementById\('accountManagerModal'\)\.style\.display='block';/.test(accountManagerOpenCloseSrc) &&
   !/results'\)\.style\.display|customerDashboard'\)\.style\.display|exampleOpportunity/.test(accountManagerOpenCloseSrc),
@@ -223,7 +223,7 @@ assert(
 // real vm execution against a minimal fake DOM -- not a reimplementation.
 // ---------------------------------------------------------------------------
 {
-  const panelSrc = extractLines('showCustomerDashboardPanel', 3334, 3345, 'function showCustomerDashboardPanel({subtitleText, newCount, accountCount, signalCount, lastScanLabel}){');
+  const panelSrc = extractLines('showCustomerDashboardPanel', 3374, 3385, 'function showCustomerDashboardPanel({subtitleText, newCount, accountCount, signalCount, lastScanLabel}){');
   const registry = new Map();
   function fakeEl(id, tag){
     const el = { id, tagName: (tag || 'div').toUpperCase(), style: {}, _text: '' };
@@ -262,7 +262,7 @@ assert(
 // Required tests 13, 14 & 15: account-level research row action labels and
 // cross-list scoping.
 // ---------------------------------------------------------------------------
-const accountRowSrc = extractLines('accountRow', 10430, 10471, 'function accountRow(list, a){');
+const accountRowSrc = extractLines('accountRow', 10801, 10860, 'function accountRow(list, a){');
 assert(
   /researched \? 'Research Again' : 'Research Account'/.test(accountRowSrc),
   'accountRow() labels never-researched accounts "Research Account" and previously-researched accounts "Research Again"'
@@ -275,11 +275,16 @@ assert(
   /data-research-act="account" data-account-name="\$\{esc\(a\.name\)\}" data-list-id="\$\{esc\(list\.id\)\}"/.test(accountRowSrc),
   'the research button carries the specific account name and its own list id, so the action always operates on the exact row selected'
 );
+// ux/research-control-progress: researchDisabled now also exempts the one
+// case where this row can be genuinely, individually stopped instead of
+// merely disabled (a standalone single-account tracker) -- the underlying
+// "disabled only while a run is active for THIS list, never due to list
+// scope" guarantee is unchanged, just refined with that one exception.
 assert(
-  /const researchDisabled = runActive;/.test(accountRowSrc),
+  /const researchDisabled = runActive && !canStopThisRow;/.test(accountRowSrc),
   'the row action is disabled only while a run is active for that list (and only that exact account shows "Researching…"), never due to list scope'
 );
-const researchFromModalSrc = extractLines('researchAccountFromManageModal', 6153, 6291, 'async function researchAccountFromManageModal(accountName, listId){');
+const researchFromModalSrc = extractLines('researchAccountFromManageModal', 6193, 6346, 'async function researchAccountFromManageModal(accountName, listId){');
 assert(
   researchFromModalSrc.includes('async function researchAccountFromManageModal(accountName, listId){'),
   'researchAccountFromManageModal(accountName, listId) still takes an explicit listId, so scoping happens automatically without the user re-finding/activating the list'
@@ -357,7 +362,7 @@ assert(
   /\.view-toggle-buttons\{\s*display:flex;\s*background:#F0F2F5;/.test(dashboardHtml) && /\.view-toggle-btn\.active\{\s*background:#fff;/.test(dashboardHtml),
   'the view switcher is styled as a true segmented control (shared background/border, active option highlighted)'
 );
-const renderSwitcherSrc = extractLines('renderDashboardViewSwitcher', 3529, 3543, 'function renderDashboardViewSwitcher(){');
+const renderSwitcherSrc = extractLines('renderDashboardViewSwitcher', 3569, 3583, 'function renderDashboardViewSwitcher(){');
 assert(
   !/hasCanonicalSnapshot|customerCount|prospectCount|dashboardTeamSnapshot/.test(renderSwitcherSrc),
   'renderDashboardViewSwitcher() no longer computes/writes the removed snapshot-description text'

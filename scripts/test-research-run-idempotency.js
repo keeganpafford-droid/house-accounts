@@ -895,8 +895,13 @@ async function run(){
   {
     const dashSource = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
     const topAccountsStart = dashSource.indexOf('async function researchTopAccounts(options = {}){');
-    const topAccountsEnd = dashSource.indexOf('\nfunction autoResearchTopAccountsOnce', topAccountsStart);
-    const topAccountsBody = dashSource.slice(topAccountsStart, topAccountsEnd > -1 ? topAccountsEnd : topAccountsStart + 6000);
+    // ux/research-control-progress: autoResearchTopAccountsOnce() (the old
+    // boundary marker) was removed -- research no longer auto-starts (see
+    // processData()'s own comment on this) -- so this now searches for the
+    // shared research-tracker module comment that took its place immediately
+    // after researchTopAccounts().
+    const topAccountsEnd = dashSource.indexOf('\n// ux/research-control-progress: shared client-side research start', topAccountsStart);
+    const topAccountsBody = dashSource.slice(topAccountsStart, topAccountsEnd > -1 ? topAccountsEnd : topAccountsStart + 8000);
     assert(!/await reportResearchRunOutcome\('complete'/.test(topAccountsBody),
       'researchTopAccounts() no longer CALLS reportResearchRunOutcome(\'complete\', ...) on its success path -- persist_ha_research_output() finalizes the run atomically as part of the save itself, making the separate call unnecessary');
     assert(/await reportResearchRunOutcome\('fail'/.test(topAccountsBody),

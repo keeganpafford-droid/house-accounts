@@ -133,6 +133,17 @@ async function researchAccountFromManageModal(){ return {ok:false, error:'Resear
 async function researchListFromManageModal(){ return {ok:false, error:'Research is not available in this test fixture.'}; }
 async function refreshAggregateDashboard(){}
 function openResearchedAccountOpportunities(){}
+// ux/research-control-progress: accountRow()/listCard()/researchRunBanner()
+// (inside the real modal IIFE below) now consult this tab's own in-memory
+// research tracker first, falling back to the server-owned
+// researchRunState/breadcrumb this file's fixture payloads already drive.
+// Stubbed to report "no tracker" so the modal takes that existing fallback
+// path -- this file's own scope is pagination/collapse/search/mutation, not
+// progress-tracker rendering (covered elsewhere).
+function researchTrackerSnapshot(){ return null; }
+function researchTrackerAccountState(){ return null; }
+function researchProgressPanel(){ return ''; }
+function requestResearchStop(){}
 </script>
 <script>${MODAL_IIFE_SRC}</script>
 </body></html>`;

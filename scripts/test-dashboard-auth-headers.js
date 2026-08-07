@@ -106,11 +106,11 @@ const EXTRACTED = {
   // Scaling round: shifted by the pagination-rewrite's CSS insertion
   // (~line 2006) and dashboard/index.html's Manage Customer Accounts
   // additions further down -- bodies of these functions are unchanged.
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2490, 2500, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2563, 2580, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2594, 2619, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2641, 2651, {async: true}),
-  request: extractFn('request', 10293, 10310, {async: true})
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2530, 2540, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2603, 2620, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2634, 2659, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2681, 2691, {async: true}),
+  request: extractFn('request', 10664, 10681, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

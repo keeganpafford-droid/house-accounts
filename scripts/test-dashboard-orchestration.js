@@ -107,61 +107,61 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // numbers were re-derived mechanically (parse-complete scan from each
 // function's real signature line), not hand-counted.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2490, 2500, {async: true}),
+  extractFn('claimAutomaticResearchRun', 2530, 2540, {async: true}),
   // Duplicate-company research control (beta round): researchAccountFromManageModal(),
   // researchListFromManageModal(), and researchTopAccounts() (all extracted
   // below) now call checkDuplicateCompanyResearch() before ever claiming a
   // run -- it must be real, extracted source (not stubbed), since its own
   // fetch call and fail-open contract are directly part of the orchestration
   // under test here.
-  extractFn('checkDuplicateCompanyResearch', 2514, 2530, {async: true}),
-  extractFn('duplicateCompanyResearchMessage', 2540, 2543),
-  extractFn('heartbeatCurrentResearchRun', 2563, 2580, {async: true}),
-  extractFn('reportResearchRunOutcome', 2594, 2619, {async: true}),
-  extractFn('normalizeSavedAccount', 2755, 2817),
-  extractFn('accountCardFor', 4565, 4571),
-  extractFn('accountSignalsPanel', 4572, 4575),
+  extractFn('checkDuplicateCompanyResearch', 2554, 2570, {async: true}),
+  extractFn('duplicateCompanyResearchMessage', 2580, 2583),
+  extractFn('heartbeatCurrentResearchRun', 2603, 2620, {async: true}),
+  extractFn('reportResearchRunOutcome', 2634, 2659, {async: true}),
+  extractFn('normalizeSavedAccount', 2795, 2857),
+  extractFn('accountCardFor', 4605, 4611),
+  extractFn('accountSignalsPanel', 4612, 4615),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6116, 6151, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 5980, 6002, {async: true}),
-  extractFn('persistScopedResearchResult', 6010, 6055, {async: true}),
-  extractFn('researchAccountFromManageModal', 6153, 6291, {async: true}),
-  extractFn('researchAccountByName', 6507, 6646, {async: true}),
-  extractFn('getAccountsForResearch', 6651, 6664),
-  extractFn('batchPayloadForAccounts', 6666, 6710),
-  extractFn('applyBusinessSignalAccountBoost', 6713, 6721),
-  extractFn('researchAccountsBatch', 6723, 6821, {async: true}),
-  extractFn('signalTopicKeyClient', 6823, 6831),
-  extractFn('dedupeSignalsClient', 6833, 6846),
-  extractFn('researchTopAccounts', 6848, 7016, {async: true}),
-  extractFn('refreshOpportunityViews', 7117, 7137),
+  extractFn('safeParseResearchResponse', 6156, 6191, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 6020, 6042, {async: true}),
+  extractFn('persistScopedResearchResult', 6050, 6095, {async: true}),
+  extractFn('researchAccountFromManageModal', 6193, 6346, {async: true}),
+  extractFn('researchAccountByName', 6620, 6775, {async: true}),
+  extractFn('getAccountsForResearch', 6779, 6792),
+  extractFn('batchPayloadForAccounts', 6794, 6838),
+  extractFn('applyBusinessSignalAccountBoost', 6841, 6849),
+  extractFn('researchAccountsBatch', 6851, 6971, {async: true}),
+  extractFn('signalTopicKeyClient', 6973, 6981),
+  extractFn('dedupeSignalsClient', 6983, 6996),
+  extractFn('researchTopAccounts', 6998, 7318, {async: true}),
+  extractFn('refreshOpportunityViews', 7451, 7471),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 7173, 7183),
+  extractFn('applyModalResearchResultToDashboard', 7507, 7517),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 7204, 7232, {async: true}),
-  extractFn('renderDetailedAccountViews', 9525, 9593),
-  extractFn('serializeAccountForStorage', 9603, 9662),
-  extractFn('performSaveCurrentUpload', 9672, 9772, {async: true}),
-  extractFn('saveCurrentUpload', 9781, 9785),
-  extractFn('toggleAccountMetadataEdit', 9793, 9799),
-  extractFn('saveAccountMetadataEdit', 9822, 9858, {async: true}),
-  extractRaw('delegatedClickListener', 9876, 9915, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 9928, 9944),
-  extractFn('escapeHtml', 10230, 10233)
+  extractFn('researchAccountFromCard', 7538, 7566, {async: true}),
+  extractFn('renderDetailedAccountViews', 9859, 9927),
+  extractFn('serializeAccountForStorage', 9937, 9996),
+  extractFn('performSaveCurrentUpload', 10006, 10106, {async: true}),
+  extractFn('saveCurrentUpload', 10115, 10119),
+  extractFn('toggleAccountMetadataEdit', 10127, 10133),
+  extractFn('saveAccountMetadataEdit', 10156, 10192, {async: true}),
+  extractRaw('delegatedClickListener', 10210, 10249, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 10262, 10278),
+  extractFn('escapeHtml', 10576, 10579)
 ].join('\n\n');
 
 // ===========================================================================
@@ -214,6 +214,21 @@ function extractEmailDomain(email){ return String(email || '').split('@')[1] || 
 async function loadDashboardUsage(){ return null; }
 function getSavedLead(){ return null; }
 function defaultDashboardView(){ return 'my'; }
+// ux/research-control-progress: client-side progress/stop tracker helpers
+// researchAccountByName()/researchAccountsBatch()/researchTopAccounts()/
+// researchAccountFromManageModal()/researchListFromManageModal() now call.
+// Pure in-memory progress bookkeeping with no fetch/save/claim side effects
+// -- no bearing on this file's call-count assertions. Real tracker/stop
+// behavior has its own dedicated coverage.
+function startResearchTracker(){}
+function finishResearchTracker(){}
+function markResearchAccountStarted(){}
+function markResearchAccountDone(){}
+function markResearchGroupDone(){}
+function registerResearchAbort(){}
+function unregisterResearchAbort(){}
+function requestResearchStop(){}
+function isResearchStopRequested(){ return false; }
 `;
 
 // ===========================================================================
@@ -394,7 +409,8 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
       warn: (...a) => consoleLog.warn.push(a),
       error: (...a) => consoleLog.error.push(a)
     },
-    Math, Date, JSON, Set, Array, Object, Number, String, Promise, Boolean,
+    Math, Date, JSON, Set, Map, Array, Object, Number, String, Promise, Boolean,
+    AbortController,
     setTimeout, clearTimeout
   };
   vm.createContext(sandbox);

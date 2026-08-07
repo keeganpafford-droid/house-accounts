@@ -51,10 +51,10 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // off the list object; the underlying required-test guarantees (labels,
 // active-only confirmation count) are proven against the new mechanism
 // instead.
-const listCardSrc = extractLines('listCard', 10532, 10563, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 10956, 10996, 'function listCard(list){');
 assert(
-  /const listResearchLabel = list\.everResearched \? 'Research Entire List Again' : 'Research Entire List';/.test(listCardSrc),
-  'required tests 1 & 2: never-researched lists show "Research Entire List", previously-researched lists show "Research Entire List Again" -- now driven by the server-computed list.everResearched'
+  /const listResearchLabel = list\.everResearched \? 'Research All Accounts Again' : 'Research All Accounts';/.test(listCardSrc),
+  'required tests 1 & 2: never-researched lists show "Research All Accounts", previously-researched lists show "Research All Accounts Again" -- now driven by the server-computed list.everResearched'
 );
 assert(
   /everResearched:Array\.isArray\(researchedRows\)&&researchedRows\.length>0/.test(dashboardApiMonitoringListsSrc),
@@ -64,9 +64,16 @@ assert(
   /activeCount:Math\.max\(0,totalCount-pausedCount\)/.test(dashboardApiMonitoringListsSrc),
   'required test 3: the server computes activeCount (total minus paused) via Prefer: count=exact, excluding paused accounts from the confirmation-dialog count without ever fetching the accounts themselves'
 );
+// ux/research-control-progress: disabledAttr/disabledTitle are now shared,
+// precomputed variables (`const disabledAttr = runActive ? ' disabled' : '';`)
+// reused by BOTH the "Research All Accounts" and "Research Unresearched
+// Accounts" menu items, rather than inlined ternaries repeated per button --
+// the underlying requirement (disabled exactly when runActive) is proven by
+// checking the variable's own definition, not a literal button string.
 assert(
-  /data-list-research-act="research" data-list-id="\$\{esc\(list\.id\)\}" data-list-name="\$\{esc\(list\.name\)\}"\$\{runActive\?' disabled':''\}/.test(listCardSrc),
-  'required test 4: the Research Entire List button is disabled exactly when runActive is true (the same server-owned researchRunState accountRow() uses)'
+  /const disabledAttr = runActive \? ' disabled' : '';/.test(listCardSrc) &&
+  /data-list-research-act="research" data-list-id="\$\{esc\(list\.id\)\}" data-list-name="\$\{esc\(list\.name\)\}"\$\{disabledAttr\}\$\{disabledTitle\}/.test(listCardSrc),
+  'required test 4: the Research All Accounts button is disabled exactly when runActive is true (the same server-owned researchRunState accountRow() uses)'
 );
 {
   const menuOrder = listCardSrc.indexOf('data-list-research-act="research"');
@@ -95,13 +102,13 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 6306, 6474, 'async function researchListFromManageModal(listId){');
+const researchListSrc = extractLines('researchListFromManageModal', 6361, 6587, 'async function researchListFromManageModal(listId, options = {}){');
 assert(
-  /const activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
+  /let activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
 );
 assert(
-  /if\(!activeAccounts\.length\) return \{ok:false, error:'This list has no active accounts to research\.'\};/.test(researchListSrc),
+  /if\(!activeAccounts\.length\) return \{ok:false, error: options\.onlyUnresearched \? '[\s\S]{0,120}?' : 'This list has no active accounts to research\.'\};/.test(researchListSrc),
   'a list with zero active accounts is refused honestly, never silently claiming a run for nothing'
 );
 assert(
@@ -114,7 +121,7 @@ assert(
   'warm/mixed accounts in the list are sent through ONE batched /api/research-batch call, reusing batchPayloadForAccounts() exactly like a single-account request would with one more account in the array'
 );
 assert(
-  /await fetch\('\/api\/research-account', \{method:'POST', headers, body: JSON\.stringify\(payload\)\}\);/.test(researchListSrc),
+  /await fetch\('\/api\/research-account', \{method:'POST', headers, signal: controller\.signal, body: JSON\.stringify\(payload\)\}\);/.test(researchListSrc),
   'historical accounts in the list are researched via the same /api/research-account endpoint the single-account path uses'
 );
 assert(
@@ -132,13 +139,18 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 10817, 10920, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines("handleListResearchClick", 11258, 11370, "async function handleListResearchClick(btn){");
 // Scaling round: the active-account count in the confirmation dialog now
 // comes from the server-computed list.activeCount (Prefer: count=exact) --
 // cachedLists no longer carries a full .accounts array to filter
 // client-side. See api/monitoring-lists.js's loadLists().
+// ux/research-control-progress: handleListResearchClick() now branches on
+// onlyUnresearched (Research Unresearched Accounts vs. Research All
+// Accounts) -- the required "names the list + active-account count"
+// guarantee is proven against the "Research All Accounts" branch, which
+// still shows the count exactly as before.
 assert(
-  /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeCount\} account/.test(handleListResearchClickSrc),
+  /showResearchConfirm\(onlyUnresearched \? \{[\s\S]*?\} : \{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeCount\} account/.test(handleListResearchClickSrc),
   'the confirmation dialog names the list and states its server-computed active-account count'
 );
 assert(
@@ -172,7 +184,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7312, 7407, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7646, 7741, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'
@@ -231,7 +243,7 @@ assert(
 // uploaded list, the upload-success panel stays visible throughout, and
 // post-research totals update without a manual refresh.
 // ---------------------------------------------------------------------------
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3629, 3734, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3669, 3774, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /fetch\(`\/api\/get-dashboard\?email=\$\{encodeURIComponent\(e\)\}&view=\$\{encodeURIComponent\(dashboardViewMode \|\| defaultDashboardView\(\)\)\}`/.test(fetchAggregateSrc),
   'required test 11: fetchAndRenderAggregateDashboard() calls the real /api/get-dashboard aggregate endpoint (every uploaded list the user owns), the exact same source loadSavedDashboard() has always used -- never a single-upload-scoped request'

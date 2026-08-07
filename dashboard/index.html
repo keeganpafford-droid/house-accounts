@@ -1491,6 +1491,26 @@
     color:var(--muted);
     line-height:1.4;
   }
+  .dashboard-research-progress{
+    background:#EAF6F4;
+    border:1px solid var(--radar);
+    border-radius:10px;
+    padding:10px 14px;
+    margin:0 0 16px;
+  }
+  .dashboard-research-progress-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-bottom:6px;
+  }
+  .dashboard-research-progress-label{
+    font-size:.85rem;
+    font-weight:700;
+    color:var(--ink);
+  }
   .signal-research-panel{
     margin-top:10px;
   }
@@ -1907,6 +1927,9 @@
   margin-bottom:14px;
 }
 .upload-success-actions{display:flex;gap:10px;flex-wrap:wrap;}
+.upload-research-decision{background:#EAF6F4;border:1px solid var(--radar);border-radius:10px;padding:12px 14px;margin-bottom:14px;}
+.upload-research-decision-copy{color:var(--ink);font-size:.9rem;line-height:1.45;margin-bottom:10px;}
+.upload-research-decision-actions{display:flex;gap:10px;flex-wrap:wrap;}
 .locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 
 .monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
@@ -2003,6 +2026,15 @@
 .acct-mgr-run-banner{margin:10px 0 2px;padding:9px 12px;border-radius:8px;font-size:.84rem;font-weight:600;line-height:1.4;}
 .acct-mgr-run-banner-active{background:#EAF6F4;color:var(--ink);border-left:3px solid var(--radar);}
 .acct-mgr-run-banner-error{background:var(--danger-surface);color:var(--danger);border-left:3px solid var(--danger);}
+.acct-mgr-progress-panel{margin:10px 0 2px;padding:12px 14px;border-radius:8px;background:#EAF6F4;border-left:3px solid var(--radar);}
+.acct-mgr-progress-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px;}
+.acct-mgr-progress-title{font-weight:700;font-size:.86rem;color:var(--ink);}
+.acct-mgr-progress-count{font-size:.8rem;color:var(--ink);font-weight:600;}
+.acct-mgr-progress-bar{height:6px;border-radius:999px;background:rgba(0,0,0,.08);overflow:hidden;margin-bottom:6px;}
+.acct-mgr-progress-bar-fill{height:100%;background:var(--radar);border-radius:999px;transition:width .3s ease;}
+.acct-mgr-progress-detail{font-size:.78rem;color:#4B5563;margin-bottom:8px;}
+.acct-mgr-progress-stop{margin:0;}
+.acct-mgr-action-stop{background:var(--danger);}
 /* Scaling round: Manage Customer Accounts pagination -- search box and
    Previous/Next pager, matching the existing .acct-mgr-* token set. */
 .acct-mgr-search-row{margin:10px 0 8px;}
@@ -2336,6 +2368,13 @@
       <div class="upload-success-title" id="uploadSuccessTitle"></div>
       <div class="upload-success-detail" id="uploadSuccessDetail"></div>
       <div class="upload-success-warning" id="uploadSuccessWarning" hidden></div>
+      <div class="upload-research-decision" id="uploadResearchDecision">
+        <div class="upload-research-decision-copy">House Accounts can now research these companies for current opportunities.</div>
+        <div class="upload-research-decision-actions">
+          <button class="btn" type="button" id="uploadResearchAllBtn">Research all <span id="uploadResearchAllCount">0</span> accounts</button>
+          <button class="btn btn-secondary" type="button" id="uploadResearchNotNowBtn">Not now</button>
+        </div>
+      </div>
       <div class="upload-success-actions">
         <button class="btn" type="button" id="uploadSuccessViewPrioritiesBtn">View Priorities</button>
         <button class="btn btn-secondary" type="button" id="uploadSuccessManageAccountsBtn">Manage Customer Accounts</button>
@@ -2373,6 +2412,7 @@
         <button class="btn btn-secondary" id="researchTopBtn" type="button" onclick="researchTopAccounts()">Research Top Accounts</button>
         <div class="research-note">Research scans public sources for real business signals. Historical order data helps prioritize accounts, but verified signals create the strongest “why now.”</div>
       </div>
+      <div class="dashboard-research-progress" id="dashboardResearchProgress" hidden></div>
       
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -6204,6 +6244,10 @@ async function researchAccountFromManageModal(accountName, listId){
   // flight can label the server-confirmed active run with this account's
   // name (see requirement 2/7 of the run-state reattachment feature).
   setActiveResearchBreadcrumb(expectedUploadId, researchRunId, targetAccountName);
+  // ux/research-control-progress: total:1 -- a genuinely standalone,
+  // individually stoppable unit of work (its own claim, its own single
+  // fetch), unlike the multi-account list/batch paths above.
+  startResearchTracker(expectedUploadId, [targetAccountName], {label: targetAccountName});
 
   try{
     const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
@@ -6234,7 +6278,10 @@ async function researchAccountFromManageModal(accountName, listId){
     };
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
-    const res = await fetch(endpoint, {method:'POST', headers, body: JSON.stringify(payload)});
+    const controller = new AbortController();
+    registerResearchAbort(expectedUploadId, targetAccountName, controller);
+    const res = await fetch(endpoint, {method:'POST', headers, signal: controller.signal, body: JSON.stringify(payload)});
+    unregisterResearchAbort(expectedUploadId, targetAccountName);
     const data = await safeParseResearchResponse(res, {endpoint, uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
     account.signals = enhancedPublicMode
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
@@ -6274,6 +6321,8 @@ async function researchAccountFromManageModal(accountName, listId){
       // clobbering the newer run's state -- see failResearchRunAttempt().
       await reportResearchRunOutcome('fail', saveResult.error, runContext);
       clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+      markResearchAccountDone(expectedUploadId, targetAccountName, {failed:true});
+      finishResearchTracker(expectedUploadId);
       return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
     }
     // Success: persist_ha_research_output() (via /api/save-upload's tracked
@@ -6282,11 +6331,17 @@ async function researchAccountFromManageModal(accountName, listId){
     // above, so no separate reportResearchRunOutcome('complete', ...) call
     // is needed here either.
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+    markResearchAccountDone(expectedUploadId, targetAccountName, {opportunities: account.signals.length});
+    finishResearchTracker(expectedUploadId);
     return {ok:true, account};
   }catch(err){
-    await reportResearchRunOutcome('fail', err, runContext);
+    unregisterResearchAbort(expectedUploadId, targetAccountName);
+    const stopped = isResearchStopRequested(expectedUploadId);
+    await reportResearchRunOutcome('fail', stopped ? 'Stopped by user' : err, runContext);
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    return {ok:false, error: (err && err.message) || 'Research failed. Please try again.'};
+    markResearchAccountDone(expectedUploadId, targetAccountName, {failed: !stopped, stopped});
+    finishResearchTracker(expectedUploadId);
+    return {ok:false, error: stopped ? 'Research stopped.' : ((err && err.message) || 'Research failed. Please try again.')};
   }
 }
 
@@ -6303,7 +6358,7 @@ async function researchAccountFromManageModal(accountName, listId){
 // addSignalDerivedOpportunities() for scoring; persistScopedResearchResult()
 // for the single save at the end. No second research engine -- this is the
 // existing single-account path generalized to N accounts.
-async function researchListFromManageModal(listId){
+async function researchListFromManageModal(listId, options = {}){
   const expectedUploadId = listId;
   const snapshot = await fetchUploadScopedSnapshot(expectedUploadId);
   if(!snapshot.ok) return {ok:false, error: snapshot.error};
@@ -6313,8 +6368,13 @@ async function researchListFromManageModal(listId){
   // are never present in a scoped snapshot at all (server-excluded);
   // paused ones are excluded here explicitly, the same monitoringStatus
   // field accountRow()'s own pause/resume toggle already reads.
-  const activeAccounts = allAccounts.filter(a => a.monitoringStatus !== 'paused');
-  if(!activeAccounts.length) return {ok:false, error:'This list has no active accounts to research.'};
+  // ux/research-control-progress: options.onlyUnresearched narrows this to
+  // "Research Unresearched Accounts" -- an account with a real
+  // lastResearchedAt is left exactly as it is, never re-queued merely
+  // because the rest of the list is being researched.
+  let activeAccounts = allAccounts.filter(a => a.monitoringStatus !== 'paused');
+  if(options.onlyUnresearched) activeAccounts = activeAccounts.filter(a => !a.lastResearchedAt);
+  if(!activeAccounts.length) return {ok:false, error: options.onlyUnresearched ? 'Every active account in this list has already been researched.' : 'This list has no active accounts to research.'};
 
   // Duplicate-company research control (beta round): checked BEFORE ever
   // claiming this upload's research-run lock, so a list made up entirely of
@@ -6350,8 +6410,9 @@ async function researchListFromManageModal(listId){
   // (unlike the single-account claim above), so getActiveResearchBreadcrumb()
   // falls back to its generic "an account in this list" phrasing.
   setActiveResearchBreadcrumb(expectedUploadId, researchRunId, null);
+  startResearchTracker(expectedUploadId, researchableAccounts.map(a => a.name), {label: expectedUploadName || ''});
 
-  let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0;
+  let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0, stopped = 0;
   // FR2 round item 4: tracked per-account so the caller can branch the
   // completion workflow on however many DISTINCT accounts from THIS run
   // actually produced an opportunity (zero / exactly one / multiple),
@@ -6375,42 +6436,80 @@ async function researchListFromManageModal(listId){
     const historicalGroup = researchableAccounts.filter(a => !enhancedGroup.includes(a));
 
     if(enhancedGroup.length){
-      const res = await fetch('/api/research-batch', {
-        method:'POST',
-        headers,
-        body: JSON.stringify({
-          mode:'warm-account',
-          researchRunId,
-          attemptId,
-          uploadId: expectedUploadId,
-          accounts: batchPayloadForAccounts(enhancedGroup)
-        })
-      });
-      const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${enhancedGroup.length} accounts`});
-      // Defense-in-depth for the narrow race window between the pre-check
-      // above and this request: the server independently re-checks and may
-      // have excluded an account from its own dispatch even though it
-      // passed the pre-check moments earlier -- see api/research-batch.js's
-      // own skippedDuplicateAccountNames. Never treated as "researched, zero
-      // signals": excluded from attempted/withSignals and added to
-      // skippedDuplicates instead.
-      const serverSkipped = new Set(Array.isArray(data.skippedDuplicateAccountNames) ? data.skippedDuplicateAccountNames : []);
-      enhancedGroup.forEach(account => {
-        if(serverSkipped.has(account.name)){
-          skippedDuplicates.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
-          return;
+      const enhancedNames = enhancedGroup.map(a => a.name);
+      enhancedNames.forEach(name => markResearchAccountStarted(expectedUploadId, name));
+      // ux/research-control-progress: ONE combined request for the whole
+      // warm/mixed group -- same "no per-account boundary to abort
+      // independently" architecture limit as researchAccountsBatch(); Stop
+      // Research aborts this single controller and every name above is
+      // marked stopped together.
+      const enhancedController = new AbortController();
+      registerResearchAbort(expectedUploadId, 'enhanced-group', enhancedController);
+      let enhancedAborted = false;
+      try{
+        const res = await fetch('/api/research-batch', {
+          method:'POST',
+          headers,
+          signal: enhancedController.signal,
+          body: JSON.stringify({
+            mode:'warm-account',
+            researchRunId,
+            attemptId,
+            uploadId: expectedUploadId,
+            accounts: batchPayloadForAccounts(enhancedGroup)
+          })
+        });
+        unregisterResearchAbort(expectedUploadId, 'enhanced-group');
+        const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${enhancedGroup.length} accounts`});
+        // Defense-in-depth for the narrow race window between the pre-check
+        // above and this request: the server independently re-checks and may
+        // have excluded an account from its own dispatch even though it
+        // passed the pre-check moments earlier -- see api/research-batch.js's
+        // own skippedDuplicateAccountNames. Never treated as "researched, zero
+        // signals": excluded from attempted/withSignals and added to
+        // skippedDuplicates instead.
+        const serverSkipped = new Set(Array.isArray(data.skippedDuplicateAccountNames) ? data.skippedDuplicateAccountNames : []);
+        let enhancedOpportunities = 0;
+        enhancedGroup.forEach(account => {
+          if(serverSkipped.has(account.name)){
+            skippedDuplicates.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
+            return;
+          }
+          attempted += 1;
+          const signals = (data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : [];
+          account.signals = signals;
+          account.lastResearchedAt = new Date().toISOString();
+          if(signals.length){ withSignals += 1; totalSignals += signals.length; }
+          addSignalDerivedOpportunities(account, account.signals);
+          enhancedOpportunities += (account.futureOpportunities || []).length;
+          accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
+        });
+        markResearchGroupDone(expectedUploadId, enhancedNames, {opportunities: enhancedOpportunities});
+      }catch(err){
+        unregisterResearchAbort(expectedUploadId, 'enhanced-group');
+        enhancedAborted = err && err.name === 'AbortError';
+        if(enhancedAborted){
+          markResearchGroupDone(expectedUploadId, enhancedNames, {stopped:true});
+          stopped += enhancedNames.length;
+        } else {
+          failures += enhancedNames.length;
+          markResearchGroupDone(expectedUploadId, enhancedNames, {failed:true});
         }
-        attempted += 1;
-        const signals = (data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : [];
-        account.signals = signals;
-        account.lastResearchedAt = new Date().toISOString();
-        if(signals.length){ withSignals += 1; totalSignals += signals.length; }
-        addSignalDerivedOpportunities(account, account.signals);
-        accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
-      });
+      }
     }
     for(const account of historicalGroup){
+      // ux/research-control-progress: checked before EACH account -- List
+      // Stop guarantees no additional queued account begins, even if the
+      // enhanced-group request above already finished.
+      if(isResearchStopRequested(expectedUploadId)){
+        stopped += 1;
+        markResearchAccountDone(expectedUploadId, account.name, {stopped:true});
+        continue;
+      }
       attempted += 1;
+      markResearchAccountStarted(expectedUploadId, account.name);
+      const controller = new AbortController();
+      registerResearchAbort(expectedUploadId, account.name, controller);
       try{
         const payload = {
           accountName: account.name,
@@ -6426,15 +6525,24 @@ async function researchListFromManageModal(listId){
           categories: [...(account.categoryTypes || [])],
           projects: account.projects || []
         };
-        const res = await fetch('/api/research-account', {method:'POST', headers, body: JSON.stringify(payload)});
+        const res = await fetch('/api/research-account', {method:'POST', headers, signal: controller.signal, body: JSON.stringify(payload)});
+        unregisterResearchAbort(expectedUploadId, account.name);
         const data = await safeParseResearchResponse(res, {endpoint:'/api/research-account', uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
         account.signals = Array.isArray(data.signals) ? data.signals : [];
         account.lastResearchedAt = new Date().toISOString();
         if(account.signals.length){ withSignals += 1; totalSignals += account.signals.length; }
         addSignalDerivedOpportunities(account, account.signals);
         accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
+        markResearchAccountDone(expectedUploadId, account.name, {opportunities: (account.futureOpportunities || []).length});
       }catch(err){
-        failures += 1;
+        unregisterResearchAbort(expectedUploadId, account.name);
+        if(err && err.name === 'AbortError'){
+          stopped += 1;
+          markResearchAccountDone(expectedUploadId, account.name, {stopped:true});
+        } else {
+          failures += 1;
+          markResearchAccountDone(expectedUploadId, account.name, {failed:true});
+        }
       }
     }
 
@@ -6448,15 +6556,18 @@ async function researchListFromManageModal(listId){
     if(!saveResult.ok){
       await reportResearchRunOutcome('fail', saveResult.error, runContext);
       clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+      finishResearchTracker(expectedUploadId);
       return {ok:false, error: saveResult.error, staleAttempt: !!saveResult.staleAttempt, snapshotMismatch: !!saveResult.snapshotMismatch};
     }
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
+    finishResearchTracker(expectedUploadId);
     return {
       ok:true,
       attempted,
       withSignals,
       totalSignals,
       failures,
+      stopped,
       // "accounts requested" per the required completion summary -- every
       // active account originally considered, including any later excluded
       // as a duplicate. accountsSkippedAsDuplicates is the same information
@@ -6467,9 +6578,11 @@ async function researchListFromManageModal(listId){
       accountsWithOpportunities: accountResults.filter(a => a.opportunityCount > 0)
     };
   }catch(err){
-    await reportResearchRunOutcome('fail', err, runContext);
+    const runStopped = isResearchStopRequested(expectedUploadId);
+    await reportResearchRunOutcome('fail', runStopped ? 'Stopped by user' : err, runContext);
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    return {ok:false, error: (err && err.message) || 'Research failed. Please try again.'};
+    finishResearchTracker(expectedUploadId);
+    return {ok:false, error: runStopped ? 'Research stopped.' : ((err && err.message) || 'Research failed. Please try again.')};
   }
 }
 
@@ -6508,6 +6621,8 @@ async function researchAccountByName(accountName, options = {}){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   if(!account) return;
   const panel = accountSignalsPanel(account.name);
+  const trackerUploadId = options.trackerUploadId || null;
+  if(trackerUploadId) markResearchAccountStarted(trackerUploadId, account.name);
 
   let runId = options.researchRunId || null;
   let attemptId = options.attemptId || null;
@@ -6557,11 +6672,19 @@ async function researchAccountByName(accountName, options = {}){
     };
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
+    // ux/research-control-progress: unlike the whole-list batch call, this
+    // request genuinely covers just THIS one account -- a real, individually
+    // stoppable unit of work, whether reached via researchTopAccounts()'s
+    // fallback loop or (in the future) a standalone caller.
+    const controller = new AbortController();
+    if(trackerUploadId) registerResearchAbort(trackerUploadId, account.name, controller);
     const res = await fetch(endpoint, {
       method:'POST',
       headers,
+      signal: controller.signal,
       body: JSON.stringify(payload)
     });
+    if(trackerUploadId) unregisterResearchAbort(trackerUploadId, account.name);
     const data = await safeParseResearchResponse(res, {endpoint, uploadId: currentUploadId, accountId: account.id, accountName: account.name});
     account.signals = enhancedPublicMode
       ? ((data.byAccount && Array.isArray(data.byAccount[account.name])) ? data.byAccount[account.name] : (Array.isArray(data.signals) ? data.signals.filter(sig => (sig.accountName || sig.company_name || '') === account.name) : []))
@@ -6633,20 +6756,25 @@ async function researchAccountByName(accountName, options = {}){
       await heartbeatCurrentResearchRun(attemptContext);
       await saveCurrentUpload('researched', attemptContext);
     }
+    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {opportunities: account.signals.length});
   }catch(err){
-    console.error('[Account Research] Research or account update failed.', {
-      accountName: account.name,
-      message: err && err.message ? err.message : String(err)
-    });
+    if(trackerUploadId) unregisterResearchAbort(trackerUploadId, account.name);
+    const stopped = trackerUploadId ? isResearchStopRequested(trackerUploadId) : false;
+    if(!stopped){
+      console.error('[Account Research] Research or account update failed.', {
+        accountName: account.name,
+        message: err && err.message ? err.message : String(err)
+      });
+    }
     if(panel) panel.innerHTML = `<div class="no-signals-message">We couldn’t complete research for this account. Please try again.</div>`;
     if(ownClaim){
-      await reportResearchRunOutcome('fail', err, attemptContext);
+      await reportResearchRunOutcome('fail', stopped ? 'Stopped by user' : err, attemptContext);
     }
+    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {failed: !stopped, stopped});
   }
 }
 
 let researchInProgress = false;
-let autoResearchStarted = false;
 
 function getAccountsForResearch(options = {}){
   const accounts = window.accountRadarAccounts || [];
@@ -6724,13 +6852,24 @@ async function researchAccountsBatch(accounts, options = {}){
   if(!accounts.length) return false;
   const btn = document.getElementById('researchTopBtn');
   const auto = options && options.auto;
+  const trackerUploadId = options.trackerUploadId;
+  const accountNames = accounts.map(a => a.name);
+  if(trackerUploadId) accountNames.forEach(name => markResearchAccountStarted(trackerUploadId, name));
   if(btn){ btn.textContent = auto ? `Scanning ${accounts.length} accounts with AI...` : `Researching ${accounts.length} accounts with AI...`; }
+  // ux/research-control-progress: this is ONE combined request for the
+  // whole group -- there is no per-account boundary to abort independently
+  // (see markResearchGroupDone()'s own comment). Stop Research aborts this
+  // single controller; every account named above is then marked stopped
+  // together once the aborted fetch's catch below runs.
+  const controller = new AbortController();
+  if(trackerUploadId) registerResearchAbort(trackerUploadId, 'batch', controller);
   try{
     const headers = window.HouseAuth&&HouseAuth.authHeadersAsync?await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}):{'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
     const res = await fetch('/api/research-batch', {
       method:'POST',
       headers,
+      signal: controller.signal,
       body: JSON.stringify({
         mode: accounts.every(isWarmAccount) ? 'warm-account' : (Number(accounts.length) > 25 ? 'lead-gen-expanded' : 'ranked'),
         // Log-correlation only -- see researchAccountByName()'s payload above
@@ -6790,8 +6929,19 @@ async function researchAccountsBatch(accounts, options = {}){
       }
     });
     refreshOpportunityViews();
+    if(trackerUploadId) unregisterResearchAbort(trackerUploadId, 'batch');
     return true;
   }catch(err){
+    if(trackerUploadId) unregisterResearchAbort(trackerUploadId, 'batch');
+    if(err && err.name === 'AbortError'){
+      // Stop Research: the fallback loop researchTopAccounts() would
+      // otherwise run next never gets to mark these accounts, since its own
+      // stopRequested check makes it return before processing anyone --
+      // mark them stopped here instead, so the progress panel never shows
+      // them stuck "researching" forever.
+      if(trackerUploadId) markResearchGroupDone(trackerUploadId, accountNames, {stopped:true});
+      return false;
+    }
     console.warn('Batch AI research failed; falling back to per-account research.', err);
     const diagnostics = getResearchDiagnostics();
     diagnostics.push({
@@ -6940,6 +7090,10 @@ async function researchTopAccounts(options = {}){
   }
   // outcome is claimed-new / reclaimed-after-failure / reclaimed-after-expired-lease.
   currentResearchAttemptId = attemptId || null;
+  // ux/research-control-progress: tracker created only once a real run is
+  // actually claimed (never for a rejected/completed/attached-active
+  // outcome above, which never start any research at all).
+  startResearchTracker(currentUploadId, accounts.map(a => a.name), {label: currentUploadName || ''});
 
   if(btn){ btn.textContent = auto ? 'Scanning Accounts...' : 'Researching...'; }
   window.researchDiagnostics = [];
@@ -6962,7 +7116,7 @@ async function researchTopAccounts(options = {}){
 
   try{
     // First try the batch AI web-search path. This mirrors the Google-AI-style research flow.
-    const batchWorked = await researchAccountsBatch(accounts, options);
+    const batchWorked = await researchAccountsBatch(accounts, {...options, trackerUploadId: currentUploadId});
 
     // Fallback: only use slower per-account pipeline if the batch endpoint fails or returns no signals.
     const batchSignals = accounts.reduce((sum, a) => sum + ((a.signals || []).length), 0);
@@ -6980,13 +7134,25 @@ async function researchTopAccounts(options = {}){
       let index = 0;
       async function worker(){
         while(index < accounts.length){
+          // ux/research-control-progress: checked before EVERY dispatch, not
+          // just once -- guarantees no additional queued account begins once
+          // Stop Research is clicked, even mid-loop with other workers still
+          // finishing their current account.
+          if(isResearchStopRequested(currentUploadId)) return;
           const account = accounts[index++];
           if(btn){ btn.textContent = auto ? `Scanning ${Math.min(index, accounts.length)} of ${accounts.length}...` : `Researching ${Math.min(index, accounts.length)} of ${accounts.length}...`; }
-          await researchAccountByName(account.name, {skipSave:true, researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId});
+          await researchAccountByName(account.name, {skipSave:true, researchRunId: currentResearchRunId, attemptId: currentResearchAttemptId, trackerUploadId: currentUploadId});
         }
       }
       await Promise.all(Array.from({length: Math.min(concurrency, accounts.length)}, worker));
       refreshOpportunityViews();
+    } else {
+      // Batch succeeded with real signals -- the fallback loop above never
+      // runs, so this is the one place these accounts are ever marked done
+      // for this run (researchAccountsBatch() itself leaves them
+      // "researching"; see its own comment on why the done/not-done
+      // decision has to happen here, once batchSignals is known).
+      markResearchGroupDone(currentUploadId, accounts.map(a => a.name), {opportunities: batchSignals});
     }
 
     // Phase 2A implementation-review ROUND 6, item 1: this is the ONE,
@@ -7007,22 +7173,190 @@ async function researchTopAccounts(options = {}){
     await heartbeatCurrentResearchRun(terminalCtx);
     await saveCurrentUpload('research_updated', terminalCtx);
   }catch(err){
-    await reportResearchRunOutcome('fail', err);
+    // An AbortError from Stop Research is reported exactly like any other
+    // failure -- reportResearchRunOutcome('fail', ...) is what invalidates
+    // this attemptId server-side (see the tracker module's own header
+    // comment on why that's what actually makes a stop safe, not just the
+    // client-side abort).
+    const stopped = isResearchStopRequested(currentUploadId);
+    await reportResearchRunOutcome('fail', stopped ? 'Stopped by user' : err);
   }finally{
     currentResearchAttemptId = null;
     if(btn){ btn.disabled = false; btn.textContent = 'Research Top Accounts'; }
     researchInProgress = false;
+    finishResearchTracker(currentUploadId);
   }
 }
 
-function autoResearchTopAccountsOnce(){
-  if(autoResearchStarted) return;
-  const accounts = window.accountRadarAccounts || [];
-  if(!accounts.length) return;
-  autoResearchStarted = true;
-  setTimeout(() => researchTopAccounts({auto:true}), 500);
+// ux/research-control-progress: shared client-side research start/stop/
+// progress state, keyed by uploadId (the server's one-active-run lock in
+// claim_ha_research_run() is itself per-upload, not global, so two
+// DIFFERENT uploads' research can legitimately run at once -- this mirrors
+// that). Replaces the removed autoResearchTopAccountsOnce() (see
+// processData()'s own comment above it) -- research is never silently
+// started anymore, so there is no "started once automatically" flag to
+// guard. Purely in-memory, same lifetime as the pre-existing
+// researchInProgress/currentResearchRunId globals it complements -- no new
+// persistence. A full page reload loses this (falls back to the existing
+// server-owned researchRunState banner/breadcrumb, unchanged); it does
+// survive closing/reopening the Manage Customer Accounts modal within the
+// same page load, since this is a plain top-level variable, not modal DOM
+// state.
+//
+// Honest cancellation: neither api/research-batch.js nor
+// api/research-account.js has a server-side cancellation API -- they are
+// ordinary Vercel serverless functions. Aborting the BROWSER's fetch here
+// stops this tab from waiting on/acting on the response; it cannot
+// guarantee in-flight provider work on the server stops incurring cost.
+// What IS guaranteed: (1) stopRequested is checked before every account
+// dispatch below, so no additional queued account ever begins once stop is
+// requested, and (2) each caller's existing reportResearchRunOutcome('fail',
+// ...) call (already present in every research function's catch block)
+// invalidates the run's attemptId server-side, so persist_ha_research_output()'s
+// existing attempt-id check silently discards an abandoned request's
+// result even if it completes after the user stopped -- stale results
+// never resurrect after a stop.
+const researchRunTrackers = new Map();
+function startResearchTracker(uploadId, accountNames, meta = {}){
+  const tracker = {
+    uploadId, label: meta.label || '', total: accountNames.length,
+    completedNames: new Set(), failedNames: new Set(), stoppedNames: new Set(), researchingNames: new Set(),
+    opportunitiesFound: 0, stopRequested: false, finished: false, abortControllers: new Map()
+  };
+  researchRunTrackers.set(uploadId, tracker);
+  notifyResearchTrackerChange(uploadId);
+  return tracker;
 }
-
+function getResearchTracker(uploadId){ return researchRunTrackers.get(uploadId) || null; }
+function finishResearchTracker(uploadId){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return;
+  tracker.finished = true;
+  notifyResearchTrackerChange(uploadId);
+  // Cleared on a short delay rather than instantly, so a just-completed
+  // (or just-stopped) progress state is actually visible for a moment
+  // instead of disappearing the instant the last account settles.
+  setTimeout(() => {
+    if(researchRunTrackers.get(uploadId) === tracker){ researchRunTrackers.delete(uploadId); notifyResearchTrackerChange(uploadId); }
+  }, 4000);
+}
+function registerResearchAbort(uploadId, key, controller){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(tracker) tracker.abortControllers.set(key, controller);
+}
+function unregisterResearchAbort(uploadId, key){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(tracker) tracker.abortControllers.delete(key);
+}
+function markResearchAccountStarted(uploadId, name){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return;
+  tracker.researchingNames.add(name);
+  notifyResearchTrackerChange(uploadId);
+}
+function markResearchAccountDone(uploadId, name, {failed = false, stopped = false, opportunities = 0} = {}){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return;
+  tracker.researchingNames.delete(name);
+  if(stopped) tracker.stoppedNames.add(name);
+  else if(failed) tracker.failedNames.add(name);
+  else tracker.completedNames.add(name);
+  tracker.opportunitiesFound += opportunities;
+  notifyResearchTrackerChange(uploadId);
+}
+// Marks every name in a combined/whole-group call as done at once -- the
+// only granularity possible for the enhanced/warm-mixed batch call
+// (api/research-batch.js processes an entire group in one request; there
+// is no per-account boundary to report on until the whole call resolves).
+function markResearchGroupDone(uploadId, names, {failed = false, stopped = false, opportunities = 0} = {}){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return;
+  names.forEach(name => {
+    tracker.researchingNames.delete(name);
+    if(stopped) tracker.stoppedNames.add(name);
+    else if(failed) tracker.failedNames.add(name);
+    else tracker.completedNames.add(name);
+  });
+  tracker.opportunitiesFound += Number(opportunities || 0);
+  notifyResearchTrackerChange(uploadId);
+}
+// requestResearchStop() itself never reports the run outcome to the server
+// -- callers report through their OWN existing reportResearchRunOutcome
+// ('fail', ...) path, since only they hold the researchRunId/attemptId
+// context needed to do so, and every caller already has a catch block
+// wired to it (an AbortError is caught exactly like any other failure).
+function requestResearchStop(uploadId){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return;
+  tracker.stopRequested = true;
+  tracker.abortControllers.forEach(controller => { try{ controller.abort(); }catch(err){ /* already settled */ } });
+  notifyResearchTrackerChange(uploadId);
+}
+function isResearchStopRequested(uploadId){
+  const tracker = researchRunTrackers.get(uploadId);
+  return !!(tracker && tracker.stopRequested);
+}
+const researchTrackerListeners = new Set();
+function onResearchTrackerChange(fn){ researchTrackerListeners.add(fn); return () => researchTrackerListeners.delete(fn); }
+function notifyResearchTrackerChange(uploadId){
+  researchTrackerListeners.forEach(fn => { try{ fn(uploadId); }catch(err){ console.warn('[Research] progress listener failed', err); } });
+}
+// Read-only snapshot for rendering -- callers never touch tracker internals
+// (Sets/Maps) directly.
+function researchTrackerSnapshot(uploadId){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return null;
+  const completed = tracker.completedNames.size + tracker.failedNames.size + tracker.stoppedNames.size;
+  return {
+    uploadId, label: tracker.label, total: tracker.total, completed,
+    researching: tracker.researchingNames.size,
+    remaining: Math.max(0, tracker.total - completed - tracker.researchingNames.size),
+    failed: tracker.failedNames.size, stopped: tracker.stoppedNames.size,
+    opportunitiesFound: tracker.opportunitiesFound,
+    stopRequested: tracker.stopRequested, finished: tracker.finished
+  };
+}
+// Per-account lookup for row rendering -- is THIS specific account
+// currently being researched (or already settled) under this tab's own
+// tracker for uploadId. Returns null if no tracker exists for uploadId at
+// all (a different tab/reload started the run, or none is active), so
+// callers can fall back to the existing server-owned researchRunState/
+// breadcrumb display for that case.
+function researchTrackerAccountState(uploadId, accountName){
+  const tracker = researchRunTrackers.get(uploadId);
+  if(!tracker) return null;
+  if(tracker.researchingNames.has(accountName)) return 'researching';
+  if(tracker.completedNames.has(accountName)) return 'complete';
+  if(tracker.failedNames.has(accountName)) return 'failed';
+  if(tracker.stoppedNames.has(accountName)) return 'stopped';
+  return 'queued';
+}
+// ux/research-control-progress: main-dashboard mini progress indicator --
+// a smaller, persistent counterpart to the Manage Customer Accounts
+// modal's full researchProgressPanel(), sharing the exact same
+// researchTrackerSnapshot()/requestResearchStop() state and controller, so
+// implementing it is just a second, smaller renderer subscribed to the
+// same onResearchTrackerChange() event -- no separate tracking system.
+function renderDashboardResearchProgress(){
+  const el = document.getElementById('dashboardResearchProgress');
+  if(!el) return;
+  const snap = currentUploadId ? researchTrackerSnapshot(currentUploadId) : null;
+  if(!snap){ el.hidden = true; el.innerHTML = ''; return; }
+  const pct = snap.total ? Math.round((snap.completed / snap.total) * 100) : 0;
+  const label = `${snap.finished ? 'Research complete' : 'Researching'}${currentUploadName ? ` — ${escapeHtml(currentUploadName)}` : ''} — ${snap.completed} of ${snap.total} complete`;
+  el.hidden = false;
+  el.innerHTML = `<div class="dashboard-research-progress-row">
+      <span class="dashboard-research-progress-label">${label}</span>
+      <button type="button" class="btn btn-ghost btn-mini" id="dashboardResearchViewProgressBtn">View Progress</button>
+      ${snap.finished ? '' : '<button type="button" class="btn btn-ghost btn-mini" id="dashboardResearchStopBtn">Stop</button>'}
+    </div>
+    <div class="acct-mgr-progress-bar"><div class="acct-mgr-progress-bar-fill" style="width:${pct}%"></div></div>`;
+  const viewBtn = document.getElementById('dashboardResearchViewProgressBtn');
+  if(viewBtn) viewBtn.addEventListener('click', () => { document.getElementById('manageCustomerAccountsBtn')?.click(); });
+  const stopBtn = document.getElementById('dashboardResearchStopBtn');
+  if(stopBtn) stopBtn.addEventListener('click', () => { requestResearchStop(currentUploadId); });
+}
+onResearchTrackerChange(() => renderDashboardResearchProgress());
 
 function getWhyNowText(opp){
   if(!opp) return 'Review this account for a focused next step.';
@@ -10007,6 +10341,16 @@ function renderUploadSuccessState(records, accounts){
       warningEl.innerHTML = '';
     }
   }
+  // ux/research-control-progress: upload no longer auto-starts research
+  // (see processData() below -- it used to chain straight into
+  // autoResearchTopAccountsOnce() the instant the save resolved). This is
+  // the explicit decision point instead: shown fresh on every successful
+  // upload, reset to visible here so a second upload in the same session
+  // gets its own prompt even if a prior one was dismissed via "Not now".
+  const decisionEl = document.getElementById('uploadResearchDecision');
+  const decisionCountEl = document.getElementById('uploadResearchAllCount');
+  if(decisionCountEl) decisionCountEl.textContent = String(accountCount);
+  if(decisionEl) decisionEl.hidden = false;
   panel.style.display = 'block';
 }
 
@@ -10195,13 +10539,16 @@ function processData(records){
     futureOpportunityCount: futureOpportunities.length,
     reasonsToReachOut: futureOpportunities.length
   };
-  // Phase 2A implementation-review item 2: research must not start until
-  // currentUploadId is guaranteed set, since research-batch.js now requires
-  // a real uploadId to claim a server-owned research run against. Previously
-  // autoResearchTopAccountsOnce() (a 500ms-delayed call) and this save fired
-  // independently with no ordering guarantee between them -- usually the
-  // save won the race, but nothing enforced it. Chaining explicitly closes
-  // that latent race rather than continuing to rely on timing.
+  // ux/research-control-progress: research NO LONGER auto-starts here.
+  // Before this change, this save was immediately followed by
+  // autoResearchTopAccountsOnce() (a 500ms-delayed call into
+  // researchTopAccounts({auto:true})) -- uploading a list silently
+  // committed the user to research with no explicit decision point. The
+  // explicit choice now lives in renderUploadSuccessState()'s
+  // #uploadResearchDecision block (Research all N accounts / Not now,
+  // wired in wireUploadSuccessStateControls()) -- accounts are simply
+  // saved and left in their "Not researched yet" state until the user
+  // decides.
   //
   // Follow-up round / FR2 round: whatever this upload left on screen above
   // (the untouched prior aggregate, or the neutral "Building your
@@ -10223,7 +10570,6 @@ function processData(records){
     if(refreshResult && !refreshResult.ok && !aggregateDashboardEverLoaded){
       showDashboardRefreshRetryState();
     }
-    autoResearchTopAccountsOnce();
   });
 }
 
@@ -10259,6 +10605,31 @@ function wireUploadSuccessStateControls(){
     anotherBtn.addEventListener('click', () => {
       dismissUploadSuccessState();
       openLightweightCustomerUpload();
+    });
+  }
+  // ux/research-control-progress: the explicit upload/research decision.
+  // "Research all" reads window.accountRadarAccounts/currentUploadId at
+  // CLICK time (never captured at render time), so it always reflects
+  // whatever this upload actually saved as -- it calls the exact same
+  // researchTopAccounts() the pre-existing "Research Top Accounts" button
+  // uses, just with auto:false (an explicit user action, not the removed
+  // silent auto-trigger). "Not now" makes zero research calls -- it only
+  // hides this decision block, leaving the account list itself untouched
+  // and researchable later from either that button or Manage Customer
+  // Accounts.
+  const researchAllBtn = document.getElementById('uploadResearchAllBtn');
+  if(researchAllBtn){
+    researchAllBtn.addEventListener('click', () => {
+      const decisionEl = document.getElementById('uploadResearchDecision');
+      if(decisionEl) decisionEl.hidden = true;
+      researchTopAccounts({auto:false});
+    });
+  }
+  const notNowBtn = document.getElementById('uploadResearchNotNowBtn');
+  if(notNowBtn){
+    notNowBtn.addEventListener('click', () => {
+      const decisionEl = document.getElementById('uploadResearchDecision');
+      if(decisionEl) decisionEl.hidden = true;
     });
   }
 }
@@ -10432,8 +10803,23 @@ else wireUploadSuccessStateControls();
    const researched = !!a.lastResearchedAt;
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
-   const activeAccountName = runActive ? getActiveResearchBreadcrumb(list.id, runState.researchRunId) : '';
-   const isBeingResearched = runActive && activeAccountName === a.name;
+   // ux/research-control-progress: this tab's own tracker (see
+   // researchTrackerAccountState() in the main script) is a more precise,
+   // non-racy source than the old localStorage breadcrumb -- it is
+   // consulted FIRST and, when present, entirely replaces the breadcrumb
+   // lookup for this render. If no tracker exists (a different tab/reload
+   // started this run, or none is active client-side), the breadcrumb/
+   // server-truth fallback below is exactly the pre-existing behavior.
+   const trackerSnapshot = researchTrackerSnapshot(list.id);
+   const trackerAccountState = trackerSnapshot ? researchTrackerAccountState(list.id, a.name) : null;
+   const activeAccountName = trackerSnapshot ? null : (runActive ? getActiveResearchBreadcrumb(list.id, runState.researchRunId) : '');
+   const isBeingResearched = trackerSnapshot ? trackerAccountState === 'researching' : (runActive && activeAccountName === a.name);
+   // A row-level Stop control is only offered when this tab's OWN tracker
+   // proves it's a genuinely standalone, single-account run (total:1) --
+   // for a multi-account list/batch run there is no way to cancel just one
+   // account out of a shared request (see requestResearchStop()'s own
+   // comment), so the row stays simply disabled, same as before.
+   const canStopThisRow = isBeingResearched && trackerSnapshot && trackerSnapshot.total === 1;
    // Required: "Research Account" for a never-researched account,
    // "Research Again" once it has been, "Researching…" only for the
    // specific account currently being researched -- disabling the row
@@ -10441,15 +10827,18 @@ else wireUploadSuccessStateControls();
    // account in the same list has an active run (the server only allows
    // one run per list at a time).
    const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Research Again' : 'Research Account');
-   const researchDisabled = runActive;
+   const researchDisabled = runActive && !canStopThisRow;
    let researchTitle = '';
-   if(runActive) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
+   if(runActive && !canStopThisRow) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
    const metaParts = [
      a.industry ? esc(a.industry) : '',
      a.domain ? esc(a.domain) : 'No domain on file',
      `Added ${fmt(a.dateAdded)}`,
      researched ? `Last researched ${fmt(a.lastResearchedAt)}` : 'Not researched yet'
    ].filter(Boolean);
+   const researchActionHtml = canStopThisRow
+     ? `<button type="button" class="acct-mgr-action acct-mgr-action-stop" data-research-stop-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">Stop Research</button>`
+     : `<button type="button" class="acct-mgr-action" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${researchLabel}</button>`;
    return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
         <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
@@ -10458,7 +10847,7 @@ else wireUploadSuccessStateControls();
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
-      <button type="button" class="acct-mgr-action" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${researchLabel}</button>
+      ${researchActionHtml}
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
@@ -10469,11 +10858,46 @@ else wireUploadSuccessStateControls();
       <div class="acct-mgr-status-line" data-row-status hidden></div>
     </div>`;
  }
+ // ux/research-control-progress: real counts derived from THIS tab's own
+ // in-memory tracker (see researchTrackerSnapshot() in the main script) --
+ // total/completed/researching/remaining/failed/stopped/opportunitiesFound
+ // are all genuine per-account state this run has actually produced so far,
+ // never an animated/simulated bar. Only rendered when a tracker exists for
+ // this list (i.e. THIS tab is the one driving the run); a different tab or
+ // a page reload falls back to researchRunBanner()'s existing generic
+ // server-truth message below, since the rich per-account detail is
+ // intentionally not persisted (see the tracker module's own header
+ // comment on why).
+ function researchProgressPanel(list){
+   const snap = researchTrackerSnapshot(list.id);
+   if(!snap) return '';
+   const pct = snap.total ? Math.round((snap.completed / snap.total) * 100) : 0;
+   const detailParts = [`${snap.researching} researching`, `${snap.remaining} remaining`];
+   if(snap.failed) detailParts.push(`${snap.failed} failed`);
+   if(snap.stopped) detailParts.push(`${snap.stopped} stopped`);
+   if(snap.opportunitiesFound) detailParts.push(`${snap.opportunitiesFound} opportunit${snap.opportunitiesFound===1?'y':'ies'} found`);
+   const title = snap.finished ? 'Research complete' : 'Researching accounts';
+   const stopBtn = snap.finished ? '' : `<button type="button" class="btn btn-ghost btn-mini acct-mgr-progress-stop" data-research-stop-act="list" data-list-id="${esc(list.id)}">Stop Research</button>`;
+   return `<div class="acct-mgr-progress-panel" role="status" aria-live="polite">
+      <div class="acct-mgr-progress-head">
+        <span class="acct-mgr-progress-title">${esc(title)}</span>
+        <span class="acct-mgr-progress-count">${snap.completed} of ${snap.total} complete</span>
+      </div>
+      <div class="acct-mgr-progress-bar"><div class="acct-mgr-progress-bar-fill" style="width:${pct}%"></div></div>
+      <div class="acct-mgr-progress-detail">${esc(detailParts.join(' · '))}</div>
+      ${stopBtn}
+    </div>`;
+ }
  // Renders a list-level banner from the same server-owned researchRunState
  // used by accountRow() above, so an active/failed run is visible even
  // before scrolling to the specific row (requirement 2's "clear message
- // naming the account being researched, when available").
+ // naming the account being researched, when available"). The rich
+ // researchProgressPanel() above takes priority whenever this tab's own
+ // tracker exists for this list -- this generic banner is the fallback for
+ // every other case (another tab/reload owns the run, or it failed).
  function researchRunBanner(list){
+   const progressHtml = researchProgressPanel(list);
+   if(progressHtml) return progressHtml;
    const state = list.researchRunState || {status:'idle'};
    if(state.status === 'idle') return '';
    const name = getActiveResearchBreadcrumb(list.id, state.researchRunId);
@@ -10533,7 +10957,14 @@ else wireUploadSuccessStateControls();
    const paused = list.status === 'paused';
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
-   const listResearchLabel = list.everResearched ? 'Research Entire List Again' : 'Research Entire List';
+   const listResearchLabel = list.everResearched ? 'Research All Accounts Again' : 'Research All Accounts';
+   const disabledAttr = runActive ? ' disabled' : '';
+   const disabledTitle = runActive ? ' title="Another research run is currently active for this uploaded list."' : '';
+   // ux/research-control-progress: Stop Research is offered in the menu
+   // only when THIS tab's own tracker proves it's the one driving the
+   // active run (see researchProgressPanel()'s comment) -- a different
+   // tab/reload has no honest way to stop what it can't abort.
+   const canStopFromMenu = runActive && !!researchTrackerSnapshot(list.id) && !researchTrackerSnapshot(list.id).finished;
    const expanded = expandedUploadId === list.id;
    return `<section class="acct-mgr-list" data-list-id="${esc(list.id)}">
       <div class="acct-mgr-list-head">
@@ -10549,7 +10980,9 @@ else wireUploadSuccessStateControls();
           <div class="acct-mgr-menu-wrap">
             <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(list.name)}">⋯</button>
             <div class="acct-mgr-menu" role="menu">
-              <button type="button" role="menuitem" data-list-research-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${runActive?' disabled':''}${runActive?' title="Another research run is currently active for this uploaded list."':''}>${listResearchLabel}</button>
+              <button type="button" role="menuitem" data-list-research-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${disabledAttr}${disabledTitle}>${listResearchLabel}</button>
+              <button type="button" role="menuitem" data-list-research-act="research-unresearched" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}"${disabledAttr}${disabledTitle}>Research Unresearched Accounts</button>
+              ${canStopFromMenu ? `<button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-stop-act="research" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}">Stop Research</button>` : ''}
               <div class="acct-mgr-menu-separator" role="separator"></div>
               <button type="button" role="menuitem" class="acct-mgr-danger-item" data-list-act="delete" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}">Delete Uploaded List</button>
             </div>
@@ -10594,6 +11027,14 @@ else wireUploadSuccessStateControls();
  function isModalOpen(){
    const el = document.getElementById('accountManagerModal');
    return !!el && el.style.display === 'block';
+ }
+ // ux/research-control-progress: re-renders from the same cachedLists the
+ // 6s poll already maintains, but the instant THIS tab's own tracker state
+ // changes (an account starts/completes/fails/stops) -- no new fetch, no
+ // new interval, just a local re-render so the rich progress panel/rows
+ // feel live between polls instead of only updating every 6s.
+ if(typeof onResearchTrackerChange === 'function'){
+   onResearchTrackerChange(() => { if(isModalOpen()) renderManager(); });
  }
  function anyListHasActiveRun(){
    return cachedLists.some(l => l.researchRunState && l.researchRunState.status === 'active');
@@ -10817,15 +11258,24 @@ else wireUploadSuccessStateControls();
  async function handleListResearchClick(btn){
    const listId = btn.dataset.listId;
    const listName = btn.dataset.listName || 'this list';
+   // ux/research-control-progress: the same handler now backs both "Research
+   // All Accounts" and "Research Unresearched Accounts" -- the button's own
+   // data-list-research-act value decides scope/confirm copy; everything
+   // else (claim, tracker, progress, save) is identical either way.
+   const onlyUnresearched = btn.dataset.listResearchAct === 'research-unresearched';
    // Scaling round: activeCount comes straight from the upload summary
    // (server-computed via Prefer: count=exact) -- cachedLists no longer
    // carries a full .accounts array to derive this from client-side.
    const listEntry = cachedLists.find(l => l.id === listId);
    const activeCount = (listEntry && listEntry.activeCount) || 0;
-   const confirmed = await showResearchConfirm({
+   const confirmed = await showResearchConfirm(onlyUnresearched ? {
+     title: `Research unresearched accounts in ${esc(listName)}?`,
+     bodyHtml: `This researches only the accounts in <strong>${esc(listName)}</strong> that have never been researched -- already-researched accounts are left as they are. This may take a few minutes -- House Accounts stays usable while it runs.`,
+     confirmLabel: 'Research Unresearched Accounts'
+   } : {
      title: `Research ${esc(listName)}?`,
      bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeCount} account${activeCount===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
-     confirmLabel: 'Research Entire List'
+     confirmLabel: 'Research All Accounts'
    });
    if(!confirmed) return;
    // Kicks an early re-render so the list-level control, and every account
@@ -10836,7 +11286,7 @@ else wireUploadSuccessStateControls();
    let result;
    try{
      if(typeof researchListFromManageModal !== 'function') throw new Error('Research is not available on this page.');
-     result = await researchListFromManageModal(listId);
+     result = await researchListFromManageModal(listId, {onlyUnresearched});
    }catch(err){
      result = {ok:false, error: (err && err.message) || 'List research failed. Please try again.'};
    }
@@ -11143,6 +11593,19 @@ else wireUploadSuccessStateControls();
      return;
    }
 
+   // ux/research-control-progress: row-level Stop -- only ever rendered by
+   // accountRow() when this tab's own tracker proves it's a genuinely
+   // standalone, single-account run (see canStopThisRow there). Reuses the
+   // exact same requestResearchStop() the list-level controls use, keyed by
+   // the same listId -- for a total:1 tracker this IS the whole run.
+   const rowStopBtn = e.target.closest('[data-research-stop-act="account"]');
+   if(rowStopBtn){
+     closeAllMenus();
+     requestResearchStop(rowStopBtn.dataset.listId);
+     renderManager();
+     return;
+   }
+
    const ab=e.target.closest('[data-account-act]');
    if(ab){
      closeAllMenus();
@@ -11191,11 +11654,27 @@ else wireUploadSuccessStateControls();
      return;
    }
 
-   const listResearchBtn = e.target.closest('[data-list-research-act="research"]');
+   const listResearchBtn = e.target.closest('[data-list-research-act]');
    if(listResearchBtn){
      if(listResearchBtn.disabled) return;
      closeAllMenus();
      await handleListResearchClick(listResearchBtn);
+     return;
+   }
+
+   // ux/research-control-progress: List Stop -- reachable from either the
+   // ⋯ menu (data-list-stop-act, only rendered while THIS tab's own tracker
+   // shows an active, unfinished run for this list) or the rich progress
+   // panel's own Stop button (data-research-stop-act="list", same
+   // condition -- researchProgressPanel() only renders it while unfinished).
+   // Both call the exact same requestResearchStop(); no confirm dialog,
+   // since this is already a deliberate action and stopping is safe (see
+   // the tracker module's own header comment on what "stop" honestly does).
+   const listStopBtn = e.target.closest('[data-list-stop-act="research"], [data-research-stop-act="list"]');
+   if(listStopBtn){
+     closeAllMenus();
+     requestResearchStop(listStopBtn.dataset.listId);
+     renderManager();
      return;
    }
 
