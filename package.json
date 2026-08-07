@@ -22,7 +22,8 @@
     "test:get-dashboard-authentication": "node scripts/test-get-dashboard-authentication.js",
     "test:signal-benchmark": "node scripts/run-signal-benchmark.js",
     "research:benchmark": "node scripts/run-live-research.js",
-    "research:all": "node scripts/run-live-research.js --all"
+    "research:all": "node scripts/run-live-research.js --all",
+    "benchmark:research-batch-mechanics": "node scripts/benchmark-research-batch-mechanics.js"
   },
   "devDependencies": {
     "playwright": "^1.62.1"
