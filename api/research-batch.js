@@ -16,7 +16,8 @@ import {
   displayLabelForEventType,
   extractEventDate,
   findPublicationContextDate,
-  resolveOpportunityEvents
+  resolveOpportunityEvents,
+  entityMatch
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -1986,6 +1987,107 @@ function dedupeSignals(signals = []) {
   return [...map.values()].sort(compareBestSignals);
 }
 
+// ---------------------------------------------------------------------------
+// Sprint 1 (signal-to-account evidence grounding). Reproduced production
+// failure: a Gallagher research request returned an opportunity whose
+// underlying evidence was actually about Avidia Bank. Root cause was two
+// independent gaps in the accountCandidate lookup this feeds:
+//   1. The lookup's `mapped.eventFingerprint` branch never fires --
+//      makeSignal()'s return object has no eventFingerprint field (it is
+//      only computed later, per-signal, by normalizeOpportunity() ->
+//      eventFingerprint() -- see that call below). Resolution has always
+//      been 100% sourceUrl-based in production; that OR branch was dead.
+//   2. Even a correct sourceUrl match only proves the MODEL cited a page
+//      this run actually discovered for this account -- it never confirmed
+//      that page's evidence is actually ABOUT this account. A multi-company
+//      source page (e.g. a roundup or a firm's own multi-branch news page)
+//      can carry a real, correctly-discovered sourceUrl while the model
+//      extracts a different company's event from it.
+//
+// The fix below closes both gaps with one small, reused mechanism instead
+// of a new resolution subsystem:
+//   - requireResolvedCandidate() makes sourceUrl resolution a hard
+//     requirement (a signal whose sourceUrl matches no candidate this run
+//     actually discovered for the account is rejected, not silently
+//     defaulted to `{}`); the dead eventFingerprint branch is removed
+//     rather than kept as inert-but-misleading code.
+//   - verifyCandidateCompanyGrounding() then confirms company identity
+//     using ONLY that candidate's query-scoped title+snippet (Serper's own
+//     relevance-scoped excerpt for a quoted-company-name search) -- never
+//     Firecrawl's full pageContent, which is scraped regardless of
+//     relevance and is exactly where the reproduced Avidia contamination
+//     lived. It reuses entityMatch() (signal-intelligence.js) unchanged for
+//     the primary check (full company name, or its punctuation/suffix-
+//     normalized form, present in the source) plus a narrow fallback for
+//     legitimate shortened references (e.g. "Gallagher" for "Arthur J.
+//     Gallagher & Co.") that entityMatch's full-phrase check alone would
+//     miss -- bounded to a short list of generic business-entity words so
+//     it cannot fire on a bare "bank"/"group"/"insurance" style word alone.
+//
+// Explicit scope: this proves the accepted signal's source candidate was
+// one House Accounts actually discovered for the requested account, and
+// that candidate's query-scoped evidence credibly identifies that company.
+// It does NOT prove event-local provenance -- a candidate whose title and
+// snippet genuinely identify the right company, but whose separately
+// fetched pageContent also contains an unrelated company's story elsewhere
+// on the same page, remains a residual gap (see
+// scripts/test-signal-account-evidence-grounding.js's mixed-page-scope
+// case). Closing that would require a fuzzy event-local excerpt/fingerprint
+// primitive this repo does not have and this sprint does not build.
+const GENERIC_COMPANY_WORDS = new Set([
+  'group', 'holdings', 'holding', 'company', 'companies', 'corporation', 'corp',
+  'incorporated', 'partners', 'partnership', 'services', 'solutions', 'systems',
+  'industries', 'enterprises', 'international', 'global', 'capital', 'financial',
+  'insurance', 'bank', 'banking', 'bancorp', 'trust', 'associates'
+]);
+
+function distinctiveCompanyTokens(companyName = '') {
+  return normalizeCompanyName(companyName)
+    .split(/\s+/)
+    .filter(token => token.length >= 4 && !GENERIC_COMPANY_WORDS.has(token));
+}
+
+// Narrow fallback for legitimate shortened/surname-only company references
+// (e.g. "Gallagher") that entityMatch()'s full-phrase check does not catch.
+// Deliberately ANY-token, not ALL-token -- a company legitimately referred to
+// by only its most distinctive word (surname, coined name) should still
+// match. Tokens are pre-filtered to length>=4 and not in the bounded generic-
+// word list above specifically so this cannot fire on a bare "bank"/"group"
+// mention that merely happens to share an industry-generic word with the
+// account name (the reproduced Avidia-Bank-generic-banking-text case).
+function hasDistinctiveNameFallbackMatch(companyName = '', text = '') {
+  const tokens = distinctiveCompanyTokens(companyName);
+  if (!tokens.length) return false;
+  const normalizedText = normalizeCompanyName(text);
+  if (!normalizedText) return false;
+  return tokens.some(token => new RegExp(`\\b${token}\\b`).test(normalizedText));
+}
+
+// Company-grounding check, scoped to ONLY the resolved candidate's
+// query-scoped title+snippet -- never pageContent/rawContent (Firecrawl's
+// full, relevance-agnostic page scrape). entityMatch() itself is reused
+// unmodified; only the object passed to it is scoped down.
+function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
+  const scopedCandidate = { title: candidate.title || '', snippet: candidate.snippet || '', url: candidate.url || '' };
+  const entity = entityMatch(scopedCandidate, account);
+  if (entity.level !== 'rejected') return { grounded: true, reasons: entity.reasons };
+  const companyName = account.name || account.companyName || '';
+  const scopedText = `${scopedCandidate.title} ${scopedCandidate.snippet}`;
+  if (hasDistinctiveNameFallbackMatch(companyName, scopedText)) {
+    return { grounded: true, reasons: ['distinctive company name matched in source'] };
+  }
+  return { grounded: false, reasons: entity.reasons };
+}
+
+// Requires the signal's sourceUrl to resolve to a candidate this run
+// actually discovered for the requested account -- replaces the previous
+// `sourceUrl OR eventFingerprint` lookup (whose eventFingerprint branch was
+// dead; see comment above) with a single, mandatory check instead of an
+// optional one that silently fell back to `{}` on no match.
+function requireResolvedCandidate(candidates, mapped, account) {
+  if (!mapped.sourceUrl) return null;
+  return candidates.find(c => c.accountName === account.name && c.url === mapped.sourceUrl) || null;
+}
 
 // ---------------------------------------------------------------------------
 // Phase 2A implementation-review — server-owned research-run idempotency.
@@ -2959,14 +3061,17 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       const accountMode = clean(account.intelligenceMode).toLowerCase();
       const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
       if (!mapped) return null;
-      const accountCandidate = candidates.find(c => c.accountName === account.name && (
-        (mapped.sourceUrl && c.url === mapped.sourceUrl) ||
-        (mapped.eventFingerprint && c.eventFingerprint === mapped.eventFingerprint)
-      )) || {};
-      const normalized = normalizeOpportunity(mapped, account, accountCandidate);
+      const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
+      const normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
       const validation = validateOpportunity(normalized);
-      if (!validation.valid) {
-        console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: validation.reasons, title: normalized.signalTitle });
+      const groundingReasons = [];
+      if (!accountCandidate) {
+        groundingReasons.push('source not matched to a discovered candidate');
+      } else if (!verifyCandidateCompanyGrounding(accountCandidate, account).grounded) {
+        groundingReasons.push('company identity not confirmed in source evidence');
+      }
+      if (!validation.valid || groundingReasons.length) {
+        console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
         return null;
       }
       return normalized;
