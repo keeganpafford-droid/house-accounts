@@ -42,9 +42,9 @@ const SRC = [
   extractLines('add-customer-data-modal-and-route', 3376, 3499, 'let addCustomerDataModalTriggerEl = null;'),
   extractLines('guided-tour', 3782, 4172, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
   extractLines('beta-welcome-modal', 4174, 4187, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 9922, 9967, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 10186, 10189, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 10191, 10220, 'function dismissUploadSuccessState(){')
+  extractLines('upload-success-state', 9966, 10011, 'const MISSING_FIELD_LABELS = {'),
+  extractLines('escapeHtml', 10230, 10233, 'function escapeHtml(text){'),
+  extractLines('dismissUploadSuccessState-and-wiring', 10235, 10264, 'function dismissUploadSuccessState(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------

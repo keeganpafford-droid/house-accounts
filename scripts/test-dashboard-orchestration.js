@@ -126,42 +126,42 @@ const REAL_SOURCE = [
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6072, 6107, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 5936, 5958, {async: true}),
-  extractFn('persistScopedResearchResult', 5966, 6011, {async: true}),
-  extractFn('researchAccountFromManageModal', 6109, 6247, {async: true}),
-  extractFn('researchAccountByName', 6463, 6602, {async: true}),
-  extractFn('getAccountsForResearch', 6607, 6620),
-  extractFn('batchPayloadForAccounts', 6622, 6666),
-  extractFn('applyBusinessSignalAccountBoost', 6669, 6677),
-  extractFn('researchAccountsBatch', 6679, 6777, {async: true}),
-  extractFn('signalTopicKeyClient', 6779, 6787),
-  extractFn('dedupeSignalsClient', 6789, 6802),
-  extractFn('researchTopAccounts', 6804, 6972, {async: true}),
-  extractFn('refreshOpportunityViews', 7073, 7093),
+  extractFn('safeParseResearchResponse', 6116, 6151, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 5980, 6002, {async: true}),
+  extractFn('persistScopedResearchResult', 6010, 6055, {async: true}),
+  extractFn('researchAccountFromManageModal', 6153, 6291, {async: true}),
+  extractFn('researchAccountByName', 6507, 6646, {async: true}),
+  extractFn('getAccountsForResearch', 6651, 6664),
+  extractFn('batchPayloadForAccounts', 6666, 6710),
+  extractFn('applyBusinessSignalAccountBoost', 6713, 6721),
+  extractFn('researchAccountsBatch', 6723, 6821, {async: true}),
+  extractFn('signalTopicKeyClient', 6823, 6831),
+  extractFn('dedupeSignalsClient', 6833, 6846),
+  extractFn('researchTopAccounts', 6848, 7016, {async: true}),
+  extractFn('refreshOpportunityViews', 7117, 7137),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 7129, 7139),
+  extractFn('applyModalResearchResultToDashboard', 7173, 7183),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 7160, 7188, {async: true}),
-  extractFn('renderDetailedAccountViews', 9481, 9549),
-  extractFn('serializeAccountForStorage', 9559, 9618),
-  extractFn('performSaveCurrentUpload', 9628, 9728, {async: true}),
-  extractFn('saveCurrentUpload', 9737, 9741),
-  extractFn('toggleAccountMetadataEdit', 9749, 9755),
-  extractFn('saveAccountMetadataEdit', 9778, 9814, {async: true}),
-  extractRaw('delegatedClickListener', 9832, 9871, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 9884, 9900),
-  extractFn('escapeHtml', 10186, 10189)
+  extractFn('researchAccountFromCard', 7204, 7232, {async: true}),
+  extractFn('renderDetailedAccountViews', 9525, 9593),
+  extractFn('serializeAccountForStorage', 9603, 9662),
+  extractFn('performSaveCurrentUpload', 9672, 9772, {async: true}),
+  extractFn('saveCurrentUpload', 9781, 9785),
+  extractFn('toggleAccountMetadataEdit', 9793, 9799),
+  extractFn('saveAccountMetadataEdit', 9822, 9858, {async: true}),
+  extractRaw('delegatedClickListener', 9876, 9915, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 9928, 9944),
+  extractFn('escapeHtml', 10230, 10233)
 ].join('\n\n');
 
 // ===========================================================================

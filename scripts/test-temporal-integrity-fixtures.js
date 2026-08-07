@@ -252,15 +252,15 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4595, 5765, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4595, 5809, 'function confidenceLabel(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2843, 3289, 'function cleanOpportunityToken(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7683, 8973, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 8976, 9479, 'function normalizeSignalLayerType(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 7727, 9017, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9020, 9523, 'function normalizeSignalLayerType(');
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2690, 2695, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2925, 2928, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10186, 10189, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7598, 7600, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7603, 7605, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10230, 10233, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 7642, 7644, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 7647, 7649, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};

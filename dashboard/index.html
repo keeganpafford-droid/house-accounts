@@ -4953,7 +4953,26 @@ function isReferralFirstPosture(opp){
 // merchandise/apparel, giveaways, gifts, event materials, product
 // categories, and placing an order.
 function mentionsProductOrMerchOffer(text){
-  return /\b(promotional (?:products?|materials?|items?)|custom merchandise|merchandise options|event merchandise|branded (?:items?|merchandise|products?|apparel)|merch\b|swag\b|apparel\b|giveaways?\b|(?:vip |attendee )?gifts?\b|staff gear|event materials?|product categor(?:y|ies)|plac(?:e|ing) an order)\b/i.test(text);
+  // Confirmed production case (Gallagher acquisition opener): "This could
+  // create opportunities for onboarding kits and marketing materials for
+  // the new services. Can we schedule a time to discuss?" passed this gate
+  // because neither "onboarding kits" nor "marketing materials" was in the
+  // enumerated noun list below. Two additions close this, deliberately kept
+  // narrow to avoid rejecting genuinely grounded questions that happen to
+  // share a word (e.g. "are your raw materials sourced locally?" must still
+  // pass -- see scripts/test-conversation-starter-policy-gate.js):
+  //   1. A handful of QUALIFIED compound nouns (not bare "materials"/"kits")
+  //      added to the enumerated list -- specific enough not to fire on
+  //      unrelated grounded phrasing.
+  //   2. A structural pattern catching "this/it/that could/would/might/can
+  //      create/open up/present an opportunity/need/demand/room for X" --
+  //      this is a vendor-offering STATEMENT SHAPE regardless of which
+  //      product noun fills X, so it generalizes to this whole class of
+  //      product-first opener rather than requiring the noun list to
+  //      enumerate every possible phrasing.
+  if (/\b(promotional (?:products?|materials?|items?)|custom merchandise|merchandise options|event merchandise|branded (?:items?|merchandise|products?|apparel)|merch\b|swag\b|apparel\b|giveaways?\b|(?:vip |attendee )?gifts?\b|staff gear|event materials?|product categor(?:y|ies)|plac(?:e|ing) an order|onboarding kits?|welcome kits?|launch kits?|recognition (?:items?|programs?)|marketing materials?|\bcollateral\b)\b/i.test(text)) return true;
+  if (/\b(this|it|that)\s+(could|would|might|can)\s+(create|open up|present)\s+(an?\s+)?(opportunit(?:y|ies)|need|demand|room)\s+for\b/i.test(text)) return true;
+  return false;
 }
 // R7 follow-up: the Conversation Starter field specifically must always be
 // a real, answerable question -- a stored/generated opener with no "?" at
@@ -4961,6 +4980,21 @@ function mentionsProductOrMerchOffer(text){
 // permanent Conversation Starter rule requires.
 function isMeaningfulConversationQuestion(text){
   return /\?/.test(String(text || ''));
+}
+// Confirmed production case (Gallagher acquisition opener, "...Can we
+// schedule a time to discuss?"): a direct meeting/call-booking request is a
+// close, not an open-ended discovery question, regardless of whether it
+// ends in "?". Three separate patterns rather than one combined regex --
+// "can/could/shall we X", "would you like to X", and "let's X" are
+// different sentence shapes and a single alternation across all three verb
+// forms silently requires the wrong grammar for two of them (e.g. "would
+// you like to we schedule..." is not valid English).
+function isDirectSchedulingClose(text){
+  const t = String(text || '');
+  if (/\b(can|could|shall)\s+we\s+(schedule|set up|book|arrange|find)\s+(?:a\s+)?(?:quick\s+|brief\s+)?(time|call|meeting|chat)\b/i.test(t)) return true;
+  if (/\bwould you like to\s+(schedule|set up|book|arrange|hop on|jump on)\b/i.test(t)) return true;
+  if (/\blet'?s\s+(schedule|set up|book|hop on|jump on)\b/i.test(t)) return true;
+  return false;
 }
 function isGroundedOpener(text, opp){
   const t = String(text || '').trim();
@@ -5004,6 +5038,16 @@ function isGroundedOpener(text, opp){
   // no framing exception applies here; a product mention anywhere in it is
   // always disqualifying.
   if(mentionsProductOrMerchOffer(t)) return false;
+  // Confirmed production case (Gallagher acquisition opener): "...Can we
+  // schedule a time to discuss?" contains a "?" so it satisfied
+  // isMeaningfulConversationQuestion() below, but a direct meeting/call
+  // request is a CLOSE, not the open-ended discovery question the
+  // Conversation Starter is supposed to be -- it progresses straight to
+  // booking time rather than inviting a reply. Three separate,
+  // grammatically-correct patterns (not one combined pattern) since "can/
+  // could/shall we X", "would you like to X", and "let's X" each take a
+  // different sentence structure.
+  if(isDirectSchedulingClose(t)) return false;
   // R7 follow-up: a Conversation Starter with no question at all is a
   // statement, not the open-ended question the permanent rule requires.
   if(!isMeaningfulConversationQuestion(t)) return false;
