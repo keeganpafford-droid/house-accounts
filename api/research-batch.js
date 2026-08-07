@@ -2825,6 +2825,17 @@ export default async function handler(req, res) {
     }
 
     let parsed = null;
+    // Sprint 1 controlled-beta policy (fail-closed, intentional): every
+    // signal callOpenAIWebSearch() could produce here would carry no
+    // discovered candidate to resolve against, so requireResolvedCandidate()
+    // rejects it with certainty (see the header comment above that function
+    // below). Before this policy, the candidates.length===0 branch still
+    // called callOpenAIWebSearch() and paid its full latency/cost for output
+    // that Sprint 1 already guarantees gets discarded -- synthesisMode below
+    // records which branch actually ran, distinct from providerMode (which
+    // describes DISCOVERY strategy, not synthesis outcome).
+    let synthesisMode = 'candidate-backed';
+    let fallbackSkippedReason = '';
     if (candidates.length) {
       const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
 
@@ -2960,36 +2971,33 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       }
       parsed = parseJsonLoose(rawText);
     } else {
-      // Fallback: ask OpenAI's web search to do the batch research in the same style as Google AI.
-      // Benchmark diagnostic (scale/research-runtime-benchmark): same
-      // pre-OpenAI-call checkpoint as the candidates.length branch above,
-      // for the no-candidates/web-search-fallback path.
+      // Controlled-beta trust-over-recall policy: candidate-backed discovery
+      // (Serper/Firecrawl) found nothing for this request, so there is no
+      // independently-sourced evidence for verifyCandidateCompanyGrounding()
+      // to check a synthesized signal against. callOpenAIWebSearch() is
+      // deliberately NOT called here -- it is left fully intact in this file
+      // (still callable, still useful for a future properly-scoped grounded
+      // sparse-account fallback) but calling it from THIS branch would only
+      // spend real OpenAI web-search latency and cost on output
+      // requireResolvedCandidate() is guaranteed to reject, since a
+      // candidate-less citation can never resolve to a discovered candidate.
+      // This is "research completed, no independently grounded opportunity
+      // found" -- not a claim that no opportunity exists, and not a
+      // provider/runtime failure -- so it proceeds through the exact same
+      // successful empty-result response a genuinely dry candidate-backed
+      // account already takes, just without the wasted call.
+      synthesisMode = 'no-candidate-evidence';
+      fallbackSkippedReason = 'no candidate-backed evidence discovered';
+      parsed = { signals: [] };
+      sourceCoverage['no-candidate-evidence'] = safeAccounts.length;
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
-        prospectDebugLog('OpenAI synthesis starting', {
+        prospectDebugLog('OpenAI synthesis skipped', {
           elapsedMs: Date.now() - startedAt,
           candidateCount: 0,
-          providerMode: 'openai-web-search'
+          synthesisMode,
+          reason: fallbackSkippedReason
         });
       }
-      try {
-        // Same deadline guard as the candidates.length branch above.
-        const remainingMs = REQUEST_DEADLINE_MS - (Date.now() - startedAt);
-        if (remainingMs < MIN_USEFUL_OPENAI_MS) {
-          throw new Error(`Research incomplete: only ${Math.max(0, Math.round(remainingMs))}ms of budget remained before signal synthesis -- not enough to run reliably. Please try again.`);
-        }
-        const result = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts, timeoutMs: Math.min(remainingMs, OPENAI_CALL_MAX_MS) });
-        rawText = result.text;
-        openaiUsage.calls += 1;
-        openaiUsage.inputTokens += result.usage.inputTokens;
-        openaiUsage.outputTokens += result.usage.outputTokens;
-        openaiUsage.totalTokens += result.usage.totalTokens;
-      } catch (err) {
-        openaiUsage.failures += 1;
-        logProviderUsageOnFailure();
-        throw err;
-      }
-      parsed = parseJsonLoose(rawText);
-      sourceCoverage['ai-web-search'] = safeAccounts.length;
     }
 
     const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
@@ -3225,6 +3233,8 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         elapsedMs: Date.now() - startedAt,
         model,
         providerMode,
+        synthesisMode,
+        fallbackSkippedReason,
         accountsReceived: accounts.length,
         accountsResearched: safeAccounts.length,
         rankedCandidates: candidates.length,

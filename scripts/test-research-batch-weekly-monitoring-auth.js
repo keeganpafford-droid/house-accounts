@@ -119,18 +119,37 @@ async function runWithFetchSpy(body, headers, fn){
 // ---------------------------------------------------------------------------
 // Hotfix test 10: a correct Bearer token permits the EXISTING
 // weekly-monitoring path end-to-end -- the real handler proceeds past the
-// new gate, calls OpenAI's web-search fallback (the real code path taken
-// when SERPER_API_KEY is not configured, which is production's actual
-// configuration for this mode today), and returns a normal 200 response
-// shaped exactly like before this hotfix.
-// ---------------------------------------------------------------------------
+// new gate and returns a normal 200 response shaped exactly like before
+// this hotfix.
+//
+// Sprint 1 controlled-beta policy note: this used to prove the OpenAI call
+// via SERPER_API_KEY left unset (candidates.length===0 -> the old
+// callOpenAIWebSearch() fallback). That fallback is no longer called from
+// the zero-candidate branch at all (see api/research-batch.js's
+// synthesisMode='no-candidate-evidence' policy) -- every real, currently
+// live path that reaches OpenAI now does so via the candidate-backed
+// branch, so this test configures SERPER_API_KEY and mocks a real
+// discovered candidate to keep proving "this hotfix's new auth gate doesn't
+// break the normal research call" against the code path that is actually
+// still live.
 {
   setBaseEnv();
   process.env.OPENAI_API_KEY = 'fake-openai-key';
+  process.env.SERPER_API_KEY = 'fake-serper-key';
   const { res, fetchCalls, calledUrls } = await runWithFetchSpy(
     { mode: 'weekly-monitoring', accounts: [{ name: 'Acme Co' }] },
     { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` },
     async (url) => {
+      if (String(url).includes('google.serper.dev')) {
+        return jsonResponse({
+          organic: [{
+            title: 'New facility expansion ribbon cutting announced 2026',
+            snippet: 'Acme Co held a ribbon cutting for a new facility expansion, announced 2026, trade show exhibitor booth.',
+            link: 'https://news.example.com/acme-co-facility',
+            date: '2026-01-01'
+          }]
+        });
+      }
       if (String(url) === 'https://api.openai.com/v1/responses') {
         return jsonResponse({ output_text: JSON.stringify({ signals: [] }) });
       }
@@ -140,7 +159,8 @@ async function runWithFetchSpy(body, headers, fn){
   assert(res.statusCode === 200, 'a correct Bearer token reaches normal orchestration and returns 200 (hotfix test 10)');
   assert(Array.isArray(res.body?.signals), 'the response has the existing shape (a signals array), unchanged by this hotfix (hotfix test 10)');
   assert(res.body?.diagnostics?.mode === 'weekly-monitoring', 'the response diagnostics confirm the weekly-monitoring path actually ran (hotfix test 10)');
-  assert(fetchCalls === 1 && calledUrls[0] === 'https://api.openai.com/v1/responses', 'an authorized weekly-monitoring request reaches the real OpenAI research call exactly as before this hotfix (hotfix test 10)');
+  assert(calledUrls.includes('https://api.openai.com/v1/responses'), 'an authorized weekly-monitoring request still reaches the real OpenAI research call exactly as before this hotfix, via the candidate-backed path (hotfix test 10)');
+  assert(res.body?.diagnostics?.synthesisMode === 'candidate-backed', `hotfix test 10 exercises the candidate-backed synthesis path, not the disabled no-candidate fallback (got ${res.body?.diagnostics?.synthesisMode})`);
 }
 
 // ---------------------------------------------------------------------------

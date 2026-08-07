@@ -34,6 +34,31 @@ function setBaseEnv(){
   delete process.env.BRAVE_SEARCH_API_KEY;
 }
 
+// Sprint 1 controlled-beta policy (candidates.length===0 -> no OpenAI call
+// at all, see api/research-batch.js) means a request with SERPER_API_KEY
+// unset -- and therefore zero candidates -- can never reach callOpenAIJson()
+// anymore. testSuccessfulRun()/testFailedRun() below exist specifically to
+// prove OpenAI usage/failure capture, which now requires the
+// candidates.length>0 branch to be exercised -- so both configure a real
+// SERPER_API_KEY and mock a single scoring-qualified Serper candidate,
+// rather than relying on the (now policy-changed) no-candidate fallback.
+let serperMockQueryCount = 0;
+function mockSerperCandidateFetch(url){
+  serperMockQueryCount += 1;
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      organic: [{
+        title: 'New facility expansion ribbon cutting announced 2026',
+        snippet: 'Acme Test Co held a ribbon cutting for a new facility expansion, announced 2026, trade show exhibitor booth.',
+        link: `https://news.example.com/acme-facility-${serperMockQueryCount}`,
+        date: '2026-01-01'
+      }]
+    })
+  };
+}
+
 // ---------------------------------------------------------------------------
 // openaiUsageFromResponse(): pure token-extraction unit tests.
 // ---------------------------------------------------------------------------
@@ -63,11 +88,14 @@ function setBaseEnv(){
 // ---------------------------------------------------------------------------
 async function testSuccessfulRun(){
   setBaseEnv();
+  process.env.SERPER_API_KEY = 'fake-serper-key';
+  serperMockQueryCount = 0;
   const realFetch = global.fetch;
   const realConsoleLog = console.log;
   const loggedLines = [];
   console.log = (...args) => { loggedLines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); };
   global.fetch = async (url) => {
+    if(String(url).includes('google.serper.dev')) return mockSerperCandidateFetch(url);
     if(String(url).includes('api.openai.com')){
       return {
         ok: true,
@@ -96,7 +124,7 @@ async function testSuccessfulRun(){
     assert(usage.openai.calls === 1, `successful run: openai.calls is 1 (got ${usage.openai.calls})`);
     assert(usage.openai.failures === 0, `successful run: openai.failures is 0 (got ${usage.openai.failures})`);
     assert(usage.openai.inputTokens === 4321 && usage.openai.outputTokens === 987 && usage.openai.totalTokens === 5308, `successful run: real OpenAI token counts are captured (got ${JSON.stringify(usage.openai)})`);
-    assert(usage.serper.configured === false && usage.serper.queries === 0, `successful run: serper reports not-configured/zero queries when SERPER_API_KEY is unset (got ${JSON.stringify(usage.serper)})`);
+    assert(usage.serper.configured === true && usage.serper.queries > 0, `successful run: serper reports configured/real queries now that this test exercises the candidate-backed branch (got ${JSON.stringify(usage.serper)})`);
     assert(usage.firecrawl.configured === false && usage.firecrawl.requests === 0, `successful run: firecrawl reports not-configured/zero requests when FIRECRAWL_API_KEY is unset (got ${JSON.stringify(usage.firecrawl)})`);
     assert(usage.run.accountsAttempted === 1, `successful run: accountsAttempted matches the request (got ${usage.run.accountsAttempted})`);
     assert(typeof usage.run.elapsedMs === 'number' && usage.run.elapsedMs >= 0, 'successful run: elapsedMs is a real non-negative number');
@@ -119,11 +147,14 @@ await testSuccessfulRun();
 // ---------------------------------------------------------------------------
 async function testFailedRun(){
   setBaseEnv();
+  process.env.SERPER_API_KEY = 'fake-serper-key';
+  serperMockQueryCount = 0;
   const realFetch = global.fetch;
   const realConsoleLog = console.log;
   const loggedLines = [];
   console.log = (...args) => { loggedLines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); };
   global.fetch = async (url) => {
+    if(String(url).includes('google.serper.dev')) return mockSerperCandidateFetch(url);
     if(String(url).includes('api.openai.com')){
       return { ok: false, status: 500, text: async () => 'OpenAI is having a bad day' };
     }
