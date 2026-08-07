@@ -656,6 +656,15 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Targeted search complete', {
         company: account.name,
+        // Benchmark diagnostic (scale/research-runtime-benchmark): elapsed
+        // time for THIS account's discovery stage, since a genuine Vercel
+        // platform timeout kills the invocation before any response body
+        // (including the diagnostics.searchDiagnostics[].elapsedMs this
+        // function already returns) can ever reach the client -- only a
+        // console.log line that executed before the kill survives. accountStartedAt
+        // is set at the top of this account's own worker in mapLimit(), a few
+        // ms after request start for a single-account request.
+        elapsedMs: Date.now() - accountStartedAt,
         queriesRun: queries,
         queryResultCounts: queriesWithResults,
         resultsReturned: raw.length,
@@ -2603,6 +2612,11 @@ export default async function handler(req, res) {
     const hasSearchProvider = serperConfigured;
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Request received', {
+        // Benchmark diagnostic (scale/research-runtime-benchmark): the t0
+        // anchor every other stage-timing elapsedMs in this request is
+        // measured against. Near-zero by construction; present for
+        // consistency with the other checkpoints below.
+        elapsedMs: Date.now() - startedAt,
         mode,
         accountsReceived: accounts.length,
         uniqueAccountsResearched: safeAccounts.length,
@@ -2627,6 +2641,16 @@ export default async function handler(req, res) {
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
         prospectDebugLog('Firecrawl enrichment complete', {
+          // Benchmark diagnostic (scale/research-runtime-benchmark): see the
+          // 'Request received' comment above. This is the last checkpoint
+          // BEFORE the single whole-batch OpenAI synthesis call -- if a
+          // timed-out invocation's logs show this line but never show
+          // 'OpenAI synthesis starting' or 'LLM opportunity parser complete'
+          // below, the time was spent between here and the OpenAI call
+          // actually being dispatched (prompt-string construction, which is
+          // synchronous and should be sub-millisecond) rather than inside
+          // OpenAI itself.
+          elapsedMs: Date.now() - startedAt,
           firecrawlCalled: !!process.env.FIRECRAWL_API_KEY && candidates.length > 0,
           candidatesSentToFirecrawl: candidates.length,
           scrapedCount: enriched.scrapedCount || 0
@@ -2717,6 +2741,22 @@ ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets and clean page content:
 ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query, intendedSignalFamily:c.intendedSignalFamily, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, entityVerification:c.entityVerification, sourceAuthorityScore:c.sourceAuthorityScore, freshnessScore:c.freshnessScore, candidateScore:c.candidateScore, eventFingerprint:c.eventFingerprint, sources:c.sources})), null, 2)}`;
+      // Benchmark diagnostic (scale/research-runtime-benchmark): the one
+      // genuine gap in existing checkpoint logging -- nothing previously
+      // marked the moment the single whole-batch OpenAI call actually
+      // starts. callOpenAIJson()/callOpenAIWebSearch() have no timeout and
+      // no retry (see api/research-batch.js's own architecture), so this is
+      // the single most likely place a request approaches the 58s ceiling.
+      // If a timed-out invocation's logs show this line but never show 'LLM
+      // opportunity parser complete', the OpenAI call itself is where the
+      // time went.
+      if (mode === 'prospect-intelligence' || mode === 'warm-account') {
+        prospectDebugLog('OpenAI synthesis starting', {
+          elapsedMs: Date.now() - startedAt,
+          candidateCount: candidates.length,
+          promptChars: synthesisPrompt.length
+        });
+      }
       try {
         const result = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
         rawText = result.text;
@@ -2732,6 +2772,16 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       parsed = parseJsonLoose(rawText);
     } else {
       // Fallback: ask OpenAI's web search to do the batch research in the same style as Google AI.
+      // Benchmark diagnostic (scale/research-runtime-benchmark): same
+      // pre-OpenAI-call checkpoint as the candidates.length branch above,
+      // for the no-candidates/web-search-fallback path.
+      if (mode === 'prospect-intelligence' || mode === 'warm-account') {
+        prospectDebugLog('OpenAI synthesis starting', {
+          elapsedMs: Date.now() - startedAt,
+          candidateCount: 0,
+          providerMode: 'openai-web-search'
+        });
+      }
       try {
         const result = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
         rawText = result.text;
@@ -2751,6 +2801,11 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('LLM opportunity parser complete', {
+        // Benchmark diagnostic (scale/research-runtime-benchmark): the gap
+        // between this and 'OpenAI synthesis starting' above is the OpenAI
+        // network call itself plus the (synchronous, cheap) parseJsonLoose()
+        // call -- effectively isolating OpenAI's own latency for this request.
+        elapsedMs: Date.now() - startedAt,
         providerMode,
         candidateCountPassedToParser: candidates.length,
         rawSignalsReturned: rawSignals.length,
