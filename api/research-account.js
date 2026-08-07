@@ -6,7 +6,8 @@ import {
   validateOpportunity,
   dedupeOpportunities,
   classifySignalFamily,
-  displaySignalType
+  displaySignalType,
+  verifyCandidateCompanyGrounding
 } from './signal-intelligence.js';
 
 // Vercel Serverless Function: verified public signal research.
@@ -1137,6 +1138,19 @@ function sourceBucket(result = {}) {
   return 'general';
 }
 
+// Signal-to-account evidence grounding (Sprint 1 extension): requires a
+// synthesized signal's sourceUrl to resolve to a candidate this run actually
+// discovered for the account, instead of the previous
+// `allCandidates.find(...) || {}` (which silently proceeded with an empty
+// evidence object on no match). This endpoint researches one account per
+// request, so -- unlike api/research-batch.js's equivalent
+// requireResolvedCandidate(), which also filters by accountName across a
+// multi-account candidate pool -- no accountName filter is needed here:
+// every entry in candidates already belongs to this request's one account.
+function resolveAccountCandidate(candidates, sourceUrl) {
+  if (!sourceUrl) return null;
+  return candidates.find(c => c.url === sourceUrl) || null;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -1225,15 +1239,33 @@ export default async function handler(req, res) {
     // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
     const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''));
 
+    // Signal-to-account evidence grounding (Sprint 1 extension -- see the
+    // header comment above the equivalent block in api/research-batch.js for
+    // the full reproduced-failure writeup). This endpoint only ever
+    // researches ONE account per request, so unlike research-batch.js's
+    // multi-account candidate pool, resolution here needs no accountName
+    // filter -- every entry in allCandidates already belongs to this
+    // account. It previously fell back to `{}` on a sourceUrl with no
+    // matching discovered candidate (never rejecting), and never checked
+    // that a resolved candidate's evidence actually named this company.
+    // verifyCandidateCompanyGrounding() (signal-intelligence.js, shared with
+    // api/research-batch.js) closes both gaps, scoped to the candidate's
+    // query-scoped title+snippet only -- never Firecrawl's pageContent.
     const normalizedSignals = [
       ...aiQualification.signals,
       ...acceptedSearchSignals
     ].map(signal => {
-      const candidate = allCandidates.find(c => c.url && c.url === signal.sourceUrl) || {};
-      const normalized = normalizeOpportunity(signal, { name: accountName }, candidate);
+      const candidate = resolveAccountCandidate(allCandidates, signal.sourceUrl);
+      const normalized = normalizeOpportunity(signal, { name: accountName }, candidate || {});
       const validation = validateOpportunity(normalized);
-      if (!validation.valid) {
-        console.warn('[Signal Intelligence] account opportunity rejected', { accountName, reasons: validation.reasons, title: normalized.signalTitle });
+      const groundingReasons = [];
+      if (!candidate) {
+        groundingReasons.push('source not matched to a discovered candidate');
+      } else if (!verifyCandidateCompanyGrounding(candidate, { name: accountName }).grounded) {
+        groundingReasons.push('company identity not confirmed in source evidence');
+      }
+      if (!validation.valid || groundingReasons.length) {
+        console.warn('[Signal Intelligence] account opportunity rejected', { accountName, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
         return null;
       }
       return normalized;

@@ -126,6 +126,79 @@ function entityMatch(candidate = {}, account = {}) {
   return { level: score >= 75 ? 'verified' : score >= 50 ? 'probable' : score >= 30 ? 'uncertain' : 'rejected', score, reasons };
 }
 
+// Signal-to-account evidence grounding (Sprint 1, shared by both live-research
+// endpoints -- api/research-batch.js's multi-account pipeline and
+// api/research-account.js's single-account pipeline). Reproduced production
+// failure: a Gallagher research request returned an opportunity whose
+// underlying evidence was actually about Avidia Bank. entityMatch() above
+// already provides a reliable full-phrase/normalized-form company check, but
+// on its own it cannot handle a company legitimately referred to by only its
+// most distinctive word (a surname or coined name, e.g. "Gallagher" for
+// "Arthur J. Gallagher & Co.") -- that requires a fallback, and the fallback
+// is exactly where an ungoverned implementation would risk false positives
+// on a bare generic industry word ("bank", "group", "insurance") shared
+// between two unrelated companies. GENERIC_COMPANY_WORDS bounds that risk to
+// a short, fixed list rather than a general stopword system.
+const GENERIC_COMPANY_WORDS = new Set([
+  'group', 'holdings', 'holding', 'company', 'companies', 'corporation', 'corp',
+  'incorporated', 'partners', 'partnership', 'services', 'solutions', 'systems',
+  'industries', 'enterprises', 'international', 'global', 'capital', 'financial',
+  'insurance', 'bank', 'banking', 'bancorp', 'trust', 'associates'
+]);
+
+// Uses normalizeCompany() (this module's own normalizer, the same one
+// entityMatch() uses for its own company-vs-source comparison) rather than a
+// second, independently-tuned normalizer, so a company name's distinctive
+// tokens are always derived under the identical stripping rules entityMatch()
+// itself already applied.
+function distinctiveCompanyTokens(companyName = '') {
+  return normalizeCompany(companyName)
+    .split(/\s+/)
+    .filter(token => token.length >= 4 && !GENERIC_COMPANY_WORDS.has(token));
+}
+
+// Narrow fallback for legitimate shortened/surname-only company references
+// that entityMatch()'s full-phrase check does not catch. Deliberately
+// ANY-token, not ALL-token -- a company legitimately referred to by only its
+// most distinctive word should still match. Tokens are pre-filtered to
+// length>=4 and not in the bounded generic-word list above specifically so
+// this cannot fire on a bare "bank"/"group" mention that merely happens to
+// share an industry-generic word with the account name (the reproduced
+// Avidia-Bank-generic-banking-text case).
+function hasDistinctiveNameFallbackMatch(companyName = '', text = '') {
+  const tokens = distinctiveCompanyTokens(companyName);
+  if (!tokens.length) return false;
+  const normalizedText = normalizeCompany(text);
+  if (!normalizedText) return false;
+  return tokens.some(token => new RegExp(`\\b${token}\\b`).test(normalizedText));
+}
+
+// Company-grounding check, scoped to ONLY the candidate's query-scoped
+// title+snippet -- never pageContent/rawContent (Firecrawl's full,
+// relevance-agnostic page scrape, which is where the reproduced Avidia
+// contamination actually lived). entityMatch() itself is reused unmodified;
+// only the object passed to it is scoped down to title+snippet+url.
+//
+// Explicit scope: this proves the candidate's query-scoped evidence
+// credibly identifies the requested company. It does NOT prove event-local
+// provenance -- a candidate whose title and snippet genuinely identify the
+// right company, but whose separately-fetched pageContent also contains an
+// unrelated company's story elsewhere on the same page, remains a residual
+// gap (see each endpoint's grounding regression tests). Closing that would
+// require a fuzzy event-local excerpt/fingerprint primitive this module does
+// not implement and this sprint does not build.
+function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
+  const scopedCandidate = { title: candidate.title || candidate.headline || '', snippet: candidate.snippet || '', url: candidate.url || '' };
+  const entity = entityMatch(scopedCandidate, account);
+  if (entity.level !== 'rejected') return { grounded: true, reasons: entity.reasons };
+  const companyName = account.name || account.companyName || '';
+  const scopedText = `${scopedCandidate.title} ${scopedCandidate.snippet}`;
+  if (hasDistinctiveNameFallbackMatch(companyName, scopedText)) {
+    return { grounded: true, reasons: ['distinctive company name matched in source'] };
+  }
+  return { grounded: false, reasons: entity.reasons };
+}
+
 function eventFingerprint(candidate = {}, familyOverride = '') {
   const text = `${candidate.title || ''} ${candidate.snippet || ''} ${candidate.rawContent || candidate.pageContent || ''}`;
   const family = familyOverride || candidate.signalFamily || classifySignalFamily(text, candidate.intendedSignalFamily);
@@ -996,7 +1069,8 @@ function dedupeByEventFingerprint(items = [], options = {}) {
 export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
-  entityMatch, eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
+  entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
+  eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
   findPublicationContextDate,
