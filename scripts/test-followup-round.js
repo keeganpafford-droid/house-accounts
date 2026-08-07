@@ -25,6 +25,10 @@ const dashboardHtml = readFileSync(new URL('../dashboard/index.html', import.met
 const dashboardLines = dashboardHtml.split('\n');
 const siteHeaderJs = readFileSync(new URL('../site-header.js', import.meta.url), 'utf8');
 const siteHeaderCss = readFileSync(new URL('../site-header.css', import.meta.url), 'utf8');
+// Scaling round: everResearched/activeCount moved server-side (see
+// api/monitoring-lists.js's loadLists()) since cachedLists no longer
+// carries a full .accounts array for listCard() to derive them from.
+const dashboardApiMonitoringListsSrc = readFileSync(new URL('../api/monitoring-lists.js', import.meta.url), 'utf8');
 
 function extractLines(label, startLine, endLine, expectedFirst){
   const slice = dashboardLines.slice(startLine - 1, endLine);
@@ -39,18 +43,26 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // Required tests 1-5: list-level research labels, active-account scoping,
 // disabled-while-running, and Delete Uploaded List staying separate.
 // ---------------------------------------------------------------------------
-const listCardSrc = extractLines('listCard', 10340, 10372, 'function listCard(list){');
+// Scaling round: listCard() no longer receives a full .accounts array to
+// derive everResearched/activeAccounts from client-side -- cachedLists now
+// holds upload SUMMARIES only. Both are now server-computed in
+// api/monitoring-lists.js's loadLists() (everResearched via a cheap
+// existence check, activeCount via Prefer: count=exact) and read directly
+// off the list object; the underlying required-test guarantees (labels,
+// active-only confirmation count) are proven against the new mechanism
+// instead.
+const listCardSrc = extractLines('listCard', 10488, 10519, 'function listCard(list){');
 assert(
-  /const everResearched = accounts\.some\(a => a\.lastResearchedAt\);/.test(listCardSrc),
-  'listCard() determines the list-level research label from whether ANY account in the list has ever been researched'
+  /const listResearchLabel = list\.everResearched \? 'Research Entire List Again' : 'Research Entire List';/.test(listCardSrc),
+  'required tests 1 & 2: never-researched lists show "Research Entire List", previously-researched lists show "Research Entire List Again" -- now driven by the server-computed list.everResearched'
 );
 assert(
-  /const listResearchLabel = everResearched \? 'Research Entire List Again' : 'Research Entire List';/.test(listCardSrc),
-  'required tests 1 & 2: never-researched lists show "Research Entire List", previously-researched lists show "Research Entire List Again"'
+  /everResearched:Array\.isArray\(researchedRows\)&&researchedRows\.length>0/.test(dashboardApiMonitoringListsSrc),
+  'required test 1 & 2 (server side): everResearched is computed from a real existence check against ha_accounts, not assumed'
 );
 assert(
-  /const activeAccounts = accounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(listCardSrc),
-  'required test 3: listCard() computes activeAccounts by excluding paused accounts (deleted accounts are never present in a scoped snapshot at all)'
+  /activeCount:Math\.max\(0,totalCount-pausedCount\)/.test(dashboardApiMonitoringListsSrc),
+  'required test 3: the server computes activeCount (total minus paused) via Prefer: count=exact, excluding paused accounts from the confirmation-dialog count without ever fetching the accounts themselves'
 );
 assert(
   /data-list-research-act="research" data-list-id="\$\{esc\(list\.id\)\}" data-list-name="\$\{esc\(list\.name\)\}"\$\{runActive\?' disabled':''\}/.test(listCardSrc),
@@ -83,7 +95,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 6254, 6422, 'async function researchListFromManageModal(listId){');
+const researchListSrc = extractLines('researchListFromManageModal', 6262, 6430, 'async function researchListFromManageModal(listId){');
 assert(
   /const activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -120,10 +132,14 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 10584, 10679, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines("handleListResearchClick", 10773, 10876, "async function handleListResearchClick(btn){");
+// Scaling round: the active-account count in the confirmation dialog now
+// comes from the server-computed list.activeCount (Prefer: count=exact) --
+// cachedLists no longer carries a full .accounts array to filter
+// client-side. See api/monitoring-lists.js's loadLists().
 assert(
-  /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeAccounts\.length\} account/.test(handleListResearchClickSrc),
-  'the confirmation dialog names the list and states its active-account count'
+  /showResearchConfirm\(\{[\s\S]{0,50}?title: `Research \$\{esc\(listName\)\}\?`,[\s\S]{0,300}?\$\{activeCount\} account/.test(handleListResearchClickSrc),
+  'the confirmation dialog names the list and states its server-computed active-account count'
 );
 assert(
   /This may take a few minutes/.test(handleListResearchClickSrc),
@@ -156,7 +172,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7260, 7355, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7268, 7363, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'
@@ -215,7 +231,7 @@ assert(
 // uploaded list, the upload-success panel stays visible throughout, and
 // post-research totals update without a manual refresh.
 // ---------------------------------------------------------------------------
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3621, 3726, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3629, 3734, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /fetch\(`\/api\/get-dashboard\?email=\$\{encodeURIComponent\(e\)\}&view=\$\{encodeURIComponent\(dashboardViewMode \|\| defaultDashboardView\(\)\)\}`/.test(fetchAggregateSrc),
   'required test 11: fetchAndRenderAggregateDashboard() calls the real /api/get-dashboard aggregate endpoint (every uploaded list the user owns), the exact same source loadSavedDashboard() has always used -- never a single-upload-scoped request'

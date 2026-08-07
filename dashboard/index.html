@@ -2003,6 +2003,14 @@
 .acct-mgr-run-banner{margin:10px 0 2px;padding:9px 12px;border-radius:8px;font-size:.84rem;font-weight:600;line-height:1.4;}
 .acct-mgr-run-banner-active{background:#EAF6F4;color:var(--ink);border-left:3px solid var(--radar);}
 .acct-mgr-run-banner-error{background:var(--danger-surface);color:var(--danger);border-left:3px solid var(--danger);}
+/* Scaling round: Manage Customer Accounts pagination -- search box and
+   Previous/Next pager, matching the existing .acct-mgr-* token set. */
+.acct-mgr-search-row{margin:10px 0 8px;}
+.acct-mgr-search-input{width:100%;max-width:320px;border:1px solid var(--line);border-radius:6px;padding:8px 12px;font-family:var(--body);font-size:.85rem;color:var(--ink);background:#fff;}
+.acct-mgr-search-input:focus-visible{outline:2px solid var(--radar);outline-offset:1px;}
+.acct-mgr-pager{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--line);}
+.acct-mgr-pager-label{color:var(--muted);font-size:.8rem;}
+.acct-mgr-pager-controls{display:flex;gap:8px;}
 
 /* ROUND 12, UX item 2 -- Recently Researched (above This Week's Priorities)
    and the shared "just landed here" highlight used by scrollToAccountResult(). */
@@ -10219,6 +10227,17 @@ else wireUploadSuccessStateControls();
  const fmt=d=>{if(!d)return '—';const x=new Date(d);return Number.isNaN(x.getTime())?'—':x.toLocaleDateString()};
  const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
  let cachedLists=[];
+ // Scaling round: Manage Customer Accounts pagination. cachedLists now
+ // holds upload SUMMARIES only (no .accounts array, no raw_data) --
+ // expandedUploadId/expandedPage hold the one currently-expanded upload's
+ // current page of accounts, fetched separately on demand. Only one upload
+ // is ever expanded at a time (a single variable, not a Set), so expanding
+ // a second upload naturally collapses the first. expandedPage shape:
+ // {uploadId, accounts, cursorHistory, currentCursor, nextCursor, hasMore,
+ // total, limit, search, loading, error}.
+ let expandedUploadId=null;
+ let expandedPage=null;
+ let acctSearchDebounceTimer=null;
  // Release blocker (post-Phase-2A review): this used HouseAuth.authHeaders()
  // -- a synchronous read of whatever token happened to be cached in
  // localStorage, with no expiry check -- so once the access token expired
@@ -10244,6 +10263,99 @@ else wireUploadSuccessStateControls();
      throw err;
    }
    return d;
+ }
+
+ // Scaling round: the "expand an upload" fetch -- GET /api/monitoring-lists
+ // with ?uploadId=/?cursor=/?q=, entirely separate from request('GET')'s
+ // upload-summary fetch above (never touches it, never touches
+ // cachedLists). Reuses the exact same auth-header attachment as request()
+ // rather than modifying that function's tested contract.
+ async function requestAccountPage(uploadId,{cursor,search}={}){
+   const headers = window.HouseAuth?.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+   if(!headers) throw new Error('Your session has expired. Please log in again.');
+   const params = new URLSearchParams({uploadId});
+   if(cursor) params.set('cursor', cursor);
+   if(search) params.set('q', search);
+   const r=await fetch(`/api/monitoring-lists?${params.toString()}`,{method:'GET',headers,cache:'no-store'});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok) throw new Error(d.error||'Failed to load accounts');
+   return d;
+ }
+
+ function emptyExpandedPage(uploadId,search=''){
+   return {uploadId,accounts:[],cursorHistory:[],currentCursor:null,nextCursor:null,hasMore:false,total:0,limit:50,search,loading:false,error:null};
+ }
+
+ // Single fetcher backing every accounts-page state change (expand, Next,
+ // Previous, search, and the quiet post-mutation/poll refresh below).
+ // quiet:true keeps the currently-rendered rows on screen while refetching
+ // (used for polling and after a mutation, so a background refresh never
+ // flashes a loading state over rows the user is looking at); the default
+ // (loud) mode shows a brief loading state, appropriate for a direct
+ // user-initiated action. Guards against a stale response landing after the
+ // user has since collapsed or switched to a different upload.
+ async function refreshExpandedPage({resetCursor=false,quiet=false}={}){
+   if(!expandedUploadId) return;
+   const uploadId = expandedUploadId;
+   const search = (expandedPage && expandedPage.search) || '';
+   const cursor = resetCursor ? null : ((expandedPage && expandedPage.currentCursor) || null);
+   if(!quiet){
+     expandedPage = {...(expandedPage||emptyExpandedPage(uploadId,search)), uploadId, search, currentCursor:cursor, loading:true, error:null};
+     renderManager();
+   }
+   try{
+     const d = await requestAccountPage(uploadId, {cursor, search});
+     if(expandedUploadId !== uploadId) return; // collapsed/switched while in flight
+     expandedPage = {
+       ...(expandedPage||emptyExpandedPage(uploadId,search)),
+       uploadId, search, currentCursor:cursor,
+       accounts: d.accounts||[],
+       nextCursor: (d.pageInfo && d.pageInfo.nextCursor) || null,
+       hasMore: !!(d.pageInfo && d.pageInfo.hasMore),
+       total: (d.pageInfo && typeof d.pageInfo.total==='number') ? d.pageInfo.total : 0,
+       limit: (d.pageInfo && d.pageInfo.limit) || 50,
+       loading:false, error:null
+     };
+   }catch(err){
+     if(expandedUploadId !== uploadId) return;
+     expandedPage = {...(expandedPage||emptyExpandedPage(uploadId,search)), loading:false, error:(err&&err.message)||'Failed to load accounts.'};
+   }
+   renderManager();
+ }
+
+ async function expandUpload(uploadId){
+   if(expandedUploadId === uploadId){ collapseUpload(); return; }
+   expandedUploadId = uploadId;
+   expandedPage = emptyExpandedPage(uploadId);
+   await refreshExpandedPage({resetCursor:true});
+ }
+ function collapseUpload(){
+   expandedUploadId = null;
+   expandedPage = null;
+   renderManager();
+ }
+ async function goToNextPage(){
+   if(!expandedPage || !expandedPage.hasMore || expandedPage.loading) return;
+   expandedPage.cursorHistory.push(expandedPage.currentCursor);
+   expandedPage.currentCursor = expandedPage.nextCursor;
+   await refreshExpandedPage();
+ }
+ async function goToPreviousPage(){
+   if(!expandedPage || !expandedPage.cursorHistory.length || expandedPage.loading) return;
+   expandedPage.currentCursor = expandedPage.cursorHistory.pop();
+   await refreshExpandedPage();
+ }
+ // Short debounce so search doesn't fire a request on every keystroke --
+ // only after typing pauses for 300ms. Cancelled/superseded if the user
+ // keeps typing, collapses, or switches uploads before it fires.
+ function scheduleSearchRefresh(uploadId, term){
+   if(acctSearchDebounceTimer) clearTimeout(acctSearchDebounceTimer);
+   acctSearchDebounceTimer = setTimeout(async () => {
+     acctSearchDebounceTimer = null;
+     if(expandedUploadId !== uploadId) return;
+     expandedPage = {...(expandedPage||emptyExpandedPage(uploadId)), search:term};
+     await refreshExpandedPage({resetCursor:true});
+   }, 300);
  }
 
  // Visual refinement: one compact branded row per account (name/meta,
@@ -10337,14 +10449,48 @@ else wireUploadSuccessStateControls();
  // server-owned researchRunState accountRow()/researchRunBanner() already
  // read is active, for the same reason an individual account's button is
  // disabled then -- the server only allows one run per list at a time.
+ // Scaling round: renders the currently-expanded upload's account list --
+ // search box, loading/error/empty states, one page of accountRow()s (never
+ // list.accounts, which no longer exists on the summary object), and
+ // Previous/Next pagination controls. Only called for the single upload
+ // matching expandedUploadId; listCard() below never calls this for a
+ // collapsed card. pageIndex (0-based) times the server-reported page size
+ // gives an accurate "Showing X-Y of N" range even though no absolute page
+ // number is tracked -- every prior page was necessarily a full page (you
+ // can only reach page N by having paged through N full ones first).
+ function renderExpandedSection(list){
+   const page = expandedPage;
+   if(!page || page.uploadId !== list.id) return '<div class="acct-mgr-empty">Loading accounts…</div>';
+   const searchBoxHtml = `<div class="acct-mgr-search-row"><input type="search" class="acct-mgr-search-input" placeholder="Search accounts in this list…" value="${esc(page.search||'')}" data-acct-search data-list-id="${esc(list.id)}" aria-label="Search accounts in ${esc(list.name)}"></div>`;
+   if(page.loading && !page.accounts.length){
+     return `${searchBoxHtml}<div class="acct-mgr-empty">Loading accounts…</div>`;
+   }
+   if(page.error){
+     return `${searchBoxHtml}<div class="acct-mgr-list-status is-error" role="alert">${esc(page.error)} <button type="button" class="btn btn-ghost btn-mini" data-acct-page-retry data-list-id="${esc(list.id)}">Try again</button></div>`;
+   }
+   if(!page.accounts.length){
+     const msg = page.search ? `No accounts match "${esc(page.search)}".` : 'No customer accounts in this list.';
+     return `${searchBoxHtml}<div class="acct-mgr-empty">${msg}</div>`;
+   }
+   const rowsHtml = page.accounts.map(a=>accountRow(list,a)).join('');
+   const pageIndex = page.cursorHistory.length;
+   const startIdx = pageIndex*(page.limit||50)+1;
+   const endIdx = startIdx+page.accounts.length-1;
+   const pagerHtml = `<div class="acct-mgr-pager">
+        <span class="acct-mgr-pager-label">Showing ${startIdx}–${endIdx} of ${page.total} account${page.total===1?'':'s'}</span>
+        <div class="acct-mgr-pager-controls">
+          <button type="button" class="acct-mgr-toggle" data-acct-page-prev data-list-id="${esc(list.id)}"${pageIndex===0?' disabled':''}>Previous</button>
+          <button type="button" class="acct-mgr-toggle" data-acct-page-next data-list-id="${esc(list.id)}"${page.hasMore?'':' disabled'}>Next</button>
+        </div>
+      </div>`;
+   return `${searchBoxHtml}<div${page.loading?' style="opacity:.6"':''}>${rowsHtml}</div>${pagerHtml}`;
+ }
  function listCard(list){
    const paused = list.status === 'paused';
-   const accounts = list.accounts || [];
-   const activeAccounts = accounts.filter(a => a.monitoringStatus !== 'paused');
-   const everResearched = accounts.some(a => a.lastResearchedAt);
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
-   const listResearchLabel = everResearched ? 'Research Entire List Again' : 'Research Entire List';
+   const listResearchLabel = list.everResearched ? 'Research Entire List Again' : 'Research Entire List';
+   const expanded = expandedUploadId === list.id;
    return `<section class="acct-mgr-list" data-list-id="${esc(list.id)}">
       <div class="acct-mgr-list-head">
         <div>
@@ -10352,6 +10498,7 @@ else wireUploadSuccessStateControls();
           <div class="acct-mgr-list-meta"><span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span>${list.companyCount} customer account${list.companyCount===1?'':'s'} · ${paused?'Monitoring paused':'Monitoring active'}</div>
         </div>
         <div class="acct-mgr-list-actions">
+          <button type="button" class="acct-mgr-toggle" data-list-expand-toggle data-list-id="${esc(list.id)}" aria-expanded="${expanded?'true':'false'}">${expanded?'Hide Accounts':'View Accounts'}</button>
           <button type="button" class="acct-mgr-toggle" data-list-act="${paused?'resume':'pause'}" data-list-id="${esc(list.id)}" data-list-name="${esc(list.name)}" aria-label="${paused?'Resume monitoring for '+esc(list.name):'Pause monitoring for '+esc(list.name)}">
             <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Resume List':'Pause List'}</span>
           </button>
@@ -10367,10 +10514,29 @@ else wireUploadSuccessStateControls();
       </div>
       ${researchRunBanner(list)}
       <div class="acct-mgr-list-status" data-list-status hidden></div>
-      <div>${(list.accounts||[]).map(a=>accountRow(list,a)).join('') || '<div class="acct-mgr-empty">No customer accounts in this list.</div>'}</div>
+      ${expanded ? renderExpandedSection(list) : ''}
     </section>`;
  }
- function renderManager(){const root=document.getElementById('accountManagerContent');if(!root)return;root.innerHTML=cachedLists.map(listCard).join('')||'<p class="acct-mgr-empty">No uploaded customer accounts found.</p>';}
+ // Scaling round: a debounced search refresh calls this mid-typing, and a
+ // full innerHTML replace would otherwise destroy and recreate the search
+ // <input> itself, dropping keyboard focus and cursor position out from
+ // under the user. Preserves and restores both across the replace whenever
+ // the element that had focus was the search box.
+ function renderManager(){
+   const root=document.getElementById('accountManagerContent');
+   if(!root)return;
+   const active=document.activeElement;
+   const wasSearchFocused=!!(active && active.matches && active.matches('[data-acct-search]'));
+   const selection=wasSearchFocused?{start:active.selectionStart,end:active.selectionEnd}:null;
+   root.innerHTML=cachedLists.map(listCard).join('')||'<p class="acct-mgr-empty">No uploaded customer accounts found.</p>';
+   if(wasSearchFocused){
+     const restored=root.querySelector('[data-acct-search]');
+     if(restored){
+       restored.focus({preventScroll:true});
+       if(selection) restored.setSelectionRange(selection.start, selection.end);
+     }
+   }
+ }
 
  // ROUND 12: bounded polling so a reopened/left-open modal picks up a run
  // that finishes (or fails) server-side without the user manually
@@ -10400,7 +10566,21 @@ else wireUploadSuccessStateControls();
    try{
      const d=await request('GET');
      cachedLists=d.lists?.customer||[];
-     renderManager();
+     // Scaling round: if the currently-expanded upload was deleted out from
+     // under us (by this tab or another), drop back to fully collapsed
+     // rather than rendering a page for an upload that no longer exists.
+     // Otherwise, quietly refresh its current page too (same cursor/search,
+     // no loading flash) so mutated rows/counts stay correct -- this is
+     // what every mutation handler's own `await load()` already relies on.
+     if(expandedUploadId && !cachedLists.some(l=>l.id===expandedUploadId)){
+       expandedUploadId=null;
+       expandedPage=null;
+     }
+     if(expandedUploadId){
+       await refreshExpandedPage({quiet:true});
+     }else{
+       renderManager();
+     }
    }catch(e){
      console.warn('Customer account management load failed',e);
    }
@@ -10419,6 +10599,13 @@ else wireUploadSuccessStateControls();
    document.getElementById('accountManagerModal').style.display='block';
    const closeBtn = document.getElementById('closeAccountManagerBtn');
    if(closeBtn) closeBtn.focus({preventScroll:true});
+   // Upload-summaries-loading state -- only on the very first open (nothing
+   // rendered yet), so a reopen shows the previous, still-useful render
+   // until load() replaces it, rather than a jarring blank flash every time.
+   if(!cachedLists.length){
+     const content = document.getElementById('accountManagerContent');
+     if(content) content.innerHTML = '<p class="acct-mgr-empty">Loading customer accounts…</p>';
+   }
    load();
  }
  function close(){
@@ -10522,9 +10709,11 @@ else wireUploadSuccessStateControls();
      // Patch this modal's own cached row in place (rather than a full
      // load()/re-render) so the row correctly shows "Research Again" and a
      // fresh "Last researched" date on the NEXT render, without wiping this
-     // success message off-screen the instant it appears.
-     const listEntry = cachedLists.find(l => l.id === listId);
-     const acctEntry = listEntry && (listEntry.accounts||[]).find(x => x.name === accountName);
+     // success message off-screen the instant it appears. Scaling round:
+     // cachedLists no longer carries .accounts -- the row lives in
+     // expandedPage.accounts (this list is necessarily the expanded one,
+     // since that's the only place a Research button is rendered from).
+     const acctEntry = expandedPage && expandedPage.uploadId === listId && (expandedPage.accounts||[]).find(x => x.name === accountName);
      if(acctEntry) acctEntry.lastResearchedAt = (fresh && fresh.lastResearchedAt) || new Date().toISOString();
      setRowStatus(row, 'success', signalCount
        ? `Research complete — ${signalCount} verified signal${signalCount===1?'':'s'} found.`
@@ -10584,11 +10773,14 @@ else wireUploadSuccessStateControls();
  async function handleListResearchClick(btn){
    const listId = btn.dataset.listId;
    const listName = btn.dataset.listName || 'this list';
+   // Scaling round: activeCount comes straight from the upload summary
+   // (server-computed via Prefer: count=exact) -- cachedLists no longer
+   // carries a full .accounts array to derive this from client-side.
    const listEntry = cachedLists.find(l => l.id === listId);
-   const activeAccounts = ((listEntry && listEntry.accounts) || []).filter(a => a.monitoringStatus !== 'paused');
+   const activeCount = (listEntry && listEntry.activeCount) || 0;
    const confirmed = await showResearchConfirm({
      title: `Research ${esc(listName)}?`,
-     bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeAccounts.length} account${activeAccounts.length===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
+     bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeCount} account${activeCount===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
      confirmLabel: 'Research Entire List'
    });
    if(!confirmed) return;
@@ -10885,6 +11077,20 @@ else wireUploadSuccessStateControls();
    const menuTrigger = e.target.closest('[data-menu-trigger]');
    if(menuTrigger){ toggleMenu(menuTrigger); return; }
 
+   // Scaling round: expand/collapse, Previous/Next, and search-error retry
+   // for the Manage Customer Accounts pagination UI. expandUpload() itself
+   // handles the "only one upload expanded at a time" rule (a single
+   // expandedUploadId variable) -- expanding a second upload naturally
+   // collapses whichever was open.
+   const expandToggle = e.target.closest('[data-list-expand-toggle]');
+   if(expandToggle){ closeAllMenus(); await expandUpload(expandToggle.dataset.listId); return; }
+   const pagePrev = e.target.closest('[data-acct-page-prev]');
+   if(pagePrev){ if(pagePrev.disabled) return; await goToPreviousPage(); return; }
+   const pageNext = e.target.closest('[data-acct-page-next]');
+   if(pageNext){ if(pageNext.disabled) return; await goToNextPage(); return; }
+   const pageRetry = e.target.closest('[data-acct-page-retry]');
+   if(pageRetry){ await refreshExpandedPage(); return; }
+
    const researchBtn = e.target.closest('[data-research-act="account"]');
    if(researchBtn){
      if(researchBtn.disabled) return;
@@ -10981,6 +11187,13 @@ else wireUploadSuccessStateControls();
  });
  document.addEventListener('keydown', e => { if(e.key === 'Escape') closeAllMenus(); });
  document.addEventListener('scroll', () => closeAllMenus(), true);
+ // Debounced, upload-scoped account search -- scheduleSearchRefresh() itself
+ // owns the 300ms debounce and the stale-response guard (see its comment).
+ document.addEventListener('input', e => {
+   const searchInput = e.target.closest('[data-acct-search]');
+   if(!searchInput) return;
+   scheduleSearchRefresh(searchInput.dataset.listId, searchInput.value);
+ });
  document.addEventListener('DOMContentLoaded',()=>{document.getElementById('manageCustomerAccountsBtn')?.addEventListener('click',open)});
 })();
 </script>

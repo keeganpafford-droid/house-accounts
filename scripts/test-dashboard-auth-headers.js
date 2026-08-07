@@ -103,11 +103,14 @@ function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
 // file -- extractFn()'s own signature/closing-brace checks are the actual
 // correctness guarantee, not these numbers.
 const EXTRACTED = {
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2482, 2492, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2555, 2572, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2586, 2611, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2633, 2643, {async: true}),
-  request: extractFn('request', 10230, 10247, {async: true})
+  // Scaling round: shifted by the pagination-rewrite's CSS insertion
+  // (~line 2006) and dashboard/index.html's Manage Customer Accounts
+  // additions further down -- bodies of these functions are unchanged.
+  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2490, 2500, {async: true}),
+  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2563, 2580, {async: true}),
+  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2594, 2619, {async: true}),
+  loadDashboardUsage: extractFn('loadDashboardUsage', 2641, 2651, {async: true}),
+  request: extractFn('request', 10249, 10266, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

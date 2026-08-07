@@ -70,13 +70,112 @@ async function loadResearchRunsByUpload(uploadIds, ids){
   }
   return map;
 }
+// ---------------------------------------------------------------------------
+// Scaling round: Manage Customer Accounts pagination. ha_accounts already
+// carries a UNIQUE (upload_id, account_name) constraint (see
+// ha_accounts_upload_account_name_key in supabase-schema.sql), so
+// account_name alone is already a sufficient, deterministic keyset cursor
+// within a given upload_id -- no new index or migration is needed. Counts
+// use PostgREST's `Prefer: count=exact` (a standard, zero-migration
+// feature) instead of ever downloading rows just to count them.
+// ---------------------------------------------------------------------------
+const ACCOUNTS_PAGE_DEFAULT_LIMIT=50;
+const ACCOUNTS_PAGE_MAX_LIMIT=100;
+
+// Same fetch machinery as sb(), but reads the exact result count from the
+// Content-Range response header instead of returning a parsed body -- lets
+// callers show "Showing 1-50 of 1,000" without ever transferring the rows
+// themselves. limit=0 keeps the response body itself empty.
+async function sbCount(path){
+  const {url,key}=env();
+  const sep=path.includes('?')?'&':'?';
+  const r=await fetch(`${url}/rest/v1/${path}${sep}limit=0`,{headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:'count=exact'}});
+  if(!r.ok){const t=await r.text().catch(()=>'');const err=new Error(`Supabase ${r.status}: ${t}`);err.status=r.status;err.fromSupabase=true;throw err}
+  const range=r.headers.get('content-range')||'';
+  const m=range.match(/\/(\d+)$/);
+  return m?Number(m[1]):0;
+}
+
+// Strips '%'/'_'/'*' from a user-supplied search term before it is ever
+// wrapped in an ilike.*...* filter -- '*' is PostgREST's own wildcard
+// delimiter and '%'/'_' are raw SQL LIKE wildcards; stripping them (rather
+// than attempting ILIKE ESCAPE-clause support PostgREST's simple filter
+// syntax doesn't expose) means a search term can never act as a wildcard
+// pattern of the caller's own choosing.
+function sanitizeSearchTerm(v){return clean(v).replace(/[%_*]/g,'').slice(0,120)}
+
+// Opaque keyset cursor -- literally the last-seen account_name, base64'd so
+// it isn't a plain, directly-editable string in the URL.
+function encodeCursor(accountName){return Buffer.from(String(accountName),'utf8').toString('base64')}
+function decodeCursor(raw){try{return Buffer.from(String(raw),'base64').toString('utf8')||null}catch{return null}}
+
+function accountListRow(a){return{id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false}}
+
+// Confirms the requested upload actually belongs to a user this ctx can see
+// -- same ownership-scoping shape as every other id=eq./user_id=in.() check
+// in this file -- before a single ha_accounts row is ever queried. Treats a
+// forged/foreign upload_id exactly like a non-existent one (404, never a
+// distinguishable 403), so a caller learns nothing about whether the id
+// belongs to someone else.
+async function assertOwnedUpload(ctx,uploadId){
+  const rows=await sb(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=${inFilter(ctx.userIds)}&select=id&limit=1`);
+  if(!Array.isArray(rows)||!rows.length){const e=new Error('Upload not found or not accessible.');e.status=404;throw e}
+}
+
+// One bounded, keyset-paginated, optionally-search-scoped page of a single
+// upload's accounts -- the ONLY place ha_accounts.raw_data is ever read for
+// the Manage Customer Accounts list view, and it never leaves this
+// function: accountListRow() extracts just the handful of derived display
+// fields (monitoring/research status, last-researched date, domain) that
+// otherwise have no dedicated column, and the raw blob itself is discarded
+// before the response is built.
+async function loadAccountPage(ctx,{uploadId,cursor,search,limit}){
+  await assertOwnedUpload(ctx,uploadId);
+  const pageSize=Math.min(Math.max(Number.isFinite(limit)?Math.trunc(limit):ACCOUNTS_PAGE_DEFAULT_LIMIT,1),ACCOUNTS_PAGE_MAX_LIMIT);
+  const term=sanitizeSearchTerm(search);
+  const scopeFilters=[`upload_id=eq.${encodeURIComponent(uploadId)}`];
+  if(term)scopeFilters.push(`account_name=ilike.${encodeURIComponent(`*${term}*`)}`);
+  const cursorName=cursor?decodeCursor(cursor):null;
+  const pageFilters=cursorName?[...scopeFilters,`account_name=gt.${encodeURIComponent(cursorName)}`]:scopeFilters;
+  // Over-fetch by one to learn hasMore without a second query -- the extra
+  // row (if present) is trimmed below and never rendered. total is always
+  // computed against scopeFilters (never pageFilters), so it reflects the
+  // whole matching set regardless of which page is being viewed.
+  const [rows,total]=await Promise.all([
+    sb(`ha_accounts?${pageFilters.join('&')}&select=id,upload_id,account_name,industry,raw_data,created_at&order=account_name.asc&limit=${pageSize+1}`),
+    sbCount(`ha_accounts?${scopeFilters.join('&')}`)
+  ]);
+  const list=Array.isArray(rows)?rows:[];
+  const hasMore=list.length>pageSize;
+  const page=hasMore?list.slice(0,pageSize):list;
+  const nextCursor=hasMore?encodeCursor(page[page.length-1].account_name):null;
+  return{accounts:page.map(accountListRow),pageInfo:{limit:pageSize,hasMore,nextCursor,total,search:term}};
+}
+
 async function loadLists(ctx){const ids=ctx.userIds.length?inFilter(ctx.userIds):'eq.__none__';const emails=ctx.emails.length?inFilter(ctx.emails):'eq.__none__';const [cu,pu]=await Promise.all([
  sb(`ha_uploads?user_id=${ids}&select=*&order=updated_at.desc&limit=200`),
  sb(`ha_prospect_uploads?user_email=${emails}&select=*&order=created_at.desc&limit=200`)
 ]);
  const customerUploadIds=(cu||[]).map(u=>u.id).filter(Boolean);
  const researchRunsByUpload=await loadResearchRunsByUpload(customerUploadIds, ids);
- const customer=[];for(const u of (cu||[])){const [ac,sg]=await Promise.all([sb(`ha_accounts?upload_id=eq.${encodeURIComponent(u.id)}&select=id,upload_id,account_name,industry,raw_data,created_at,updated_at&order=account_name.asc&limit=5000`),sb(`ha_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,first_seen_at&order=first_seen_at.desc&limit=1`)]);customer.push({id:u.id,type:'customer',name:u.upload_name||'Customer List',status:isPaused(u.stage)?'paused':'active',companyCount:(ac||[]).length,lastUpload:u.updated_at||u.created_at||'',lastScan:(sg||[])[0]?.first_seen_at||'',signalCount:(sg||[]).length,researchRunState:summarizeResearchRunState(researchRunsByUpload.get(u.id)),accounts:(ac||[]).map(a=>({id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false}))})}
+ // Scaling round: the modal-open summary never needs a single account row
+ // -- only counts, an "ever researched" flag, and the latest-signal marker
+ // -- so this is now a small, fixed number of tiny queries per upload
+ // (run in parallel ACROSS uploads too) instead of one query per upload
+ // that downloaded up to 5000 raw_data-laden rows. activeCount/pausedCount
+ // preserve the exact wording the "Research Entire List" confirmation
+ // dialog already relies on (client-side, unchanged) without ever fetching
+ // the accounts themselves.
+ const customer=await Promise.all((cu||[]).map(async u=>{
+   const uploadIdFilter=`ha_accounts?upload_id=eq.${encodeURIComponent(u.id)}`;
+   const [totalCount,pausedCount,researchedRows,sg]=await Promise.all([
+     sbCount(uploadIdFilter),
+     sbCount(`${uploadIdFilter}&raw_data->>monitoring_status=eq.paused`),
+     sb(`${uploadIdFilter}&raw_data->>last_researched_at=not.is.null&select=id&limit=1`),
+     sb(`ha_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,first_seen_at&order=first_seen_at.desc&limit=1`)
+   ]);
+   return{id:u.id,type:'customer',name:u.upload_name||'Customer List',status:isPaused(u.stage)?'paused':'active',companyCount:totalCount,activeCount:Math.max(0,totalCount-pausedCount),pausedCount,everResearched:Array.isArray(researchedRows)&&researchedRows.length>0,lastUpload:u.updated_at||u.created_at||'',lastScan:(sg||[])[0]?.first_seen_at||'',signalCount:(sg||[]).length,researchRunState:summarizeResearchRunState(researchRunsByUpload.get(u.id))};
+ }));
  const prospect=[];for(const u of (pu||[])){const [ac,sg]=await Promise.all([sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(u.id)}&select=id,company_name,last_scanned_at,status&limit=5000`),sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,created_at&order=created_at.desc&limit=5000`)]);const latest=(ac||[]).map(a=>a.last_scanned_at).filter(Boolean).sort().reverse()[0]||'';prospect.push({id:u.id,type:'prospect',name:u.filename||'Prospect List',status:isPaused(u.status)?'paused':'active',companyCount:(ac||[]).length,lastUpload:u.created_at||'',lastScan:latest,signalCount:(sg||[]).length,newSignalsThisWeek:(sg||[]).filter(s=>Date.now()-new Date(s.created_at||0).getTime()<=7*86400000).length})}
  return{customer,prospect}}
 async function patchList(type,id,action,name){if(type==='customer'){const payload=action==='rename'?{upload_name:clean(name),updated_at:new Date().toISOString()}:{stage:action==='pause'?'paused':'uploaded',updated_at:new Date().toISOString()};return sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(payload)})}const payload=action==='rename'?{filename:clean(name)}:{status:action==='pause'?'paused':'active'};await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(payload)});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status:action==='pause'?'paused':'active'})});}
@@ -168,7 +267,22 @@ async function deleteCustomerAccountViaSnapshot(account){
 }
 
 async function deleteList(type,id){if(type==='customer'){await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});return}await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
-export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){const lists=await loadLists(ctx);const activeCustomers=lists.customer.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedCustomers=lists.customer.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0),activeProspects=lists.prospect.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedProspects=lists.prospect.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0);return json(res,200,{ok:true,scope:ctx.canViewTeam?'organization':'user',role:ctx.role,lists,summary:{activeCustomers,pausedCustomers,activeProspects,pausedProspects,nextWeeklyScan:'Monday',monitoringStatus:(activeCustomers+activeProspects)>0?'Active':'No active lists'}})}if(req.method==='PATCH'){const{type,id,action,name}=req.body||{};if(type==='account'&&id&&['pause-account','resume-account','delete-account'].includes(action)){await patchCustomerAccount(ctx,id,action);return json(res,200,{ok:true})}if(!['customer','prospect'].includes(type)||!id||!['rename','pause','resume'].includes(action))return json(res,400,{error:'Invalid list update'});if(action==='rename'&&!clean(name))return json(res,400,{error:'List name is required'});await patchList(type,id,action,name);return json(res,200,{ok:true})}if(req.method==='DELETE'){const{type,id}=req.body||{};if(!['customer','prospect'].includes(type)||!id)return json(res,400,{error:'Invalid list delete'});await deleteList(type,id);return json(res,200,{ok:true})}return json(res,405,{error:'Method not allowed'})}catch(e){console.error('[Monitoring Lists]',e);
+export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){
+  // Scaling round: a GET carrying ?uploadId= is a request for one bounded,
+  // keyset-paginated (optionally search-scoped) page of that upload's
+  // accounts -- the "expand an upload" fetch -- entirely separate from the
+  // upload-summary fetch below, and independently authorization-checked
+  // (assertOwnedUpload) on every call rather than trusting the caller's own
+  // uploadId. ?cursor=/?q=/?limit= are otherwise-untrusted input: cursor is
+  // just an opaque account_name, q is sanitized before use, and limit is
+  // clamped -- see loadAccountPage()'s own comments.
+  const requestedUploadId=clean(req.query?.uploadId||'');
+  if(requestedUploadId){
+    const limitRaw=Number(req.query?.limit);
+    const page=await loadAccountPage(ctx,{uploadId:requestedUploadId,cursor:clean(req.query?.cursor||'')||null,search:req.query?.q||'',limit:limitRaw});
+    return json(res,200,{ok:true,uploadId:requestedUploadId,...page});
+  }
+  const lists=await loadLists(ctx);const activeCustomers=lists.customer.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedCustomers=lists.customer.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0),activeProspects=lists.prospect.filter(x=>x.status==='active').reduce((n,x)=>n+x.companyCount,0),pausedProspects=lists.prospect.filter(x=>x.status==='paused').reduce((n,x)=>n+x.companyCount,0);return json(res,200,{ok:true,scope:ctx.canViewTeam?'organization':'user',role:ctx.role,lists,summary:{activeCustomers,pausedCustomers,activeProspects,pausedProspects,nextWeeklyScan:'Monday',monitoringStatus:(activeCustomers+activeProspects)>0?'Active':'No active lists'}})}if(req.method==='PATCH'){const{type,id,action,name}=req.body||{};if(type==='account'&&id&&['pause-account','resume-account','delete-account'].includes(action)){await patchCustomerAccount(ctx,id,action);return json(res,200,{ok:true})}if(!['customer','prospect'].includes(type)||!id||!['rename','pause','resume'].includes(action))return json(res,400,{error:'Invalid list update'});if(action==='rename'&&!clean(name))return json(res,400,{error:'List name is required'});await patchList(type,id,action,name);return json(res,200,{ok:true})}if(req.method==='DELETE'){const{type,id}=req.body||{};if(!['customer','prospect'].includes(type)||!id)return json(res,400,{error:'Invalid list delete'});await deleteList(type,id);return json(res,200,{ok:true})}return json(res,405,{error:'Method not allowed'})}catch(e){console.error('[Monitoring Lists]',e);
   // ROUND 13 fix: e.fromSupabase (set only inside sb() -- see its own
   // comment) means NO application code chose this status; it is whatever
   // raw HTTP status Supabase/PostgREST happened to return for some
