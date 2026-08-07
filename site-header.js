@@ -20,7 +20,12 @@
     // single biggest cause of "confused about how to get data in."
     importGuidesNavigation:true,
     customerSuccessNavigation:false,
-    comingSoonNavigation:false,
+    // Paid-beta-readiness sprint: renamed from comingSoonNavigation, which
+    // was defined here but never actually consulted anywhere -- the old
+    // /coming-soon page it would have gated was orphaned (self-referencing
+    // nav only, no real entry point). Restored as the What's New page
+    // (/whats-new.html), now actually wired into the Help dropdown below.
+    whatsNewNavigation:true,
     betaProgramNavigation:false,
     integrations:false
   });
@@ -161,6 +166,7 @@
                       <a role="menuitem" href="/dashboard/#restart-tour">Restart Product Tour</a>
                       <a role="menuitem" href="/export-guides/#need-help">Export Help</a>
                       <a role="menuitem" href="/export-guides/#troubleshooting">Upload Troubleshooting</a>
+                      ${MVP_FEATURES.whatsNewNavigation ? `<a role="menuitem" href="/whats-new.html">What's New</a>` : ''}
                       <a role="menuitem" href="/contact.html">Contact / Feedback</a>
                     </div>
                    </div><a class="ha-action-link ha-cta" id="haAddCustomerDataCta" href="${ADD_CUSTOMER_DATA_HREF}">Add Customer Data</a><a class="ha-action-link ha-secondary${isActive({match:['/settings','/settings.html']})?' is-active':''}" href="/settings.html">Settings</a><button class="ha-action-link" type="button" data-ha-logout>Sign Out</button>`

@@ -400,9 +400,17 @@ function asBusinessOpportunity(opp){
   const age = sandbox.formatSignalAge(noRealDateOpp);
   assert(age === '', `required test 12/13: formatSignalAge() returns no age line at all (never "Detected today") when only discovery timestamps are present and no real signalDate/lastActivityDate/orderDate exists (got "${age}")`);
 
+  // Preview QA hygiene: derive the expected day count from real elapsed
+  // wall-clock time (matching what formatSignalAge() itself computes off
+  // Date.now()) rather than a value hardcoded against this file's fixed
+  // fixture-only NOW -- daysAgo(5) is 5 days before NOW, but the REAL
+  // elapsed time between that date-only string and the actual moment this
+  // suite runs can be off by a day depending on how far NOW itself has
+  // drifted from the real calendar date.
   const realDateOpp = { signalDate: daysAgo(5) };
   const realAge = sandbox.formatSignalAge(realDateOpp);
-  assert(/Dated 5 days ago/.test(realAge), `formatSignalAge() still correctly reports age from a real date, using the Preview-QA-clarified "Dated" wording (got "${realAge}")`);
+  const realElapsedDays = Math.round((Date.now() - new Date(daysAgo(5) + 'T00:00:00Z').getTime()) / 86400000);
+  assert(new RegExp(`Dated ${realElapsedDays} days? ago`).test(realAge), `formatSignalAge() still correctly reports age from a real date, using the Preview-QA-clarified "Dated" wording (got "${realAge}", expected ~${realElapsedDays} days ago)`);
 }
 
 // ---------------------------------------------------------------------------
