@@ -43,6 +43,13 @@ function friendlyPageName(pathname){
   return PAGE_NAMES[pathname] || pathname || '';
 }
 
+// Same lightweight pattern already used elsewhere in this codebase (see
+// dashboard/index.html and signup-form.js) -- good enough to reject
+// obviously-malformed values before they're ever used as an email header.
+function isValidEmail(value){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function env(){
   const rawUrl = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -103,37 +110,55 @@ async function resolveAuthenticatedIdentity(req){
   }
 }
 
+function diagRow(label, value){
+  if(!value) return '';
+  return `<p style="margin:0 0 4px;text-transform:uppercase;letter-spacing:.04em;font-size:11px;font-weight:700;color:#5B6B82;">${escapeHtml(label)}</p><p style="margin:0 0 14px;font-size:14px;">${escapeHtml(value)}</p>`;
+}
+
 async function sendFeedbackEmail({type, message, email, organizationName, currentPage, timestamp, browser}){
   const key = process.env.RESEND_API_KEY;
   if(!key) return {skipped: true, reason: 'Missing RESEND_API_KEY'};
 
+  // The From address never changes -- sending "from" a customer's own
+  // address would break SPF/DMARC. Instead a verified/validated submitter
+  // email is used only as the Reply-To header, so clicking Reply in an
+  // inbox addresses the customer directly.
   const from = process.env.ALERTS_FROM_EMAIL || 'House Accounts <alerts@houseaccounts.ai>';
   const to = process.env.FEEDBACK_TO_EMAIL || 'hello@houseaccounts.ai';
   const label = friendlyType(type);
   const subject = `House Accounts Beta ${label}`;
   const pageLabel = friendlyPageName(currentPage);
+  const submitterLabel = email || 'Not provided';
   // Diagnostic context is rendered in its own labeled block, visually and
-  // structurally separated from the customer's own message below it.
+  // structurally separated from the customer's own message below it. The
+  // submitter identity leads the block so it's never buried under lower-
+  // priority metadata like browser/page.
   const html = `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#17375E;">
       <h2 style="margin:0 0 16px;">New ${escapeHtml(label)}</h2>
       <div style="padding:14px 16px;border:1px solid #D8DEE9;border-radius:8px;background:#EEF3F8;margin-bottom:18px;">
-        <p style="margin:0 0 8px;font-weight:700;">Diagnostic context</p>
-        <p style="margin:4px 0;"><strong>From:</strong> ${email ? escapeHtml(email) : 'Not signed in'}</p>
-        ${organizationName ? `<p style="margin:4px 0;"><strong>Workspace:</strong> ${escapeHtml(organizationName)}</p>` : ''}
-        ${pageLabel ? `<p style="margin:4px 0;"><strong>Page:</strong> ${escapeHtml(pageLabel)}</p>` : ''}
-        ${browser ? `<p style="margin:4px 0;"><strong>Browser:</strong> ${escapeHtml(browser)}</p>` : ''}
-        <p style="margin:4px 0;"><strong>Submitted:</strong> ${escapeHtml(timestamp)}</p>
+        <p style="margin:0 0 4px;text-transform:uppercase;letter-spacing:.04em;font-size:11px;font-weight:700;color:#5B6B82;">Submitted by</p>
+        <p style="margin:0 0 14px;font-size:15px;font-weight:700;">${escapeHtml(submitterLabel)}</p>
+        ${diagRow('Workspace', organizationName)}
+        ${diagRow('Submitted', timestamp)}
+        ${diagRow('Page', pageLabel)}
+        ${diagRow('Browser', browser)}
       </div>
       <p style="margin:0 0 8px;font-weight:700;">Message</p>
       <div style="padding:16px;border:1px solid #D8DEE9;border-radius:8px;background:#F7F8FA;white-space:pre-wrap;">${escapeHtml(message)}</div>
     </div>
   `;
 
+  const payload = { from, to, subject, html };
+  // Only ever a verified (authenticated) or well-formed (signed-out,
+  // client-supplied) address -- never an unvalidated value that could
+  // become a malformed or spoofable email header.
+  if(email && isValidEmail(email)) payload.reply_to = email;
+
   const resp = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from, to, subject, html })
+    body: JSON.stringify(payload)
   });
 
   const data = await resp.json().catch(() => ({}));

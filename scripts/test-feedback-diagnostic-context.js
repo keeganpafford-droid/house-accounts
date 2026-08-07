@@ -125,9 +125,21 @@ function createFetchMock(){
 function resendCall(fetchImpl){
   return fetchImpl.calls.find(c => c.url === 'https://api.resend.com/emails');
 }
-function resendHtml(fetchImpl){
+function resendPayload(fetchImpl){
   const call = resendCall(fetchImpl);
-  return call ? JSON.parse(call.body).html : '';
+  return call ? JSON.parse(call.body) : {};
+}
+function resendHtml(fetchImpl){
+  return resendPayload(fetchImpl).html || '';
+}
+// Extracts the value rendered under a stacked "Label" / value pair (the
+// current diagRow()/"Submitted by" markup in api/feedback.js), rather than
+// the old inline "<strong>Label:</strong> value" format.
+function diagValue(html, label){
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('>' + escaped + '</p>\\s*<p[^>]*>([^<]*)</p>');
+  const m = html.match(re);
+  return m ? m[1] : null;
 }
 
 function fakeReq({token, body = {}} = {}){
@@ -199,7 +211,7 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     const html = resendHtml(fetchImpl);
-    assert(html.includes('<strong>Page:</strong> Dashboard'), `4) current page is captured and rendered with a friendly label (html snippet: ${html.match(/<strong>Page:[^<]*<\/strong>[^<]*/) || 'not found'})`);
+    assert(diagValue(html, 'Page') === 'Dashboard', `4) current page is captured and rendered with a friendly label (got "${diagValue(html, 'Page')}")`);
   }
 
   // =========================================================================
@@ -212,7 +224,7 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     const html = resendHtml(fetchImpl);
-    assert(html.includes('<strong>Browser:</strong> Chrome on Windows'), '5) browser context is captured and rendered in the diagnostic block');
+    assert(diagValue(html, 'Browser') === 'Chrome on Windows', `5) browser context is captured and rendered in the diagnostic block (got "${diagValue(html, 'Browser')}")`);
   }
 
   // =========================================================================
@@ -235,11 +247,15 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     const html = resendHtml(fetchImpl);
+    const payload = resendPayload(fetchImpl);
     assert(res._status === 200 && res._body?.success === true, '6) authenticated submission succeeds');
-    assert(html.includes(`<strong>From:</strong> ${FIXTURES.emailMember}`), `6) the server-resolved, token-verified email is used (html: ${html.match(/<strong>From:[^<]*<\/strong>[^<]*/)})`);
-    assert(html.includes(`<strong>Workspace:</strong> ${FIXTURES.orgName}`), `6) the server-resolved workspace/organization name is included (html: ${html.match(/<strong>Workspace:[^<]*<\/strong>[^<]*/)})`);
-    assert(!html.includes('attacker@evil.example'), '6) a client-supplied, spoofed email is never trusted or shown');
-    assert(!html.includes('Spoofed Org'), '6) a client-supplied, spoofed organization name is never trusted or shown');
+    assert(diagValue(html, 'Submitted by') === FIXTURES.emailMember, `6/7) the server-resolved, token-verified email is prominently shown as "Submitted by" (got "${diagValue(html, 'Submitted by')}")`);
+    assert(diagValue(html, 'Workspace') === FIXTURES.orgName, `6) the server-resolved workspace/organization name is included (got "${diagValue(html, 'Workspace')}")`);
+    assert(!html.includes('attacker@evil.example'), '6/9) a client-supplied, spoofed email is never trusted or shown');
+    assert(!html.includes('Spoofed Org'), '6/9) a client-supplied, spoofed organization name is never trusted or shown');
+    assert(payload.reply_to === FIXTURES.emailMember, `8) Reply-To is set to the verified, server-resolved email (got "${payload.reply_to}")`);
+    assert(payload.reply_to !== 'attacker@evil.example', '9) a spoofed client-supplied email can never become Reply-To, overriding the verified identity');
+    assert(payload.from === 'House Accounts <alerts@houseaccounts.ai>', `13) the From address remains alerts@houseaccounts.ai regardless of submitter identity (got "${payload.from}")`);
   }
 
   // Authenticated but no organization -- Workspace line simply omitted.
@@ -250,8 +266,8 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     const html = resendHtml(fetchImpl);
-    assert(html.includes(`<strong>From:</strong> ${FIXTURES.emailNoOrg}`), '6b) an authenticated user with no organization still gets their resolved email shown');
-    assert(!html.includes('<strong>Workspace:</strong>'), '6b) no Workspace line is rendered when the user has no organization');
+    assert(diagValue(html, 'Submitted by') === FIXTURES.emailNoOrg, '6b) an authenticated user with no organization still gets their resolved email shown');
+    assert(diagValue(html, 'Workspace') === null, '6b) no Workspace row is rendered when the user has no organization');
   }
 
   // =========================================================================
@@ -270,7 +286,9 @@ async function run(){
     assert(res._status === 200 && res._body?.success === true, '7) signed-out submission (no token) succeeds');
     assert(!fetchImpl.calls.some(c => c.url.includes('/auth/v1/user')), '7) no auth verification call is made when no token is present');
     const html = resendHtml(fetchImpl);
-    assert(html.includes('<strong>From:</strong> visitor@example.com'), '7) a signed-out visitor\'s self-reported email is used as a fallback since no trusted identity exists');
+    const payload = resendPayload(fetchImpl);
+    assert(diagValue(html, 'Submitted by') === 'visitor@example.com', '7) a signed-out visitor\'s self-reported email is used as a fallback since no trusted identity exists');
+    assert(payload.reply_to === 'visitor@example.com', '10) a valid signed-out-supplied email becomes the Reply-To address');
   }
 
   // Invalid/expired token -- fails closed to "treated as unauthenticated",
@@ -283,7 +301,7 @@ async function run(){
     await handler(req, res);
     assert(res._status === 200 && res._body?.success === true, '7b) an invalid/expired token fails closed to unauthenticated rather than blocking the submission');
     const html = resendHtml(fetchImpl);
-    assert(html.includes('<strong>From:</strong> fallback@example.com'), '7b) falls back to the client-supplied email when the token cannot be verified');
+    assert(diagValue(html, 'Submitted by') === 'fallback@example.com', '7b) falls back to the client-supplied email when the token cannot be verified');
   }
 
   // Authenticated (Supabase accepts the token) but no matching ha_users row
@@ -296,7 +314,37 @@ async function run(){
     await handler(req, res);
     assert(res._status === 200 && res._body?.success === true, '7c) an authenticated Supabase user with no ha_users row still submits successfully');
     const html = resendHtml(fetchImpl);
-    assert(html.includes(`<strong>From:</strong> ${FIXTURES.emailOrphan}`), '7c) falls back to the verified Supabase Auth email when no ha_users row exists');
+    assert(diagValue(html, 'Submitted by') === FIXTURES.emailOrphan, '7c) falls back to the verified Supabase Auth email when no ha_users row exists');
+  }
+
+  // =========================================================================
+  // 12. Invalid Reply-To values are never sent to Resend -- a malformed,
+  //     client-supplied signed-out email is shown for transparency (since
+  //     it's what the visitor typed) but never used as a Reply-To header.
+  // =========================================================================
+  {
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({body: {type: 'Feedback', message: 'Malformed email test.', email: 'not-a-valid-email'}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 200 && res._body?.success === true, '12) submission with a malformed email still succeeds');
+    const payload = resendPayload(fetchImpl);
+    assert(!('reply_to' in payload), `12) an invalid email value is never sent as Reply-To (got payload.reply_to=${JSON.stringify(payload.reply_to)})`);
+  }
+
+  // 11. Missing signed-out email does not break submission, and no
+  //     Reply-To is set (there is nothing valid to reply to).
+  {
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({body: {type: 'Feedback', message: 'No email provided at all.'}});
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 200 && res._body?.success === true, '11) a signed-out submission with no email at all still succeeds');
+    const payload = resendPayload(fetchImpl);
+    assert(!('reply_to' in payload), '11/12) no Reply-To header is set when no replyable email exists');
+    assert(diagValue(resendHtml(fetchImpl), 'Submitted by') === 'Not provided', '11) "Submitted by: Not provided" is shown when no replyable email exists');
   }
 
   // =========================================================================
@@ -313,7 +361,7 @@ async function run(){
     assert(res._status === 200 && res._body?.success === true, `8) a submission with only a message (no diagnostic fields at all) still succeeds (got ${res._status} ${JSON.stringify(res._body)})`);
     const html = resendHtml(fetchImpl);
     assert(html.includes('New Feedback'), '8) missing type defaults to plain Feedback');
-    assert(html.includes('Not signed in'), '8) missing/absent identity renders as "Not signed in" rather than breaking the template');
+    assert(diagValue(html, 'Submitted by') === 'Not provided', '8) missing/absent identity renders as "Not provided" rather than breaking the template');
   }
 
   // Missing message is still rejected (unchanged pre-existing validation).
@@ -375,12 +423,14 @@ async function run(){
     const res = fakeRes();
     await handler(req, res);
     const html = resendHtml(fetchImpl);
-    const diagnosticIdx = html.indexOf('Diagnostic context');
+    const submittedByIdx = html.indexOf('>Submitted by<');
+    const pageIdx = html.indexOf('>Page<');
+    const browserIdx = html.indexOf('>Browser<');
     const messageHeadingIdx = html.indexOf('>Message<');
     const messageBodyIdx = html.indexOf('DISTINCTIVE_CUSTOMER_MESSAGE_TEXT');
-    assert(diagnosticIdx >= 0, '10) a distinct "Diagnostic context" heading exists');
+    assert(submittedByIdx >= 0, '10/14) a distinct "Submitted by" diagnostic field exists, leading the diagnostic block');
     assert(messageHeadingIdx >= 0, '10) a distinct "Message" heading exists');
-    assert(diagnosticIdx < messageHeadingIdx && messageHeadingIdx < messageBodyIdx, '10) diagnostic context is rendered before, and visually separated from, the customer\'s own message');
+    assert(submittedByIdx < pageIdx && pageIdx < browserIdx && browserIdx < messageHeadingIdx && messageHeadingIdx < messageBodyIdx, '10/14) diagnostic context (submitter identity, page, browser) is rendered before, and visually separated from, the customer\'s own message');
   }
 
   // =========================================================================
@@ -407,8 +457,14 @@ async function run(){
     assert(/data-feedback-type="Feedback"/.test(contact), '11) the plain Feedback form is still present');
     assert(/data-feedback-type="Bug"/.test(contact), '11) the Bug report form is still present');
     assert(/data-feedback-type="Feature Request"/.test(contact), '11) the Feature Request form is still present');
-    assert(/Thanks — your feedback was submitted\./.test(contact), '11) the original success alert() copy is unchanged');
-    assert(/your feedback could not be submitted/.test(contact), '11) the original error alert() copy is unchanged');
+    {
+      const scriptMatch = contact.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/);
+      const scriptWithoutComments = (scriptMatch ? scriptMatch[1] : '').replace(/\/\/[^\n]*/g, '');
+      assert(!/\balert\s*\(/.test(scriptWithoutComments), '1-3) alert()/window.alert() is never actually called anywhere in contact.html\'s script (comments referencing it by name are fine)');
+    }
+    assert(/class="form-status"/.test(contact), 'a branded .form-status panel exists in the markup for each form');
+    assert(/So we can reply if needed\./.test(contact), 'the optional signed-out email field carries the required helper text');
+    assert(/type="email"/.test(contact), 'an optional email input is present for signed-out submitters');
     assert(/class="diagnostic-note"/.test(contact) && /basic context like your current page and browser/.test(contact), '11) a concise, non-alarming diagnostic-context transparency note is present near the forms');
     assert(!/technical bug report|stack trace|error code|debug log/i.test(contact.replace(/<!--[\s\S]*?-->/g, '')), '11) the page still does not read like a technical bug reporter');
     assert(/window\.location\.pathname/.test(contact), '11) currentPage is still captured as a pathname only, never a full URL with query string');
