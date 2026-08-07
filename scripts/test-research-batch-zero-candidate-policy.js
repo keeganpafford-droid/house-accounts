@@ -87,8 +87,42 @@ async function testZeroCandidateSkipsWebSearchFallback(){
   assert(diag.synthesisMode === 'no-candidate-evidence', `3) diagnostics.synthesisMode reports 'no-candidate-evidence' (got ${diag.synthesisMode})`);
   assert(diag.fallbackSkippedReason === 'no candidate-backed evidence discovered', `3) diagnostics.fallbackSkippedReason is the exact agreed wording (got ${JSON.stringify(diag.fallbackSkippedReason)})`);
   assert(diag.rankedCandidates === 0, `3) diagnostics.rankedCandidates confirms zero candidates were the actual cause (got ${diag.rankedCandidates})`);
+  assert(diag.providerMode !== 'openai-web-search', `2) diagnostics.providerMode never claims 'openai-web-search' when no such call occurred (got ${diag.providerMode})`);
 }
 await testZeroCandidateSkipsWebSearchFallback();
+
+// ---------------------------------------------------------------------------
+// Case 1b: no search provider configured at all (SERPER_API_KEY unset) --
+// the exact scenario that exposed the stale providerMode default. Before
+// the diagnostics fix, providerMode defaulted to 'openai-web-search' because
+// this branch always used to actually call it; now it must not claim a
+// provider call that never happens.
+// ---------------------------------------------------------------------------
+async function testNoSearchProviderDiagnosticsAreTruthful(){
+  setBaseEnv();
+  delete process.env.SERPER_API_KEY;
+  const realFetch = global.fetch;
+  let anyFetchCalled = false;
+  global.fetch = async (url) => {
+    anyFetchCalled = true;
+    throw new Error(`unexpected fetch call with no search provider configured: ${url}`);
+  };
+  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'No Provider Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
+  const res = makeRes();
+  try {
+    await handler(req, res);
+  } finally {
+    global.fetch = realFetch;
+  }
+
+  assert(anyFetchCalled === false, '1) zero fetch calls of any kind (including OpenAI) when no search provider is configured at all');
+  assert(res.statusCode === 200, `2) still the existing successful empty-result response, not an error (got ${res.statusCode})`);
+  const diag = res.body?.diagnostics || {};
+  assert(diag.providerMode !== 'openai-web-search', `2) diagnostics.providerMode no longer reports the stale 'openai-web-search' default (got ${diag.providerMode})`);
+  assert(diag.synthesisMode === 'no-candidate-evidence', `4) diagnostics.synthesisMode is still 'no-candidate-evidence' (got ${diag.synthesisMode})`);
+  assert(res.body?.providerUsage?.openai?.calls === 0, `3) providerUsage.openai.calls is 0 (got ${res.body?.providerUsage?.openai?.calls})`);
+}
+await testNoSearchProviderDiagnosticsAreTruthful();
 
 // ---------------------------------------------------------------------------
 // Case 2: candidate-backed discovery succeeds -- the normal synthesis path
@@ -142,6 +176,7 @@ async function testCandidateBackedPathUnaffected(){
   assert(diag.synthesisMode === 'candidate-backed', `4) diagnostics.synthesisMode reports 'candidate-backed' when real candidates exist (got ${diag.synthesisMode})`);
   assert(diag.fallbackSkippedReason === '', `4) diagnostics.fallbackSkippedReason is empty on the normal candidate-backed path (got ${JSON.stringify(diag.fallbackSkippedReason)})`);
   assert(diag.rankedCandidates > 0, `4) diagnostics.rankedCandidates reflects the real discovered candidate (got ${diag.rankedCandidates})`);
+  assert(diag.providerMode === 'targeted-search', `4) diagnostics.providerMode accurately reports 'targeted-search' -- the provider actually used for discovery (got ${diag.providerMode})`);
 }
 await testCandidateBackedPathUnaffected();
 

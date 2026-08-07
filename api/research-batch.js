@@ -2739,7 +2739,17 @@ export default async function handler(req, res) {
     let candidateSamples = [];
     let searchDiagnostics = [];
     let rawText = '';
-    let providerMode = 'openai-web-search';
+    // Diagnostics semantic correction (Sprint 1 follow-up): this default
+    // used to read 'openai-web-search' because, before this commit, a
+    // request with no search provider configured always fell through to
+    // callOpenAIWebSearch() -- the value was an accurate prediction of what
+    // would run. Since the zero-candidate branch no longer calls that
+    // function at all (see synthesisMode below), 'openai-web-search' would
+    // now claim a provider call happened when it did not. providerMode
+    // describes DISCOVERY strategy attempted, not synthesis outcome --
+    // synthesisMode/fallbackSkippedReason are the fields that answer
+    // "did an OpenAI call actually happen."
+    let providerMode = 'no-search-provider';
     // Commercial-readiness core validation, item 1: accumulated across this
     // single handler invocation, then logged and returned -- never a
     // separate metering system, just the totals this run's own provider
@@ -2779,7 +2789,7 @@ export default async function handler(req, res) {
         mode,
         accountsReceived: accounts.length,
         uniqueAccountsResearched: safeAccounts.length,
-        providerMode: hasSearchProvider ? 'serper-targeted-search' : 'openai-web-search',
+        providerMode: hasSearchProvider ? 'serper-targeted-search' : 'no-search-provider',
         serperConfigured,
         targetedSearchEnabled,
         firecrawlConfigured: !!process.env.FIRECRAWL_API_KEY,
