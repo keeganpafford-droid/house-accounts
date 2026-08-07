@@ -29,6 +29,48 @@ import { createHash, timingSafeEqual } from 'crypto';
 // (never client-controllable) env var HA_DEBUG_INSTRUMENTATION=true to
 // include full identifiers for QA/debugging.
 const DEBUG_INSTRUMENTATION = String(process.env.HA_DEBUG_INSTRUMENTATION || '').toLowerCase() === 'true';
+
+// Reliability fix (scale/research-runtime-benchmark) -- time-budget
+// constants. Not derived from the earlier 35s hypothesis: real Preview
+// evidence showed normal successful single-account requests (Home Depot,
+// 'warm-account' mode) totaling roughly 25-33s end to end, with the OpenAI
+// synthesis call alone starting around 2.6s in and accounting for nearly
+// all of that -- while one observed run instead ran synthesis for ~55s and
+// was platform-killed at Vercel's ~58s maxDuration with zero response.
+//
+// REQUEST_DEADLINE_MS: the point (measured from this invocation's own
+// startedAt) beyond which no new provider work should be started. Reserves
+// ~8s under the platform's ~58s ceiling -- ample given that once a call
+// aborts, everything remaining (parsing, signal shaping, JSON response
+// construction) is synchronous, in-memory, and sub-second -- while leaving
+// the normal 25-33s case completely untouched.
+const REQUEST_DEADLINE_MS = 50000;
+// MIN_USEFUL_OPENAI_MS: below this much remaining budget, do not start the
+// OpenAI call at all -- measured normal-case synthesis alone already takes
+// ~22-30s for a single account, so a call given less time than this is
+// overwhelmingly likely to be aborted for nothing, spending real provider
+// cost for zero benefit. Fail immediately and truthfully instead (this
+// throws into the same catch block a slow-but-real OpenAI failure already
+// uses, so it is accounted and logged identically).
+const MIN_USEFUL_OPENAI_MS = 15000;
+// OPENAI_CALL_MAX_MS: an independent ceiling on the OpenAI call itself even
+// when more of REQUEST_DEADLINE_MS is technically still available (e.g. an
+// unusually fast discovery/Firecrawl stage) -- keeps consistent margin
+// between "the call gave up" and REQUEST_DEADLINE_MS regardless of how much
+// budget the earlier stages happened to leave.
+const OPENAI_CALL_MAX_MS = 45000;
+// Serper/Firecrawl were NOT the offender in the observed failure, but both
+// had zero timeout too (confirmed by inspection) -- the same structural
+// risk (one hung call consuming the whole budget) applies equally to them.
+// These are generous relative to normal call latency for these providers,
+// so they should never fire for a genuinely healthy call.
+const SERPER_CALL_TIMEOUT_MS = 10000;
+// Matches the `timeout` field already sent in the Firecrawl request body
+// (a hint to Firecrawl's own API, not previously enforced locally) -- now
+// also enforced client-side so a call Firecrawl itself fails to bound does
+// not hang this function indefinitely either.
+const FIRECRAWL_CALL_TIMEOUT_MS = 12000;
+
 function shortHash(value = '') {
   return createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12);
 }
@@ -133,15 +175,54 @@ function sourceDomain(url = '') {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
+// Reliability fix (scale/research-runtime-benchmark, real Home Depot
+// evidence): NONE of this file's outbound provider calls previously had any
+// timeout -- confirmed by direct inspection of every fetch() call site. A
+// single-account request's own stage-timing checkpoints showed synthesis
+// starting at 2.6s and the invocation still running at Vercel's ~58s
+// maxDuration kill, with no further checkpoint log ever appearing -- i.e.
+// the OpenAI call itself ran for ~55s before the PLATFORM silently
+// terminated the whole function with zero response. A platform timeout is
+// not a JS-catchable event: no further code (not even a catch/finally)
+// executes once it fires. fetchWithTimeout() gives every provider call an
+// AbortController-bounded ceiling so a slow/hung call fails with a normal,
+// catchable Error WELL BEFORE that platform kill -- turning a silent,
+// undiagnosable 504 into an ordinary thrown error the existing client code
+// already handles correctly (safeParseResearchResponse() in
+// dashboard/index.html throws on any !res.ok response, and every caller of
+// this endpoint already routes a thrown error into
+// reportResearchRunOutcome('fail', ...) -- confirmed by reading each call
+// site, not assumed). No client-side change is required for this fix to be
+// truthful: a request that times out becomes a failed, retryable research
+// run, exactly like any other failure already does today -- never a
+// "successful research, zero opportunities" outcome.
+async function fetchWithTimeout(url, options = {}, timeoutMs) {
+  if (!timeoutMs || timeoutMs <= 0) return fetch(url, options);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      let host = url;
+      try { host = new URL(url).hostname; } catch {}
+      throw new Error(`Request to ${host} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function firecrawlScrape(url) {
   const apiKey = process.env.FIRECRAWL_API_KEY;
   if (!apiKey || !url) return '';
   try {
-    const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+    const resp = await fetchWithTimeout('https://api.firecrawl.dev/v2/scrape', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, timeout: 12000 })
-    });
+    }, FIRECRAWL_CALL_TIMEOUT_MS);
     if (!resp.ok) return '';
     const data = await resp.json();
     const text = data?.data?.markdown || data?.markdown || data?.data?.text || data?.text || '';
@@ -168,13 +249,24 @@ async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 
   const scraped = await mapLimit(selected, 8, async c => ({ key: c.url.split('#')[0].toLowerCase(), content: await firecrawlScrape(c.url) }));
   const contentMap = new Map((scraped || []).filter(x => x && x.content).map(x => [x.key, x.content]));
   let scrapedCount = 0;
+  // Prompt-size fix (scale/research-runtime-benchmark): previously this also
+  // rewrote `snippet` to `${original snippet}\n\nPage content: ${content}` --
+  // re-embedding the SAME scraped text that `pageContent` already carries
+  // verbatim. Both fields flow into the synthesis prompt unchanged (see the
+  // candidate map below), so every scraped candidate was sending its own
+  // content twice for zero additional evidence. Real Home Depot evidence: 30
+  // candidates / 63,999 prompt chars, 6 of them Firecrawl-scraped -- each
+  // scraped candidate could carry up to ~1800 (pageContent) + ~2200
+  // (snippet, itself embedding up to ~2000 of the same content) chars, so up
+  // to ~12,000 of the observed 64k characters were this exact duplication
+  // for this one request. `snippet` now stays the original short search
+  // snippet; `pageContent` remains the sole carrier of scraped content --
+  // the same evidence is still sent, exactly once.
   const enriched = candidates.map(c => {
     const content = contentMap.get((c.url || '').split('#')[0].toLowerCase());
     if (!content) return c;
     scrapedCount++;
-    return { ...c, pageContent: content, snippet: compact(`${c.snippet || ''}
-
-Page content: ${content}`, 2200), provider: `${c.provider || 'search'}+firecrawl` };
+    return { ...c, pageContent: content, provider: `${c.provider || 'search'}+firecrawl` };
   });
   return { candidates: enriched, scrapedCount, attemptedCount: selected.length };
 }
@@ -363,11 +455,11 @@ async function serperSearch(query) {
   if (!apiKey) return [];
   let httpStatus = 0;
   try {
-    const resp = await fetch('https://google.serper.dev/search', {
+    const resp = await fetchWithTimeout('https://google.serper.dev/search', {
       method: 'POST',
       headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ q: query, num: 8 })
-    });
+    }, SERPER_CALL_TIMEOUT_MS);
     httpStatus = resp.status;
     if (!resp.ok) {
       return [{
@@ -726,8 +818,8 @@ function openaiUsageFromResponse(data = {}) {
     totalTokens: Number(usage.total_tokens || 0) || 0
   };
 }
-async function callOpenAIJson({ apiKey, model, prompt }) {
-  const resp = await fetch('https://api.openai.com/v1/responses', {
+async function callOpenAIJson({ apiKey, model, prompt, timeoutMs }) {
+  const resp = await fetchWithTimeout('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -736,13 +828,13 @@ async function callOpenAIJson({ apiKey, model, prompt }) {
       temperature: 0.1,
       max_output_tokens: 9000
     })
-  });
+  }, timeoutMs);
   if (!resp.ok) throw new Error(await resp.text().catch(() => `OpenAI error ${resp.status}`));
   const data = await resp.json();
   return { text: responseOutputText(data), usage: openaiUsageFromResponse(data) };
 }
 
-async function callOpenAIWebSearch({ apiKey, model, accounts }) {
+async function callOpenAIWebSearch({ apiKey, model, accounts, timeoutMs }) {
   const prompt = `Research these companies for public buying moments that create timely reasons for a promotional-products salesperson to start a conversation.
 
 House Accounts is not trying to summarize companies. It is trying to answer: "Why should I contact this company today?"
@@ -796,11 +888,11 @@ Confidence must be 0-100. Return nothing only for clear duplicates, spam, unveri
     tools: [{ type: process.env.OPENAI_WEB_SEARCH_TOOL || 'web_search_preview' }],
     max_output_tokens: 9000
   };
-  const resp = await fetch('https://api.openai.com/v1/responses', {
+  const resp = await fetchWithTimeout('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  });
+  }, timeoutMs);
   if (!resp.ok) throw new Error(await resp.text().catch(() => `OpenAI web search error ${resp.status}`));
   const data = await resp.json();
   return { text: responseOutputText(data), usage: openaiUsageFromResponse(data) };
@@ -2740,7 +2832,24 @@ Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
 
 Candidate snippets and clean page content:
-${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, score:c.score, query:c.query, intendedSignalFamily:c.intendedSignalFamily, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, entityVerification:c.entityVerification, sourceAuthorityScore:c.sourceAuthorityScore, freshnessScore:c.freshnessScore, candidateScore:c.candidateScore, eventFingerprint:c.eventFingerprint, sources:c.sources})), null, 2)}`;
+${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, query:c.query, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, sources:c.sources})), null, 2)}`;
+      // Prompt-size fix (scale/research-runtime-benchmark): removed
+      // score/intendedSignalFamily/entityVerification/sourceAuthorityScore/
+      // freshnessScore/candidateScore/eventFingerprint from what is SENT to
+      // the model -- all seven are this pipeline's OWN internal
+      // ranking/dedup bookkeeping (already fully applied earlier: filtering,
+      // scoring, clusterCandidates()'s event-level dedup, and the
+      // slice(0,30)/slice(0,180) caps all already happened using these
+      // values). None of them are evidence text the synthesis prompt's own
+      // instructions ask the model to read or weigh -- the prompt already
+      // has its own actionability/budget/deadline scoring instructions and
+      // never references our internal scores. Removing them loses no
+      // evidence the model could act on, only non-evidentiary metadata that
+      // existed for OUR selection logic, not the model's reasoning. `score`
+      // (discoverCandidatesForAccounts()'s own ranking) and `candidateScore`
+      // (clusterCandidates()'s final sort) are both still computed and used
+      // internally exactly as before -- only their inclusion in the
+      // OUTBOUND prompt payload changed.
       // Benchmark diagnostic (scale/research-runtime-benchmark): the one
       // genuine gap in existing checkpoint logging -- nothing previously
       // marked the moment the single whole-batch OpenAI call actually
@@ -2758,7 +2867,20 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         });
       }
       try {
-        const result = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt });
+        // Reliability fix (scale/research-runtime-benchmark): if too little
+        // of REQUEST_DEADLINE_MS remains to give this call a realistic
+        // chance (measured normal-case synthesis alone already takes
+        // ~22-30s), fail now rather than starting a call almost certain to
+        // be aborted for nothing -- this throw is caught by the SAME block
+        // as a real OpenAI failure, so it is logged/accounted identically
+        // and reaches the client as the same kind of ordinary, truthful
+        // "failed, retryable" error safeParseResearchResponse() already
+        // converts into reportResearchRunOutcome('fail', ...) today.
+        const remainingMs = REQUEST_DEADLINE_MS - (Date.now() - startedAt);
+        if (remainingMs < MIN_USEFUL_OPENAI_MS) {
+          throw new Error(`Research incomplete: only ${Math.max(0, Math.round(remainingMs))}ms of budget remained before signal synthesis -- not enough to run reliably. Please try again.`);
+        }
+        const result = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt, timeoutMs: Math.min(remainingMs, OPENAI_CALL_MAX_MS) });
         rawText = result.text;
         openaiUsage.calls += 1;
         openaiUsage.inputTokens += result.usage.inputTokens;
@@ -2783,7 +2905,12 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         });
       }
       try {
-        const result = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts });
+        // Same deadline guard as the candidates.length branch above.
+        const remainingMs = REQUEST_DEADLINE_MS - (Date.now() - startedAt);
+        if (remainingMs < MIN_USEFUL_OPENAI_MS) {
+          throw new Error(`Research incomplete: only ${Math.max(0, Math.round(remainingMs))}ms of budget remained before signal synthesis -- not enough to run reliably. Please try again.`);
+        }
+        const result = await callOpenAIWebSearch({ apiKey, model: process.env.OPENAI_SEARCH_MODEL || model, accounts: safeAccounts, timeoutMs: Math.min(remainingMs, OPENAI_CALL_MAX_MS) });
         rawText = result.text;
         openaiUsage.calls += 1;
         openaiUsage.inputTokens += result.usage.inputTokens;
