@@ -91,7 +91,7 @@ assert(
 // Item 2: duplicate-account-name-safe identity + safe (non-blind) response
 // parsing for every account research call site.
 // ---------------------------------------------------------------------------
-const safeParseSrc = extractLines('safeParseResearchResponse', 6318, 6353, 'async function safeParseResearchResponse(res, context){');
+const safeParseSrc = extractLines('safeParseResearchResponse', 6397, 6432, 'async function safeParseResearchResponse(res, context){');
 assert(
   /const rawBody = await res\.text\(\);\s*let parsed = null;\s*try\{ parsed = JSON\.parse\(rawBody\); \}catch\(parseErr\)\{/.test(safeParseSrc),
   'required tests 7/8: safeParseResearchResponse() reads the body once as text and attempts JSON.parse itself -- it never calls response.json() blindly, so a non-JSON body can never surface a raw parser SyntaxError to the user'
@@ -109,7 +109,7 @@ assert(
   'the logged body preview is bounded to 300 characters, never the full response body'
 );
 
-const researchAccountModalSrc = extractLines('researchAccountFromManageModal', 6355, 6512, 'async function researchAccountFromManageModal(accountName, listId){');
+const researchAccountModalSrc = extractLines('researchAccountFromManageModal', 6434, 6597, 'async function researchAccountFromManageModal(accountName, listId){');
 assert(
   /const snapshot = await fetchUploadScopedSnapshot\(expectedUploadId\);/.test(researchAccountModalSrc) &&
   /const account = freshUploadScopedAccounts\.find\(a => a\.name === targetAccountName\);/.test(researchAccountModalSrc),
@@ -124,7 +124,7 @@ assert(
   'no blind res.json() call remains in the individual research path'
 );
 
-const researchListModalSrc = extractLines('researchListFromManageModal', 6527, 6753, 'async function researchListFromManageModal(listId, options = {}){');
+const researchListModalSrc = extractLines('researchListFromManageModal', 6612, 6842, 'async function researchListFromManageModal(listId, options = {}){');
 assert(
   !/const data = await res\.json\(\);/.test(researchListModalSrc),
   'no blind res.json() call remains in the list-level research path (neither the batched warm/mixed call nor the per-account historical loop)'
@@ -170,7 +170,7 @@ assert(
   'fetchAndRenderAggregateDashboard() marks that a real aggregate has successfully loaded once it renders one -- the single source of truth processData() reads to decide whether an aggregate is already safely on screen'
 );
 
-const processDataSrc = extractLines('processData', 10569, 10786, 'function processData(records){');
+const processDataSrc = extractLines('processData', 10676, 10893, 'function processData(records){');
 assert(
   /if\(!aggregateDashboardEverLoaded\)\{\s*\/\/ Render the focused recommendation feed\s*renderWeeklyPrioritiesFeed\(futureOpportunities, accounts, \{/.test(processDataSrc),
   'required test 10: processData() only writes this single upload\'s own accounts/opportunities into the main #results/priorities feed when no aggregate dashboard has ever loaded yet this session -- it never overwrites an existing aggregate with a single-upload snapshot'
@@ -205,7 +205,7 @@ assert(
 // ---------------------------------------------------------------------------
 // Item 4: zero/one/multiple-account list-research completion workflow.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines('handleListResearchClick', 11476, 11588, 'async function handleListResearchClick(btn){');
+const handleListResearchClickSrc = extractLines('handleListResearchClick', 11583, 11695, 'async function handleListResearchClick(btn){');
 assert(
   /const opportunityAccounts = Array\.isArray\(result\.accountsWithOpportunities\) \? result\.accountsWithOpportunities : \[\];/.test(handleListResearchClickSrc),
   'handleListResearchClick() branches on the exact set of accounts from this run that produced an opportunity'

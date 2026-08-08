@@ -5078,7 +5078,72 @@ function isDirectSchedulingClose(text){
   if (/\b(can|could|shall)\s+we\s+(schedule|set up|book|arrange|find)\s+(?:a\s+)?(?:quick\s+|brief\s+)?(time|call|meeting|chat)\b/i.test(t)) return true;
   if (/\bwould you like to\s+(schedule|set up|book|arrange|hop on|jump on)\b/i.test(t)) return true;
   if (/\blet'?s\s+(schedule|set up|book|hop on|jump on)\b/i.test(t)) return true;
+  // product/commercial-opportunity-intelligence, QA correction round 3:
+  // "can/could/shall we meet" (and "meet for N minutes") is a distinct,
+  // very common scheduling-close phrasing the verb-enumerated pattern above
+  // never covered -- "meet" was never in that verb list. Caught separately
+  // since it's a different verb, not a wording variant of an existing one.
+  if (/\b(can|could|shall)\s+we\s+meet\b/i.test(t)) return true;
+  if (/\bmeet\s+for\s+\d+\s*(minutes?|mins?)\b/i.test(t)) return true;
   return false;
+}
+// product/commercial-opportunity-intelligence, QA correction round 3
+// (Best Next Question policy refinement): a grounded, permission-based
+// concept offer -- "we had an idea around X, would it be okay if I sent a
+// few concepts?" -- is structurally different from a direct pitch ("we can
+// support this with promotional products. Can we schedule a meeting?").
+// This is a NARROW exception to mentionsProductOrMerchOffer()'s ban, not a
+// replacement for it: BOTH of the following must hold, or the ban still
+// applies in full --
+//   1. The text is actually SHAPED as a permission-ask to send concepts
+//      ("would it be okay/useful if I sent...", "okay if I send...", "mind
+//      if I send...", "want me to send...") -- a bare product mention with
+//      no permission-ask shape still fails.
+//   2. The product/idea reference is TRACEABLE to this exact opportunity's
+//      own generated activationIdeas/commercialPlay.concept -- never an
+//      invented or generic one. An opp with no activationIdeas at all (old
+//      signal, or a new-schema signal where the model declined to produce
+//      a play) can never satisfy this, so the ban applies in full there too.
+// Shared by isPermissionBasedConceptOffer() and isGroundedOpener(): detects
+// the "would it be okay if I sent..." sentence shape regardless of whether
+// the referenced idea happens to hit a recognized product/merch noun (see
+// isGroundedOpener()'s use of this -- "branded umbrellas," an invented idea
+// with no traceable basis, doesn't match mentionsProductOrMerchOffer()'s
+// enumerated noun list at all, so this shape check is the only thing that
+// catches it and routes it through the traceability requirement below).
+function hasConceptSendPermissionAskShape(text){
+  return /\b(would (it be|you be)\s+(okay|useful|helpful|alright)\s+(if|to)\b.{0,60}\bsen[dt]\b)|\bokay\s+(if|to)\s+(i\s+)?sen[dt]\b|\bmind\s+if\s+i\s+sen[dt]\b|\bwant\s+me\s+to\s+sen[dt]\b/i.test(String(text || ''));
+}
+function isPermissionBasedConceptOffer(text, opp){
+  const t = String(text || '');
+  // Before this exception existed, ANY product mention was an unconditional
+  // reject, so a long scripted email that happened to mention a product
+  // never needed a dedicated length check. This exception can now let a
+  // product-mentioning text through, so it needs its own, tighter cap --
+  // one short question-and-permission-ask, not a paragraph -- independent
+  // of the general 280-char compact() ceiling applied further upstream.
+  if(t.length > 220) return false;
+  if(!hasConceptSendPermissionAskShape(t)) return false;
+  const ideas = Array.isArray(opp?.activationIdeas) ? opp.activationIdeas : [];
+  const concept = opp?.commercialPlay?.concept || '';
+  const traceable = [...ideas, concept].filter(Boolean);
+  if(!traceable.length) return false;
+  const significantWords = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 3);
+  // Words from the event/company context (the concept title, the account
+  // name) are excluded from counting as a match -- they're "free" words
+  // likely to appear in ANY text about this opportunity, real or invented
+  // (e.g. every plausible opener mentions "parade" for a parade-sponsorship
+  // signal), so crediting them would let an invented idea ride along on the
+  // event name alone. Only genuinely idea-specific words count as evidence
+  // of traceability.
+  const contextWords = new Set(significantWords(`${concept} ${opp?.account || opp?.accountName || ''}`));
+  const textWords = new Set(significantWords(t));
+  return traceable.some(idea => {
+    const ideaWords = significantWords(idea).filter(w => !contextWords.has(w));
+    if(!ideaWords.length) return false;
+    const matches = ideaWords.filter(w => textWords.has(w)).length;
+    return matches / ideaWords.length >= 0.5;
+  });
 }
 function isGroundedOpener(text, opp){
   const t = String(text || '').trim();
@@ -5119,9 +5184,23 @@ function isGroundedOpener(text, opp){
   // established-relationship posture too). Unlike the email/call-script/
   // LinkedIn channels -- which may still frame a later, low-pressure product
   // offer -- the Conversation Starter itself is the FIRST question asked, so
-  // no framing exception applies here; a product mention anywhere in it is
-  // always disqualifying.
-  if(mentionsProductOrMerchOffer(t)) return false;
+  // no framing exception applies here based on relationship/posture.
+  //
+  // product/commercial-opportunity-intelligence, QA correction round 3: the
+  // ONE narrow exception is a grounded, permission-based concept offer --
+  // see isPermissionBasedConceptOffer()'s header comment for the exact two
+  // conditions required. A bare product/merch mention with no permission-ask
+  // shape, or one that isn't traceable to this opportunity's own generated
+  // activationIdeas/commercialPlay, is still disqualifying -- this is a
+  // narrow carve-out, not a repeal of the rule above.
+  if(mentionsProductOrMerchOffer(t) && !isPermissionBasedConceptOffer(t, opp)) return false;
+  // A "would it be okay if I sent..." permission-ask shape implicitly claims
+  // to be offering a concrete concept, even when the referenced idea doesn't
+  // happen to match mentionsProductOrMerchOffer()'s enumerated product/merch
+  // nouns (e.g. "branded umbrellas" isn't on that list). Any text using this
+  // shape must clear the same traceability bar -- otherwise an invented idea
+  // could slip through simply by avoiding the recognized noun list.
+  if(hasConceptSendPermissionAskShape(t) && !isPermissionBasedConceptOffer(t, opp)) return false;
   // Confirmed production case (Gallagher acquisition opener): "...Can we
   // schedule a time to discuss?" contains a "?" so it satisfied
   // isMeaningfulConversationQuestion() below, but a direct meeting/call
@@ -6440,7 +6519,13 @@ async function researchAccountFromManageModal(accountName, listId){
       notes: account.notes || '',
       employees: account.employees || '',
       categories: [...(account.categoryTypes || [])],
-      projects: account.projects || []
+      projects: account.projects || [],
+      // product/commercial-opportunity-intelligence, QA correction round 2:
+      // paired {project, category, dateStr} records (unlike categories/
+      // projects above, which are separate, unpaired arrays) -- the one
+      // shape that lets the server judge whether an uploaded purchase date
+      // is genuinely close to a signal's event date.
+      purchases: account.purchases || []
     };
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
@@ -6689,7 +6774,11 @@ async function researchListFromManageModal(listId, options = {}){
           notes: account.notes || '',
           employees: account.employees || '',
           categories: [...(account.categoryTypes || [])],
-          projects: account.projects || []
+          projects: account.projects || [],
+          // product/commercial-opportunity-intelligence, QA correction round 2:
+          // paired {project, category, dateStr} records -- see the other two
+          // /api/research-account payload builders' identical comment.
+          purchases: account.purchases || []
         };
         const res = await fetch('/api/research-account', {method:'POST', headers, signal: controller.signal, body: JSON.stringify(payload)});
         unregisterResearchAbort(expectedUploadId, account.name);
@@ -6834,7 +6923,13 @@ async function researchAccountByName(accountName, options = {}){
       notes: account.notes || '',
       employees: account.employees || '',
       categories: [...(account.categoryTypes || [])],
-      projects: account.projects || []
+      projects: account.projects || [],
+      // product/commercial-opportunity-intelligence, QA correction round 2:
+      // paired {project, category, dateStr} records (unlike categories/
+      // projects above, which are separate, unpaired arrays) -- the one
+      // shape that lets the server judge whether an uploaded purchase date
+      // is genuinely close to a signal's event date.
+      purchases: account.purchases || []
     };
     const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) throw new Error('Your session has expired. Please log in again.');
@@ -6974,6 +7069,17 @@ function batchPayloadForAccounts(accounts){
       .map(p => p.orderDate || p.date || p.order_date)
       .filter(Boolean)
       .slice(0, 6);
+    // product/commercial-opportunity-intelligence, QA correction round 2:
+    // PAIRED {category, project, dateStr} records -- unlike recentOrderDates/
+    // categories above, which are separate, unpaired arrays that can't tell
+    // the server which category was purchased on which date. This is the
+    // one shape that lets the server judge whether an uploaded purchase
+    // date is genuinely close to a signal's event date (see
+    // findLikelyRelatedPurchase() in api/signal-intelligence.js).
+    const recentPurchases = (account.purchases || [])
+      .map(p => ({ category: p.category || '', project: p.project || '', dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '' }))
+      .filter(p => p.dateStr)
+      .slice(0, 8);
     const existingSignals = (account.futureOpportunities || [])
       .filter(o => o.signalLayerType && o.signalLayerType !== 'Business Activity Signal')
       .slice(0, 5)
@@ -6995,6 +7101,7 @@ function batchPayloadForAccounts(accounts){
       categories: [...(account.categoryTypes || [])].slice(0, 10),
       contacts,
       recentOrderDates,
+      recentPurchases,
       existingSignals,
       repeatPatterns,
       intelligenceMode: account.intelligenceMode || deriveAccountIntelligenceMode(account),

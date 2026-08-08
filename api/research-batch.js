@@ -19,7 +19,8 @@ import {
   resolveOpportunityEvents,
   verifyCandidateCompanyGrounding,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
-  normalizeCommercialIntelligence
+  normalizeCommercialIntelligence,
+  findLikelyRelatedPurchase
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -656,6 +657,12 @@ function accountPromptContext(accounts) {
     quickWinScore: a.quickWinScore || '',
     historicalCategoriesPurchased: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
     recentOrderDates: Array.isArray(a.recentOrderDates) ? a.recentOrderDates.slice(0, 5) : [],
+    // product/commercial-opportunity-intelligence, QA correction round 2:
+    // PAIRED {category, project, dateStr} records -- unlike the two fields
+    // above, which are separate, unpaired arrays -- so the model can judge
+    // whether an uploaded purchase date is genuinely close to a recent-past
+    // signal's event date (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT).
+    recentPurchases: Array.isArray(a.recentPurchases) ? a.recentPurchases.slice(0, 8) : [],
     knownContacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 6) : [],
     existingSignals: Array.isArray(a.existingSignals) ? a.existingSignals.slice(0, 5) : [],
     repeatPatterns: Array.isArray(a.repeatPatterns) ? a.repeatPatterns.slice(0, 5) : [],
@@ -1024,6 +1031,15 @@ function groundedWhySuffix(ground = {}) {
 }
 
 function salesReadyWhy(trigger = '', context = '', moment = '', type = '', ground = {}) {
+  // product/commercial-opportunity-intelligence, QA correction round 2: a
+  // confident purchase match for a recent-past event overrides the generic
+  // topic-based templates below with an honest, specific one -- this is the
+  // ONLY place this deterministic fallback ever claims we supplied
+  // something, and only when a genuinely close uploaded purchase date
+  // supports it (findLikelyRelatedPurchase() in signal-intelligence.js).
+  if (ground.relatedPurchase?.confidence === 'confident' && ground.relatedPurchase.purchase?.category) {
+    return `We supplied ${clean(ground.relatedPurchase.purchase.category)} for this -- worth asking how it went and finding out what's next.`;
+  }
   const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
   const suffix = groundedWhySuffix(ground);
   if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
@@ -1049,11 +1065,39 @@ function leadSentence(accountName = '', specific = '', actionability = {}) {
   return `Saw ${accountName}'s ${specific}.`;
 }
 
-function salesReadyOpener(trigger = '', context = '', moment = '', type = '', ground = {}) {
+function salesReadyOpener(trigger = '', context = '', moment = '', type = '', ground = {}, activationIdeas = []) {
   const specific = compact(trigger || moment || '', 90);
   const accountName = clean(ground.accountName || '');
   if (!specific) return honestLimitedOpener(accountName);
   const lead = leadSentence(accountName, specific, ground.actionability || {});
+
+  // product/commercial-opportunity-intelligence, QA correction round 2:
+  // two evidence-backed overrides, both returning early before the
+  // existing topic-based templates below. Upcoming event + real, specific
+  // activation ideas -> a genuine permission-based concept offer using the
+  // actual generated ideas, never invented ones. Recent-past event -> tier
+  // B/C/D per the founder's historical-event correction: a confidently-
+  // matched uploaded purchase gets a follow-up referencing what we actually
+  // supplied; no confident match (or an ambiguous one) gets a neutral
+  // posture that never claims prior fulfillment. Every other case (ongoing
+  // signals, upcoming events with no strong ideas) is completely
+  // unchanged.
+  if (ground.actionability?.status === 'upcoming' && Array.isArray(activationIdeas) && activationIdeas.length) {
+    const leadIdeas = activationIdeas.slice(0, 2).map(idea => clean(idea)).join(' and ');
+    return `${lead} We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`;
+  }
+  if (ground.actionability?.status === 'recent-past') {
+    if (ground.relatedPurchase?.confidence === 'confident' && ground.relatedPurchase.purchase?.category) {
+      return `Saw ${specific} wrapped up. We supplied ${clean(ground.relatedPurchase.purchase.category)} for it -- how did that go, and what's next on the calendar?`;
+    }
+    if (ground.relatedPurchase?.confidence === 'none') {
+      return `Saw ${specific} wrapped up -- how did it go? Anything else like it coming up this season?`;
+    }
+    // 'ambiguous', or relatedPurchase not computed -- preserve uncertainty,
+    // never guess at fulfillment either way.
+    return `Saw ${specific} wrapped up -- how did it go? What's next on the calendar?`;
+  }
+
   const dept = clean((ground.recommendedBuyingTeam || [])[0] || '');
   const deptAsk = dept ? ` Is ${dept} the right team to ask about that?` : '';
   const historicalNote = ground.historicalFact ? ` Since ${ground.historicalFact}, this seems worth a quick note.` : '';
@@ -1809,7 +1853,17 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   // text below so both can reference it (Priority 2: grounded outreach).
   const recommendedBuyingTeam = inferRecommendedBuyingTeam(type, businessContext, `${summary} ${buyingMoment} ${concreteTrigger}`, raw);
   const historicalFact = oneHistoricalOrderFact(account);
-  const ground = { accountName, actionability: actionabilityStatus, recommendedBuyingTeam, historicalFact };
+  // product/commercial-opportunity-intelligence, QA correction round 2: a
+  // narrow, bounded date-proximity check (NOT fuzzy text matching) against
+  // this account's own uploaded purchases -- computed only for a genuinely
+  // recent-past event, and used only to decide whether the DETERMINISTIC
+  // fallback templates below may reference an actual supplied item. The
+  // live model reasons about this directly from the same paired purchase
+  // data in its own prompt context (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT).
+  const relatedPurchase = actionabilityStatus.status === 'recent-past'
+    ? findLikelyRelatedPurchase(account.purchases, resolvedEventDate)
+    : null;
+  const ground = { accountName, actionability: actionabilityStatus, recommendedBuyingTeam, historicalFact, relatedPurchase };
 
   // product/commercial-opportunity-intelligence: the one shared normalizer,
   // computed once here so both the legacy why-this-matters compatibility
@@ -1817,7 +1871,7 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   // fields (in the returned object) derive from the exact same parsed thought.
   const commercialIntelligence = normalizeCommercialIntelligence(raw);
   const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment, ground, commercialIntelligence.commercialPlay?.narrative || '');
-  const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type, ground), 280);
+  const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type, ground, commercialIntelligence.activationIdeas), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.promo_categories || raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories || promoCategoriesForMoment(buyingMoment, type, businessContext), 6);
   const conversations = safeArray(raw.likelyConversations || raw.conversationThemes || raw.likelyConversation || raw.conversationAngle, 5);

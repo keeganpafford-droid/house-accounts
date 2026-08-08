@@ -46,7 +46,7 @@ function extractLines(filePath, label, startLine, endLine, expectedFirst) {
 
 // --- api/research-batch.js: requireResolvedCandidate(candidates, mapped, account) ---
 const RESEARCH_BATCH_PATH = path.join(__dirname, '..', 'api', 'research-batch.js');
-const REQUIRE_RESOLVED_CANDIDATE_SRC = extractLines(RESEARCH_BATCH_PATH, 'requireResolvedCandidate', 2079, 2082, 'function requireResolvedCandidate(candidates, mapped, account) {');
+const REQUIRE_RESOLVED_CANDIDATE_SRC = extractLines(RESEARCH_BATCH_PATH, 'requireResolvedCandidate', 2133, 2136, 'function requireResolvedCandidate(candidates, mapped, account) {');
 const batchSandbox = {};
 vm.createContext(batchSandbox);
 vm.runInContext(`${REQUIRE_RESOLVED_CANDIDATE_SRC}\nthis.requireResolvedCandidate = requireResolvedCandidate;`, batchSandbox);
@@ -55,7 +55,7 @@ assert(typeof requireResolvedCandidate === 'function', 'extracted the real requi
 
 // --- api/research-account.js: resolveAccountCandidate(candidates, sourceUrl) ---
 const RESEARCH_ACCOUNT_PATH = path.join(__dirname, '..', 'api', 'research-account.js');
-const RESOLVE_ACCOUNT_CANDIDATE_SRC = extractLines(RESEARCH_ACCOUNT_PATH, 'resolveAccountCandidate', 1171, 1174, 'function resolveAccountCandidate(candidates, sourceUrl) {');
+const RESOLVE_ACCOUNT_CANDIDATE_SRC = extractLines(RESEARCH_ACCOUNT_PATH, 'resolveAccountCandidate', 1172, 1175, 'function resolveAccountCandidate(candidates, sourceUrl) {');
 const accountSandbox = {};
 vm.createContext(accountSandbox);
 vm.runInContext(`${RESOLVE_ACCOUNT_CANDIDATE_SRC}\nthis.resolveAccountCandidate = resolveAccountCandidate;`, accountSandbox);

@@ -81,10 +81,10 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6011, 'function confidenceLabel(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8164, 8166, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8169, 8171, 'function clampScore(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6090, 'function confidenceLabel(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
 
 function makeSandbox(){
   const sandbox = {

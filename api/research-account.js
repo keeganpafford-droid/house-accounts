@@ -934,7 +934,7 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
   };
 }
 
-async function aiQualifyBusinessSignals(accountName, industry, candidates = [], suppliedContactName = '') {
+async function aiQualifyBusinessSignals(accountName, industry, candidates = [], suppliedContactName = '', recentPurchases = []) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !candidates.length) {
     return { enabled: Boolean(apiKey), signals: [], rawCount: 0, error: apiKey ? '' : 'OPENAI_API_KEY not configured' };
@@ -952,6 +952,7 @@ async function aiQualifyBusinessSignals(accountName, industry, candidates = [], 
 Account: ${accountName}
 Industry: ${industry || 'Unknown'}
 User-supplied contact to verify first, if any: ${suppliedContactName || 'None'}
+${recentPurchases.length ? `Recently uploaded purchases from us (category, project, date) -- use ONLY to judge whether a RECENT PAST public event might be something we already supplied for; a purchase date within roughly 3-4 weeks of the event date is the only thing that counts as evidence, never the event topic alone: ${JSON.stringify(recentPurchases)}` : ''}
 
 Your job is NOT to summarize the company.
 Your job is to think like an elite promotional-products sales rep and answer one question:
@@ -1177,7 +1178,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
   try {
-    const { accountName, industry, cityState, emailDomain, notes, employees, contactName } = req.body || {};
+    const { accountName, industry, cityState, emailDomain, notes, employees, contactName, purchases } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
@@ -1258,7 +1259,16 @@ export default async function handler(req, res) {
     const acceptedSearchSignals = evaluatedSearchResults.map(x => x.signal).filter(Boolean);
 
     // AI qualification is the business-signal moat: search finds candidates, AI decides whether they are meaningful.
-    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''));
+    // product/commercial-opportunity-intelligence, QA correction round 2:
+    // paired {category, project, dateStr} records -- this endpoint
+    // previously received nothing at all about uploaded purchase history
+    // (purchases wasn't even destructured from req.body above until this
+    // change), so it had no way to judge whether a recent-past public event
+    // corresponds to something we actually supplied.
+    const recentPurchases = Array.isArray(purchases)
+      ? purchases.map(p => ({ category: p?.category || '', project: p?.project || '', dateStr: p?.dateStr || p?.date || p?.orderDate || p?.order_date || '' })).filter(p => p.dateStr).slice(0, 8)
+      : [];
+    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''), recentPurchases);
 
     // Signal-to-account evidence grounding (Sprint 1 extension -- see the
     // header comment above the equivalent block in api/research-batch.js for

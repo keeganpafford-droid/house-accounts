@@ -39,15 +39,16 @@ function extractLines(label, startLine, endLine, expectedFirst) {
 }
 
 // mentionsProductOrMerchOffer -> isMeaningfulConversationQuestion ->
-// isDirectSchedulingClose -> isGroundedOpener, all contiguous.
-const GATE_SRC = extractLines('conversation-starter-policy-gate', 5039, 5166, 'function mentionsProductOrMerchOffer(text){');
+// isDirectSchedulingClose -> isPermissionBasedConceptOffer -> isGroundedOpener,
+// all contiguous.
+const GATE_SRC = extractLines('conversation-starter-policy-gate', 5039, 5245, 'function mentionsProductOrMerchOffer(text){');
 
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(GATE_SRC, sandbox);
-const { mentionsProductOrMerchOffer, isMeaningfulConversationQuestion, isDirectSchedulingClose, isGroundedOpener } = sandbox;
+const { mentionsProductOrMerchOffer, isMeaningfulConversationQuestion, isDirectSchedulingClose, isPermissionBasedConceptOffer, isGroundedOpener } = sandbox;
 
-for (const fn of [mentionsProductOrMerchOffer, isMeaningfulConversationQuestion, isDirectSchedulingClose, isGroundedOpener]) {
+for (const fn of [mentionsProductOrMerchOffer, isMeaningfulConversationQuestion, isDirectSchedulingClose, isPermissionBasedConceptOffer, isGroundedOpener]) {
   assert(typeof fn === 'function', `extraction produced a real function (${fn && fn.name})`);
 }
 
@@ -94,6 +95,59 @@ const CONTROL_3 = 'Noticed the new distribution center opening — how is the te
   assert(mentionsProductOrMerchOffer(text) === false, `5) control ${i + 1} ("${text.slice(0, 40)}...") does not false-positive on mentionsProductOrMerchOffer()`);
   assert(isGroundedOpener(text, { account: 'Acme Corp' }) === true, `5) control ${i + 1} still passes isGroundedOpener() as a legitimate grounded question`);
 });
+
+// ---------------------------------------------------------------------------
+// QA correction round 3 (Best Next Question policy refinement): a grounded,
+// permission-based concept offer -- traceable to the opportunity's own
+// generated activationIdeas/commercialPlay -- is now allowed. Everything
+// else the founder listed as still-banned remains banned.
+// ---------------------------------------------------------------------------
+const DOVER_OPP = {
+  account: 'Dover Honda',
+  activationIdeas: ['Parade-day team kit', 'Family-focused giveaway bags'],
+  commercialPlay: { concept: 'Holiday Parade Sponsorship', narrative: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.' }
+};
+
+// Required test 1: a grounded, activation-specific permission ask passes.
+const DOVER_GOOD = 'We had a couple ideas for the Holiday Parade, including a parade-day team kit and a family-focused giveaway. Would it be okay if I sent a few concepts over?';
+assert(mentionsProductOrMerchOffer(DOVER_GOOD) === true, 'required test 1 sanity: the Dover opener does mention a product/activation ("giveaway"), so it needs the new exception to pass at all');
+assert(isPermissionBasedConceptOffer(DOVER_GOOD, DOVER_OPP) === true, 'required test 1: isPermissionBasedConceptOffer() recognizes the grounded, permission-based concept offer');
+assert(isGroundedOpener(DOVER_GOOD, DOVER_OPP) === true, 'required test 1: a grounded, activation-specific permission ask passes isGroundedOpener() when it is traceable to the opportunity\'s own generated activationIdeas');
+
+// Founder's alternate phrasing patterns must also pass.
+const PATTERN_2 = 'A couple things came to mind for the event, including a parade-day team kit. Okay if I send them your way?';
+assert(isGroundedOpener(PATTERN_2, DOVER_OPP) === true, 'required test 1: the "a couple things came to mind... okay if I send them your way?" pattern also passes');
+const PATTERN_3 = 'We had an idea around a family-focused giveaway for the parade. Would it be useful if I sent a few concepts?';
+assert(isGroundedOpener(PATTERN_3, DOVER_OPP) === true, 'required test 1: the "would it be useful if I sent" pattern also passes');
+
+// Required test 2: generic product pitches still fail, even with a real opp.
+const GENERIC_PITCH = 'We can support this with promotional products. Can we schedule a meeting?';
+assert(isGroundedOpener(GENERIC_PITCH, DOVER_OPP) === false, 'required test 2: a generic "promotional products" pitch still fails isGroundedOpener() even when the opp has real activationIdeas (no permission-ask shape, and not traceable to a specific idea)');
+const GENERIC_MERCH_OFFER = 'This creates a great opportunity for branded merchandise and event giveaways for attendees.';
+assert(isGroundedOpener(GENERIC_MERCH_OFFER, DOVER_OPP) === false, 'required test 2: a generic merchandise/service offer with no permission-ask shape still fails');
+
+// Required test 3: scheduling closes still fail, even when otherwise grounded.
+const SCHEDULING_WITH_IDEA = 'We had an idea around a parade-day team kit. Can we schedule a quick call to discuss?';
+assert(isGroundedOpener(SCHEDULING_WITH_IDEA, DOVER_OPP) === false, 'required test 3: a scheduling close ("can we schedule a quick call") still fails isGroundedOpener() even when it references a real activation idea');
+const MEET_15_MIN = 'Would it be okay if I sent a few concepts? Can we meet for 15 minutes next week?';
+assert(isGroundedOpener(MEET_15_MIN, DOVER_OPP) === false, 'required test 3: "Can we meet for 15 minutes?" still fails even alongside a genuine permission-ask sentence');
+
+// Required test 4: unsupported/invented activation references still fail.
+const INVENTED_IDEA = 'We had an idea around branded umbrellas for the parade. Would it be okay if I sent a few concepts over?';
+assert(isPermissionBasedConceptOffer(INVENTED_IDEA, DOVER_OPP) === false, 'required test 4: an invented activation idea ("branded umbrellas") not present in the opp\'s real activationIdeas is not traceable');
+assert(isGroundedOpener(INVENTED_IDEA, DOVER_OPP) === false, 'required test 4: isGroundedOpener() rejects the invented-idea permission ask, falling back to the deterministic template instead');
+const NO_IDEAS_OPP = { account: 'Thin Evidence Co', activationIdeas: [], commercialPlay: null };
+assert(isGroundedOpener(DOVER_GOOD, NO_IDEAS_OPP) === false, 'required test 4: the identical permission-ask phrasing fails for an opportunity with no real activationIdeas at all -- nothing to trace the offer to');
+const OLD_SIGNAL_NO_KEYS = { account: 'Legacy Co' };
+assert(isGroundedOpener(DOVER_GOOD, OLD_SIGNAL_NO_KEYS) === false, 'required test 4: an old signal with no activationIdeas/commercialPlay keys at all also fails -- the exception never fires without real, traceable ideas');
+
+// Long scripted emails disguised as questions still fail -- the exception
+// requires ONE short question, not a paragraph, even when it otherwise has
+// the right shape and a real, traceable idea.
+const LONG_SCRIPTED = 'Hi there, I hope this finds you well. We had an idea around family-focused giveaways and wanted to reach out because we think this could be a great fit for your organization given everything happening with the parade this year. Would it be okay if I sent a few concepts over for your review at your convenience?';
+assert(LONG_SCRIPTED.length > 220, 'sanity: the long-scripted-email fixture exceeds the permission-ask exception\'s length cap');
+assert(isPermissionBasedConceptOffer(LONG_SCRIPTED, DOVER_OPP) === false, 'a long scripted paragraph disguised as a permission-ask question is rejected by the length cap, even with the right shape and a real, traceable idea');
+assert(isGroundedOpener(LONG_SCRIPTED, DOVER_OPP) === false, 'isGroundedOpener() rejects the long scripted email, falling back to the deterministic template instead');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

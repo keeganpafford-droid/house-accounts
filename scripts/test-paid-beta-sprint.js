@@ -103,7 +103,14 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(actionability.status === 'recent-past' && actionability.tense === 'past' && actionability.isPriorityEligible === true, 'required test 4: a ribbon cutting 20 days in the past is eligible as a follow-up');
 
   const opener = salesReadyOpener('ribbon cutting ceremony', 'Acme Manufacturing held a ribbon cutting.', '', 'New Location', { accountName: 'Acme Manufacturing', actionability });
-  assert(/recently had/i.test(opener), `required test 4: the generated opener uses past tense ("recently had") for a recent-past event, not present/future tense (got: "${opener}")`);
+  // product/commercial-opportunity-intelligence, QA correction round 3
+  // (Sandwich Stampede finding): a recent-past event now goes through the
+  // dedicated purchase-context tier logic in salesReadyOpener() rather than
+  // the generic topic-based templates below it, so the exact phrasing
+  // changed from leadSentence()'s "recently had" to "wrapped up" -- still
+  // unambiguously past tense, matching the founder's own real example
+  // wording, and still never future-tense.
+  assert(/wrapped up/i.test(opener), `required test 4: the generated opener uses past tense ("wrapped up") for a recent-past event, not present/future tense (got: "${opener}")`);
   assert(!/coming up|will host|is hosting/i.test(opener), 'required test 4: the opener for a recent-past event does not use future-tense phrasing');
 }
 
@@ -450,7 +457,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6011, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6090, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -473,7 +480,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 29
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -482,13 +489,13 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10788, 10791, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8164, 8166, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8169, 8171, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10895, 10898, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.

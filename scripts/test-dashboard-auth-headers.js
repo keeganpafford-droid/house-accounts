@@ -110,7 +110,7 @@ const EXTRACTED = {
   heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2647, 2664, {async: true}),
   reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2678, 2703, {async: true}),
   loadDashboardUsage: extractFn('loadDashboardUsage', 2725, 2735, {async: true}),
-  request: extractFn('request', 10876, 10893, {async: true})
+  request: extractFn('request', 10983, 11000, {async: true})
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

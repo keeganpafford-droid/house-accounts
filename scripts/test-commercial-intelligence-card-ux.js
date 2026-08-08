@@ -51,14 +51,14 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4679, 6125, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8112, 8652, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10788, 10791, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8164, 8166, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8169, 8171, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7567, 7605, 'function getReasonToReachOutTitle(opp){');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4679, 6204, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8219, 8759, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10895, 10898, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7674, 7712, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   // QA correction 1: document.body.insertAdjacentHTML/lastElementChild are

@@ -46,9 +46,9 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6011, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6090, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
 
 // Builds a fresh vm sandbox whose Date global is a fixed-instant subclass of
 // the real Date -- every `new Date()`/`Date.now()` call inside the extracted

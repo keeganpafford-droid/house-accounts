@@ -126,42 +126,42 @@ const REAL_SOURCE = [
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6318, 6353, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 6182, 6204, {async: true}),
-  extractFn('persistScopedResearchResult', 6212, 6257, {async: true}),
-  extractFn('researchAccountFromManageModal', 6355, 6512, {async: true}),
-  extractFn('researchAccountByName', 6786, 6941, {async: true}),
-  extractFn('getAccountsForResearch', 6945, 6958),
-  extractFn('batchPayloadForAccounts', 6960, 7004),
-  extractFn('applyBusinessSignalAccountBoost', 7007, 7015),
-  extractFn('researchAccountsBatch', 7017, 7137, {async: true}),
-  extractFn('signalTopicKeyClient', 7139, 7147),
-  extractFn('dedupeSignalsClient', 7149, 7162),
-  extractFn('researchTopAccounts', 7164, 7484, {async: true}),
-  extractFn('refreshOpportunityViews', 7639, 7659),
+  extractFn('safeParseResearchResponse', 6397, 6432, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 6261, 6283, {async: true}),
+  extractFn('persistScopedResearchResult', 6291, 6336, {async: true}),
+  extractFn('researchAccountFromManageModal', 6434, 6597, {async: true}),
+  extractFn('researchAccountByName', 6875, 7036, {async: true}),
+  extractFn('getAccountsForResearch', 7040, 7053),
+  extractFn('batchPayloadForAccounts', 7055, 7111),
+  extractFn('applyBusinessSignalAccountBoost', 7114, 7122),
+  extractFn('researchAccountsBatch', 7124, 7244, {async: true}),
+  extractFn('signalTopicKeyClient', 7246, 7254),
+  extractFn('dedupeSignalsClient', 7256, 7269),
+  extractFn('researchTopAccounts', 7271, 7591, {async: true}),
+  extractFn('refreshOpportunityViews', 7746, 7766),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 7695, 7705),
+  extractFn('applyModalResearchResultToDashboard', 7802, 7812),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 7726, 7754, {async: true}),
-  extractFn('renderDetailedAccountViews', 10064, 10132),
-  extractFn('serializeAccountForStorage', 10142, 10208),
-  extractFn('performSaveCurrentUpload', 10218, 10318, {async: true}),
-  extractFn('saveCurrentUpload', 10327, 10331),
-  extractFn('toggleAccountMetadataEdit', 10339, 10345),
-  extractFn('saveAccountMetadataEdit', 10368, 10404, {async: true}),
-  extractRaw('delegatedClickListener', 10422, 10461, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 10474, 10490),
-  extractFn('escapeHtml', 10788, 10791)
+  extractFn('researchAccountFromCard', 7833, 7861, {async: true}),
+  extractFn('renderDetailedAccountViews', 10171, 10239),
+  extractFn('serializeAccountForStorage', 10249, 10315),
+  extractFn('performSaveCurrentUpload', 10325, 10425, {async: true}),
+  extractFn('saveCurrentUpload', 10434, 10438),
+  extractFn('toggleAccountMetadataEdit', 10446, 10452),
+  extractFn('saveAccountMetadataEdit', 10475, 10511, {async: true}),
+  extractRaw('delegatedClickListener', 10529, 10568, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 10581, 10597),
+  extractFn('escapeHtml', 10895, 10898)
 ].join('\n\n');
 
 // ===========================================================================

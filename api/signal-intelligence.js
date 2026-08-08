@@ -416,13 +416,18 @@ function validateOpportunity(opportunity = {}) {
 const COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT = `
 Beyond the factual event itself, reason like a smart promotional-products merchandise strategist sitting beside the rep -- not a copywriter drafting an email. Do not merely summarize the signal; interpret it commercially.
 
+Before generating commercialPlay/activationIdeas, first ask yourself: who are the relevant audiences this specific signal creates, affects, or brings together? Do not default to employees. Depending on the event and company, the right audience might be employees, recruits, customers, prospects, investors/LPs, portfolio companies, executives, partners, dealers, field teams, event attendees, VIPs, volunteers, community members, or sponsors. A financing/fund-close signal may point toward investor/LP gifts, fund-close gifts, or annual-meeting/investor-event kits rather than employee apparel; an acquisition may point toward integration/new-team programs; a community event may point toward attendee or volunteer activation. Generate the play and ideas against the audience(s) actually implied by the evidence, not a reflexive default.
+
 - commercialPlay: your interpretation of the specific commercial opportunity this event creates. Answer "what's the play I see here?", not "what happened" (that belongs in the factual fields above). A concise, memorable concept/title (e.g. "50 Summers" for an anniversary) is welcome ONLY when a genuinely useful one emerges naturally from the evidence -- never manufacture a cute campaign name just to fill the field. If the evidence does not support a credible commercial play, omit commercialPlay entirely. Do not write generic filler such as "consider branded merchandise" or "this could be an opportunity to reach out."
-- activationIdeas: up to 6 concrete, specific ways a rep could activate against the opportunity (e.g. "Premium pool/beach towels", "Installer/team workwear" -- never bare category words like "Apparel", "Drinkware", or "Giveaways" with no qualifier). If nothing specific and credible comes to mind, return an empty list. Do not pad to reach a target count -- two strong ideas beat six generic ones.
+- activationIdeas: up to 6 concrete, specific ways a rep could activate against the opportunity for the audience(s) identified above (e.g. "Premium pool/beach towels", "Installer/team workwear", "Investor welcome kit" -- never bare category words like "Apparel", "Drinkware", or "Giveaways" with no qualifier). If nothing specific and credible comes to mind, return an empty list. Do not pad to reach a target count -- two strong ideas beat six generic ones.
 - expansionPotential: think beyond the immediate order. Does this look like a one-time opportunity, a recurring program, account expansion, cross-department reach, employee use, customer use, a seasonal repeat, or a route into a related/parent organization? Give a short narrative explaining the commercial upside (not a restatement of the tags), plus up to 3 tags from this fixed list ONLY when they genuinely apply: one-time, recurring-program, account-expansion, cross-department, employee-program, customer-program, seasonal-repeat, parent-org-route, other. Omit expansionPotential entirely if you have no confident read on this. Do not force every opportunity into every category.
 
 A grounded signal with no credible commercial interpretation is a better output than fabricated commercial intelligence. Absence of commercialPlay, an empty activationIdeas list, and absence of expansionPotential are all valid and expected outcomes for weak or generic signals -- never force any of these fields merely because the schema has a place for them.
 
-For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting, do not pitch a product directly, and do not ask to schedule a meeting. It must be a genuine, specific question.
+For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting and do not ask to schedule a meeting.
+Usually this means a plain question with no product mention at all. But when the event is a genuinely UPCOMING one (not yet happened) and you have one or two genuinely strong, specific activationIdeas, the question may instead lead with those exact ideas and ask permission to send concepts -- e.g. "We had a couple ideas for the event, including [a real activation idea] -- would it be okay if I sent a few concepts over?" Never reference an idea you did not actually generate in activationIdeas, never assert the work is already happening, and never combine this with a scheduling request. If you do not have a genuinely strong activation idea, ask a plain discovery question instead -- do not force a product mention.
+
+If the account context below includes recent uploaded purchases, and this signal is a RECENT PAST event (not upcoming, not ongoing): check whether any uploaded purchase date falls within roughly 3-4 weeks of the event date. If one clearly does, you may treat that as likely evidence we supplied something for this event -- reference the actual purchased category/project by name, ask how it landed, and pivot the discovery question toward what's next (e.g. "Glad the bandanas landed well -- what's next on the calendar?"). If no purchase is that close, or timing is unclear or ambiguous, do NOT claim we supplied anything -- use a neutral posture instead (e.g. "Saw the event wrapped up -- how did it go? What's next on the calendar?"). Never guess at fulfillment from the event topic alone; only a genuinely close uploaded purchase date counts as evidence.
 `.trim();
 
 const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
@@ -521,6 +526,49 @@ function normalizeCommercialIntelligence(raw = {}) {
 // read it unconditionally.
 function isCommercialIntelligenceSignal(payload = {}) {
   return Array.isArray(payload && payload.activationIdeas) || !!(payload && payload.expansionPotential) || !!(payload && payload.commercialPlay);
+}
+
+// ---------------------------------------------------------------------------
+// product/commercial-opportunity-intelligence, QA correction round 2
+// (historical-event/order-linkage). A narrow, bounded DATE-PROXIMITY check
+// against an account's own uploaded purchase history -- deliberately NOT a
+// fuzzy text/keyword-matching engine, and not used anywhere near event
+// identity/fingerprinting/dedup. Confidence is judged purely on how close
+// an uploaded purchase's own date is to the signal's resolved event date:
+//   - 'confident': exactly one uploaded purchase within
+//     RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS of the event date.
+//   - 'ambiguous': more than one candidate within the confident window (which
+//     one, if any, is genuinely unclear), or a single candidate that's close
+//     but outside the confident window and inside the wider one -- treated
+//     the same as "don't know," never guessed at.
+//   - 'none': nothing within the wider window at all.
+// This exists solely so the DETERMINISTIC fallback templates (used only
+// when the live model doesn't supply its own text) can decide whether it's
+// safe to reference an actual supplied item for a recent-past event, or
+// must use a neutral, uncertainty-preserving posture instead. The live
+// model itself reasons about this directly from the same paired purchase
+// data in its own prompt context (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT) --
+// this function is not called on that path.
+// ---------------------------------------------------------------------------
+const RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS = 21;
+const RELATED_PURCHASE_AMBIGUOUS_WINDOW_DAYS = 45;
+function findLikelyRelatedPurchase(purchases = [], eventDateIso = '') {
+  const eventDate = parseDate(eventDateIso);
+  if (!eventDate || !Array.isArray(purchases) || !purchases.length) return { confidence: 'none', purchase: null };
+  const withDistance = purchases
+    .map(p => {
+      const d = parseDate(p && (p.dateStr || p.date || p.orderDate));
+      if (!d) return null;
+      return { purchase: p, days: Math.abs((d.getTime() - eventDate.getTime()) / 86400000) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.days - b.days);
+  if (!withDistance.length) return { confidence: 'none', purchase: null };
+  const withinConfident = withDistance.filter(x => x.days <= RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS);
+  const withinAmbiguous = withDistance.filter(x => x.days <= RELATED_PURCHASE_AMBIGUOUS_WINDOW_DAYS);
+  if (withinConfident.length === 1) return { confidence: 'confident', purchase: withinConfident[0].purchase };
+  if (withinAmbiguous.length) return { confidence: 'ambiguous', purchase: null };
+  return { confidence: 'none', purchase: null };
 }
 
 function dedupeOpportunities(opportunities = []) {
@@ -1232,5 +1280,5 @@ export {
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
-  isCommercialIntelligenceSignal
+  isCommercialIntelligenceSignal, findLikelyRelatedPurchase
 };
