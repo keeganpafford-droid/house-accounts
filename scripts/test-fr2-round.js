@@ -33,19 +33,19 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // Item 1: Help stays closed after the guided tour ends (Finish/Skip/Escape),
 // and focus never returns to a Help-menu trigger.
 // ---------------------------------------------------------------------------
-const isHelpRelatedSrc = extractLines('isHelpRelatedGuidedTourTrigger', 4140, 4143, 'function isHelpRelatedGuidedTourTrigger(el){');
+const isHelpRelatedSrc = extractLines('isHelpRelatedGuidedTourTrigger', 4150, 4153, 'function isHelpRelatedGuidedTourTrigger(el){');
 assert(
   /el\.id === 'haHelpToggle' \|\| Boolean\(el\.closest\('#haHelpDropdown, \.ha-help-dropdown'\)\)/.test(isHelpRelatedSrc),
   'isHelpRelatedGuidedTourTrigger() detects both the Help toggle button itself and anything inside the Help dropdown (e.g. the "Restart Product Tour" link)'
 );
 
-const launchGuidedTourSrc = extractLines('launchGuidedTour', 4145, 4178, 'function launchGuidedTour(){');
+const launchGuidedTourSrc = extractLines('launchGuidedTour', 4155, 4188, 'function launchGuidedTour(){');
 assert(
   /if\(window\.location\.hash === '#restart-tour'\)\{\s*const url = new URL\(window\.location\.href\);\s*url\.hash = '';\s*window\.history\.replaceState\(null, '', url\.pathname \+ url\.search\);\s*\}/.test(launchGuidedTourSrc),
   'required test 4 support: launchGuidedTour() consumes/clears the #restart-tour hash immediately, so a later hashchange (browser back/forward, another same-page hash link) cannot silently re-trigger the tour a second time'
 );
 
-const closeGuidedTourSrc = extractLines('closeGuidedTour', 4180, 4224, 'function closeGuidedTour(){');
+const closeGuidedTourSrc = extractLines('closeGuidedTour', 4190, 4234, 'function closeGuidedTour(){');
 assert(
   /const cameFromHelp = isHelpRelatedGuidedTourTrigger\(guidedTourTriggerEl\);/.test(closeGuidedTourSrc),
   'closeGuidedTour() determines whether the tour was launched from a Help-menu control before doing anything else'
@@ -91,7 +91,7 @@ assert(
 // Item 2: duplicate-account-name-safe identity + safe (non-blind) response
 // parsing for every account research call site.
 // ---------------------------------------------------------------------------
-const safeParseSrc = extractLines('safeParseResearchResponse', 6397, 6432, 'async function safeParseResearchResponse(res, context){');
+const safeParseSrc = extractLines('safeParseResearchResponse', 6458, 6493, 'async function safeParseResearchResponse(res, context){');
 assert(
   /const rawBody = await res\.text\(\);\s*let parsed = null;\s*try\{ parsed = JSON\.parse\(rawBody\); \}catch\(parseErr\)\{/.test(safeParseSrc),
   'required tests 7/8: safeParseResearchResponse() reads the body once as text and attempts JSON.parse itself -- it never calls response.json() blindly, so a non-JSON body can never surface a raw parser SyntaxError to the user'
@@ -109,7 +109,7 @@ assert(
   'the logged body preview is bounded to 300 characters, never the full response body'
 );
 
-const researchAccountModalSrc = extractLines('researchAccountFromManageModal', 6434, 6597, 'async function researchAccountFromManageModal(accountName, listId){');
+const researchAccountModalSrc = extractLines('researchAccountFromManageModal', 6495, 6658, 'async function researchAccountFromManageModal(accountName, listId){');
 assert(
   /const snapshot = await fetchUploadScopedSnapshot\(expectedUploadId\);/.test(researchAccountModalSrc) &&
   /const account = freshUploadScopedAccounts\.find\(a => a\.name === targetAccountName\);/.test(researchAccountModalSrc),
@@ -124,7 +124,7 @@ assert(
   'no blind res.json() call remains in the individual research path'
 );
 
-const researchListModalSrc = extractLines('researchListFromManageModal', 6612, 6842, 'async function researchListFromManageModal(listId, options = {}){');
+const researchListModalSrc = extractLines('researchListFromManageModal', 6673, 6903, 'async function researchListFromManageModal(listId, options = {}){');
 assert(
   !/const data = await res\.json\(\);/.test(researchListModalSrc),
   'no blind res.json() call remains in the list-level research path (neither the batched warm/mixed call nor the per-account historical loop)'
@@ -158,19 +158,19 @@ assert(
 // ---------------------------------------------------------------------------
 // Item 3: never render a single-upload dashboard snapshot after save.
 // ---------------------------------------------------------------------------
-const buildingPlaceholderSrc = extractLines('showBuildingDashboardPanelPlaceholder', 3661, 3672, 'function showBuildingDashboardPanelPlaceholder(){');
+const buildingPlaceholderSrc = extractLines('showBuildingDashboardPanelPlaceholder', 3671, 3682, 'function showBuildingDashboardPanelPlaceholder(){');
 assert(
   /subtitle\.textContent = 'Building your dashboard…';/.test(buildingPlaceholderSrc),
   'required test 12: a neutral "Building your dashboard…" placeholder exists, showing no fabricated single-upload numbers'
 );
 
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3713, 3818, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3723, 3828, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /aggregateDashboardEverLoaded = true;/.test(fetchAggregateSrc),
   'fetchAndRenderAggregateDashboard() marks that a real aggregate has successfully loaded once it renders one -- the single source of truth processData() reads to decide whether an aggregate is already safely on screen'
 );
 
-const processDataSrc = extractLines('processData', 10676, 10893, 'function processData(records){');
+const processDataSrc = extractLines('processData', 10766, 10994, 'function processData(records){');
 assert(
   /if\(!aggregateDashboardEverLoaded\)\{\s*\/\/ Render the focused recommendation feed\s*renderWeeklyPrioritiesFeed\(futureOpportunities, accounts, \{/.test(processDataSrc),
   'required test 10: processData() only writes this single upload\'s own accounts/opportunities into the main #results/priorities feed when no aggregate dashboard has ever loaded yet this session -- it never overwrites an existing aggregate with a single-upload snapshot'
@@ -188,7 +188,7 @@ assert(
   'required test 11: the upload-success panel is still rendered and stays visible regardless of which branch above ran'
 );
 assert(
-  /saveCurrentUpload\('uploaded'\)\.then\(async \(\) => \{\s*let refreshResult = null;\s*if\(typeof refreshAggregateDashboard === 'function'\) refreshResult = await refreshAggregateDashboard\(\);/.test(processDataSrc),
+  /saveCurrentUpload\('uploaded'\)\.then\(async \(saveResult\) => \{[\s\S]*?let refreshResult = null;\s*if\(typeof refreshAggregateDashboard === 'function'\) refreshResult = await refreshAggregateDashboard\(\);/.test(processDataSrc),
   'required test 10: the post-upload save chain awaits/tracks the aggregate refresh through the same production refreshAggregateDashboard() -> fetchAndRenderAggregateDashboard() path page load uses'
 );
 assert(
@@ -196,7 +196,7 @@ assert(
   'required test 13: a failed aggregate refresh on a true first upload (no prior aggregate to fall back to) shows a retryable, non-destructive failure state instead of leaving "Building your dashboard…" stuck forever; when a prior aggregate already exists, it is simply left untouched (nothing to retry into)'
 );
 
-const retryStateSrc = extractLines('showDashboardRefreshRetryState', 3679, 3699, 'function showDashboardRefreshRetryState(){');
+const retryStateSrc = extractLines('showDashboardRefreshRetryState', 3689, 3709, 'function showDashboardRefreshRetryState(){');
 assert(
   /retryBtn\.addEventListener\('click', async \(\) => \{\s*showBuildingDashboardPanelPlaceholder\(\);\s*const result = await refreshAggregateDashboard\(\);/.test(retryStateSrc),
   'required test 13: the failure state offers a real Retry action that re-attempts the same aggregate refresh, not just static text'
@@ -205,7 +205,7 @@ assert(
 // ---------------------------------------------------------------------------
 // Item 4: zero/one/multiple-account list-research completion workflow.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines('handleListResearchClick', 11583, 11695, 'async function handleListResearchClick(btn){');
+const handleListResearchClickSrc = extractLines('handleListResearchClick', 11684, 11796, 'async function handleListResearchClick(btn){');
 assert(
   /const opportunityAccounts = Array\.isArray\(result\.accountsWithOpportunities\) \? result\.accountsWithOpportunities : \[\];/.test(handleListResearchClickSrc),
   'handleListResearchClick() branches on the exact set of accounts from this run that produced an opportunity'

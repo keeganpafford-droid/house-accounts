@@ -79,8 +79,8 @@ assert(typeof COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT === 'string' && COMMERCIAL
 // ===========================================================================
 {
   const purchases = [{ project: 'Sandwich Stampede bandanas', category: 'Bandanas', dateStr: '2026-07-10' }];
-  const related = findLikelyRelatedPurchase(purchases, '2026-07-18');
-  assert(related.confidence === 'confident', `a single purchase 8 days from the event date is a confident match (got "${related.confidence}")`);
+  const related = findLikelyRelatedPurchase(purchases, '2026-07-18', 'Sandwich Stampede Rodeo & Festival');
+  assert(related.confidence === 'confident', `a single purchase 8 days from the event date, whose own project text names the event, is a confident match (got "${related.confidence}")`);
   assert(related.purchase.category === 'Bandanas', 'the confident match carries the real purchased category through');
 
   const ground = { accountName: 'Sandwich Stampede', actionability: { status: 'recent-past' }, relatedPurchase: related };
@@ -128,8 +128,39 @@ assert(typeof COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT === 'string' && COMMERCIAL
   // ambiguous window) is correctly ignored -- proximity, not existence, is
   // what counts as evidence.
   const purchases = [{ category: 'Winter apparel', dateStr: '2026-01-15' }];
-  const farAway = findLikelyRelatedPurchase(purchases, '2026-07-18');
+  const farAway = findLikelyRelatedPurchase(purchases, '2026-07-18', 'Sandwich Stampede Rodeo & Festival');
   assert(farAway.confidence === 'none', 'a purchase from 6 months earlier is not treated as evidence of fulfillment for this event, regardless of the account having ANY purchase history');
+}
+
+// ===========================================================================
+// Required test 11 (Preview QA correction round 4, explicit false-positive
+// finding): an UNRELATED purchase that merely happens to land near the same
+// event date must NOT be treated as event fulfillment merely because the
+// dates are close. Purchase similarity requires more than temporal
+// proximity -- findLikelyRelatedPurchase() now additionally requires the
+// purchase's own project/category text to share a distinctive word with the
+// event's own context text before it will ever return 'confident'.
+// ===========================================================================
+{
+  // Same tight date window as the genuine Sandwich Stampede match above (8
+  // days out), but the purchase itself is completely unrelated -- an office
+  // furniture order that coincidentally landed in the same window.
+  const purchases = [{ project: 'Q3 office furniture restock', category: 'Office furniture', dateStr: '2026-07-10' }];
+  const falsePositive = findLikelyRelatedPurchase(purchases, '2026-07-18', 'Sandwich Stampede Rodeo & Festival');
+  assert(falsePositive.confidence !== 'confident', `required test 11: an unrelated purchase within the tight date window is NOT promoted to "confident" merely because the dates are close (got confidence="${falsePositive.confidence}")`);
+  assert(falsePositive.purchase === null, 'required test 11: no purchase is claimed as the fulfillment source when there is no textual connection to the event, regardless of date proximity');
+
+  const groundFalsePositive = { accountName: 'Sandwich Stampede', actionability: { status: 'recent-past' }, relatedPurchase: falsePositive };
+  const openerFalsePositive = salesReadyOpener('the Sandwich Stampede Rodeo & Festival', '', '', '', groundFalsePositive, []);
+  assert(!/we supplied/i.test(openerFalsePositive), 'required test 11: the opener never claims "we supplied" the unrelated office-furniture purchase for this event');
+  assert(!/office furniture/i.test(openerFalsePositive), 'required test 11: the opener never names the unrelated purchase category at all');
+
+  // Sanity: with NO event context text supplied at all, the confident tier
+  // can never fire, even for the genuinely-matching Sandwich Stampede
+  // purchase from the earlier test -- callers that don't supply context
+  // degrade safely to "ambiguous," never to a wrongly promoted "confident."
+  const noContext = findLikelyRelatedPurchase([{ project: 'Sandwich Stampede bandanas', category: 'Bandanas', dateStr: '2026-07-10' }], '2026-07-18');
+  assert(noContext.confidence === 'ambiguous', `required test 11: with no eventContextText supplied, even a genuinely matching purchase degrades to "ambiguous," never silently promoted to "confident" (got "${noContext.confidence}")`);
 }
 
 // ===========================================================================

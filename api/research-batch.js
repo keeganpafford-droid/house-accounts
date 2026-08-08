@@ -1860,8 +1860,11 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   // fallback templates below may reference an actual supplied item. The
   // live model reasons about this directly from the same paired purchase
   // data in its own prompt context (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT).
+  // QA correction round 4 (false-positive finding): eventContextText lets
+  // findLikelyRelatedPurchase() require more than date proximity for its
+  // 'confident' tier -- see that function's header comment.
   const relatedPurchase = actionabilityStatus.status === 'recent-past'
-    ? findLikelyRelatedPurchase(account.purchases, resolvedEventDate)
+    ? findLikelyRelatedPurchase(account.purchases, resolvedEventDate, `${concreteTrigger} ${title}`)
     : null;
   const ground = { accountName, actionability: actionabilityStatus, recommendedBuyingTeam, historicalFact, relatedPurchase };
 

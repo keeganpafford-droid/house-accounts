@@ -36,17 +36,17 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6090, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
-const RR_BLOCK = extractBlock('recently-researched', 8137, 8197, 'function getRecentlyResearchedAccounts(){');
-const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 7941, 8036, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10895, 10898, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3383, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4689, 6151, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8445, 9753, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9756, 10259, 'function normalizeSignalLayerType(');
+const RR_BLOCK = extractBlock('recently-researched', 8226, 8286, 'function getRecentlyResearchedAccounts(){');
+const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 8030, 8125, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10996, 10999, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8360, 8362, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8365, 8367, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};

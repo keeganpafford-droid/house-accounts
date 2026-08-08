@@ -231,6 +231,27 @@ async function supabase(path, options={}){
 function signalHash(userId, uploadId, accountName, s){
   return hashString([userId, uploadId, accountName, s.signalType || s.type || '', s.signalTitle || s.title || s.whatChanged || '', s.sourceUrl || s.source || ''].join('|').toLowerCase());
 }
+// product/commercial-opportunity-intelligence, QA correction 4 (re-research
+// persistence) -- same allowlist and rationale as api/save-upload.js's own
+// refreshableSignalRow(): never event_fingerprint/user_id (identity, must
+// stay stable) and never first_seen_at (when we first learned about it),
+// but every column that represents our CURRENT interpretation of the event.
+function refreshableSignalRow(row){
+  return {
+    user_id: row.user_id,
+    event_fingerprint: row.event_fingerprint,
+    signal_hash: row.signal_hash,
+    signal_type: row.signal_type,
+    title: row.title,
+    why_reach_out: row.why_reach_out,
+    confidence: row.confidence,
+    source_url: row.source_url,
+    source_domain: row.source_domain,
+    published_at: row.published_at,
+    payload: row.payload,
+    last_seen_at: row.last_seen_at
+  };
+}
 function getBaseUrl(req){
   if(process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, '');
   const host = req.headers['x-forwarded-host'] || req.headers.host;
@@ -843,6 +864,23 @@ export default async function handler(req, res){
           // events, and re-running a timed-out/partial run never re-emails
           // or re-inserts an event it already persisted.
           newSignalRows = Array.isArray(inserted) ? inserted : [];
+          // QA correction 4 (re-research persistence): a weekly re-scan can
+          // regenerate materially better commercialPlay/activationIdeas/
+          // expansionPotential/conversationStarter for an event it already
+          // knows about -- the ignore-duplicates insert above never lets
+          // that reach the stored row. This second upsert refreshes exactly
+          // that interpretation (never identity, never first_seen_at, never
+          // newSignalRows/digest-notification behavior, which stays keyed
+          // off the ignore-duplicates result above only).
+          const refreshRows = rowsToInsert.map(refreshableSignalRow);
+          const chunkSize = 200;
+          for(let i=0;i<refreshRows.length;i+=chunkSize){
+            await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
+              method:'POST',
+              prefer:'resolution=merge-duplicates',
+              body: JSON.stringify(refreshRows.slice(i, i+chunkSize))
+            });
+          }
         }
         // Priority 6 (paid-beta weekly digest correction): no email is sent
         // here per-upload. Eligible signals are accumulated into
@@ -959,5 +997,6 @@ export {
   // change) so the local preview tool can drive the exact same digest-row
   // derivation the real handler uses, per "generate the local HTML preview
   // through the exact final weekly-scan input path."
-  accountPayload, deriveAccountHistoryDigestRows, dedupeDigestRows
+  accountPayload, deriveAccountHistoryDigestRows, dedupeDigestRows,
+  refreshableSignalRow
 };

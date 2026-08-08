@@ -15,7 +15,7 @@
 import handler, {
   computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult,
   accumulateProgress, decideFinalStatus, FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS,
-  RESEARCH_FETCH_TIMEOUT_MS, safeSecretEqual
+  RESEARCH_FETCH_TIMEOUT_MS, safeSecretEqual, refreshableSignalRow
 } from '../api/weekly-scan.js';
 import { resolveOpportunityEvents, dedupeByEventFingerprint, normalizeOpportunity } from '../api/signal-intelligence.js';
 
@@ -1374,8 +1374,15 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       // The row genuinely gets persisted -- research/discovery succeeded and
       // the signal is retained for Research Details/account history -- it
       // is only excluded from the DIGEST, never from ha_signals itself.
+      // QA correction 4 (re-research persistence): a SECOND upsert now
+      // follows the ignore-duplicates insert to refresh interpretation
+      // fields on an already-known event -- only the first (ignore-
+      // duplicates) call represents a genuine insert for this assertion's
+      // purposes, mirroring how insertedFingerprintsByUser/newSignalRows
+      // elsewhere in this file only ever derive from that same call.
       const rows = JSON.parse(options.body);
-      insertedRows.push(...rows);
+      const prefer = String((options.headers || {}).Prefer || '');
+      if (!prefer.includes('merge-duplicates')) insertedRows.push(...rows);
       return jsonResponse(rows);
     }
     if (u.includes('/api/research-batch')) {
@@ -1470,7 +1477,14 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       // pair was already inserted earlier in this SAME invocation is
       // silently skipped (not returned), exactly as Postgres/PostgREST
       // would skip it — never as an application-level dedup shortcut.
+      // QA correction 4 (re-research persistence): a SECOND, merge-
+      // duplicates upsert now follows to refresh interpretation fields on
+      // an already-known event -- this assertion is specifically about the
+      // ignore-duplicates INSERT-ATTEMPT count (each upload's own attempt
+      // to discover/insert the event), so only that call is counted here.
       const rows = JSON.parse(options.body);
+      const prefer = String((options.headers || {}).Prefer || '');
+      if (prefer.includes('merge-duplicates')) return jsonResponse(rows);
       insertAttempts.push(rows);
       const seen = insertedFingerprintsByUser.get(userId) || new Set();
       const genuinelyNew = rows.filter(row => !seen.has(row.event_fingerprint));
@@ -1564,6 +1578,107 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
   }
   assert(res.body?.digest?.length === 2, 'the response reports exactly 2 digest entries, one per user');
   assert(res.body?.runs?.length === 2, 'both uploads (belonging to different users) are still reported in runs, confirming per-upload run tracking is unaffected by per-user digest grouping');
+}
+
+// ---------------------------------------------------------------------------
+// product/commercial-opportunity-intelligence, QA correction round 4 --
+// required test 1: re-researching an already-known canonical event
+// (same event_fingerprint) must REFRESH its commercial-intelligence fields
+// rather than silently retaining stale play/question data. Root cause: the
+// ignore-duplicates insert used for ha_signals is, by design, a silent
+// no-op on a conflict with an already-persisted event -- correct for
+// identity/notification purposes (a retried/re-run scan must never
+// re-email a digest for an event it already surfaced), but this was ALSO
+// silently discarding every re-scan's improved interpretation forever. A
+// second, explicit merge-duplicates upsert (refreshableSignalRow()) now
+// refreshes exactly the interpretation columns.
+// ---------------------------------------------------------------------------
+{
+  assert(typeof refreshableSignalRow === 'function', 'sanity: refreshableSignalRow is exported for direct testing');
+  // Pure-function shape check: identity columns are present (needed for the
+  // ON CONFLICT match target) but first_seen_at is never included -- "when
+  // we first learned about this" must survive a refresh untouched.
+  const shaped = refreshableSignalRow({
+    user_id: 'u1', event_fingerprint: 'fp-1', signal_hash: 'h1', signal_type: 'Event',
+    title: 'T', why_reach_out: 'W', confidence: 80, source_url: 'https://x', source_domain: 'x',
+    published_at: '2026-07-01', payload: { commercialPlay: { narrative: 'Real play' } },
+    first_seen_at: '2020-01-01T00:00:00Z', last_seen_at: '2026-08-08T00:00:00Z'
+  });
+  assert(!('first_seen_at' in shaped), 'refreshableSignalRow() never carries first_seen_at through to the refresh upsert');
+  assert(shaped.event_fingerprint === 'fp-1' && shaped.user_id === 'u1', 'refreshableSignalRow() keeps the identity columns needed for the ON CONFLICT match target, unchanged');
+  assert(shaped.payload.commercialPlay.narrative === 'Real play', 'refreshableSignalRow() carries the full current payload through');
+
+  // Full-handler integration: a weekly re-scan re-discovers an event this
+  // user already has persisted (simulated via the mock's ignore-duplicates
+  // branch always returning [] -- "already existed, nothing genuinely
+  // new," exactly like a real Postgres ON CONFLICT DO NOTHING) with
+  // materially DIFFERENT, richer commercial intelligence than before.
+  process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+  process.env.CRON_SECRET = TEST_CRON_SECRET;
+  process.env.RESEND_API_KEY = 'fake-resend-key';
+  delete process.env.WEEKLY_RESEARCH_BATCH_SIZE;
+
+  const userId = 'user-refresh-1';
+  const uploadRow = { id: 'upload-refresh-1', user_id: userId, upload_name: 'Refresh List', summary: {}, created_at: new Date().toISOString(), ha_users: { id: userId, email: 'refreshrep@example.com', name: 'Refresh Rep', company: '' } };
+  const accounts = [{ id: 'acct-refresh-1', account_name: 'Dover Honda', industry: '', contact_name: '', contact_email: '', metrics: {}, raw_data: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  const ha_signals_calls = [];
+  const realFetchRefresh = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    if (u.includes('/rest/v1/ha_uploads')) return jsonResponse([uploadRow]);
+    if (u.includes('/rest/v1/ha_accounts')) return jsonResponse(accounts);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'GET') return jsonResponse([]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'POST') return jsonResponse([{ id: 'run-refresh-1', ...JSON.parse(options.body)[0] }]);
+    if (u.includes('/rest/v1/ha_weekly_runs') && method === 'PATCH') return jsonResponse([{ id: 'run-patched', ...JSON.parse(options.body) }]);
+    if (u.includes('/rest/v1/ha_signals') && method === 'POST') {
+      const rows = JSON.parse(options.body);
+      const prefer = String((options.headers || {}).Prefer || '');
+      ha_signals_calls.push({ prefer, rows });
+      // Simulates the event already existing: the ignore-duplicates call
+      // always reports nothing genuinely new; the merge-duplicates call's
+      // return value is never consumed by the caller.
+      if (prefer.includes('ignore-duplicates')) return jsonResponse([]);
+      return jsonResponse(rows);
+    }
+    if (u.includes('/api/research-batch')) {
+      return jsonResponse({
+        signals: [{
+          accountName: 'Dover Honda', signalType: 'Community / Sponsorship',
+          signalTitle: '2026 Dover Holiday Parade', whatChanged: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.',
+          whyItMattersForPromo: 'Lead sponsorship of a major community event.',
+          sourceUrl: 'https://example.com/dover-honda-parade', confidenceScore: 88,
+          eventCategory: 'event-like',
+          actionabilityStatus: { status: 'upcoming', tense: 'future', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: false, label: 'Upcoming' },
+          commercialPlay: { concept: 'Holiday Parade Sponsorship', narrative: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.' },
+          activationIdeas: ['Parade-day team kit', 'Family-focused giveaway bags'],
+          expansionPotential: { narrative: 'A recurring annual sponsorship.', tags: ['recurring-program'] },
+          conversationStarter: 'We had a couple ideas for the Holiday Parade, including a parade-day team kit. Would it be okay if I sent a few concepts over?'
+        }],
+        diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
+      });
+    }
+    if (u === 'https://api.resend.com/emails') return jsonResponse({ id: 'resend-id-refresh' });
+    throw new Error(`Unhandled fetch in re-research persistence refresh test mock: ${method} ${u}`);
+  };
+  const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
+  const res = makeRes();
+  try { await handler(req, res); } finally { global.fetch = realFetchRefresh; }
+
+  assert(res.statusCode === 200, 'required test 1: the re-research invocation succeeds');
+  assert(ha_signals_calls.length === 2, `required test 1: exactly two ha_signals upsert calls are made -- the original ignore-duplicates insert attempt, and the new refresh upsert (got ${ha_signals_calls.length})`);
+  const mergeCall = ha_signals_calls.find(c => c.prefer.includes('merge-duplicates'));
+  assert(!!mergeCall, 'required test 1: a second, explicit merge-duplicates upsert runs -- this is the actual fix');
+  if (mergeCall) {
+    const refreshedRow = mergeCall.rows[0];
+    assert(refreshedRow.event_fingerprint, 'required test 1: the refresh upsert targets a real event_fingerprint -- canonical event identity is untouched, this refreshes interpretation attached to the same event, not a new one');
+    assert(refreshedRow.payload?.commercialPlay?.concept === 'Holiday Parade Sponsorship', `required test 1: the refresh upsert's payload carries the fresh commercialPlay (got ${JSON.stringify(refreshedRow.payload?.commercialPlay)})`);
+    assert(Array.isArray(refreshedRow.payload?.activationIdeas) && refreshedRow.payload.activationIdeas.length === 2, 'required test 1: the refresh upsert carries the fresh activationIdeas');
+    assert(refreshedRow.payload?.expansionPotential?.tags?.includes('recurring-program'), 'required test 1: the refresh upsert carries the fresh expansionPotential');
+    assert(/would it be okay if i sent/i.test(refreshedRow.payload?.conversationStarter || ''), 'required test 1: the refresh upsert carries the fresh conversationStarter (concept-led permission ask), not stale generic discovery text');
+    assert(!('first_seen_at' in refreshedRow), 'required test 1: the refresh upsert never touches first_seen_at');
+  }
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

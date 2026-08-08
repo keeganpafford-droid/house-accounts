@@ -51,7 +51,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // off the list object; the underlying required-test guarantees (labels,
 // active-only confirmation count) are proven against the new mechanism
 // instead.
-const listCardSrc = extractLines('listCard', 11281, 11321, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 11382, 11422, 'function listCard(list){');
 assert(
   /const listResearchLabel = list\.everResearched \? 'Research All Accounts Again' : 'Research All Accounts';/.test(listCardSrc),
   'required tests 1 & 2: never-researched lists show "Research All Accounts", previously-researched lists show "Research All Accounts Again" -- now driven by the server-computed list.everResearched'
@@ -102,7 +102,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 6612, 6842, 'async function researchListFromManageModal(listId, options = {}){');
+const researchListSrc = extractLines('researchListFromManageModal', 6673, 6903, 'async function researchListFromManageModal(listId, options = {}){');
 assert(
   /let activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -139,7 +139,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 11583, 11695, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines("handleListResearchClick", 11684, 11796, "async function handleListResearchClick(btn){");
 // Scaling round: the active-account count in the confirmation dialog now
 // comes from the server-computed list.activeCount (Prefer: count=exact) --
 // cachedLists no longer carries a full .accounts array to filter
@@ -184,7 +184,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 7941, 8036, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 8030, 8125, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'
@@ -243,7 +243,7 @@ assert(
 // uploaded list, the upload-success panel stays visible throughout, and
 // post-research totals update without a manual refresh.
 // ---------------------------------------------------------------------------
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3713, 3818, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3723, 3828, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /fetch\(`\/api\/get-dashboard\?email=\$\{encodeURIComponent\(e\)\}&view=\$\{encodeURIComponent\(dashboardViewMode \|\| defaultDashboardView\(\)\)\}`/.test(fetchAggregateSrc),
   'required test 11: fetchAndRenderAggregateDashboard() calls the real /api/get-dashboard aggregate endpoint (every uploaded list the user owns), the exact same source loadSavedDashboard() has always used -- never a single-upload-scoped request'
@@ -253,7 +253,7 @@ assert(
   'required test 12: fetchAndRenderAggregateDashboard() never references #uploadSuccessState at all, in silent or non-silent mode -- the upload-success panel is left completely untouched by this refresh'
 );
 {
-  const processDataSaveChain = dashboardHtml.slice(dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async () => {"), dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async () => {") + 400);
+  const processDataSaveChain = dashboardHtml.slice(dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {"), dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {") + 1200);
   assert(
     /if\(typeof refreshAggregateDashboard === 'function'\) refreshResult = await refreshAggregateDashboard\(\);/.test(processDataSaveChain),
     'required test 11: processData() calls the shared refreshAggregateDashboard() immediately after the fresh upload\'s save resolves, so the aggregate (every uploaded list) replaces the transient single-upload snapshot without a manual refresh (FR2 round: the result is now also captured to drive the retryable-failure state)'

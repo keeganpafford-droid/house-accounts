@@ -2535,6 +2535,16 @@ let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
+// QA correction 4 (Northern Pool 0-vs-25 finding): window.accountRadarAccounts
+// is populated the instant a CSV is parsed client-side, BEFORE the server
+// save even runs, and is never reconciled against what the server actually
+// accepted (free-plan locking, account_name validation, etc. can all drop
+// rows server-side). null means "no confirmed server accept-count yet for
+// the current upload" (research proceeds as before -- this is a targeted
+// invariant guard, not a rewrite of account sourcing); once a stage='uploaded'
+// save resolves, this is set to the server's own accountsSaved count and
+// researchTopAccounts() refuses to launch when it is confirmed to be 0.
+let lastUploadAcceptedAccountCount = null;
 // Phase 2A / A2: single-flight save queue. Every saveCurrentUpload() call
 // (regardless of caller — research completion, dashboard reload, a manual
 // per-account re-research) chains onto this promise instead of firing
@@ -5291,8 +5301,32 @@ function repairDanglingOpener(text){
   return repaired.length >= 20 ? repaired : '';
 }
 
+// QA correction 4 (Dover Honda "concept-led must be preferred, not merely
+// allowed" finding): a deterministic, dashboard-side counterpart to
+// api/research-batch.js's salesReadyOpener() upcoming-tier override --
+// builds a concept-led permission ask directly from the opportunity's own
+// real, already-normalized activationIdeas. Returns null (never a
+// fabricated idea, never a guess) unless ALL THREE qualifying conditions
+// hold: the signal is genuinely upcoming, commercialPlay is credible (has a
+// real narrative -- normalizeCommercialIntelligence()/isGenericCommercialPlay()
+// already guarantee this can't be generic filler), and there is at least
+// one real activationIdea to draw from.
+function conceptLedApproach(opp){
+  if(!opp || opp.actionabilityStatus?.status !== 'upcoming') return null;
+  if(!opp.commercialPlay || !String(opp.commercialPlay.narrative || '').trim()) return null;
+  const ideas = (Array.isArray(opp.activationIdeas) ? opp.activationIdeas : []).map(i => String(i || '').trim()).filter(Boolean);
+  if(!ideas.length) return null;
+  const account = String(opp.account || opp.accountName || '').trim();
+  const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
+  const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
+  const lead = account && specific ? `Saw ${account} has ${specific} coming up.` : (specific ? `Saw ${specific} coming up.` : '');
+  const leadIdeas = ideas.slice(0, 2).join(' and ');
+  const question = `We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`;
+  return lead ? `${lead} ${question}` : question;
+}
+
 function getSuggestedOpener(opp){
-  if(isGroundedOpener(opp.conversationStarter, opp)) return opp.conversationStarter;
+  const stored = isGroundedOpener(opp.conversationStarter, opp) ? opp.conversationStarter : null;
   // R5 follow-up: before falling all the way back to the fully generic
   // deterministic template below, try to salvage the real, grounded stored
   // text when the ONLY reason it failed the groundedness gate is a
@@ -5300,8 +5334,19 @@ function getSuggestedOpener(opp){
   // exact same groundedness/posture checks (isGroundedOpener()) before it
   // is trusted, so a repair that happens to expose some OTHER problem
   // (e.g. a referral-first violation) is still rejected, same as before.
-  const repaired = repairDanglingOpener(opp.conversationStarter);
-  if(repaired && isGroundedOpener(repaired, opp)) return repaired;
+  const repaired = !stored ? repairDanglingOpener(opp.conversationStarter) : null;
+  const bestStored = stored || (repaired && isGroundedOpener(repaired, opp) ? repaired : null);
+  // QA correction 4: passing isGroundedOpener() only proves bestStored is
+  // SAFE, not that it's the BEST available approach -- a valid-but-generic
+  // discovery question ("anything coming up?") must not automatically win
+  // just because it passes the safety gate when a concept-led permission
+  // ask is available. Prefer the concept-led version UNLESS bestStored is
+  // ALREADY concept-led itself (isPermissionBasedConceptOffer), in which
+  // case the model's own, presumably more specific, version wins over the
+  // deterministic template.
+  const conceptLed = conceptLedApproach(opp);
+  if(conceptLed && !(bestStored && isPermissionBasedConceptOffer(bestStored, opp))) return conceptLed;
+  if(bestStored) return bestStored;
   // QA round 3, item 5: same fix as businessSuggestedOpener() -- never
   // greet with a department/role placeholder from opp.contact.
   const knownContact = likelyKnownBuyer(opp);
@@ -5454,24 +5499,24 @@ function renderOpportunitySection(opp){
   if(!narrative) return '';
   const concept = getCommercialPlayConcept(opp);
   return `<div class="opp-section">
-    <div class="opp-label">The Opportunity</div>
+    <div class="opp-label">The Play</div>
     <div class="opp-content">${concept ? `<span class="opp-play-concept">${escapeHtml(concept)}</span> — ` : ''}${escapeHtml(shortText(narrative, 220))}</div>
   </div>`;
 }
 
-// Renders ACTIVATION IDEAS -- hidden entirely when empty. `limit` caps how
+// Renders IDEAS TO SEND -- hidden entirely when empty. `limit` caps how
 // many show (the primary card shows only the strongest ~3; Prepare for Call
 // passes no limit to show the full normalized list, up to 6).
 function renderActivationIdeasSection(opp, limit){
   const ideas = getActivationIdeas(opp, limit);
   if(!ideas.length) return '';
   return `<div class="opp-section">
-    <div class="opp-label">Activation Ideas</div>
+    <div class="opp-label">Ideas to Send</div>
     <div class="opp-content opp-activation-ideas">${ideas.map(idea => `<span class="opp-idea-chip">${escapeHtml(idea)}</span>`).join('')}</div>
   </div>`;
 }
 
-// Renders WHY IT COULD MATTER -- hidden entirely when there is no
+// Renders WHY IT COULD GROW -- hidden entirely when there is no
 // expansion-potential narrative. Tags render subtly (small, muted) since
 // they are a secondary classification, not the section's headline content.
 function renderWhyItCouldMatterSection(opp){
@@ -5479,7 +5524,7 @@ function renderWhyItCouldMatterSection(opp){
   if(!narrative) return '';
   const tags = getExpansionPotentialTags(opp);
   return `<div class="opp-section">
-    <div class="opp-label">Why It Could Matter</div>
+    <div class="opp-label">Why It Could Grow</div>
     <div class="opp-content">${escapeHtml(shortText(narrative, 190))}${tags.length ? `<div class="opp-expansion-tags">${tags.map(t => `<span class="opp-tag-subtle">${escapeHtml(String(t).replace(/-/g,' '))}</span>`).join('')}</div>` : ''}</div>
   </div>`;
 }
@@ -5812,18 +5857,35 @@ function renderVerifiedOpportunitySection(opp){
 // this deliberately does not call, since those cap to 3 ideas and truncate
 // the narrative for card scannability -- Prepare for Call is the
 // destination for the full version, not a duplicate of the card).
-function renderCommercialOpportunitySection(opp){
+// QA correction 4 (Product Finding 2 -- UX simplification): previously one
+// combined card holding all three commercial-interpretation fields
+// together; the founder's flattened mental model treats them as three
+// separate, independently-hidden top-level groups in Prepare for Call
+// (The Play / Ideas to Send / Why It Could Grow) rather than one bundled
+// card, matching the same "hide entirely when empty" rule each field
+// already had. Same untruncated, full-detail data as before -- only the
+// grouping and labels changed. Kept as three small functions (not one
+// three-branch function) so each can be independently omitted from the
+// modal's group list, same pattern as the primary card's
+// renderOpportunitySection()/renderActivationIdeasSection()/
+// renderWhyItCouldMatterSection() (which stay separate for the same reason
+// and remain the card's own compact/truncated versions).
+function renderThePlaySection(opp){
   const narrative = getCommercialPlayNarrative(opp);
+  if(!narrative) return '';
   const concept = getCommercialPlayConcept(opp);
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">The Play</h3><div class="sales-play-detail-item">${concept ? `<span class="opp-play-concept">${escapeHtml(concept)}</span> — ` : ''}${escapeHtml(narrative)}</div></div>`;
+}
+function renderIdeasToSendSection(opp){
   const ideas = getActivationIdeas(opp);
-  const expansionNarrative = getExpansionPotentialNarrative(opp);
-  const expansionTags = getExpansionPotentialTags(opp);
-  const rows = [];
-  if(narrative) rows.push(`<div class="sales-play-detail-item"><strong>The Opportunity</strong>${concept ? `<span class="opp-play-concept">${escapeHtml(concept)}</span> — ` : ''}${escapeHtml(narrative)}</div>`);
-  if(ideas.length) rows.push(`<div class="sales-play-detail-item"><strong>Activation Ideas</strong><div class="opp-activation-ideas">${ideas.map(idea => `<span class="opp-idea-chip">${escapeHtml(idea)}</span>`).join('')}</div></div>`);
-  if(expansionNarrative) rows.push(`<div class="sales-play-detail-item"><strong>Why It Could Matter</strong>${escapeHtml(expansionNarrative)}${expansionTags.length ? `<div class="opp-expansion-tags">${expansionTags.map(t => `<span class="opp-tag-subtle">${escapeHtml(String(t).replace(/-/g,' '))}</span>`).join('')}</div>` : ''}</div>`);
-  if(!rows.length) return '';
-  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">The Opportunity</h3><div class="sales-play-detail-grid">${rows.join('')}</div></div>`;
+  if(!ideas.length) return '';
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Ideas to Send</h3><div class="opp-activation-ideas">${ideas.map(idea => `<span class="opp-idea-chip">${escapeHtml(idea)}</span>`).join('')}</div></div>`;
+}
+function renderWhyItCouldGrowSection(opp){
+  const narrative = getExpansionPotentialNarrative(opp);
+  if(!narrative) return '';
+  const tags = getExpansionPotentialTags(opp);
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Why It Could Grow</h3><div class="sales-play-detail-item">${escapeHtml(narrative)}${tags.length ? `<div class="opp-expansion-tags">${tags.map(t => `<span class="opp-tag-subtle">${escapeHtml(String(t).replace(/-/g,' '))}</span>`).join('')}</div>` : ''}</div></div>`;
 }
 
 // Priority 5: real order history only -- previous orders, actual historical
@@ -5970,17 +6032,16 @@ function renderRepOpportunityCard(opp){
   // signal details live in Prepare for Call's Research Details group, not
   // here.
   //
-  // product/commercial-opportunity-intelligence: the card hierarchy is now
-  // Why Now -> The Opportunity -> Activation Ideas -> Why It Could Matter ->
-  // Best Next Question. The old single "Why it matters" section (generic
-  // narrative text) is replaced by renderOpportunitySection() -- a real
-  // commercial-play interpretation, hidden entirely when the evidence
-  // doesn't support one, never generic filler. renderActivationIdeasSection()/
-  // renderWhyItCouldMatterSection() are likewise hidden entirely when empty
-  // -- no empty containers, no placeholder text. "Conversation starter" is
-  // relabeled "Best Next Question" (same field, same policy gate -- see
-  // getSuggestedOpener()) since its intent is now commercial discovery, not
-  // opener copy.
+  // product/commercial-opportunity-intelligence, QA correction 4 (Product
+  // Finding 2 -- UX simplification): the card hierarchy is now Why Now ->
+  // The Play -> Ideas to Send -> Why It Could Grow -> recommended contact ->
+  // How to Approach. Previously "The Opportunity"/"Activation Ideas"/"Why
+  // It Could Matter"/"Best Next Question" -- same underlying fields, same
+  // policy gates (getSuggestedOpener()), renamed toward one consistent
+  // mental model shared with Prepare for Call (see createSalesPlayPanel()).
+  // renderOpportunitySection()/renderActivationIdeasSection()/
+  // renderWhyItCouldMatterSection() remain hidden entirely when their
+  // underlying field is empty -- no empty containers, no placeholder text.
   const dateLine = signalDateAndActionabilityLine(opp);
   return `
     <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
@@ -6000,7 +6061,7 @@ function renderRepOpportunityCard(opp){
       ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactCompact(opp) : ''}
 
       <div class="opp-section opener-card">
-        <div class="opp-label">Best Next Question</div>
+        <div class="opp-label">How to Approach</div>
         <div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div>
       </div>
 
@@ -7268,6 +7329,21 @@ function dedupeSignalsClient(signals){
   return [...map.values()];
 }
 
+// QA correction 4 (Northern Pool 0-vs-25 finding): the one user-visible
+// consequence of a confirmed-zero-accounts upload -- hides the "Research
+// all N accounts" decision (there is nothing to research) and repurposes
+// the existing upload-success warning slot (see renderUploadSuccessState())
+// to say so honestly, instead of leaving the success panel implying there
+// are researchable accounts when the server accepted none.
+function hideUploadDecisionForZeroAcceptedAccounts(){
+  const decisionEl = document.getElementById('uploadResearchDecision');
+  if(decisionEl) decisionEl.hidden = true;
+  const warningEl = document.getElementById('uploadSuccessWarning');
+  if(warningEl){
+    warningEl.hidden = false;
+    warningEl.innerHTML = 'None of these accounts were saved, so there is nothing to research yet. Check the file (account names may be missing or unrecognized) and try uploading again.';
+  }
+}
 async function researchTopAccounts(options = {}){
   if(researchInProgress) return;
   // Phase 2A implementation-review item 2: research-batch.js requires a real
@@ -7278,6 +7354,19 @@ async function researchTopAccounts(options = {}){
   // 401/400 from the server.
   if(!currentUploadId){
     console.warn('[Research] researchTopAccounts() called before an upload exists; skipping.');
+    return;
+  }
+  // QA correction 4 (Northern Pool 0-vs-25 finding): window.accountRadarAccounts
+  // (what getAccountsForResearch() below reads) is populated at CSV-parse
+  // time, before the server save even runs, and is never reconciled against
+  // what the server actually accepted -- free-plan locking or account-name
+  // validation can silently drop every row. Only blocks on a CONFIRMED
+  // zero from the server (never on "unknown yet"), so research launched
+  // from Manage Customer Accounts (which re-fetches server truth itself via
+  // fetchUploadScopedSnapshot()) is unaffected.
+  if(lastUploadAcceptedAccountCount === 0){
+    console.warn('[Research] researchTopAccounts() called but the server confirmed 0 accounts were accepted for this upload; refusing to launch research.');
+    hideUploadDecisionForZeroAcceptedAccounts();
     return;
   }
   researchInProgress = true;
@@ -8934,7 +9023,23 @@ window.createSalesPlayPanel = function(opp, opts){
   });
 
   const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode, opp);
-  const commercialOpportunityHtml = renderCommercialOpportunitySection(opp);
+  // QA correction 4 (Product Finding 2 -- UX simplification): The Opportunity/
+  // Best Next Move/Best Next Question/Opportunity Summary were increasingly
+  // restating the same intelligence in slightly different language. Prepare
+  // for Call is now flattened to the founder's 8-item mental model: Verified
+  // Signal/Evidence, The Play, Ideas to Send, Why It Could Grow, Recommended
+  // Contact, How to Approach, Account/Purchase Context, Research Details.
+  // Best Next Move/Opportunity Summary/Success Looks Like are no longer
+  // rendered anywhere (they only ever restated The Play once it existed) --
+  // buildConciseSalesPlay() itself is UNCHANGED and still computes
+  // play.bestNextMoveCombined/play.opportunitySummary/play.successLooksLike,
+  // since those remain real, tested, reusable functions; this is a
+  // rendering-hierarchy change, not a deletion of that logic. Questions to
+  // Ask is still useful after How to Approach, so it survives, demoted into
+  // the collapsed Outreach group alongside Email/Call Script.
+  const thePlayHtml = renderThePlaySection(opp);
+  const ideasToSendHtml = renderIdeasToSendSection(opp);
+  const whyItCouldGrowHtml = renderWhyItCouldGrowSection(opp);
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') closeSalesPlayModal(this)">
       <div class="sales-play-modal-content">
@@ -8947,41 +9052,36 @@ window.createSalesPlayPanel = function(opp, opts){
         </div>
         <div class="sales-play-output">
 
-          <!-- Priority 5: Verified Opportunity -- exact signal, event/publication date, actionability, source. -->
+          <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">Verified Opportunity</div>
+            <div class="sales-play-group-label">Verified Signal / Evidence</div>
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
-          <!-- product/commercial-opportunity-intelligence: the FULL commercial
-               interpretation -- untruncated opportunity narrative, the complete
-               activation-ideas list, and expansion potential. This is the
-               deeper version of what the primary card shows compactly; it is
-               the core of Prepare for Call now, not a secondary detail. Omits
-               the whole group wrapper (no empty container) when there is
-               nothing to show. -->
-          ${commercialOpportunityHtml ? `<div class="sales-play-group">${commercialOpportunityHtml}</div>` : ''}
+          <!-- 2. The Play -- untruncated commercialPlay narrative. Hidden entirely when not specific/credible (normalizeCommercialIntelligence()/isGenericCommercialPlay() already guarantee this can't be generic filler). -->
+          ${thePlayHtml ? `<div class="sales-play-group"><div class="sales-play-group-label">The Play</div>${thePlayHtml}</div>` : ''}
 
-          <!-- Priority 5: Call Plan -- who, why, and the specific discovery question. -->
+          <!-- 3. Ideas to Send -- the full normalized activationIdeas list (primary card shows only the strongest ~3). Hidden entirely when empty. -->
+          ${ideasToSendHtml ? `<div class="sales-play-group"><div class="sales-play-group-label">Ideas to Send</div>${ideasToSendHtml}</div>` : ''}
+
+          <!-- 4. Why It Could Grow -- expansionPotential. Hidden entirely when absent. -->
+          ${whyItCouldGrowHtml ? `<div class="sales-play-group"><div class="sales-play-group-label">Why It Could Grow</div>${whyItCouldGrowHtml}</div>` : ''}
+
+          <!-- 5. Recommended Contact -->
+          ${opp.isVerifiedSignalOpportunity ? `<div class="sales-play-group"><div class="sales-play-group-label">Recommended Contact</div>${renderSuggestedContactPrimary(opp)}</div>` : ''}
+
+          <!-- 6. How to Approach -- the specific discovery question/permission ask (getSuggestedOpener(), same policy gate as the primary card). -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">Call Plan</div>
-            ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
-            <div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Best Next Question</h3><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
+            <div class="sales-play-group-label">How to Approach</div>
+            <div class="sales-play-detail-card"><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
           </div>
 
-          <!-- product/commercial-opportunity-intelligence: Email/Call Script/
-               Best Next Move/Success Looks Like are secondary, template-
-               generated outreach tools now (they cost no API time/money, so
-               nothing here was deleted) -- collapsed by default so the
-               primary commercial intelligence above is what a rep sees
-               first, matching the same collapsed-by-default pattern
-               Research Details already uses below. -->
+          <!-- Secondary, collapsed Outreach utilities -- Email/Call Script cost
+               no API time/money so nothing here was deleted, only demoted
+               below the primary intelligence above. Questions to Ask lives
+               here too (still useful after How to Approach, but secondary). -->
           <details class="sales-play-group supporting">
             <summary class="sales-play-group-label" style="cursor:pointer;">Outreach</summary>
-            <div class="sales-play-card">
-              <h3><span class="section-icon">☆</span> Best Next Move</h3>
-              <div class="section-content">${escapeHtml(play.bestNextMoveCombined)}</div>
-            </div>
             <div class="sales-play-grid">
               <div class="sales-play-section full">
                 <div class="sales-play-card">
@@ -9016,31 +9116,21 @@ window.createSalesPlayPanel = function(opp, opts){
                   <div style="margin-top:14px; text-align:right;"><button class="copy-mini" data-copy-sales-play="linkedin">Copy Message</button></div>
                 </div>
               </div>` : ''}
-              <div class="sales-play-section full">
-                <div class="sales-play-card">
-                  <h3><span class="section-icon">⚑</span> Success Looks Like</h3>
-                  <div class="section-content"><ul class="sales-play-list check-list success-list">${play.successLooksLike.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
-                </div>
-              </div>
             </div>
           </details>
 
-          <!-- Priority 5: Account Context -- real previous orders, real historical categories, cadence, uploaded contacts, notes. -->
+          <!-- 7. Account / Purchase Context -- real previous orders, real historical categories, cadence, uploaded contacts, notes. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">Account Context</div>
+            <div class="sales-play-group-label">Account / Purchase Context</div>
             ${renderAccountContextSection(opp)}
           </div>
 
-          <!-- Priority 5: Research Details -- collapsed by default. Evidence, alternate/additional sources, classification detail, inferred merchandise categories. Nothing here was deleted from Priority 4's card simplification, only relocated. -->
+          <!-- 8. Research Details -- collapsed by default. Evidence, alternate/additional sources, classification detail, inferred merchandise categories. -->
           <details class="sales-play-group supporting">
             <summary class="sales-play-group-label" style="cursor:pointer;">Research Details</summary>
             ${renderAdditionalOpportunitiesForSalesPlay(opp)}
             ${renderSupportingResearchDetails(opp)}
             ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactMeta(opp) : ''}
-            <div class="sales-play-card" style="margin-bottom:16px">
-              <h3><span class="section-icon">◎</span> Opportunity Summary</h3>
-              <div class="section-content"><ul class="sales-play-list">${play.opportunitySummary.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
-            </div>
           </details>
 
         </div>
@@ -10883,7 +10973,18 @@ function processData(records){
   // forever, and must never discard an existing aggregate that was already
   // correctly on screen -- only the no-prior-aggregate placeholder case
   // gets a visible, retryable failure state.
-  saveCurrentUpload('uploaded').then(async () => {
+  lastUploadAcceptedAccountCount = null;
+  saveCurrentUpload('uploaded').then(async (saveResult) => {
+    // QA correction 4 (Northern Pool 0-vs-25 finding): accountsSaved is the
+    // server's own confirmed count of ha_accounts rows actually persisted
+    // for this upload -- distinct from accounts.length (the raw client-
+    // parsed count used above for the summary object), which free-plan
+    // locking or account-name validation can silently reduce server-side.
+    // A later explicit user action against this list is gated on this value.
+    if(saveResult && saveResult.ok && saveResult.data && Number.isFinite(Number(saveResult.data.accountsSaved))){
+      lastUploadAcceptedAccountCount = Number(saveResult.data.accountsSaved);
+      if(lastUploadAcceptedAccountCount === 0) hideUploadDecisionForZeroAcceptedAccounts();
+    }
     let refreshResult = null;
     if(typeof refreshAggregateDashboard === 'function') refreshResult = await refreshAggregateDashboard();
     if(refreshResult && !refreshResult.ok && !aggregateDashboardEverLoaded){

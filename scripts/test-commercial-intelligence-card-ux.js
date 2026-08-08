@@ -48,17 +48,17 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 }
 
 // Same verified-working ranges as scripts/test-preview-qa-round7-live-render.js.
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4679, 6204, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8219, 8759, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10895, 10898, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7674, 7712, 'function getReasonToReachOutTitle(opp){');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3383, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4689, 6265, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8308, 8848, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8445, 9753, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9756, 10259, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10996, 10999, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8360, 8362, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8365, 8367, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7763, 7801, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   // QA correction 1: document.body.insertAdjacentHTML/lastElementChild are
@@ -126,13 +126,19 @@ function baseOpp(overrides = {}){
 }
 
 const sandbox = makeSandbox();
-for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySection, sandbox.renderActivationIdeasSection, sandbox.renderWhyItCouldMatterSection, sandbox.getCommercialPlayNarrative, sandbox.isCommercialIntelligenceSignal, sandbox.renderCommercialOpportunitySection]){
+for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySection, sandbox.renderActivationIdeasSection, sandbox.renderWhyItCouldMatterSection, sandbox.getCommercialPlayNarrative, sandbox.isCommercialIntelligenceSignal, sandbox.renderThePlaySection, sandbox.renderIdeasToSendSection, sandbox.renderWhyItCouldGrowSection]){
   assert(typeof fn === 'function', `extraction produced a real function (${fn && fn.name})`);
 }
 
 // ===========================================================================
 // New-schema signal, full commercial intelligence: all five sections render,
 // in the approved order, with real content.
+//
+// QA correction 4 (Product Finding 2 -- UX simplification): labels renamed
+// toward one consistent mental model -- Why Now / The Play / Ideas to Send
+// / Why It Could Grow / How to Approach (previously The Opportunity /
+// Activation Ideas / Why It Could Matter / Best Next Question). Same
+// underlying fields, same hide-when-empty rules.
 // ===========================================================================
 {
   const opp = baseOpp({
@@ -142,17 +148,17 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   });
   const html = sandbox.renderRepOpportunityCard(opp);
   const whyNowIdx = html.indexOf('Why Now');
-  const opportunityIdx = html.indexOf('The Opportunity');
-  const ideasIdx = html.indexOf('Activation Ideas');
-  const mattersIdx = html.indexOf('Why It Could Matter');
-  const questionIdx = html.indexOf('Best Next Question');
-  assert([whyNowIdx, opportunityIdx, ideasIdx, mattersIdx, questionIdx].every(i => i !== -1), `all five section labels are present (got indices ${JSON.stringify([whyNowIdx, opportunityIdx, ideasIdx, mattersIdx, questionIdx])})`);
-  assert(whyNowIdx < opportunityIdx && opportunityIdx < ideasIdx && ideasIdx < mattersIdx && mattersIdx < questionIdx, 'the five sections render in the approved order: Why Now -> The Opportunity -> Activation Ideas -> Why It Could Matter -> Best Next Question');
+  const playIdx = html.indexOf('The Play');
+  const ideasIdx = html.indexOf('Ideas to Send');
+  const growIdx = html.indexOf('Why It Could Grow');
+  const approachIdx = html.indexOf('How to Approach');
+  assert([whyNowIdx, playIdx, ideasIdx, growIdx, approachIdx].every(i => i !== -1), `all five section labels are present (got indices ${JSON.stringify([whyNowIdx, playIdx, ideasIdx, growIdx, approachIdx])})`);
+  assert(whyNowIdx < playIdx && playIdx < ideasIdx && ideasIdx < growIdx && growIdx < approachIdx, 'the five sections render in the approved order: Why Now -> The Play -> Ideas to Send -> Why It Could Grow -> How to Approach');
   assert(html.includes('50 Summers'), 'the commercial play concept renders on the card');
   assert(html.includes('50 summers of backyard memories'), 'the commercial play narrative renders on the card');
   assert(html.includes('Premium pool/beach towels') && html.includes('Heritage hats') && html.includes('Installer/team workwear'), 'specific activation ideas render as chips');
-  assert(!html.includes('Why it matters'), 'the old generic "Why it matters" label is gone, replaced by "The Opportunity"');
-  assert(!html.includes('>Conversation starter<'), 'the old "Conversation starter" label is gone, replaced by "Best Next Question"');
+  assert(!html.includes('Why it matters'), 'the old generic "Why it matters" label is gone, replaced by "The Play"');
+  assert(!html.includes('>Conversation starter<'), 'the old "Conversation starter" label is gone, replaced by "How to Approach"');
 }
 
 // ===========================================================================
@@ -171,8 +177,8 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   const cardVisibleHeader = cardHtml.split('opp-card-actions')[0];
   assert(cardVisibleHeader.includes('Idea One') && cardVisibleHeader.includes('Idea Two') && cardVisibleHeader.includes('Idea Three'), 'the primary card shows the first 3 activation ideas');
   assert(!cardVisibleHeader.includes('Idea Four') && !cardVisibleHeader.includes('Idea Five') && !cardVisibleHeader.includes('Idea Six'), 'the primary card does NOT visibly show ideas beyond the strongest ~3');
-  const fullHtml = sandbox.renderCommercialOpportunitySection(opp);
-  assert(fullHtml.includes('Idea Four') && fullHtml.includes('Idea Five') && fullHtml.includes('Idea Six'), 'Prepare for Call\'s full commercial-opportunity detail shows the complete (untruncated) activation-ideas list');
+  const fullHtml = sandbox.renderIdeasToSendSection(opp);
+  assert(fullHtml.includes('Idea Four') && fullHtml.includes('Idea Five') && fullHtml.includes('Idea Six'), 'Prepare for Call\'s Ideas to Send section shows the complete (untruncated) activation-ideas list');
 
   const twoIdeaOpp = baseOpp({ activationIdeas: ['Only Idea One', 'Only Idea Two'] });
   const twoIdeaHtml = sandbox.renderRepOpportunityCard(twoIdeaOpp);
@@ -191,12 +197,12 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   assert(sandbox.isCommercialIntelligenceSignal(opp) === true, 'sanity: this is recognized as a new-schema signal (activationIdeas is a real array)');
   const html = sandbox.renderRepOpportunityCard(opp);
   const visibleHeader = html.split('opp-card-actions')[0];
-  assert(!visibleHeader.includes('The Opportunity'), 'a new-schema signal with no credible commercial play hides "The Opportunity" section entirely');
-  assert(!visibleHeader.includes('Activation Ideas'), 'Activation Ideas is hidden when the list is empty');
-  assert(!visibleHeader.includes('Why It Could Matter'), 'Why It Could Matter is hidden when there is no expansion-potential narrative');
-  assert(!visibleHeader.includes('Some generic legacy why text'), 'the legacy whyThisMatters text never leaks into a new-schema signal\'s hidden Opportunity section');
-  // Why Now and Best Next Question are unaffected by the missing optional layer.
-  assert(visibleHeader.includes('Why Now') && html.includes('Best Next Question'), 'Why Now and Best Next Question still render normally when the optional commercial layer is absent');
+  assert(!visibleHeader.includes('The Play'), 'a new-schema signal with no credible commercial play hides "The Play" section entirely');
+  assert(!visibleHeader.includes('Ideas to Send'), 'Ideas to Send is hidden when the list is empty');
+  assert(!visibleHeader.includes('Why It Could Grow'), 'Why It Could Grow is hidden when there is no expansion-potential narrative');
+  assert(!visibleHeader.includes('Some generic legacy why text'), 'the legacy whyThisMatters text never leaks into a new-schema signal\'s hidden Play section');
+  // Why Now and How to Approach are unaffected by the missing optional layer.
+  assert(visibleHeader.includes('Why Now') && html.includes('How to Approach'), 'Why Now and How to Approach still render normally when the optional commercial layer is absent');
 }
 
 // ===========================================================================
@@ -213,20 +219,21 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   delete opp.expansionPotential;
   assert(sandbox.isCommercialIntelligenceSignal(opp) === false, 'sanity: an old signal with none of the three new keys is correctly recognized as pre-dating this feature');
   const html = sandbox.renderRepOpportunityCard(opp);
-  assert(html.includes('The Opportunity'), 'an old signal still shows an Opportunity section, via legacy fallback');
-  assert(html.includes('Recognition moments create a natural reason'), 'the Opportunity section for an old signal falls back through the legacy whyThisMatters text');
-  assert(!html.includes('Activation Ideas'), 'Activation Ideas stays hidden for an old signal -- never invented retroactively');
-  assert(!html.includes('Why It Could Matter'), 'Why It Could Matter stays hidden for an old signal -- never invented retroactively');
-  assert(html.includes('Best Next Question'), 'Best Next Question still renders normally for an old signal (conversationStarter/suggestedOpener already existed)');
+  // Required test 7: old-signal compatibility still renders.
+  assert(html.includes('The Play'), 'required test 7: an old signal still shows a Play section, via legacy fallback');
+  assert(html.includes('Recognition moments create a natural reason'), 'required test 7: the Play section for an old signal falls back through the legacy whyThisMatters text');
+  assert(!html.includes('Ideas to Send'), 'required test 7: Ideas to Send stays hidden for an old signal -- never invented retroactively');
+  assert(!html.includes('Why It Could Grow'), 'required test 7: Why It Could Grow stays hidden for an old signal -- never invented retroactively');
+  assert(html.includes('How to Approach'), 'required test 7: How to Approach still renders normally for an old signal (conversationStarter/suggestedOpener already existed)');
 }
 
 // ===========================================================================
-// QA correction 1: Prepare for Call's FULL rendered output (createSalesPlayPanel(),
-// executed for real -- not just renderCommercialOpportunitySection() in
-// isolation) must not prominently manufacture a commercial play, and the
-// secondary Outreach templates (Best Next Move/Email/Call Script) must not
-// masquerade the deterministic legacy fallback text as model-supported
-// commercial intelligence, for a new-schema signal with no credible play.
+// QA correction 1 (still true after the round 4 hierarchy simplification):
+// Prepare for Call's FULL rendered output (createSalesPlayPanel(), executed
+// for real) must not prominently manufacture a commercial play, and the
+// secondary Outreach templates (Email/Call Script) must not masquerade the
+// deterministic legacy fallback text as model-supported commercial
+// intelligence, for a new-schema signal with no credible play.
 // ===========================================================================
 {
   const genericFallbackText = 'Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.';
@@ -246,29 +253,76 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   sandbox.window.createSalesPlayPanel(opp);
   const salesPlayHtml = sandbox.__lastSalesPlayHtml || '';
   assert(salesPlayHtml.length > 0, 'sanity: createSalesPlayPanel() actually rendered a modal');
-  assert(!/The Opportunity/.test(salesPlayHtml), 'Prepare for Call does not show a "The Opportunity" group at all for a no-play new-schema signal');
-  assert(!salesPlayHtml.includes('employee apparel, onboarding materials'), 'Prepare for Call\'s full rendered output (including the demoted Outreach templates -- Best Next Move/Email/Call Script) never surfaces the deterministic legacy fallback text as if it were a real commercial play');
+  assert(!salesPlayHtml.includes('sales-play-group-label">The Play<'), 'Prepare for Call does not render a "The Play" group at all for a no-play new-schema signal (an HTML comment naming the section is fine -- the rendered group itself must not appear)');
+  assert(!salesPlayHtml.includes('employee apparel, onboarding materials'), 'Prepare for Call\'s full rendered output never surfaces the deterministic legacy fallback text as if it were a real commercial play');
 }
 
 // ===========================================================================
-// Prepare for Call: Best Next Move / Email / Call Script / Success Looks
-// Like are demoted into a collapsed "Outreach" <details> block, separate
-// from the prominent Call Plan group. Structural (source-text) checks,
-// matching this repo's convention for proving template STRUCTURE.
+// Required test 8 + 9 (Product Finding 2 -- UX simplification): the
+// simplified 8-item Prepare for Call hierarchy renders in the founder's
+// approved order, and Best Next Move / Opportunity Summary / Success Looks
+// Like -- which only ever restated The Play once it existed -- no longer
+// compete with the primary intelligence anywhere in the rendered output
+// (not even demoted into Outreach). buildConciseSalesPlay() itself is
+// UNCHANGED (still computes these fields, reusable/tested elsewhere) --
+// this is a rendering-hierarchy change, not a deletion of that logic.
+// Structural (source-text) checks, matching this repo's convention for
+// proving template STRUCTURE.
+// ===========================================================================
+{
+  const opp = baseOpp({
+    commercialPlay: { concept: '50 Summers', narrative: 'Build a limited collection celebrating 50 summers of backyard memories.' },
+    activationIdeas: ['Premium pool/beach towels'],
+    expansionPotential: { narrative: 'Field apparel could recur beyond this one order.', tags: ['recurring-program'] },
+    isVerifiedSignalOpportunity: true
+  });
+  sandbox.window.createSalesPlayPanel(opp);
+  const salesPlayHtml = sandbox.__lastSalesPlayHtml || '';
+
+  // Required test 8: the 8-item hierarchy renders in order.
+  const labels = ['Verified Signal / Evidence', 'The Play', 'Ideas to Send', 'Why It Could Grow', 'Recommended Contact', 'How to Approach', 'Account / Purchase Context', 'Research Details'];
+  const indices = labels.map(l => salesPlayHtml.indexOf(l));
+  assert(indices.every(i => i !== -1), `required test 8: all 8 hierarchy labels are present (got indices ${JSON.stringify(indices)} for ${JSON.stringify(labels)})`);
+  assert(indices.every((idx, i) => i === 0 || idx > indices[i - 1]), `required test 8: the 8 groups render in the founder's approved order (got indices ${JSON.stringify(indices)})`);
+
+  // Required test 9: Best Next Move / Opportunity Summary / Success Looks
+  // Like no longer appear anywhere in the rendered output.
+  assert(!/Best Next Move/.test(salesPlayHtml), 'required test 9: "Best Next Move" no longer renders anywhere in Prepare for Call');
+  assert(!/Opportunity Summary/.test(salesPlayHtml), 'required test 9: "Opportunity Summary" no longer renders anywhere in Prepare for Call');
+  assert(!/Success Looks Like/.test(salesPlayHtml), 'required test 9: "Success Looks Like" no longer renders anywhere in Prepare for Call');
+
+  // Outreach still exists, collapsed, with Email/Call Script/Questions to
+  // Ask -- nothing deleted from THOSE, only Best Next Move/Success Looks
+  // Like removed.
+  const outreachDetailsMatch = salesPlayHtml.match(/<details class="sales-play-group supporting">\s*<summary class="sales-play-group-label"[^>]*>Outreach<\/summary>[\s\S]*?<\/details>/);
+  assert(!!outreachDetailsMatch, 'the Outreach section is still a collapsed <details> block');
+  assert(/Email/.test(outreachDetailsMatch[0]) && /Call Script/.test(outreachDetailsMatch[0]) && /Questions to Ask/.test(outreachDetailsMatch[0]), 'Email, Call Script, and Questions to Ask still exist inside the collapsed Outreach block');
+
+  // Research Details still exists, collapsed, but no longer contains
+  // Opportunity Summary (only the additional-opportunities/supporting-
+  // research/contact-meta detail survives there).
+  const researchDetailsMatch = salesPlayHtml.match(/<details class="sales-play-group supporting">\s*<summary class="sales-play-group-label"[^>]*>Research Details<\/summary>[\s\S]*?<\/details>/);
+  assert(!!researchDetailsMatch, 'Research Details is still a collapsed <details> block');
+  assert(!/Opportunity Summary/.test(researchDetailsMatch[0]), 'Opportunity Summary no longer renders inside Research Details either');
+}
+
+// ===========================================================================
+// Structural (source-text) checks on the extracted createSalesPlayPanel()
+// source, matching this repo's convention for proving template STRUCTURE.
+// Note: buildConciseSalesPlay() still computes play.bestNextMoveCombined/
+// play.opportunitySummary/play.successLooksLike (unchanged, reusable,
+// tested elsewhere -- e.g. scripts/test-paid-beta-sprint.js), and
+// formatSalesPlayClipboard() (the separate "Copy All" clipboard utility,
+// not part of the visible modal hierarchy) still legitimately reads them --
+// so the source-text still names these fields. The functional assertions
+// above (against the actual RENDERED modal HTML) are what prove they no
+// longer appear as visible, competing sections.
 // ===========================================================================
 {
   const salesPlaySrc = SALES_PLAY_BLOCK;
-  const callPlanMatch = salesPlaySrc.match(/sales-play-group-label">Call Plan<\/div>[\s\S]*?(?=<\/div>\s*<!-- product\/commercial-opportunity-intelligence: Email)/);
-  assert(!!callPlanMatch, 'sanity: found the Call Plan group in the extracted createSalesPlayPanel() source');
-  assert(!/Best Next Move/.test(callPlanMatch[0]), 'the Call Plan group no longer contains "Best Next Move" -- it has been demoted out of the prominent group');
-  assert(/Best Next Question/.test(callPlanMatch[0]), 'the Call Plan group renders "Best Next Question" (the relabeled Conversation Starter)');
-
-  const outreachDetailsMatch = salesPlaySrc.match(/<details class="sales-play-group supporting">\s*<summary class="sales-play-group-label"[^>]*>Outreach<\/summary>[\s\S]*?<\/details>/);
-  assert(!!outreachDetailsMatch, 'the Outreach section is a collapsed <details> block (same pattern Research Details already uses), not an always-open group');
-  assert(/Best Next Move/.test(outreachDetailsMatch[0]), 'Best Next Move is demoted INTO the collapsed Outreach block');
-  assert(/Email/.test(outreachDetailsMatch[0]) && /Call Script/.test(outreachDetailsMatch[0]) && /Success Looks Like/.test(outreachDetailsMatch[0]), 'Email, Call Script, and Success Looks Like all still exist, inside the same collapsed Outreach block -- nothing was deleted, only demoted');
-
-  assert(/renderCommercialOpportunitySection\(opp\)/.test(salesPlaySrc), 'createSalesPlayPanel() renders the full commercial-opportunity detail via renderCommercialOpportunitySection()');
+  assert(/renderThePlaySection\(opp\)/.test(salesPlaySrc), 'createSalesPlayPanel() renders The Play via renderThePlaySection()');
+  assert(/renderIdeasToSendSection\(opp\)/.test(salesPlaySrc), 'createSalesPlayPanel() renders Ideas to Send via renderIdeasToSendSection()');
+  assert(/renderWhyItCouldGrowSection\(opp\)/.test(salesPlaySrc), 'createSalesPlayPanel() renders Why It Could Grow via renderWhyItCouldGrowSection()');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

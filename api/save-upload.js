@@ -24,6 +24,37 @@ function hashString(input=''){
 function signalHash(userId, uploadId, accountName, signal){
   return hashString([userId, uploadId, accountName, signal.signalType || signal.type || '', signal.signalTitle || signal.title || signal.whatChanged || '', signal.sourceUrl || signal.source || ''].join('|').toLowerCase());
 }
+// product/commercial-opportunity-intelligence, QA correction 4 (re-research
+// persistence): the ignore-duplicates insert below only ever writes a row
+// for a GENUINELY new event_fingerprint -- on a conflict with an
+// already-persisted event it is, by design, a silent no-op, so that a
+// retried/duplicate save never re-triggers a "new signal" notification.
+// That is correct for identity/notification purposes but wrong for
+// INTERPRETATION: re-researching an already-known event (Dover Honda,
+// Catalyst, etc.) regenerates commercialPlay/activationIdeas/
+// expansionPotential/conversationStarter/relatedPurchase, and those
+// improvements were being silently discarded forever because the
+// already-existing row was never touched again. This allowlist selects
+// exactly the columns that represent "our current understanding of this
+// event" -- never event_fingerprint/user_id (identity, must stay stable)
+// and never first_seen_at (when we first learned about it, not when we
+// last re-interpreted it) -- for a second, explicit refresh upsert.
+function refreshableSignalRow(row){
+  return {
+    user_id: row.user_id,
+    event_fingerprint: row.event_fingerprint,
+    signal_hash: row.signal_hash,
+    signal_type: row.signal_type,
+    title: row.title,
+    why_reach_out: row.why_reach_out,
+    confidence: row.confidence,
+    source_url: row.source_url,
+    source_domain: row.source_domain,
+    published_at: row.published_at,
+    payload: row.payload,
+    last_seen_at: row.last_seen_at
+  };
+}
 function env(){
   const rawUrl = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -458,12 +489,26 @@ export default async function handler(req, res){
       if(signalRows.length){
         const chunkSize = 200;
         for(let i=0;i<signalRows.length;i+=chunkSize){
+          const chunk = signalRows.slice(i, i+chunkSize);
           const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
             method:'POST',
             prefer:'resolution=ignore-duplicates,return=representation',
-            body: JSON.stringify(signalRows.slice(i, i+chunkSize))
+            body: JSON.stringify(chunk)
           });
           if(Array.isArray(inserted)) insertedFingerprints.push(...inserted.map(r => r.event_fingerprint));
+        }
+        // QA correction 4: every row in signalRows now exists (either just
+        // inserted above, or already existed before this request) -- this
+        // second upsert always takes the ON CONFLICT UPDATE branch, never
+        // the INSERT branch, so omitting first_seen_at from the payload is
+        // safe (see refreshableSignalRow()'s header comment).
+        const refreshRows = signalRows.map(refreshableSignalRow);
+        for(let i=0;i<refreshRows.length;i+=chunkSize){
+          await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
+            method:'POST',
+            prefer:'resolution=merge-duplicates',
+            body: JSON.stringify(refreshRows.slice(i, i+chunkSize))
+          });
         }
       }
       const conflictIgnoredCount = Math.max(0, signalRows.length - insertedFingerprints.length);

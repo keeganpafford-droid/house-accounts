@@ -64,17 +64,17 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4679, 6204, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8219, 8759, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8356, 9663, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9666, 10169, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10895, 10898, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8271, 8273, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8276, 8278, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7674, 7712, 'function getReasonToReachOutTitle(opp){');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3383, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4689, 6265, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8308, 8848, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8445, 9753, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9756, 10259, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10996, 10999, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8360, 8362, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8365, 8367, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7763, 7801, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   const sandbox = {
@@ -384,18 +384,18 @@ function daysAgoIso(days){
 // site calls the shared getSuggestedOpener() accessor, not a raw field.
 // ===========================================================================
 {
-  const salesPlayPanelSrc = LINES.slice(8853 - 1, 9067).join('\n');
+  const salesPlayPanelSrc = LINES.slice(8941 - 1, 9157).join('\n');
   assert(/window\.createSalesPlayPanel\s*=\s*function/.test(salesPlayPanelSrc), 'sanity: extracted the real createSalesPlayPanel() source for the static Conversation Starter accessor check');
-  assert(/getSuggestedOpener\(opp\)/.test(salesPlayPanelSrc), 'item 9: Prepare for Call\'s Call Plan renders the Conversation Starter via getSuggestedOpener(opp)');
+  assert(/getSuggestedOpener\(opp\)/.test(salesPlayPanelSrc), 'item 9: Prepare for Call\'s How to Approach group renders the Conversation Starter via getSuggestedOpener(opp)');
   // product/commercial-opportunity-intelligence: this block's visible label
-  // changed from "Conversation Starter" to "Best Next Question" (same
-  // field, same accessor, same policy gate -- only the rep-facing framing
-  // changed, from opener copy to commercial discovery). The underlying
-  // guarantee this test proves -- the rendered text always goes through
-  // getSuggestedOpener(opp), never a raw opp.conversationStarter read -- is
-  // unchanged.
-  const bestNextQuestionLine = (salesPlayPanelSrc.match(/.*Best Next Question.*\n.*/g) || []).join('\n');
-  assert(/getSuggestedOpener\(opp\)/.test(bestNextQuestionLine) && !/opp\.conversationStarter/.test(bestNextQuestionLine), 'item 9: the Best Next Question block specifically reads getSuggestedOpener(opp), never opp.conversationStarter directly');
+  // changed from "Conversation Starter" to "Best Next Question", then (QA
+  // correction round 4, Product Finding 2 -- UX simplification) to "How to
+  // Approach" -- same field, same accessor, same policy gate throughout,
+  // only the rep-facing framing changed. The underlying guarantee this test
+  // proves -- the rendered text always goes through getSuggestedOpener(opp),
+  // never a raw opp.conversationStarter read -- is unchanged.
+  const howToApproachLine = (salesPlayPanelSrc.match(/.*How to Approach.*\n.*/g) || []).join('\n');
+  assert(/getSuggestedOpener\(opp\)/.test(howToApproachLine) && !/opp\.conversationStarter/.test(howToApproachLine), 'item 9: the How to Approach block specifically reads getSuggestedOpener(opp), never opp.conversationStarter directly');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

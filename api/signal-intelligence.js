@@ -416,9 +416,12 @@ function validateOpportunity(opportunity = {}) {
 const COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT = `
 Beyond the factual event itself, reason like a smart promotional-products merchandise strategist sitting beside the rep -- not a copywriter drafting an email. Do not merely summarize the signal; interpret it commercially.
 
-Before generating commercialPlay/activationIdeas, first ask yourself: who are the relevant audiences this specific signal creates, affects, or brings together? Do not default to employees. Depending on the event and company, the right audience might be employees, recruits, customers, prospects, investors/LPs, portfolio companies, executives, partners, dealers, field teams, event attendees, VIPs, volunteers, community members, or sponsors. A financing/fund-close signal may point toward investor/LP gifts, fund-close gifts, or annual-meeting/investor-event kits rather than employee apparel; an acquisition may point toward integration/new-team programs; a community event may point toward attendee or volunteer activation. Generate the play and ideas against the audience(s) actually implied by the evidence, not a reflexive default.
+Before generating commercialPlay/activationIdeas, work through three questions in order, silently, and let the answers actually shape what you write -- do not skip straight to a product category:
+1. Who are the relevant audiences THIS signal creates, affects, or brings together? Do not default to employees -- name at least two plausible candidate audiences before you settle on one. Depending on the event and company, this might include employees, recruits, customers, prospects, investors/LPs, portfolio companies, executives, partners, dealers, field teams, event attendees, VIPs, volunteers, community members, or sponsors. A financing/fund-close signal specifically must have investors/LPs/portfolio companies weighed as a candidate audience alongside (not instead of) any operational/employee angle -- never settle on employee-onboarding/apparel as the only read of a financing signal without having actually considered who the money itself connects the company to.
+2. What is that audience likely TRYING TO ACCOMPLISH or experience right now because of this development? (A newly hired executive wants early, visible impact. A community-impact report reflects the work of specific people -- e.g. the store associates or field staff who actually deliver it -- who are rarely thanked for it by name. Investors in a newly closed fund are about to have their first touchpoints with it.)
+3. What commercially relevant activation could actually serve that objective?
 
-- commercialPlay: your interpretation of the specific commercial opportunity this event creates. Answer "what's the play I see here?", not "what happened" (that belongs in the factual fields above). A concise, memorable concept/title (e.g. "50 Summers" for an anniversary) is welcome ONLY when a genuinely useful one emerges naturally from the evidence -- never manufacture a cute campaign name just to fill the field. If the evidence does not support a credible commercial play, omit commercialPlay entirely. Do not write generic filler such as "consider branded merchandise" or "this could be an opportunity to reach out."
+- commercialPlay: your interpretation of the specific commercial opportunity this event creates, derived from steps 1-3 above -- not a reflexive "this could create demand for promotional products" reaction to the event category. Answer "what's the play I see here?", not "what happened" (that belongs in the factual fields above), and answer it the way a sharp rep would explain it to a colleague: specifically what to do, for whom, and why now -- not "could they potentially sell promo here?" A concise, memorable concept/title (e.g. "50 Summers" for an anniversary) is welcome ONLY when a genuinely useful one emerges naturally from the evidence -- never manufacture a cute campaign name just to fill the field. If the evidence does not support a credible, specific commercial play, omit commercialPlay entirely -- a genuinely empty field beats a filled-in non-answer. Treat these as non-answers, not real plays, even though they technically fill the field: "this creates an opportunity for promotional products," "could create a need for promotional products," "branded materials may be useful here," "merchandise could support this initiative," "consider branded merchandise," "this could be an opportunity to reach out." A real play always names a specific business objective, a specific audience, and a specific activation angle together -- if you can't state all three, you don't have a play yet, so leave the field empty.
 - activationIdeas: up to 6 concrete, specific ways a rep could activate against the opportunity for the audience(s) identified above (e.g. "Premium pool/beach towels", "Installer/team workwear", "Investor welcome kit" -- never bare category words like "Apparel", "Drinkware", or "Giveaways" with no qualifier). If nothing specific and credible comes to mind, return an empty list. Do not pad to reach a target count -- two strong ideas beat six generic ones.
 - expansionPotential: think beyond the immediate order. Does this look like a one-time opportunity, a recurring program, account expansion, cross-department reach, employee use, customer use, a seasonal repeat, or a route into a related/parent organization? Give a short narrative explaining the commercial upside (not a restatement of the tags), plus up to 3 tags from this fixed list ONLY when they genuinely apply: one-time, recurring-program, account-expansion, cross-department, employee-program, customer-program, seasonal-repeat, parent-org-route, other. Omit expansionPotential entirely if you have no confident read on this. Do not force every opportunity into every category.
 
@@ -427,7 +430,7 @@ A grounded signal with no credible commercial interpretation is a better output 
 For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting and do not ask to schedule a meeting.
 Usually this means a plain question with no product mention at all. But when the event is a genuinely UPCOMING one (not yet happened) and you have one or two genuinely strong, specific activationIdeas, the question may instead lead with those exact ideas and ask permission to send concepts -- e.g. "We had a couple ideas for the event, including [a real activation idea] -- would it be okay if I sent a few concepts over?" Never reference an idea you did not actually generate in activationIdeas, never assert the work is already happening, and never combine this with a scheduling request. If you do not have a genuinely strong activation idea, ask a plain discovery question instead -- do not force a product mention.
 
-If the account context below includes recent uploaded purchases, and this signal is a RECENT PAST event (not upcoming, not ongoing): check whether any uploaded purchase date falls within roughly 3-4 weeks of the event date. If one clearly does, you may treat that as likely evidence we supplied something for this event -- reference the actual purchased category/project by name, ask how it landed, and pivot the discovery question toward what's next (e.g. "Glad the bandanas landed well -- what's next on the calendar?"). If no purchase is that close, or timing is unclear or ambiguous, do NOT claim we supplied anything -- use a neutral posture instead (e.g. "Saw the event wrapped up -- how did it go? What's next on the calendar?"). Never guess at fulfillment from the event topic alone; only a genuinely close uploaded purchase date counts as evidence.
+If the account context below includes recent uploaded purchases, and this signal is a RECENT PAST event (not upcoming, not ongoing): check whether any uploaded purchase date falls within roughly 3-4 weeks of the event date. Date proximity ALONE is never enough -- an unrelated purchase (e.g. office furniture) that merely happens to land near a community festival's date is not evidence of anything. Only treat a purchase as likely evidence we supplied something for THIS event when it is BOTH close in time AND plausibly connected by its own project/category description (mentions the event, the event type, or a matching activity) -- reference the actual purchased category/project by name, ask how it landed, and pivot the discovery question toward what's next (e.g. "Glad the bandanas landed well -- what's next on the calendar?"). If no purchase is both close in time and plausibly connected, or timing/connection is unclear or ambiguous, do NOT claim we supplied anything -- use a neutral posture instead (e.g. "Saw the event wrapped up -- how did it go? What's next on the calendar?"). Never guess at fulfillment from the event topic alone or from date proximity alone; only a genuinely close AND plausibly connected uploaded purchase counts as evidence.
 `.trim();
 
 const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
@@ -445,6 +448,48 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
 function isGenericActivationIdea(idea = '') {
   const normalized = clean(idea).toLowerCase().replace(/[.!]+$/, '');
   return !normalized || GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized);
+}
+
+// QA correction 4 (Impiricus finding): commercialPlay is free-form prose,
+// so it can't be screened with an exact-match phrase set the way
+// activationIdeas is above -- a full-sentence generic non-answer needs a
+// STRUCTURAL check instead. This deliberately stays a hedge-pattern + a
+// generic-noun-pattern + "nothing else survives" check, not a growing
+// dictionary of banned sentences: a hedge ("could create a need for",
+// "opportunity for", "may be useful") landing on a bare generic merch noun
+// ("promotional products", "branded materials", "merchandise") with no
+// other real word left over IS the shape of a non-answer, regardless of
+// exact wording. A genuinely specific play always has some word left over
+// (a program name, a named stakeholder, a concrete activation) once this
+// same stripping is applied, so this never fires on real specificity --
+// only two short, fixed patterns plus a stopword-style filter, not a
+// dictionary of forbidden sentences.
+//
+// Confirmed non-answers this must catch (founder examples, verbatim):
+// "opportunity for promotional products"; "could create a need for
+// promotional products"; "branded materials may be useful"; "merchandise
+// could support this initiative"; and the production case, "This could
+// lead to a need for promotional products to support brand initiatives,
+// such as branded materials for outreach and events."
+const GENERIC_COMMERCIAL_PLAY_HEDGE = /\b(?:could|might|may|can)\s+(?:lead to|create|open up|present|support)\b|\b(?:opportunity|need|demand)\s+for\b|\bmay\s+be\s+useful\b|\bconsider\b/i;
+const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?)\b/i;
+const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
+  'this', 'that', 'such', 'with', 'from', 'into', 'their', 'they', 'them',
+  'consider', 'support', 'supporting', 'could', 'might', 'need', 'needs', 'lead', 'create',
+  'creates', 'creating', 'present', 'presents', 'opportunity', 'opportunities',
+  'useful', 'likely', 'potential', 'potentially', 'various', 'general', 'generic',
+  'promotional', 'products', 'product', 'materials', 'material', 'branded', 'brand',
+  'branding', 'merchandise', 'apparel', 'gear', 'swag', 'gifts', 'gift', 'corporate',
+  'custom', 'items', 'item', 'initiative', 'initiatives', 'outreach', 'events',
+  'event', 'campaign', 'campaigns', 'marketing'
+]);
+function isGenericCommercialPlay(narrative = '') {
+  const text = clean(narrative);
+  if (!text) return false;
+  if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
+  const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+    .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
+  return remaining.length === 0;
 }
 
 const EXPANSION_POTENTIAL_TAGS = new Set([
@@ -471,7 +516,12 @@ function normalizeCommercialIntelligence(raw = {}) {
   let commercialPlay = null;
   if (rawPlay && typeof rawPlay === 'object') {
     const narrative = truncateText(rawPlay.narrative || rawPlay.description || '', 320);
-    if (narrative) {
+    // QA correction 4: a narrative that is nothing more than generic promo
+    // language (see isGenericCommercialPlay()'s header comment) normalizes
+    // to null here -- the same "absence over filler" rule commercialPlay
+    // already follows for a missing/empty narrative, just extended to a
+    // narrative that is technically present but commercially empty.
+    if (narrative && !isGenericCommercialPlay(narrative)) {
       commercialPlay = { narrative };
       const concept = truncateText(rawPlay.concept || rawPlay.title || rawPlay.name || '', 60);
       if (concept) commercialPlay.concept = concept;
@@ -530,17 +580,36 @@ function isCommercialIntelligenceSignal(payload = {}) {
 
 // ---------------------------------------------------------------------------
 // product/commercial-opportunity-intelligence, QA correction round 2
-// (historical-event/order-linkage). A narrow, bounded DATE-PROXIMITY check
-// against an account's own uploaded purchase history -- deliberately NOT a
-// fuzzy text/keyword-matching engine, and not used anywhere near event
-// identity/fingerprinting/dedup. Confidence is judged purely on how close
-// an uploaded purchase's own date is to the signal's resolved event date:
+// (historical-event/order-linkage), hardened in QA correction round 4
+// (false-positive finding). A narrow, bounded check against an account's
+// own uploaded purchase history -- deliberately NOT a fuzzy text/keyword-
+// matching engine, and not used anywhere near event identity/fingerprinting/
+// dedup. Confidence is judged on date proximity BETWEEN an uploaded
+// purchase and the signal's resolved event date, AND, for the 'confident'
+// tier specifically, on whether the purchase's own project/category text
+// shares a distinctive word with the event's own title/context text:
 //   - 'confident': exactly one uploaded purchase within
-//     RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS of the event date.
-//   - 'ambiguous': more than one candidate within the confident window (which
-//     one, if any, is genuinely unclear), or a single candidate that's close
-//     but outside the confident window and inside the wider one -- treated
-//     the same as "don't know," never guessed at.
+//     RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS of the event date, AND that
+//     purchase's project/category text shares at least one distinctive word
+//     with eventContextText. Round 4 finding: date proximity ALONE is not
+//     evidence of fulfillment -- an unrelated purchase (e.g. office
+//     furniture) that merely happens to land in the same window as a
+//     community festival is not "confident" evidence of anything, and must
+//     never be treated as such merely because the dates are close. This
+//     reuses the same bounded word-overlap technique already established
+//     for isPermissionBasedConceptOffer() in dashboard/index.html (a short
+//     stopword-style filter, not a new subsystem) rather than adding fuzzy
+//     matching. If eventContextText is not supplied by the caller, the
+//     'confident' tier can never fire (there is nothing to check overlap
+//     against) -- degrading safely to 'ambiguous', never to a wrongly
+//     promoted 'confident'.
+//   - 'ambiguous': more than one date-candidate within the confident window
+//     (which one, if any, is genuinely unclear); a single date-candidate
+//     that's close but outside the confident window and inside the wider
+//     one; or a single date-candidate within the confident window whose
+//     project/category text does NOT overlap with the event context (close
+//     in time, but nothing else ties it to this specific event) -- all
+//     treated the same as "don't know," never guessed at.
 //   - 'none': nothing within the wider window at all.
 // This exists solely so the DETERMINISTIC fallback templates (used only
 // when the live model doesn't supply its own text) can decide whether it's
@@ -552,7 +621,14 @@ function isCommercialIntelligenceSignal(payload = {}) {
 // ---------------------------------------------------------------------------
 const RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS = 21;
 const RELATED_PURCHASE_AMBIGUOUS_WINDOW_DAYS = 45;
-function findLikelyRelatedPurchase(purchases = [], eventDateIso = '') {
+// Same "strip common words, see what's left" shape as isPermissionBasedConceptOffer()'s
+// significantWords() -- a plain word-length filter is enough here since we
+// only need to know whether the SAME distinctive word appears in both the
+// purchase description and the event description, not classify either one.
+function significantWordsForPurchaseMatch(text = '') {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 3);
+}
+function findLikelyRelatedPurchase(purchases = [], eventDateIso = '', eventContextText = '') {
   const eventDate = parseDate(eventDateIso);
   if (!eventDate || !Array.isArray(purchases) || !purchases.length) return { confidence: 'none', purchase: null };
   const withDistance = purchases
@@ -566,7 +642,14 @@ function findLikelyRelatedPurchase(purchases = [], eventDateIso = '') {
   if (!withDistance.length) return { confidence: 'none', purchase: null };
   const withinConfident = withDistance.filter(x => x.days <= RELATED_PURCHASE_CONFIDENT_WINDOW_DAYS);
   const withinAmbiguous = withDistance.filter(x => x.days <= RELATED_PURCHASE_AMBIGUOUS_WINDOW_DAYS);
-  if (withinConfident.length === 1) return { confidence: 'confident', purchase: withinConfident[0].purchase };
+  if (withinConfident.length === 1) {
+    const candidate = withinConfident[0].purchase;
+    const eventWords = new Set(significantWordsForPurchaseMatch(eventContextText));
+    const purchaseWords = significantWordsForPurchaseMatch(`${candidate?.project || ''} ${candidate?.category || ''}`);
+    const overlaps = eventWords.size > 0 && purchaseWords.some(w => eventWords.has(w));
+    if (overlaps) return { confidence: 'confident', purchase: candidate };
+    return { confidence: 'ambiguous', purchase: null };
+  }
   if (withinAmbiguous.length) return { confidence: 'ambiguous', purchase: null };
   return { confidence: 'none', purchase: null };
 }
@@ -1280,5 +1363,5 @@ export {
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
-  isCommercialIntelligenceSignal, findLikelyRelatedPurchase
+  isCommercialIntelligenceSignal, findLikelyRelatedPurchase, isGenericCommercialPlay
 };

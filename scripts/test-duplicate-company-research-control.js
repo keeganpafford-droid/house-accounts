@@ -564,9 +564,9 @@ async function run(){
     return slice;
   }
   const REAL_SOURCE = [
-    extractFn('claimAutomaticResearchRun', 2574, 2584, { async: true }),
-    extractFn('checkDuplicateCompanyResearch', 2598, 2614, { async: true }),
-    extractFn('duplicateCompanyResearchMessage', 2624, 2627)
+    extractFn('claimAutomaticResearchRun', 2584, 2594, { async: true }),
+    extractFn('checkDuplicateCompanyResearch', 2608, 2624, { async: true }),
+    extractFn('duplicateCompanyResearchMessage', 2634, 2637)
   ].join('\n\n');
 
   function makeSandbox(fetchImpl, houseAuthOverride){
