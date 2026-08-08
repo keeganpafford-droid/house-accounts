@@ -502,6 +502,27 @@ function normalizeCommercialIntelligence(raw = {}) {
   return { commercialPlay, activationIdeas, expansionPotential };
 }
 
+// Shared new-schema marker (mirrors dashboard/index.html's identically-named,
+// identically-implemented function -- one predicate, defined once per
+// runtime, never two independently-drifting copies). True only for a signal
+// that actually went through normalizeCommercialIntelligence() above, which
+// always attaches activationIdeas as a real array (even []) -- an old
+// signal that predates this feature never had these keys at all, so
+// Array.isArray() alone reliably tells the two apart.
+//
+// This is the read-policy distinction QA correction 1 depends on: "new
+// schema, no credible play" (commercialPlay: null) must never be treated
+// the same as "old signal, legacy fallback is the only thing available."
+// The deterministic legacy why-fields (whyThisMatters/whyItMattersForPromo/
+// reasonToReachOut) are still populated on a no-play new-schema signal --
+// that is required for validateOpportunity()/old code paths to keep
+// working -- but a downstream CUSTOMER-FACING commercial surface must call
+// this predicate before trusting that text as a real recommendation, not
+// read it unconditionally.
+function isCommercialIntelligenceSignal(payload = {}) {
+  return Array.isArray(payload && payload.activationIdeas) || !!(payload && payload.expansionPotential) || !!(payload && payload.commercialPlay);
+}
+
 function dedupeOpportunities(opportunities = []) {
   const best = new Map();
   for (const o of opportunities) {
@@ -1210,5 +1231,6 @@ export {
   resolveOpportunityEvents, dedupeByEventFingerprint,
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
-  normalizeCommercialIntelligence, isGenericActivationIdea, truncateText
+  normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
+  isCommercialIntelligenceSignal
 };

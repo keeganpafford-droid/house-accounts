@@ -23,7 +23,7 @@
 //                    before this parameter existed.
 
 import { timingSafeEqual } from 'crypto';
-import { resolveOpportunityEvents, dedupeByEventFingerprint } from './signal-intelligence.js';
+import { resolveOpportunityEvents, dedupeByEventFingerprint, isCommercialIntelligenceSignal } from './signal-intelligence.js';
 // QA round 3, item 1/6: digest eligibility is validated through the SAME
 // canonical actionability boundary as every other reader (get-dashboard.js),
 // never by trusting a persisted row's actionabilityStatus.isPriorityEligible
@@ -421,9 +421,29 @@ function suggestedNextMove(signal={}){
     'Open the account and decide whether to call, email, or ask for a referral this week.'
   );
 }
+// product/commercial-opportunity-intelligence, QA correction 1: a
+// new-schema signal (went through normalizeCommercialIntelligence(),
+// confirmed by isCommercialIntelligenceSignal()) whose model declined to
+// produce a commercialPlay has NO credible commercial interpretation --
+// signal.why_reach_out/payload.whyItMattersForPromo are, in that specific
+// case, only the deterministic legacy-compatibility fallback text
+// (makeSignal()'s salesReadyWhy()/makeAISignal()'s equivalent), kept
+// populated purely so validateOpportunity() and old code paths never see
+// an empty required field. That fallback text is generic sales-category
+// language ("Facility launches usually create needs around employee
+// apparel...") that reads exactly like a fabricated commercial play --
+// surfacing it in the weekly digest would silently resurrect the recommendation
+// the primary card and Prepare for Call correctly declined to show,
+// contradicting the "absence of a credible play is meaningful" principle.
+// A real commercialPlay.narrative (when present) is preferred FIRST, richer
+// than the legacy fields it was itself derived from.
 function whyItMatters(signal={}){
   const payload = signal.payload || {};
+  if(isCommercialIntelligenceSignal(payload) && !(payload.commercialPlay && payload.commercialPlay.narrative)){
+    return clean(payload.signalTitle || signal.title || 'This account showed a timely public update.');
+  }
   return clean(
+    payload.commercialPlay?.narrative ||
     signal.why_reach_out ||
     payload.whyItMattersForPromo ||
     payload.whyItMatters ||

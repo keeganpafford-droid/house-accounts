@@ -61,10 +61,25 @@ const CLAMP_SCORE_SRC = extractBlock('clampScore', 8169, 8171, 'function clampSc
 const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7567, 7605, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
+  // QA correction 1: document.body.insertAdjacentHTML/lastElementChild are
+  // stubbed (capturing the rendered HTML into sandbox.__lastSalesPlayHtml)
+  // so window.createSalesPlayPanel(opp) -- otherwise untestable without a
+  // real DOM -- can be called directly and its actual rendered output
+  // inspected, the same way renderRepOpportunityCard()'s return value
+  // already is. Harmless for every other test block in this file, which
+  // doesn't call createSalesPlayPanel().
+  const fakeModal = { querySelector: () => ({ focus(){} }), querySelectorAll: () => [] };
   const sandbox = {
     console,
-    window: { accountRadarAccounts: [] },
-    document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [] },
+    window: { accountRadarAccounts: [], HouseAccountsHeader: { beginOverlay(){} } },
+    document: {
+      getElementById: () => ({ textContent: '', innerHTML: '', style: {} }),
+      querySelectorAll: () => [],
+      body: {
+        insertAdjacentHTML(pos, html){ sandbox.__lastSalesPlayHtml = html; },
+        get lastElementChild(){ return fakeModal; }
+      }
+    },
     isWarmAccount: () => false,
     URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON
   };
@@ -203,6 +218,36 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   assert(!html.includes('Activation Ideas'), 'Activation Ideas stays hidden for an old signal -- never invented retroactively');
   assert(!html.includes('Why It Could Matter'), 'Why It Could Matter stays hidden for an old signal -- never invented retroactively');
   assert(html.includes('Best Next Question'), 'Best Next Question still renders normally for an old signal (conversationStarter/suggestedOpener already existed)');
+}
+
+// ===========================================================================
+// QA correction 1: Prepare for Call's FULL rendered output (createSalesPlayPanel(),
+// executed for real -- not just renderCommercialOpportunitySection() in
+// isolation) must not prominently manufacture a commercial play, and the
+// secondary Outreach templates (Best Next Move/Email/Call Script) must not
+// masquerade the deterministic legacy fallback text as model-supported
+// commercial intelligence, for a new-schema signal with no credible play.
+// ===========================================================================
+{
+  const genericFallbackText = 'Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.';
+  const opp = baseOpp({
+    account: 'Thin Evidence Co', accountName: 'Thin Evidence Co',
+    signalTitle: 'Hiring Warehouse Associates',
+    signalDetail: 'Thin Evidence Co posted three warehouse associate job listings on its careers page this week.',
+    whatChanged: 'Thin Evidence Co posted three warehouse associate job listings on its careers page this week.',
+    conversationStarter: 'Is warehouse staffing centralized, or does each location handle its own hiring?',
+    commercialPlay: null, activationIdeas: [], expansionPotential: null,
+    // Exactly what makeSignal() actually produces for this scenario (see
+    // scripts/test-commercial-intelligence-no-play-consistency.js item 1) --
+    // the deterministic legacy fallback, present for validateOpportunity()/
+    // old-consumer compatibility, NOT a real model-supported play.
+    reasonToReachOut: genericFallbackText, whyNow: genericFallbackText, whyItMattersForPromo: genericFallbackText
+  });
+  sandbox.window.createSalesPlayPanel(opp);
+  const salesPlayHtml = sandbox.__lastSalesPlayHtml || '';
+  assert(salesPlayHtml.length > 0, 'sanity: createSalesPlayPanel() actually rendered a modal');
+  assert(!/The Opportunity/.test(salesPlayHtml), 'Prepare for Call does not show a "The Opportunity" group at all for a no-play new-schema signal');
+  assert(!salesPlayHtml.includes('employee apparel, onboarding materials'), 'Prepare for Call\'s full rendered output (including the demoted Outreach templates -- Best Next Move/Email/Call Script) never surfaces the deterministic legacy fallback text as if it were a real commercial play');
 }
 
 // ===========================================================================
