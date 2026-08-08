@@ -43,12 +43,12 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2730, 2735, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2965, 2968, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2883, 3329, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4635, 5849, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8087, 9377, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9380, 9883, 'function normalizeSignalLayerType(');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4679, 6011, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
 
 // Builds a fresh vm sandbox whose Date global is a fixed-instant subclass of
 // the real Date -- every `new Date()`/`Date.now()` call inside the extracted

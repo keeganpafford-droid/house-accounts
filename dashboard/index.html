@@ -895,6 +895,50 @@
     letter-spacing:0.05em;
   }
 
+  /* product/commercial-opportunity-intelligence: Activation Ideas chips
+     keep normal case/readable text (specific phrases like "Premium pool/
+     beach towels" don't scan well in the all-caps mono style above), while
+     the Why It Could Matter tags stay subtle -- small, muted, low visual
+     weight -- since they're a secondary classification, not the headline
+     content of that section. */
+  .opp-activation-ideas{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:2px;
+  }
+  .opp-idea-chip{
+    font-size:0.78rem;
+    background:var(--paper);
+    border:1px solid var(--line);
+    color:var(--ink);
+    padding:3px 9px;
+    border-radius:12px;
+  }
+  .opp-expansion-tags{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:6px;
+  }
+  .opp-tag-subtle{
+    font-family:var(--mono);
+    font-size:0.65rem;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    color:var(--muted);
+    border:1px solid var(--line);
+    padding:2px 7px;
+    border-radius:3px;
+  }
+  /* A <span>, never <strong> -- .sales-play-detail-item strong is styled as
+     a block-level uppercase field label (see that rule), which would break
+     this inline "concept — narrative" flow if reused here. */
+  .opp-play-concept{
+    font-weight:600;
+    color:var(--ink);
+  }
+
   .opp-card-actions{
     display:flex;
     flex-wrap:wrap;
@@ -5273,6 +5317,94 @@ function whyThisMattersText(opp){
   return shortText(why, 190);
 }
 
+// ---------------------------------------------------------------------------
+// product/commercial-opportunity-intelligence: compatibility read-helpers
+// for the new commercial-interpretation fields (commercialPlay,
+// activationIdeas, expansionPotential), shared by the primary opportunity
+// card and Prepare for Call so the two surfaces can never disagree on what
+// counts as "a new-schema signal" or how an absent field degrades.
+//
+// isCommercialIntelligenceSignal() distinguishes a NEW-schema signal (one
+// that went through normalizeCommercialIntelligence() server-side, even if
+// the model declined to produce a play) from an OLD signal that predates
+// this feature entirely and never had these keys at all.
+// normalizeCommercialIntelligence() always attaches activationIdeas as an
+// array (even []), so Array.isArray() alone is a reliable marker.
+// ---------------------------------------------------------------------------
+function isCommercialIntelligenceSignal(opp){
+  return Array.isArray(opp && opp.activationIdeas) || !!(opp && opp.expansionPotential) || !!(opp && opp.commercialPlay);
+}
+
+// THE OPPORTUNITY narrative. A new-schema signal shows ONLY a real
+// commercial play -- if the model declined (no credible play), this stays
+// empty so the section is hidden entirely, never filled with generic
+// why-this-matters filler dressed up as an opportunity. An old signal
+// (predates this feature) falls back through the legacy narrative fields it
+// already had, so it still renders something meaningful.
+function getCommercialPlayNarrative(opp){
+  if(!opp) return '';
+  if(isCommercialIntelligenceSignal(opp)) return (opp.commercialPlay && opp.commercialPlay.narrative) || '';
+  return opp.whyThisMatters || opp.whyItMattersForPromo || opp.reasonToReachOut || opp.whyNow || '';
+}
+function getCommercialPlayConcept(opp){
+  return (opp && opp.commercialPlay && opp.commercialPlay.concept) || '';
+}
+
+// ACTIVATION IDEAS. Absent/empty is hidden entirely on both old and new
+// signals -- never padded toward a target count, never backfilled with
+// generic categories.
+function getActivationIdeas(opp, limit){
+  const ideas = Array.isArray(opp && opp.activationIdeas) ? opp.activationIdeas.filter(Boolean) : [];
+  return typeof limit === 'number' ? ideas.slice(0, limit) : ideas;
+}
+
+// WHY IT COULD MATTER. Same absent-is-hidden rule as activation ideas.
+function getExpansionPotentialNarrative(opp){
+  return (opp && opp.expansionPotential && opp.expansionPotential.narrative) || '';
+}
+function getExpansionPotentialTags(opp){
+  return (opp && opp.expansionPotential && Array.isArray(opp.expansionPotential.tags)) ? opp.expansionPotential.tags : [];
+}
+
+// Renders THE OPPORTUNITY section -- returns '' (hidden) when there is no
+// real commercial play to show, per the founder's explicit "a grounded
+// signal with no credible commercial interpretation is better than
+// fabricated commercial intelligence" standard.
+function renderOpportunitySection(opp){
+  const narrative = getCommercialPlayNarrative(opp);
+  if(!narrative) return '';
+  const concept = getCommercialPlayConcept(opp);
+  return `<div class="opp-section">
+    <div class="opp-label">The Opportunity</div>
+    <div class="opp-content">${concept ? `<span class="opp-play-concept">${escapeHtml(concept)}</span> — ` : ''}${escapeHtml(shortText(narrative, 220))}</div>
+  </div>`;
+}
+
+// Renders ACTIVATION IDEAS -- hidden entirely when empty. `limit` caps how
+// many show (the primary card shows only the strongest ~3; Prepare for Call
+// passes no limit to show the full normalized list, up to 6).
+function renderActivationIdeasSection(opp, limit){
+  const ideas = getActivationIdeas(opp, limit);
+  if(!ideas.length) return '';
+  return `<div class="opp-section">
+    <div class="opp-label">Activation Ideas</div>
+    <div class="opp-content opp-activation-ideas">${ideas.map(idea => `<span class="opp-idea-chip">${escapeHtml(idea)}</span>`).join('')}</div>
+  </div>`;
+}
+
+// Renders WHY IT COULD MATTER -- hidden entirely when there is no
+// expansion-potential narrative. Tags render subtly (small, muted) since
+// they are a secondary classification, not the section's headline content.
+function renderWhyItCouldMatterSection(opp){
+  const narrative = getExpansionPotentialNarrative(opp);
+  if(!narrative) return '';
+  const tags = getExpansionPotentialTags(opp);
+  return `<div class="opp-section">
+    <div class="opp-label">Why It Could Matter</div>
+    <div class="opp-content">${escapeHtml(shortText(narrative, 190))}${tags.length ? `<div class="opp-expansion-tags">${tags.map(t => `<span class="opp-tag-subtle">${escapeHtml(String(t).replace(/-/g,' '))}</span>`).join('')}</div>` : ''}</div>
+  </div>`;
+}
+
 function firstEvidenceMatch(evidence, pattern){
   const items = Array.isArray(evidence) ? evidence : [String(evidence || '')];
   return items.find(item => pattern.test(String(item || '')));
@@ -5592,6 +5724,29 @@ function renderVerifiedOpportunitySection(opp){
   </div></div>`;
 }
 
+// product/commercial-opportunity-intelligence: the FULL commercial-
+// interpretation detail for Prepare for Call -- untruncated narrative, the
+// complete (up to 6) activation-ideas list, and the full expansion-
+// potential narrative + tags. Each row is independently hidden when empty,
+// same rule as the primary card's compact renderOpportunitySection()/
+// renderActivationIdeasSection()/renderWhyItCouldMatterSection() (which
+// this deliberately does not call, since those cap to 3 ideas and truncate
+// the narrative for card scannability -- Prepare for Call is the
+// destination for the full version, not a duplicate of the card).
+function renderCommercialOpportunitySection(opp){
+  const narrative = getCommercialPlayNarrative(opp);
+  const concept = getCommercialPlayConcept(opp);
+  const ideas = getActivationIdeas(opp);
+  const expansionNarrative = getExpansionPotentialNarrative(opp);
+  const expansionTags = getExpansionPotentialTags(opp);
+  const rows = [];
+  if(narrative) rows.push(`<div class="sales-play-detail-item"><strong>The Opportunity</strong>${concept ? `<span class="opp-play-concept">${escapeHtml(concept)}</span> — ` : ''}${escapeHtml(narrative)}</div>`);
+  if(ideas.length) rows.push(`<div class="sales-play-detail-item"><strong>Activation Ideas</strong><div class="opp-activation-ideas">${ideas.map(idea => `<span class="opp-idea-chip">${escapeHtml(idea)}</span>`).join('')}</div></div>`);
+  if(expansionNarrative) rows.push(`<div class="sales-play-detail-item"><strong>Why It Could Matter</strong>${escapeHtml(expansionNarrative)}${expansionTags.length ? `<div class="opp-expansion-tags">${expansionTags.map(t => `<span class="opp-tag-subtle">${escapeHtml(String(t).replace(/-/g,' '))}</span>`).join('')}</div>` : ''}</div>`);
+  if(!rows.length) return '';
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">The Opportunity</h3><div class="sales-play-detail-grid">${rows.join('')}</div></div>`;
+}
+
 // Priority 5: real order history only -- previous orders, actual historical
 // categories (realPriorCategories(), never the inferred/suggested list),
 // cadence, uploaded contacts, and account notes. Supersedes the narrow
@@ -5730,15 +5885,23 @@ function renderRepOpportunityCard(opp){
   }
   const recBadge = recommendationBadgeMeta(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
-  // Priority 4 (paid-beta card simplification): the card now shows only the
-  // 7-item hierarchy the sprint specifies -- account, exact signal, event/
-  // publication date + actionability, why it matters, recommended contact,
-  // opener, Prepare for Call. Supporting Research, the full Evidence block,
-  // buying-team tags, promo-category tags, the detailed contact-verification
-  // explanation, and additional-signal details all moved into Prepare for
-  // Call's Research Details group (still the same underlying data -- see
-  // renderSupportingResearchDetails()/renderSuggestedContactMeta() there --
-  // nothing was deleted, only relocated off the at-a-glance card).
+  // Priority 4 (paid-beta card simplification) established the at-a-glance
+  // card / Prepare for Call split this hierarchy still follows: Supporting
+  // Research, the full Evidence block, buying-team tags, and additional-
+  // signal details live in Prepare for Call's Research Details group, not
+  // here.
+  //
+  // product/commercial-opportunity-intelligence: the card hierarchy is now
+  // Why Now -> The Opportunity -> Activation Ideas -> Why It Could Matter ->
+  // Best Next Question. The old single "Why it matters" section (generic
+  // narrative text) is replaced by renderOpportunitySection() -- a real
+  // commercial-play interpretation, hidden entirely when the evidence
+  // doesn't support one, never generic filler. renderActivationIdeasSection()/
+  // renderWhyItCouldMatterSection() are likewise hidden entirely when empty
+  // -- no empty containers, no placeholder text. "Conversation starter" is
+  // relabeled "Best Next Question" (same field, same policy gate -- see
+  // getSuggestedOpener()) since its intent is now commercial discovery, not
+  // opener copy.
   const dateLine = signalDateAndActionabilityLine(opp);
   return `
     <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
@@ -5746,20 +5909,19 @@ function renderRepOpportunityCard(opp){
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
         <div class="opp-card-title">${escapeHtml(opp.account)}</div>
         <div class="opp-section">
-          <div class="opp-label">Signal</div>
+          <div class="opp-label">Why Now</div>
           <div class="opp-content"><strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</strong></div>
         </div>
         <div class="opp-section signal-date-line"><div class="opp-label">Status</div><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>
-        <div class="opp-section">
-          <div class="opp-label">Why it matters</div>
-          <div class="opp-content">${escapeHtml(whyThisMattersText(opp))}</div>
-        </div>
+        ${renderOpportunitySection(opp)}
+        ${renderActivationIdeasSection(opp, 3)}
+        ${renderWhyItCouldMatterSection(opp)}
       </div>
 
       ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactCompact(opp) : ''}
 
       <div class="opp-section opener-card">
-        <div class="opp-label">Conversation starter</div>
+        <div class="opp-label">Best Next Question</div>
         <div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div>
       </div>
 
@@ -8665,6 +8827,7 @@ window.createSalesPlayPanel = function(opp, opts){
   });
 
   const allText = formatSalesPlayClipboard(play, account, reasonTitle, mode, opp);
+  const commercialOpportunityHtml = renderCommercialOpportunitySection(opp);
   const html = `
     <div class="sales-play-modal" onclick="if(event.target.className==='sales-play-modal') closeSalesPlayModal(this)">
       <div class="sales-play-modal-content">
@@ -8683,19 +8846,35 @@ window.createSalesPlayPanel = function(opp, opts){
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
-          <!-- Priority 5: Call Plan -- who, why, the specific opener, and one combined Best Next Move (Coaching Note merged in). -->
+          <!-- product/commercial-opportunity-intelligence: the FULL commercial
+               interpretation -- untruncated opportunity narrative, the complete
+               activation-ideas list, and expansion potential. This is the
+               deeper version of what the primary card shows compactly; it is
+               the core of Prepare for Call now, not a secondary detail. Omits
+               the whole group wrapper (no empty container) when there is
+               nothing to show. -->
+          ${commercialOpportunityHtml ? `<div class="sales-play-group">${commercialOpportunityHtml}</div>` : ''}
+
+          <!-- Priority 5: Call Plan -- who, why, and the specific discovery question. -->
           <div class="sales-play-group">
             <div class="sales-play-group-label">Call Plan</div>
             ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactPrimary(opp) : ''}
-            <div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Conversation Starter</h3><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
-            <div class="sales-play-card emphasis">
+            <div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Best Next Question</h3><div>“${escapeHtml(getSuggestedOpener(opp))}”</div></div>
+          </div>
+
+          <!-- product/commercial-opportunity-intelligence: Email/Call Script/
+               Best Next Move/Success Looks Like are secondary, template-
+               generated outreach tools now (they cost no API time/money, so
+               nothing here was deleted) -- collapsed by default so the
+               primary commercial intelligence above is what a rep sees
+               first, matching the same collapsed-by-default pattern
+               Research Details already uses below. -->
+          <details class="sales-play-group supporting">
+            <summary class="sales-play-group-label" style="cursor:pointer;">Outreach</summary>
+            <div class="sales-play-card">
               <h3><span class="section-icon">☆</span> Best Next Move</h3>
               <div class="section-content">${escapeHtml(play.bestNextMoveCombined)}</div>
             </div>
-          </div>
-
-          <div class="sales-play-group">
-            <div class="sales-play-group-label">Outreach</div>
             <div class="sales-play-grid">
               <div class="sales-play-section full">
                 <div class="sales-play-card">
@@ -8737,7 +8916,7 @@ window.createSalesPlayPanel = function(opp, opts){
                 </div>
               </div>
             </div>
-          </div>
+          </details>
 
           <!-- Priority 5: Account Context -- real previous orders, real historical categories, cadence, uploaded contacts, notes. -->
           <div class="sales-play-group">

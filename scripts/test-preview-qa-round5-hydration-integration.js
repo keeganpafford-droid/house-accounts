@@ -53,22 +53,22 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2730, 2735, 'const TIMEBOX_CONFIG = {');
-const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 2965, 2968, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2883, 3329, 'function cleanOpportunityToken(');
+const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2774, 2779, 'const TIMEBOX_CONFIG = {');
+const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3009, 3012, 'function isRelationshipExpansionOpportunity(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2927, 3373, 'function cleanOpportunityToken(');
 // This file's range extends past the OTHER test files' card-and-modal-helpers
 // boundary (4587-5701) to also include addSignalDerivedOpportunities()
 // itself (5723-5815) -- no prior test file in this suite actually invoked
 // that function, which is exactly how its re-injection defect (see R5-1)
 // went unexercised by automated tests until this integration fixture.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4635, 5963, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7950, 8490, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8087, 9377, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9380, 9883, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10609, 10612, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8002, 8004, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8007, 8009, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7405, 7443, 'function getReasonToReachOutTitle(opp){');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4679, 6125, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8112, 8652, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8249, 9556, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9559, 10062, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10788, 10791, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8164, 8166, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8169, 8171, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7567, 7605, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   const sandbox = {
