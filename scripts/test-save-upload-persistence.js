@@ -110,8 +110,40 @@ function persistHaResearchOutput(body){
     for(const s of body.p_signals){
       if(!s.event_fingerprint) continue;
       signalsAttempted += 1;
-      const exists = fakeSignals.some(x => x.user_id === body.p_user_id && x.event_fingerprint === s.event_fingerprint);
-      if(!exists){ fakeSignals.push({ user_id: body.p_user_id, event_fingerprint: s.event_fingerprint }); signalsPersisted += 1; }
+      const existing = fakeSignals.find(x => x.user_id === body.p_user_id && x.event_fingerprint === s.event_fingerprint);
+      if(!existing){
+        // Migration 9: a genuinely new event_fingerprint is INSERTed --
+        // first_seen_at/last_seen_at both set to "now", exactly like the
+        // real INSERT's own VALUES clause.
+        fakeSignals.push({
+          user_id: body.p_user_id, upload_id: body.p_upload_id, account_name: s.account_name,
+          signal_hash: s.signal_hash, event_fingerprint: s.event_fingerprint,
+          signal_type: s.signal_type, title: s.title, why_reach_out: s.why_reach_out,
+          confidence: s.confidence, source_url: s.source_url, source_domain: s.source_domain,
+          published_at: s.published_at, payload: s.payload || {},
+          first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString()
+        });
+        signalsPersisted += 1;
+      } else {
+        // Migration 9: ON CONFLICT DO UPDATE -- refreshes exactly the
+        // interpretation columns, mirroring the real SET list. Identity
+        // (user_id, event_fingerprint) cannot change (it's the match key);
+        // first_seen_at, upload_id, account_name are deliberately excluded
+        // from this update, exactly like the real migration.
+        existing.signal_hash = s.signal_hash;
+        existing.signal_type = s.signal_type;
+        existing.title = s.title;
+        existing.why_reach_out = s.why_reach_out;
+        existing.confidence = s.confidence;
+        existing.source_url = s.source_url;
+        existing.source_domain = s.source_domain;
+        existing.published_at = s.published_at;
+        existing.payload = s.payload || {};
+        existing.last_seen_at = new Date().toISOString();
+        // NOT incremented: signalsPersisted must keep meaning "genuinely
+        // NEW rows" (the xmax=0 trick in the real migration), never a
+        // refreshed-but-already-known event.
+      }
     }
   }
   if(body.p_upload_stage !== null && body.p_upload_stage !== undefined) fakeUploadState.stage = body.p_upload_stage;
@@ -1077,6 +1109,164 @@ async function run(){
   // exists (test 6 above), and accounts_updated is identity-locked (tests
   // Identity 3-5 above) -- there is no server-side pathway left that can
   // change the account_name set once research history exists.
+
+  // ===========================================================================
+  // Migration 9 (approved DB change): persist_ha_research_output()'s
+  // ha_signals insert now upserts (ON CONFLICT DO UPDATE) instead of
+  // ignoring conflicts, refreshing exactly the interpretation columns.
+  // persistHaResearchOutput() above was updated to mirror this new SQL
+  // behavior for these tests. Two required proofs:
+  // ===========================================================================
+
+  // REFRESH SEMANTICS TEST: an already-known event_fingerprint, re-
+  // researched via a genuine manual rerun (a distinct research_run_id/
+  // attempt_id, exactly like a real "Research Account" re-click), refreshes
+  // the interpretation fields while leaving identity (user_id,
+  // event_fingerprint) and discovery history (first_seen_at) untouched.
+  //
+  // event_fingerprint is computed by resolveOpportunityEvents() from
+  // company/canonical-type/location/year -- NOT supplied by the caller (a
+  // client-provided eventFingerprint field is ignored/recomputed) -- so
+  // this test drives BOTH the original discovery and the re-research
+  // through the real handler with the SAME account name and title (title
+  // text doesn't affect the fingerprint, but keeping it identical makes the
+  // "this is the same real-world event" framing honest) rather than
+  // hand-guessing the computed fingerprint string.
+  {
+    resetAll();
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-original', lease_expires_at_ms: Date.now() + 300000 }];
+    const originalSignal = {
+      accountName: 'Dover Honda', signalType: 'Community / Sponsorship',
+      signalTitle: 'Holiday Parade Sponsorship', whatChanged: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.',
+      sourceUrl: 'https://example.com/dover-honda-parade', confidenceScore: 70,
+      commercialPlay: null, activationIdeas: [], expansionPotential: null,
+      conversationStarter: 'Anything coming up that we should be thinking about?'
+    };
+    const originalReq = fakeReq({
+      lead: { email: 'qa@example.com' }, uploadId: UPLOAD_ID, stage: 'researched',
+      researchRunId: 'auto', attemptId: 'attempt-original',
+      accounts: [{ name: 'Dover Honda', signals: [originalSignal] }]
+    });
+    const originalRes = fakeRes();
+    await handler(originalReq, originalRes);
+    assert(originalRes.statusCode === 200, `sanity: the original discovery save succeeds (got status ${originalRes.statusCode}, body ${JSON.stringify(originalRes.body)})`);
+    assert(originalRes.body.signalsSaved === 1, 'sanity: the original discovery reports exactly 1 genuinely new signal');
+    const originalRow = fakeSignals.find(s => s.account_name === 'Dover Honda');
+    assert(!!originalRow, 'sanity: the original signal row exists');
+    const realFingerprint = originalRow.event_fingerprint;
+    const originalFirstSeenAt = originalRow.first_seen_at;
+    // Force a distinguishable original first_seen_at (the mock sets it to
+    // "now" on insert) so a later "unchanged" comparison is meaningful, not
+    // a same-millisecond coincidence.
+    originalRow.first_seen_at = '2025-01-01T00:00:00.000Z';
+    originalRow.last_seen_at = '2025-01-01T00:00:00.000Z';
+
+    researchRuns.push({ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'manual-rerun-dover', status: 'running', attempt_id: 'attempt-refresh-current', lease_expires_at_ms: Date.now() + 300000 });
+    const freshPayload = {
+      commercialPlay: { concept: 'Holiday Parade Sponsorship', narrative: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.' },
+      activationIdeas: ['Parade-day team kit', 'Family-focused giveaway bags'],
+      expansionPotential: { narrative: 'A recurring annual sponsorship.', tags: ['recurring-program'] },
+      conversationStarter: 'We had a couple ideas for the Holiday Parade, including a parade-day team kit. Would it be okay if I sent a few concepts over?'
+    };
+    const refreshReq = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'researched',
+      researchRunId: 'manual-rerun-dover',
+      attemptId: 'attempt-refresh-current',
+      accounts: [{
+        name: 'Dover Honda',
+        signals: [{
+          accountName: 'Dover Honda', signalType: 'Community / Sponsorship',
+          signalTitle: 'Holiday Parade Sponsorship', whatChanged: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.',
+          sourceUrl: 'https://example.com/dover-honda-parade-fresh', confidenceScore: 88,
+          ...freshPayload
+        }]
+      }]
+    });
+    const res = fakeRes();
+    await handler(refreshReq, res);
+    assert(res.statusCode === 200, `refresh semantics: the re-research save succeeds (got status ${res.statusCode}, body ${JSON.stringify(res.body)})`);
+    const matching = fakeSignals.filter(s => s.user_id === USER_ID && s.event_fingerprint === realFingerprint);
+    assert(matching.length === 1, `refresh semantics: exactly one canonical signal row still exists for this event_fingerprint (got ${matching.length})`);
+    const row = matching[0];
+    assert(row.event_fingerprint === realFingerprint, 'refresh semantics: event_fingerprint is unchanged -- canonical event identity is untouched');
+    assert(row.first_seen_at === '2025-01-01T00:00:00.000Z', `refresh semantics: first_seen_at is unchanged (got "${row.first_seen_at}")`);
+    assert(row.last_seen_at !== '2025-01-01T00:00:00.000Z', 'refresh semantics: last_seen_at IS refreshed to a new value');
+    assert(row.payload.commercialPlay && row.payload.commercialPlay.concept === 'Holiday Parade Sponsorship', `refresh semantics: the latest interpretation (commercialPlay) is present (got ${JSON.stringify(row.payload.commercialPlay)})`);
+    assert(Array.isArray(row.payload.activationIdeas) && row.payload.activationIdeas.length === 2, 'refresh semantics: the latest activationIdeas are present');
+    assert(row.payload.expansionPotential && row.payload.expansionPotential.tags.includes('recurring-program'), 'refresh semantics: the latest expansionPotential is present');
+    assert(/would it be okay if i sent/i.test(row.payload.conversationStarter || ''), 'refresh semantics: the latest conversationStarter (concept-led approach) is present, not the old generic discovery question');
+    assert(res.body.signalsSaved === 0, 'refresh semantics: signalsSaved (genuinely-new count) is 0 -- a refresh of an already-known event must never be counted/reported as a newly discovered one (notification-idempotency contract)');
+    assert(researchRuns.find(r => r.research_run_id === 'manual-rerun-dover').status === 'completed', 'sanity: the manual rerun attempt itself finalizes normally');
+  }
+
+  // STALE-ATTEMPT PROTECTION TEST (critical safeguard 2): an older/late
+  // attempt result must not be able to overwrite a newer, already-accepted
+  // research result now that DO UPDATE is supported. Simulates the exact
+  // race: attempt A is superseded by attempt B (reclaim) for the SAME
+  // research_run_id; B completes and refreshes an event's payload; A's
+  // late-arriving call (its attempt_id no longer matches) must still be
+  // rejected, and B's refreshed payload must be completely untouched by A's
+  // rejected call. Both calls use the IDENTICAL account name/signal title
+  // (only commercialPlay differs) so they resolve to the SAME real computed
+  // event_fingerprint -- see the refresh-semantics test above for why a
+  // hand-guessed fingerprint string cannot be used here.
+  {
+    resetAll();
+    // State AFTER B has already reclaimed the row (A's attempt_id no longer
+    // matches -- this is what claim_ha_research_run() does on reclaim).
+    researchRuns = [{ user_id: USER_ID, upload_id: UPLOAD_ID, research_run_id: 'auto', status: 'running', attempt_id: 'attempt-B-fresher', lease_expires_at_ms: Date.now() + 300000 }];
+    const raceSignalBase = {
+      accountName: 'Race Co', signalType: 'Event', signalTitle: 'Race Co Signal',
+      whatChanged: 'Race Co event.', confidenceScore: 90
+    };
+    const bReq = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'researched',
+      researchRunId: 'auto',
+      attemptId: 'attempt-B-fresher',
+      accounts: [{
+        name: 'Race Co',
+        signals: [{
+          ...raceSignalBase, sourceUrl: 'https://example.com/race-fresh',
+          commercialPlay: { concept: 'Fresh Play', narrative: 'A genuinely fresh, specific commercial play from attempt B.' }
+        }]
+      }]
+    });
+    const bRes = fakeRes();
+    await handler(bReq, bRes);
+    assert(bRes.statusCode === 200, `sanity: the current (reclaimed) attempt B succeeds (got status ${bRes.statusCode}, body ${JSON.stringify(bRes.body)})`);
+    const afterB = fakeSignals.find(s => s.account_name === 'Race Co');
+    assert(afterB && afterB.payload.commercialPlay.concept === 'Fresh Play', 'sanity: attempt B\'s fresh payload is persisted');
+    const raceFingerprint = afterB.event_fingerprint;
+
+    // Attempt A's late-arriving call, using its OWN now-superseded
+    // attempt_id, tries to persist a DIFFERENT (stale/regressive) payload
+    // for the SAME real-world event (same account, same signal shape ->
+    // same computed event_fingerprint).
+    const aReq = fakeReq({
+      lead: { email: 'qa@example.com' },
+      uploadId: UPLOAD_ID,
+      stage: 'researched',
+      researchRunId: 'auto',
+      attemptId: 'attempt-A-stale-race',
+      accounts: [{
+        name: 'Race Co',
+        signals: [{
+          ...raceSignalBase, sourceUrl: 'https://example.com/race-stale',
+          commercialPlay: { concept: 'Stale Play', narrative: 'A stale, late-arriving payload from the superseded attempt A.' }
+        }]
+      }]
+    });
+    const aRes = fakeRes();
+    await handler(aReq, aRes);
+    assert(aRes.statusCode === 409 && aRes.body.staleAttempt === true, `required (critical safeguard 2): attempt A's late call is rejected as a stale attempt, even though DO UPDATE now allows refreshing an existing row (got status ${aRes.statusCode}, body ${JSON.stringify(aRes.body)})`);
+    const afterA = fakeSignals.find(s => s.event_fingerprint === raceFingerprint);
+    assert(afterA.payload.commercialPlay.concept === 'Fresh Play', `required (critical safeguard 2): the rejected stale attempt A did NOT overwrite attempt B's fresher payload -- it is still "Fresh Play" (got "${afterA.payload.commercialPlay.concept}")`);
+    assert(researchRuns.find(r => r.research_run_id === 'auto').attempt_id === 'attempt-B-fresher', 'required (critical safeguard 2): the run row still reflects attempt B as current -- the stale call did not touch it');
+  }
 
   global.fetch = originalFetch;
   console.log = originalConsoleLog;

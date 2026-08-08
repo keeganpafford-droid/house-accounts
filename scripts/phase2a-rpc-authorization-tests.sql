@@ -1619,3 +1619,112 @@ begin
   delete from public.ha_users where id = v_user;
   raise notice '--- Tests 59-66 cleanup complete ---';
 end $$;
+
+-- ===========================================================================
+-- Tests 67-68 (Migration 9 -- approved DB change): persist_ha_research_output()'s
+-- ha_signals insert now upserts (ON CONFLICT DO UPDATE) instead of ignoring
+-- conflicts, so re-researching an already-known event_fingerprint refreshes
+-- its interpretation instead of silently discarding the new one forever.
+-- ===========================================================================
+do $$
+declare
+  v_user uuid;
+  v_upload uuid;
+  v_claim1 jsonb;
+  v_claim2 jsonb;
+  v_claim3 jsonb;
+  v_result jsonb;
+  v_row record;
+begin
+  insert into public.ha_users (email, name) values ('migration9-refresh-owner@example.com', 'Migration 9 Refresh Owner') returning id into v_user;
+  insert into public.ha_uploads (user_id, upload_name, stage) values (v_user, 'Migration 9 refresh-semantics upload', 'uploaded') returning id into v_upload;
+  perform public.replace_ha_accounts_snapshot(v_upload, v_user, '[{"account_name":"Dover Honda"}]'::jsonb, 'initial_upload');
+
+  raise notice '--- Test 67: re-research (a genuine manual rerun) REFRESHES an existing event''s interpretation, preserving identity and first_seen_at ---';
+  v_claim1 := public.claim_ha_research_run(v_user, v_upload, 'auto', 300);
+  v_result := public.persist_ha_research_output(
+    v_upload, v_user, 'auto', (v_claim1->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Dover Honda"}]'::jsonb,
+    '[{"account_name":"Dover Honda","signal_hash":"h-old","event_fingerprint":"fp-dover-parade-migration9","signal_type":"Community / Sponsorship","title":"Old generic title","why_reach_out":"This could create an opportunity for promotional products.","confidence":60,"payload":{"commercialPlay":null,"activationIdeas":[],"expansionPotential":null,"conversationStarter":"Anything coming up that we should be thinking about?"}}]'::jsonb,
+    'researched', '{"accountCount":1}'::jsonb
+  );
+  -- Force a distinguishable original first_seen_at, exactly like the JS
+  -- mock test does, so the "unchanged" comparison below is meaningful.
+  update public.ha_signals set first_seen_at = '2025-01-01 00:00:00+00', last_seen_at = '2025-01-01 00:00:00+00'
+    where upload_id = v_upload and event_fingerprint = 'fp-dover-parade-migration9';
+
+  v_claim2 := public.claim_ha_research_run(v_user, v_upload, 'manual-rerun-dover', 300);
+  v_result := public.persist_ha_research_output(
+    v_upload, v_user, 'manual-rerun-dover', (v_claim2->'run'->>'attempt_id')::uuid,
+    '[{"account_name":"Dover Honda"}]'::jsonb,
+    '[{"account_name":"Dover Honda","signal_hash":"h-new","event_fingerprint":"fp-dover-parade-migration9","signal_type":"Community / Sponsorship","title":"Holiday Parade Sponsorship","why_reach_out":"Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.","confidence":88,"payload":{"commercialPlay":{"concept":"Holiday Parade Sponsorship","narrative":"Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade."},"activationIdeas":["Parade-day team kit","Family-focused giveaway bags"],"expansionPotential":{"narrative":"A recurring annual sponsorship.","tags":["recurring-program"]},"conversationStarter":"We had a couple ideas for the Holiday Parade, including a parade-day team kit. Would it be okay if I sent a few concepts over?"}}]'::jsonb,
+    'researched', '{"accountCount":1}'::jsonb
+  );
+
+  if (v_result->>'signalsPersisted')::int = 0 then
+    raise notice 'PASS: Test 67: signalsPersisted is 0 for the refresh call -- a refresh of an already-known event is never counted as a genuinely new one (notification-idempotency contract)';
+  else raise notice 'FAIL: Test 67: expected signalsPersisted=0 for a pure refresh, got %', v_result->>'signalsPersisted'; end if;
+
+  select * into v_row from public.ha_signals where upload_id = v_upload and event_fingerprint = 'fp-dover-parade-migration9';
+  if (select count(*) from public.ha_signals where upload_id = v_upload and event_fingerprint = 'fp-dover-parade-migration9') = 1 then
+    raise notice 'PASS: Test 67: exactly ONE canonical signal row still exists for this event_fingerprint';
+  else raise notice 'FAIL: Test 67: expected exactly 1 row, got %', (select count(*) from public.ha_signals where upload_id = v_upload and event_fingerprint = 'fp-dover-parade-migration9'); end if;
+  if v_row.first_seen_at = '2025-01-01 00:00:00+00'::timestamptz then
+    raise notice 'PASS: Test 67: first_seen_at is UNCHANGED by the refresh';
+  else raise notice 'FAIL: Test 67: first_seen_at changed to % (expected 2025-01-01)', v_row.first_seen_at; end if;
+  if v_row.last_seen_at > '2025-01-01 00:00:00+00'::timestamptz then
+    raise notice 'PASS: Test 67: last_seen_at IS refreshed to a newer value';
+  else raise notice 'FAIL: Test 67: last_seen_at was not refreshed (%)', v_row.last_seen_at; end if;
+  if v_row.title = 'Holiday Parade Sponsorship' and v_row.confidence = 88 then
+    raise notice 'PASS: Test 67: top-level mirror columns (title, confidence) are refreshed to the latest values';
+  else raise notice 'FAIL: Test 67: expected refreshed title/confidence, got title=%, confidence=%', v_row.title, v_row.confidence; end if;
+  if (v_row.payload->'commercialPlay'->>'concept') = 'Holiday Parade Sponsorship' then
+    raise notice 'PASS: Test 67: payload.commercialPlay reflects the LATEST interpretation';
+  else raise notice 'FAIL: Test 67: payload.commercialPlay was not refreshed (%)', v_row.payload->'commercialPlay'; end if;
+  if jsonb_array_length(v_row.payload->'activationIdeas') = 2 then
+    raise notice 'PASS: Test 67: payload.activationIdeas reflects the LATEST interpretation';
+  else raise notice 'FAIL: Test 67: payload.activationIdeas was not refreshed (%)', v_row.payload->'activationIdeas'; end if;
+
+  raise notice '--- Test 68 (critical safeguard 2): a STALE attempt cannot overwrite a NEWER, already-refreshed interpretation just because DO UPDATE is now supported ---';
+  -- attempt A claims a second manual rerun, then its lease expires (or it
+  -- is reclaimed) before it ever calls persist -- attempt C reclaims and
+  -- successfully refreshes the SAME event with fresher data; A's late call
+  -- (its own now-superseded attempt_id) must be rejected, and C's fresher
+  -- payload must be left untouched.
+  v_claim3 := public.claim_ha_research_run(v_user, v_upload, 'manual-rerun-dover-2', 300);
+  update public.ha_research_runs set lease_expires_at = now() - interval '1 minute'
+    where upload_id = v_upload and research_run_id = 'manual-rerun-dover-2';
+  declare v_claim3b jsonb;
+  begin
+    v_claim3b := public.claim_ha_research_run(v_user, v_upload, 'manual-rerun-dover-2', 300); -- reclaims (attempt C)
+    v_result := public.persist_ha_research_output(
+      v_upload, v_user, 'manual-rerun-dover-2', (v_claim3b->'run'->>'attempt_id')::uuid,
+      null,
+      '[{"account_name":"Dover Honda","signal_hash":"h-newer","event_fingerprint":"fp-dover-parade-migration9","signal_type":"Community / Sponsorship","title":"Holiday Parade -- Even Fresher","confidence":95,"payload":{"commercialPlay":{"concept":"Even Fresher Play","narrative":"The genuinely current, most-recent interpretation."}}}]'::jsonb,
+      'researched', '{"accountCount":1}'::jsonb
+    );
+    begin
+      perform public.persist_ha_research_output(
+        v_upload, v_user, 'manual-rerun-dover-2', (v_claim3->'run'->>'attempt_id')::uuid, -- A's STALE, now-superseded attempt_id
+        null,
+        '[{"account_name":"Dover Honda","signal_hash":"h-stale","event_fingerprint":"fp-dover-parade-migration9","signal_type":"Community / Sponsorship","title":"Stale Late Arrival","confidence":10,"payload":{"commercialPlay":{"concept":"Stale Play","narrative":"A stale, late-arriving payload that must never win."}}}]'::jsonb,
+        'researched', '{"accountCount":1}'::jsonb
+      );
+      raise notice 'FAIL: Test 68: the stale attempt A was able to call persist_ha_research_output -- no exception raised';
+    exception when others then
+      if sqlstate = 'HA001' then raise notice 'PASS: Test 68: the stale, superseded attempt is rejected with HA001, even though DO UPDATE now allows refreshing an existing row';
+      else raise notice 'FAIL: Test 68: rejected, but with unexpected sqlstate % (message: %)', sqlstate, sqlerrm; end if;
+    end;
+  end;
+  select * into v_row from public.ha_signals where upload_id = v_upload and event_fingerprint = 'fp-dover-parade-migration9';
+  if (v_row.payload->'commercialPlay'->>'concept') = 'Even Fresher Play' then
+    raise notice 'PASS: Test 68: the rejected stale attempt did NOT overwrite the newer, already-refreshed payload -- it is still "Even Fresher Play"';
+  else raise notice 'FAIL: Test 68: the payload was overwritten by the rejected stale attempt -- now %', v_row.payload->'commercialPlay'; end if;
+
+  delete from public.ha_signals where upload_id = v_upload;
+  delete from public.ha_accounts where upload_id = v_upload;
+  delete from public.ha_research_runs where upload_id = v_upload;
+  delete from public.ha_uploads where id = v_upload;
+  delete from public.ha_users where id = v_user;
+  raise notice '--- Tests 67-68 cleanup complete ---';
+end $$;
