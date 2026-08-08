@@ -20,6 +20,11 @@ function clean(value = '') {
   return String(value || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function truncateText(value = '', maxLength = 300) {
+  const c = clean(value);
+  return c.length > maxLength ? `${c.slice(0, maxLength - 1).trim()}…` : c;
+}
+
 function normalizeCompany(value = '') {
   return clean(value).toLowerCase()
     .replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company|holdings?)\b\.?/g, ' ')
@@ -199,6 +204,12 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   return { grounded: false, reasons: entity.reasons };
 }
 
+// GUARDRAIL (product/commercial-opportunity-intelligence): this identity key
+// must be built ONLY from factual/evidence fields (company, family/subtype,
+// event date, named entities extracted from title/snippet/rawContent).
+// commercialPlay/activationIdeas/expansionPotential are interpretation, not
+// evidence -- they must NEVER be added as inputs here, or a creative concept
+// like "50 Summers" could silently become part of an event's dedup identity.
 function eventFingerprint(candidate = {}, familyOverride = '') {
   const text = `${candidate.title || ''} ${candidate.snippet || ''} ${candidate.rawContent || candidate.pageContent || ''}`;
   const family = familyOverride || candidate.signalFamily || classifySignalFamily(text, candidate.intendedSignalFamily);
@@ -338,6 +349,9 @@ function normalizeOpportunity(raw = {}, account = {}, candidate = {}) {
   let whyThisMatters = clean(raw.whyThisMatters || raw.why_this_matters || raw.whyItMattersForPromo || raw.opportunityExplanation || '');
   if (!whyThisMatters || materiallyRepeats(whyThisMatters, whatChanged)) whyThisMatters = '';
   const sources = Array.isArray(raw.sources) && raw.sources.length ? raw.sources : (candidate.sources || (candidate.url ? [{ name: candidate.sourceName || candidate.sourceDomain || 'Public source', url: candidate.url, publishedAt: candidate.publishedAt || '' }] : []));
+  // GUARDRAIL: fingerprint inputs are headline/whatChanged (factual) only --
+  // never raw.commercialPlay/activationIdeas/expansionPotential. See the
+  // guardrail comment on eventFingerprint() itself.
   const fingerprint = raw.eventFingerprint || candidate.eventFingerprint || eventFingerprint({ ...candidate, companyName: account.name || raw.companyName, title: headline, snippet: whatChanged }, family);
   return {
     ...raw,
@@ -373,13 +387,128 @@ function validateOpportunity(opportunity = {}) {
   if (!clean(opportunity.sourceUrl) && !(opportunity.sources || []).some(s => s && s.url)) reasons.push('missing evidence');
   if (opportunity.signalFamily === 'unknown') reasons.push('unsupported classification');
   if (!clean(opportunity.whyThisMatters || opportunity.whyItMattersForPromo)) reasons.push('missing commercial implication');
+  // product/commercial-opportunity-intelligence: commercialPlay itself is
+  // optional (absence is a valid outcome -- see normalizeCommercialIntelligence()),
+  // so its absence never fails validation. This only guards against a
+  // malformed commercialPlay object with no narrative ever reaching
+  // persistence -- normalizeCommercialIntelligence() already guarantees this
+  // can't happen for anything that went through it, so this is defense in
+  // depth, not the primary safeguard.
+  if (opportunity.commercialPlay && !clean(opportunity.commercialPlay.narrative)) reasons.push('commercialPlay present without a narrative');
   return { valid: reasons.length === 0, reasons };
+}
+
+// ---------------------------------------------------------------------------
+// product/commercial-opportunity-intelligence
+//
+// House Accounts' core job is the research and commercial thinking a
+// salesperson doesn't have time to do -- not writing their email for them.
+// This is the ONE shared reasoning instruction spliced into both live
+// research endpoints' prompts (api/research-batch.js, api/research-account.js)
+// so the actual wording of how to reason about the commercial angle is
+// written once, never maintained as two independently-drifting copies. Each
+// endpoint's surrounding prompt (candidate evidence, account context,
+// output-format wrapper, field-name casing) stays endpoint-specific --
+// only this reasoning instruction is shared, and normalizeCommercialIntelligence()
+// below is the shared post-processing that reconciles both endpoints' raw
+// output into one consistent internal shape regardless of casing.
+// ---------------------------------------------------------------------------
+const COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT = `
+Beyond the factual event itself, reason like a smart promotional-products merchandise strategist sitting beside the rep -- not a copywriter drafting an email. Do not merely summarize the signal; interpret it commercially.
+
+- commercialPlay: your interpretation of the specific commercial opportunity this event creates. Answer "what's the play I see here?", not "what happened" (that belongs in the factual fields above). A concise, memorable concept/title (e.g. "50 Summers" for an anniversary) is welcome ONLY when a genuinely useful one emerges naturally from the evidence -- never manufacture a cute campaign name just to fill the field. If the evidence does not support a credible commercial play, omit commercialPlay entirely. Do not write generic filler such as "consider branded merchandise" or "this could be an opportunity to reach out."
+- activationIdeas: up to 6 concrete, specific ways a rep could activate against the opportunity (e.g. "Premium pool/beach towels", "Installer/team workwear" -- never bare category words like "Apparel", "Drinkware", or "Giveaways" with no qualifier). If nothing specific and credible comes to mind, return an empty list. Do not pad to reach a target count -- two strong ideas beat six generic ones.
+- expansionPotential: think beyond the immediate order. Does this look like a one-time opportunity, a recurring program, account expansion, cross-department reach, employee use, customer use, a seasonal repeat, or a route into a related/parent organization? Give a short narrative explaining the commercial upside (not a restatement of the tags), plus up to 3 tags from this fixed list ONLY when they genuinely apply: one-time, recurring-program, account-expansion, cross-department, employee-program, customer-program, seasonal-repeat, parent-org-route, other. Omit expansionPotential entirely if you have no confident read on this. Do not force every opportunity into every category.
+
+A grounded signal with no credible commercial interpretation is a better output than fabricated commercial intelligence. Absence of commercialPlay, an empty activationIdeas list, and absence of expansionPotential are all valid and expected outcomes for weak or generic signals -- never force any of these fields merely because the schema has a place for them.
+
+For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting, do not pitch a product directly, and do not ask to schedule a meeting. It must be a genuine, specific question.
+`.trim();
+
+const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
+  'apparel', 'branded apparel', 'drinkware', 'giveaways', 'promotional items',
+  'promotional products', 'swag', 'branded merchandise', 'merchandise',
+  'branded items', 'corporate gifts', 'custom products', 'promotional giveaways',
+  'branded swag', 'company swag', 'custom merchandise', 'branded gear'
+]);
+
+// Deliberately a short, fixed list of content-free category labels -- the
+// goal is rejecting obviously generic filler, not building a merchandising
+// ontology. A specific, qualified phrase ("Premium pool/beach towels") is
+// never caught by this even though it contains a generic word, because the
+// check is against the WHOLE cleaned idea string, not a substring search.
+function isGenericActivationIdea(idea = '') {
+  const normalized = clean(idea).toLowerCase().replace(/[.!]+$/, '');
+  return !normalized || GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized);
+}
+
+const EXPANSION_POTENTIAL_TAGS = new Set([
+  'one-time', 'recurring-program', 'account-expansion', 'cross-department',
+  'employee-program', 'customer-program', 'seasonal-repeat', 'parent-org-route', 'other'
+]);
+
+// Normalizes the ONE new commercial-interpretation thought the model may
+// produce (commercialPlay/commercial_play, activationIdeas/activation_ideas,
+// expansionPotential/expansion_potential -- reconciling both endpoints'
+// casing conventions here, not in either endpoint) into a safe, bounded
+// shape. Absence is a valid, encouraged outcome: this function NEVER
+// manufactures a play/idea/expansion-read the model didn't actually
+// produce -- it only cleans, caps, and filters what IS present.
+//
+// All three keys are always present on the returned object (commercialPlay:
+// object|null, activationIdeas: array, expansionPotential: object|null),
+// even when a value is empty -- this lets callers distinguish "a new-schema
+// signal with no credible commercial interpretation" from "an old signal
+// that predates this feature entirely and never had these keys at all" (see
+// dashboard/index.html's getCommercialPlayNarrative()).
+function normalizeCommercialIntelligence(raw = {}) {
+  const rawPlay = raw.commercialPlay || raw.commercial_play;
+  let commercialPlay = null;
+  if (rawPlay && typeof rawPlay === 'object') {
+    const narrative = truncateText(rawPlay.narrative || rawPlay.description || '', 320);
+    if (narrative) {
+      commercialPlay = { narrative };
+      const concept = truncateText(rawPlay.concept || rawPlay.title || rawPlay.name || '', 60);
+      if (concept) commercialPlay.concept = concept;
+    }
+  }
+
+  const rawIdeas = Array.isArray(raw.activationIdeas) ? raw.activationIdeas
+    : Array.isArray(raw.activation_ideas) ? raw.activation_ideas : [];
+  const activationIdeas = [];
+  const seenIdeas = new Set();
+  for (const idea of rawIdeas) {
+    const text = truncateText(idea, 80);
+    if (!text || isGenericActivationIdea(text)) continue;
+    const key = text.toLowerCase();
+    if (seenIdeas.has(key)) continue;
+    seenIdeas.add(key);
+    activationIdeas.push(text);
+    if (activationIdeas.length >= 6) break;
+  }
+
+  const rawExpansion = raw.expansionPotential || raw.expansion_potential;
+  let expansionPotential = null;
+  if (rawExpansion && typeof rawExpansion === 'object') {
+    const narrative = truncateText(rawExpansion.narrative || rawExpansion.description || '', 320);
+    if (narrative) {
+      expansionPotential = { narrative };
+      const rawTags = Array.isArray(rawExpansion.tags) ? rawExpansion.tags : [];
+      const tags = [...new Set(rawTags.map(t => clean(t).toLowerCase().replace(/[^a-z-]/g, '')).filter(t => EXPANSION_POTENTIAL_TAGS.has(t)))].slice(0, 3);
+      if (tags.length) expansionPotential.tags = tags;
+    }
+  }
+
+  return { commercialPlay, activationIdeas, expansionPotential };
 }
 
 function dedupeOpportunities(opportunities = []) {
   const best = new Map();
   for (const o of opportunities) {
     if (!o) continue;
+    // GUARDRAIL: same fingerprint inputs as eventFingerprint()'s own
+    // guardrail -- commercialPlay/activationIdeas/expansionPotential never
+    // participate in this key either.
     const key = o.eventFingerprint || eventFingerprint({ companyName: o.companyName || o.accountName, title: o.headline || o.signalTitle, snippet: o.whatChanged, publishedAt: o.eventDate || o.publishedAt }, o.signalFamily);
     const existing = best.get(key);
     const score = Number(o.whyNowScore || o.why_now_score || o.commercialScore || o.confidenceScore || 0);
@@ -999,6 +1128,9 @@ function resolveEvents(candidates = []) {
     };
 
     const flatSources = ev.evidence.map(e => ({ name: e.sourceName, url: e.url, publishedAt: e.publishedDate || '' }));
+    // GUARDRAIL: company/eventType/location/year only -- see eventFingerprint()'s
+    // guardrail comment above. commercialPlay/activationIdeas/expansionPotential
+    // must never enter this identity key.
     const fingerprint = `${ev.identity.company}|${primaryType}|${normalizeForMatch(ev.identity.location || ev.identity.subjectEntity || '')}|${ev.identity.year || 'unknown'}`;
 
     return {
@@ -1076,5 +1208,7 @@ export {
   findPublicationContextDate,
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
   resolveOpportunityEvents, dedupeByEventFingerprint,
-  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType
+  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
+  COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
+  normalizeCommercialIntelligence, isGenericActivationIdea, truncateText
 };

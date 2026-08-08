@@ -7,7 +7,9 @@ import {
   dedupeOpportunities,
   classifySignalFamily,
   displaySignalType,
-  verifyCandidateCompanyGrounding
+  verifyCandidateCompanyGrounding,
+  COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
+  normalizeCommercialIntelligence
 } from './signal-intelligence.js';
 
 // Vercel Serverless Function: verified public signal research.
@@ -868,7 +870,15 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
   );
 
   const cleanSummary = compactSentence(aiSignal.shortSummary || aiSignal.summary || aiSignal.headline || aiSignal.signalTitle || candidate.title || candidate.snippet || '', 170);
-  const whyReachOut = compactSentence(aiSignal.whyReachOut || aiSignal.whyItMatters || base.reasonToReachOut || 'Recent business activity creates a timely reason to check in.', 190);
+  // product/commercial-opportunity-intelligence: the one shared normalizer,
+  // computed once here so both the legacy why-reach-out compatibility value
+  // (below) and the new commercialPlay/activationIdeas/expansionPotential
+  // fields (in the returned object) derive from the exact same parsed
+  // thought. commercialPlay.narrative is now the preferred source -- the
+  // model is no longer asked to separately produce whyItMattersForPromo as
+  // an independent target.
+  const commercialIntelligence = normalizeCommercialIntelligence(aiSignal);
+  const whyReachOut = compactSentence(commercialIntelligence.commercialPlay?.narrative || aiSignal.whyReachOut || aiSignal.whyItMatters || base.reasonToReachOut || 'Recent business activity creates a timely reason to check in.', 190);
   const opener = compactSentence(aiSignal.suggestedOpener || aiSignal.likelyConversation || aiSignal.conversationAngle || base.conversationStarter || 'Saw some recent activity and wanted to check in — anything coming up where support would be helpful?', 200);
   const sourceText = `${candidate.title || ''} ${candidate.snippet || ''} ${aiSignal.publicationDate || ''}`;
   const confidenceScore = combinedConfidenceScore({
@@ -904,6 +914,13 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
     reasonToReachOut: whyReachOut,
     conversationStarter: opener,
     whyNow: whyReachOut,
+    // product/commercial-opportunity-intelligence: commercialPlay may be
+    // null and activationIdeas may be [] -- a valid, expected outcome for a
+    // signal with real evidence but no credible commercial play. See
+    // normalizeCommercialIntelligence() in signal-intelligence.js.
+    commercialPlay: commercialIntelligence.commercialPlay,
+    activationIdeas: commercialIntelligence.activationIdeas,
+    expansionPotential: commercialIntelligence.expansionPotential,
     suggestedContact: suggestedContactDetails.name || aiSignal.suggestedContact || base.suggestedContact,
     suggestedContactDetails,
     recommendedBuyingTeam,
@@ -953,6 +970,8 @@ Leadership and contact-change rules:
 
 Reject generic About pages, Contact pages, homepages, SEO snippets, navigation text, stale news, and anything that does not create a natural reason to reach out.
 
+${COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT}
+
 Important rules:
 - Return at most 4 independently actionable opportunities. Do not stop after the first strong event.
 - Only return opportunities with confidence >= 80.
@@ -970,12 +989,14 @@ Return strict JSON only with this shape:
       "candidateId": "0",
       "signalType": "Hiring | Expansion | New Facility | Trade Show | Conference | Award | Leadership Change | Product Launch | Partnership | Acquisition | Community Initiative | Government Contract | Funding | Rebrand | Major Initiative",
       "signalTitle": "short human-readable headline",
-      "whatChanged": "one specific sentence about the public business development",
-      "whyItMattersForPromo": "one clear sentence explaining why this creates a reason for a promo rep to reach out",
+      "whatChanged": "one specific sentence about the public business development, factual only",
+      "commercialPlay": {"concept": "(optional, short)", "narrative": "the commercial play -- omit this whole field if none is credible"},
+      "activationIdeas": ["up to 6 concrete, specific ideas -- omit or leave empty if nothing specific and credible comes to mind"],
+      "expansionPotential": {"narrative": "the commercial upside beyond the immediate order", "tags": ["0-3 tags from the fixed list -- omit this whole field if you have no confident read"]},
       "likelyBuyers": ["likely buyer roles"],
       "likelyProducts": ["uniforms", "welcome kits", "trade show giveaways"],
       "likelyConversations": ["short conversation themes"],
-      "suggestedOpener": "one natural sentence a rep could say or email",
+      "suggestedOpener": "the single most useful discovery question to learn next -- ownership, timing, scope, existing program, department, or expansion potential. A genuine question, never a pitch or a meeting request.",
       "suggestedContact": "likely role to contact",
       "recommendedBuyingTeam": ["likely department/team"],
       "suggestedContactDetails": {
@@ -1322,3 +1343,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message || 'Research failed' });
   }
 }
+
+// Named export solely for direct unit testing (mirrors api/research-batch.js's
+// own export { makeSignal, ... } for the same reason) -- makeAISignal() has
+// no side effects and no dependency on request/response objects, so it can
+// be exercised directly rather than through vm/line-range extraction.
+export { makeAISignal };

@@ -17,7 +17,9 @@ import {
   extractEventDate,
   findPublicationContextDate,
   resolveOpportunityEvents,
-  verifyCandidateCompanyGrounding
+  verifyCandidateCompanyGrounding,
+  COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
+  normalizeCommercialIntelligence
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -1726,8 +1728,20 @@ function classifyLegacySignalActionability(payload = {}) {
   };
 }
 
-function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '', ground = {}) {
-  const supplied = compact(raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || '', 300);
+// product/commercial-opportunity-intelligence: commercialPlayNarrative is
+// the model's ONE commercial-interpretation thought (see
+// normalizeCommercialIntelligence() in signal-intelligence.js) and is now
+// the preferred source for this legacy compatibility field. The model is no
+// longer asked to separately produce why_this_matters/whyItMattersForPromo
+// as an independent target -- that would be two independent paraphrases of
+// the same idea. The raw.why_this_matters/etc. reads below remain only as a
+// fallback for older raw payloads (existing tests, any not-yet-updated
+// caller) that still populate them directly; new prompt output never sets
+// them. When neither is present, the existing deterministic salesReadyWhy()
+// template still runs unchanged -- this legacy field is never left empty
+// merely because the model declined to produce a commercial play.
+function meaningfulWhyThisMatters(raw = {}, type = '', trigger = '', context = '', buyingMoment = '', ground = {}, commercialPlayNarrative = '') {
+  const supplied = compact(commercialPlayNarrative || raw.why_this_matters || raw.whyItMattersForPromo || raw.whyReachOut || raw.whyItMatters || raw.why || '', 300);
   const norm = value => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const repeated = supplied && [trigger, context, raw.signalTitle, raw.title].some(v => norm(v) && (norm(supplied) === norm(v) || norm(supplied).includes(norm(v)) && norm(supplied).length <= norm(v).length + 12));
   return supplied && !repeated ? supplied : compact(salesReadyWhy(trigger, context, buyingMoment, type, ground), 300);
@@ -1797,7 +1811,12 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const historicalFact = oneHistoricalOrderFact(account);
   const ground = { accountName, actionability: actionabilityStatus, recommendedBuyingTeam, historicalFact };
 
-  const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment, ground);
+  // product/commercial-opportunity-intelligence: the one shared normalizer,
+  // computed once here so both the legacy why-this-matters compatibility
+  // value (below) and the new commercialPlay/activationIdeas/expansionPotential
+  // fields (in the returned object) derive from the exact same parsed thought.
+  const commercialIntelligence = normalizeCommercialIntelligence(raw);
+  const why = meaningfulWhyThisMatters(raw, type, concreteTrigger, businessContext, buyingMoment, ground, commercialIntelligence.commercialPlay?.narrative || '');
   const opener = compact(raw.suggested_opener || raw.suggestedOpener || raw.conversationStarter || raw.likelyConversation || salesReadyOpener(concreteTrigger, businessContext, buyingMoment, type, ground), 280);
   const buyers = safeArray(raw.likelyBuyers || raw.suggestedContacts || raw.suggestedContact || raw.contactRole, 4);
   const products = safeArray(raw.promo_categories || raw.likelyProducts || raw.promoCategories || raw.commonPromoCategories || raw.likelyProductCategories || promoCategoriesForMoment(buyingMoment, type, businessContext), 6);
@@ -1879,6 +1898,14 @@ function makeSignal(raw = {}, account = {}, options = {}) {
     reasonToReachOut: why,
     whyNow: why,
     whyItMattersForPromo: why,
+    // product/commercial-opportunity-intelligence: the new commercial-
+    // interpretation layer. commercialPlay may be null and activationIdeas
+    // may be [] -- that is a valid, expected outcome for a signal with real
+    // evidence but no credible commercial play, never treated as missing
+    // data. See normalizeCommercialIntelligence() in signal-intelligence.js.
+    commercialPlay: commercialIntelligence.commercialPlay,
+    activationIdeas: commercialIntelligence.activationIdeas,
+    expansionPotential: commercialIntelligence.expansionPotential,
     conversationStarter: opener,
     suggestedOpener: opener,
     recommendedBuyingTeam,
@@ -2881,9 +2908,9 @@ Preserve concrete triggers. Do not generalize specific events. Examples:
 For each accepted signal:
 1. concrete_trigger: specific event phrased as a short label.
 2. buying_moment: the category of buying moment.
-3. business_context: what happened and why it likely happened.
-4. why_this_matters: practical promo sales angle. Avoid generic lines like "may create opportunities for promotional products." Be specific: employee apparel, onboarding, safety programs, booth materials, launch kits, VIP gifts, customer appreciation, recognition, etc.
-5. suggested_opener: reference the concrete trigger, suggest a relevant promotional play, and ask for a simple next step.
+3. business_context: what happened and why it likely happened. Keep this factual -- what happened, when, according to what evidence. This is not the place for commercial interpretation; see below for that.
+4. ${COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT}
+5. suggested_opener: the discovery question described above (this is the field name; the intent is a discovery question, not opener copy).
 6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
 7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
 8. ABD scores: actionability_score, budget_score, deadline_score.
@@ -2914,7 +2941,9 @@ Highest value signals generally include facility expansion/new location, rebrand
 Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content, or stale leadership listings.
 
 Return strict JSON only with shape:
-{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","why_this_matters":"","whyItMattersForPromo":"","recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
+{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","commercial_play":{"concept":"(optional)","narrative":""},"commercialPlay":{"concept":"(optional)","narrative":""},"activation_ideas":[""],"activationIdeas":[""],"expansion_potential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"expansionPotential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
+
+commercial_play, activation_ideas, and expansion_potential are all optional -- omit any of them entirely (or use null) for a signal where the evidence does not support a credible commercial interpretation, rather than filling them with generic content.
 
 Accounts:
 ${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
