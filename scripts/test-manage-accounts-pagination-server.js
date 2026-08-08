@@ -44,9 +44,11 @@ const AUTH_TOKEN_TO_AUTH_USER_ID = {
   [TOKEN_OWNER_A]: AUTH_USER_OWNER_A,
   [TOKEN_OWNER_B]: AUTH_USER_OWNER_B
 };
+const UPLOAD_C = 'upload-3';
 const HA_UPLOADS = [
   {id: UPLOAD_A, user_id: USER_OWNER_A, upload_name: 'Big Distributor Book', stage: 'researched', updated_at: '2026-08-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z'},
-  {id: UPLOAD_B, user_id: USER_OWNER_B, upload_name: "Org B's List", stage: 'uploaded', updated_at: '2026-08-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z'}
+  {id: UPLOAD_B, user_id: USER_OWNER_B, upload_name: "Org B's List", stage: 'uploaded', updated_at: '2026-08-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z'},
+  {id: UPLOAD_C, user_id: USER_OWNER_A, upload_name: 'Fresh Never-Researched List', stage: 'uploaded', updated_at: '2026-08-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z'}
 ];
 
 const FIXTURE_SIZE = 1000;
@@ -70,7 +72,17 @@ HA_ACCOUNTS_A.push({
 const HA_ACCOUNTS_B = [
   {id: 'acct-b-1', upload_id: UPLOAD_B, account_name: 'Org B Account', industry: 'Test', raw_data: {monitoring_status: 'active'}, created_at: '2026-01-05T00:00:00Z'}
 ];
-const ALL_ACCOUNTS = [...HA_ACCOUNTS_A, ...HA_ACCOUNTS_B];
+// QA correction regression fixture: every account carries the exact
+// pre-fix write-side state (raw_data.last_researched_at === '', not
+// omitted/null) that a genuinely never-researched account got from its own
+// first upload save (serializeAccountForStorage()'s old `|| ''` default).
+// everResearched must be false for this upload despite that.
+const HA_ACCOUNTS_C = [
+  {id: 'acct-c-1', upload_id: UPLOAD_C, account_name: 'Never Researched One', industry: 'Test', raw_data: {monitoring_status: 'active', last_researched_at: ''}, created_at: '2026-01-05T00:00:00Z'},
+  {id: 'acct-c-2', upload_id: UPLOAD_C, account_name: 'Never Researched Two', industry: 'Test', raw_data: {monitoring_status: 'active', last_researched_at: ''}, created_at: '2026-01-05T00:00:00Z'},
+  {id: 'acct-c-3', upload_id: UPLOAD_C, account_name: 'Never Researched Three', industry: 'Test', raw_data: {monitoring_status: 'active', last_researched_at: ''}, created_at: '2026-01-05T00:00:00Z'}
+];
+const ALL_ACCOUNTS = [...HA_ACCOUNTS_A, ...HA_ACCOUNTS_B, ...HA_ACCOUNTS_C];
 
 // ===========================================================================
 // Fetch mock: routes by URL substring, mirroring exactly what
@@ -162,8 +174,13 @@ function filterAccounts(all, params){
   if(uploadId) rows = rows.filter(a => a.upload_id === uploadId);
   const monitoringStatus = params.get('raw_data->>monitoring_status');
   if(monitoringStatus === 'eq.paused') rows = rows.filter(a => a.raw_data?.monitoring_status === 'paused');
-  const lastResearched = params.get('raw_data->>last_researched_at');
-  if(lastResearched === 'not.is.null') rows = rows.filter(a => !!a.raw_data?.last_researched_at);
+  // QA correction: the real query now repeats this column with two filters
+  // (not.is.null AND neq.) to exclude '' as well as actual null -- .getAll()
+  // mirrors PostgREST's real same-column-AND semantics, unlike .get() which
+  // would silently see only the first.
+  const lastResearchedFilters = params.getAll('raw_data->>last_researched_at');
+  if(lastResearchedFilters.includes('not.is.null')) rows = rows.filter(a => a.raw_data?.last_researched_at != null);
+  if(lastResearchedFilters.includes('neq.')) rows = rows.filter(a => a.raw_data?.last_researched_at !== '');
   const nameFilter = params.get('account_name');
   if(nameFilter){
     if(nameFilter.startsWith('gt.')) rows = rows.filter(a => a.account_name > nameFilter.slice(3));
@@ -405,6 +422,24 @@ async function run(){
     const res = fakeRes();
     await handler(fakeReq({token: TOKEN_OWNER_A, query: {uploadId: UPLOAD_A, q: 'Account'}}), res);
     assert(fetchImpl.calls.length > 0 && fetchImpl.calls.every(c => c.method === 'GET'), 'no database write: every request this endpoint issues (across auth, ownership check, count, and page fetch) is a GET');
+  }
+
+  // =========================================================================
+  // QA correction: a list whose accounts carry raw_data.last_researched_at
+  // as '' (the pre-fix write-side state every freshly uploaded, never-
+  // researched account actually had) must still report everResearched:false
+  // -- '' is not a real research timestamp, and the existence check must
+  // not treat it as one.
+  // =========================================================================
+  {
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const res = fakeRes();
+    await handler(fakeReq({token: TOKEN_OWNER_A}), res);
+    assert(res._status === 200, 'QA correction: the modal-open request still succeeds with the never-researched fixture present');
+    const uploadC = res._body.lists.customer.find(l => l.id === UPLOAD_C);
+    assert(!!uploadC, 'QA correction: the never-researched-with-empty-string-state upload is present in the summary');
+    assert(uploadC.everResearched === false, `QA correction: everResearched is false for a list whose accounts only ever had raw_data.last_researched_at === '' (got ${uploadC.everResearched})`);
   }
 
   console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

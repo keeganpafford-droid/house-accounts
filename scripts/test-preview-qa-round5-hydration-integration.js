@@ -62,13 +62,13 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 28
 // that function, which is exactly how its re-injection defect (see R5-1)
 // went unexercised by automated tests until this integration fixture.
 const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4635, 5963, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7924, 8464, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8061, 9351, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9354, 9857, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10576, 10579, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 7976, 7978, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 7981, 7983, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7379, 7417, 'function getReasonToReachOutTitle(opp){');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 7950, 8490, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8087, 9377, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9380, 9883, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10609, 10612, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8002, 8004, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8007, 8009, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7405, 7443, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   const sandbox = {

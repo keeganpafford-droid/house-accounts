@@ -56,21 +56,21 @@ const REAL_SOURCE = [
   extractFn('clearActiveResearchBreadcrumb', 6124, 6135),
   extractFn('getActiveResearchBreadcrumb', 6136, 6143),
   extractFn('safeParseResearchResponse', 6156, 6191, { async: true }),
-  extractFn('researchAccountFromManageModal', 6193, 6346, { async: true }),
-  extractFn('researchListFromManageModal', 6361, 6587, { async: true }),
-  extractFn('researchAccountByName', 6620, 6775, { async: true }),
-  extractFn('getAccountsForResearch', 6779, 6792),
-  extractFn('batchPayloadForAccounts', 6794, 6838),
-  extractFn('applyBusinessSignalAccountBoost', 6841, 6849),
-  extractFn('researchAccountsBatch', 6851, 6971, { async: true }),
-  extractFn('researchTopAccounts', 6998, 7189, { async: true }),
+  extractFn('researchAccountFromManageModal', 6193, 6350, { async: true }),
+  extractFn('researchListFromManageModal', 6365, 6591, { async: true }),
+  extractFn('researchAccountByName', 6624, 6779, { async: true }),
+  extractFn('getAccountsForResearch', 6783, 6796),
+  extractFn('batchPayloadForAccounts', 6798, 6842),
+  extractFn('applyBusinessSignalAccountBoost', 6845, 6853),
+  extractFn('researchAccountsBatch', 6855, 6975, { async: true }),
+  extractFn('researchTopAccounts', 7002, 7193, { async: true }),
 ].join('\n\n');
 
 // The shared research tracker module, run for real (not stubbed) -- these
 // tests exist specifically to prove ITS stop/progress behavior actually
 // takes effect inside the real orchestration functions above.
 const TRACKER_SRC = (() => {
-  const start = 7219, end = 7333;
+  const start = 7223, end = 7337;
   const slice = LINES.slice(start - 1, end).join('\n');
   if (!slice.startsWith('const researchRunTrackers = new Map();')) {
     throw new Error('tracker module extraction: dashboard/index.html has shifted -- update the line range in this test.');
@@ -294,9 +294,47 @@ async function testTopAccountsFallbackLoopHonoursStop() {
   assert(snap === null || snap.finished === true, 'the tracker for this run is finished (not left stuck) once the fallback loop stops dispatching');
 }
 
+// ===========================================================================
+// QA correction 3: founder screenshot showed a standalone single-account
+// run reporting "0 researching / 1 remaining" with the row still offering
+// "Research Account" WHILE its /api/research-batch request was already
+// pending. researchAccountFromManageModal() called startResearchTracker()
+// but never markResearchAccountStarted() -- the account sat in "queued"
+// for the entire request duration, not a one-frame render race. Proven
+// here by inspecting the tracker mid-flight, from inside the mock fetch
+// router (which runs synchronously before the request "resolves").
+// ===========================================================================
+async function testIndividualResearchMarksAccountResearchingDuringDispatch() {
+  const account = fixtureAccount('Solo Timing Co', { intelligenceMode: 'warm', uploadId: 'list-3' });
+  let sandbox;
+  let snapshotDuringRequest = null;
+  let accountStateDuringRequest = null;
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-3', upload_name: 'Timing List' }, accounts: [account] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-timing', attemptId: 'attempt-timing-1' });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      // The single research request itself is now "in flight" -- capture
+      // the tracker's state at exactly this moment, matching the founder's
+      // screenshot of a pending request.
+      snapshotDuringRequest = sandbox.researchTrackerSnapshot('list-3');
+      accountStateDuringRequest = sandbox.researchTrackerAccountState('list-3', 'Solo Timing Co');
+      return jsonResponse({ byAccount: { 'Solo Timing Co': [] }, signals: [] });
+    }
+    throw new Error(`unexpected fetch in testIndividualResearchMarksAccountResearchingDuringDispatch: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  sandbox = createSandbox({ fetchImpl });
+  await sandbox.researchAccountFromManageModal('Solo Timing Co', 'list-3');
+
+  assert(snapshotDuringRequest !== null, 'sanity: the mock captured a tracker snapshot while the research request was in flight');
+  assert(snapshotDuringRequest.researching === 1 && snapshotDuringRequest.remaining === 0, `QA correction 3: while the single-account request is in flight, the tracker reports 1 researching / 0 remaining, not 0 researching / 1 remaining (got ${JSON.stringify(snapshotDuringRequest)})`);
+  assert(accountStateDuringRequest === 'researching', `QA correction 3: the row's own per-account tracker state is "researching" (not "queued") while its request is in flight, so it shows Researching/Stop Research rather than the idle Research Account button (got "${accountStateDuringRequest}")`);
+}
+
 await testListStopPreventsQueuedResearch();
 await testIndividualStopCancellationContract();
 await testTopAccountsFallbackLoopHonoursStop();
+await testIndividualResearchMarksAccountResearchingDuringDispatch();
 
 // ===========================================================================
 // Structural proofs: the requirements below are genuinely about ABSENCE of

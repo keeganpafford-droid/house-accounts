@@ -38,11 +38,14 @@ function extractLines(label, startLine, endLine, expectedFirst) {
   return LINES.slice(startLine - 1, endLine).join('\n');
 }
 
-const TRACKER_SRC = extractLines('research-tracker-module', 7219, 7333, 'const researchRunTrackers = new Map();');
+const TRACKER_SRC = extractLines('research-tracker-module', 7223, 7337, 'const researchRunTrackers = new Map();');
+const PROGRESS_LABEL_SRC = extractLines('researchProgressLabel', 7343, 7358, 'function researchProgressLabel(snap){');
 
 const sandbox = { Map, Set, AbortController, setTimeout, clearTimeout, console: { warn(){} } };
 vm.createContext(sandbox);
 vm.runInContext(`${TRACKER_SRC}
+${PROGRESS_LABEL_SRC}
+this.researchProgressLabel = researchProgressLabel;
 this.startResearchTracker = startResearchTracker;
 this.getResearchTracker = getResearchTracker;
 this.finishResearchTracker = finishResearchTracker;
@@ -63,7 +66,7 @@ const {
   registerResearchAbort, unregisterResearchAbort,
   markResearchAccountStarted, markResearchAccountDone, markResearchGroupDone,
   requestResearchStop, isResearchStopRequested, onResearchTrackerChange,
-  researchTrackerSnapshot, researchTrackerAccountState
+  researchTrackerSnapshot, researchTrackerAccountState, researchProgressLabel
 } = sandbox;
 
 for (const fn of [startResearchTracker, markResearchAccountStarted, markResearchAccountDone, markResearchGroupDone, requestResearchStop, researchTrackerSnapshot, researchTrackerAccountState]) {
@@ -174,6 +177,41 @@ for (const fn of [startResearchTracker, markResearchAccountStarted, markResearch
   const before = fired;
   markResearchAccountStarted('upload-f', 'One');
   assert(fired === before, 'unsubscribing actually stops further notifications');
+}
+
+// ---------------------------------------------------------------------------
+// QA correction 2: a run's user-facing title/count must never call stopped
+// accounts "complete". researchProgressLabel() is the single shared helper
+// both progress surfaces (Manage Accounts panel, dashboard mini indicator)
+// call, so proving it here proves both.
+// ---------------------------------------------------------------------------
+{
+  // Fully stopped: 10 of 10 stopped, zero real completions.
+  const allStopped = { completed: 10, total: 10, failed: 0, stopped: 10, finished: true };
+  const label = researchProgressLabel(allStopped);
+  assert(label.title === 'Research stopped', `an all-stopped finished run is titled "Research stopped", never "Research complete" (got "${label.title}")`);
+  assert(label.countLine === '10 stopped', `an all-stopped run's count line reads "10 stopped", not "10 of 10 complete" (got "${label.countLine}")`);
+}
+{
+  // Partially stopped: 4 real completions, 6 stopped.
+  const partial = { completed: 10, total: 10, failed: 0, stopped: 6, finished: true };
+  const label = researchProgressLabel(partial);
+  assert(label.title === 'Research stopped', `a partially-stopped finished run is also titled "Research stopped" (got "${label.title}")`);
+  assert(label.countLine === '4 completed · 6 stopped', `a partially-stopped run's count line distinguishes completed from stopped (got "${label.countLine}")`);
+}
+{
+  // A clean finish with no stop must be entirely unaffected by this fix.
+  const clean = { completed: 5, total: 5, failed: 0, stopped: 0, finished: true };
+  const label = researchProgressLabel(clean);
+  assert(label.title === 'Research complete', `a run with no stopped accounts is still titled "Research complete" (got "${label.title}")`);
+  assert(label.countLine === '5 of 5 complete', `a clean finished run keeps the original "N of N complete" count line (got "${label.countLine}")`);
+}
+{
+  // A run still in progress (not finished) must also be unaffected.
+  const inProgress = { completed: 2, total: 5, failed: 0, stopped: 0, finished: false };
+  const label = researchProgressLabel(inProgress);
+  assert(label.title === 'Researching accounts', `an in-progress run keeps its original title (got "${label.title}")`);
+  assert(label.countLine === '2 of 5 complete', `an in-progress run keeps its original "N of N complete" count line (got "${label.countLine}")`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

@@ -71,12 +71,12 @@ const SRC = [
   // that this test also verifies directly for required tests 1-3.
   extractLines('format-short-date', 5353, 5357, 'function formatShortDate(value){', '}'),
   extractLines('account-history-status', 5388, 5453, 'function isAccountHistoryOpportunity(opp){', '}'),
-  extractLines('opportunity-generation', 7924, 8464, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 9307, 9335, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 9354, 9360, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 9372, 9471, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 9473, 9544, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 9671, 9727, 'function monthIndexFromName(name){', '}'),
+  extractLines('opportunity-generation', 7950, 8490, 'function estimateFutureValue(account, opportunityType){', '}'),
+  extractLines('order-history-filters', 9333, 9361, 'function isClosedHistoricalRecord(record){', '}'),
+  extractLines('normalize-signal-layer-type', 9380, 9386, 'function normalizeSignalLayerType(type){', '}'),
+  extractLines('recommendation-type', 9398, 9497, 'function daysSinceDate(value){', '}'),
+  extractLines('opportunity-scoring', 9499, 9570, 'function calculateOpportunityScore(opp){', '}'),
+  extractLines('timebox-classification', 9697, 9753, 'function monthIndexFromName(name){', '}'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the
   // uploaded contact/real order history (not a generic public-signal
   // department framing) drives the Conversation Starter/Best Next Move/
@@ -85,7 +85,7 @@ const SRC = [
   // never invoked below -- it is DOM-heavy (document.body...) and inert as
   // long as it is only assigned, not called (same pattern already relied
   // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
-  extractLines('sales-play-account-history-grounding', 8466, 9052, 'function cleanSalesPlayText(value){', '}')
+  extractLines('sales-play-account-history-grounding', 8492, 9078, 'function cleanSalesPlayText(value){', '}')
 ].join('\n\n');
 
 const EXPORT_NAMES = [

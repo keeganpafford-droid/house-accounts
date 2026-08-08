@@ -171,7 +171,11 @@ async function loadLists(ctx){const ids=ctx.userIds.length?inFilter(ctx.userIds)
    const [totalCount,pausedCount,researchedRows,sg]=await Promise.all([
      sbCount(uploadIdFilter),
      sbCount(`${uploadIdFilter}&raw_data->>monitoring_status=eq.paused`),
-     sb(`${uploadIdFilter}&raw_data->>last_researched_at=not.is.null&select=id&limit=1`),
+     // QA correction: a never-researched account can carry raw_data.last_researched_at
+     // as an empty string (client saves it as '' rather than omitting the key) --
+     // "not.is.null" alone treats '' as present, so also require it be non-empty
+     // to avoid flagging every previously-uploaded list as everResearched:true.
+     sb(`${uploadIdFilter}&raw_data->>last_researched_at=not.is.null&raw_data->>last_researched_at=neq.&select=id&limit=1`),
      sb(`ha_signals?upload_id=eq.${encodeURIComponent(u.id)}&select=id,first_seen_at&order=first_seen_at.desc&limit=1`)
    ]);
    return{id:u.id,type:'customer',name:u.upload_name||'Customer List',status:isPaused(u.stage)?'paused':'active',companyCount:totalCount,activeCount:Math.max(0,totalCount-pausedCount),pausedCount,everResearched:Array.isArray(researchedRows)&&researchedRows.length>0,lastUpload:u.updated_at||u.created_at||'',lastScan:(sg||[])[0]?.first_seen_at||'',signalCount:(sg||[]).length,researchRunState:summarizeResearchRunState(researchRunsByUpload.get(u.id))};

@@ -6248,6 +6248,10 @@ async function researchAccountFromManageModal(accountName, listId){
   // individually stoppable unit of work (its own claim, its own single
   // fetch), unlike the multi-account list/batch paths above.
   startResearchTracker(expectedUploadId, [targetAccountName], {label: targetAccountName});
+  // QA correction: without this, the account stayed "queued" (0 researching)
+  // for the ENTIRE request duration -- every other research-dispatching
+  // function marks its account(s) started immediately, this one never did.
+  markResearchAccountStarted(expectedUploadId, targetAccountName);
 
   try{
     const enhancedPublicMode = ['warm','mixed'].includes(String(account.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase());
@@ -7331,6 +7335,27 @@ function researchTrackerAccountState(uploadId, accountName){
   if(tracker.stoppedNames.has(accountName)) return 'stopped';
   return 'queued';
 }
+// QA correction: a run's internal "completed" field is a SETTLED aggregate
+// (real completions + failed + stopped) -- the cleanest primitive for the
+// progress bar's width, but not honest as user-facing copy: a stopped
+// account is not a completed one. Shared by both progress surfaces so the
+// title/count wording can never drift between them.
+function researchProgressLabel(snap){
+  const realCompleted = Math.max(0, snap.completed - snap.failed - snap.stopped);
+  const wasStopped = snap.finished && snap.stopped > 0;
+  const title = wasStopped ? 'Research stopped' : (snap.finished ? 'Research complete' : 'Researching accounts');
+  let countLine;
+  if(wasStopped){
+    const parts = [];
+    if(realCompleted) parts.push(`${realCompleted} completed`);
+    if(snap.failed) parts.push(`${snap.failed} failed`);
+    parts.push(`${snap.stopped} stopped`);
+    countLine = parts.join(' · ');
+  } else {
+    countLine = `${snap.completed} of ${snap.total} complete`;
+  }
+  return { title, countLine, wasStopped, realCompleted };
+}
 // ux/research-control-progress: main-dashboard mini progress indicator --
 // a smaller, persistent counterpart to the Manage Customer Accounts
 // modal's full researchProgressPanel(), sharing the exact same
@@ -7343,7 +7368,8 @@ function renderDashboardResearchProgress(){
   const snap = currentUploadId ? researchTrackerSnapshot(currentUploadId) : null;
   if(!snap){ el.hidden = true; el.innerHTML = ''; return; }
   const pct = snap.total ? Math.round((snap.completed / snap.total) * 100) : 0;
-  const label = `${snap.finished ? 'Research complete' : 'Researching'}${currentUploadName ? ` — ${escapeHtml(currentUploadName)}` : ''} — ${snap.completed} of ${snap.total} complete`;
+  const { title, countLine } = researchProgressLabel(snap);
+  const label = `${snap.finished ? title : 'Researching'}${currentUploadName ? ` — ${escapeHtml(currentUploadName)}` : ''} — ${countLine}`;
   el.hidden = false;
   el.innerHTML = `<div class="dashboard-research-progress-row">
       <span class="dashboard-research-progress-label">${label}</span>
@@ -9970,7 +9996,14 @@ function serializeAccountForStorage(account, options = {}){
       // "Research Again". researchAccountByName() stamps
       // account.lastResearchedAt on every successful research completion
       // (standalone and batch); this echoes it into the next save.
-      last_researched_at: account.lastResearchedAt || '',
+      // QA correction: must be real null when never researched, not ''.
+      // A never-researched account's first save (the upload itself) used
+      // to write an empty string here, which api/monitoring-lists.js's
+      // "not.is.null" existence check treats as present -- every freshly
+      // uploaded list was flagged everResearched:true from the moment of
+      // upload, showing "Research All Accounts Again" before any research
+      // had ever run.
+      last_researched_at: account.lastResearchedAt || null,
       notes: account.notes || '',
       employees: account.employees || '',
       historicalCategories: [...(account.categoryTypes || [])],
@@ -10872,19 +10905,25 @@ else wireUploadSuccessStateControls();
    const snap = researchTrackerSnapshot(list.id);
    if(!snap) return '';
    const pct = snap.total ? Math.round((snap.completed / snap.total) * 100) : 0;
-   const detailParts = [`${snap.researching} researching`, `${snap.remaining} remaining`];
-   if(snap.failed) detailParts.push(`${snap.failed} failed`);
-   if(snap.stopped) detailParts.push(`${snap.stopped} stopped`);
+   const { title, countLine, wasStopped } = researchProgressLabel(snap);
+   const detailParts = [];
+   if(!snap.finished){
+     detailParts.push(`${snap.researching} researching`, `${snap.remaining} remaining`);
+     if(snap.failed) detailParts.push(`${snap.failed} failed`);
+     if(snap.stopped) detailParts.push(`${snap.stopped} stopped`);
+   } else if(!wasStopped && snap.failed){
+     // A stopped run's failed/stopped breakdown is already in countLine.
+     detailParts.push(`${snap.failed} failed`);
+   }
    if(snap.opportunitiesFound) detailParts.push(`${snap.opportunitiesFound} opportunit${snap.opportunitiesFound===1?'y':'ies'} found`);
-   const title = snap.finished ? 'Research complete' : 'Researching accounts';
    const stopBtn = snap.finished ? '' : `<button type="button" class="btn btn-ghost btn-mini acct-mgr-progress-stop" data-research-stop-act="list" data-list-id="${esc(list.id)}">Stop Research</button>`;
    return `<div class="acct-mgr-progress-panel" role="status" aria-live="polite">
       <div class="acct-mgr-progress-head">
         <span class="acct-mgr-progress-title">${esc(title)}</span>
-        <span class="acct-mgr-progress-count">${snap.completed} of ${snap.total} complete</span>
+        <span class="acct-mgr-progress-count">${esc(countLine)}</span>
       </div>
       <div class="acct-mgr-progress-bar"><div class="acct-mgr-progress-bar-fill" style="width:${pct}%"></div></div>
-      <div class="acct-mgr-progress-detail">${esc(detailParts.join(' · '))}</div>
+      ${detailParts.length ? `<div class="acct-mgr-progress-detail">${esc(detailParts.join(' · '))}</div>` : ''}
       ${stopBtn}
     </div>`;
  }
