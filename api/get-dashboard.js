@@ -249,6 +249,22 @@ function signalToOpportunity(row){
     // Prepare for Call, outreach, dedup family -- reads the SAME, current
     // classification rather than a stale value trapped inside businessSignals[0].
     canonicalEventType: s.canonicalEventType || '',
+    // Trust correction (entity-disambiguation), founder QA follow-up: this
+    // object literal was built by explicitly listing every field it carries
+    // forward from rowToSignal()'s output (`s`) -- identityConfidence was
+    // never added to that list when the tri-state grounding model shipped,
+    // so it was silently dropped between persistence and every dashboard
+    // consumer (accountOpportunityCluster(), isPriorityEligibleOpportunity(),
+    // renderVerifiedOpportunitySection(), ...), even though rowToSignal()
+    // itself already exposes it correctly via its {...payload} spread.
+    // Confirmed production defect: a persisted 'unconfirmed' Dover Holiday
+    // Parade signal rendered as "Verified Opportunity" and won the primary
+    // slot on ranking alone, with the trust gate never actually seeing its
+    // real state. A straight passthrough (no fallback/default) is required
+    // -- undefined must stay undefined (a true legacy row, grandfathered)
+    // and must never collapse into the same value a newly-graded
+    // 'unconfirmed'/'confirmed' row carries, or the reverse.
+    identityConfidence: s.identityConfidence,
     signalLayerType: 'Business Activity Signal',
     isVerifiedSignalOpportunity: true,
     signalType: s.signalType || 'Business Activity',
