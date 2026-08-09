@@ -209,5 +209,113 @@ async function testDerivedIdentityReachesGroundingThroughRealHandler() {
 }
 await testDerivedIdentityReachesGroundingThroughRealHandler();
 
+// ---------------------------------------------------------------------------
+// Test 3 (round 5, live-diagnosis follow-up): Test 2 used an em-dash
+// "Dover Honda -- Dover, NH" placeholder shape, chosen before any live data
+// existed. Live diagnostics (6ed603d) proved the REAL iclautos.com shape is
+// a numbered directory entry with the address two lines below the name and
+// a compact, space-free "Dover,NH03820" city/state/zip -- exactly what
+// api/signal-intelligence.js's accountBlockLines()/CITY_STATE_PATTERN fix
+// (round 5) exists to handle. This re-runs the full real-handler path
+// against that EXACT live shape (not a synthetic placeholder), and adds an
+// Indianapolis-shaped signal to prove the SAME derived identity still
+// rejects a conflicting candidate end to end -- not just confirms an
+// agreeing one. Also asserts the query/Firecrawl ceilings this round was
+// forbidden from changing are, in fact, unchanged from Test 2's own numbers.
+// ---------------------------------------------------------------------------
+async function testLiveShapedAccountBlockReachesGroundingThroughRealHandler() {
+  setBaseEnv();
+  process.env.FIRECRAWL_API_KEY = 'fake-firecrawl-key';
+  const realFetch = global.fetch;
+  const icalUrl = 'https://iclautos.com/careers.htm';
+  const paradeUrl = 'https://www.dovernh.org/news/details/dover-honda-parade-sponsor';
+  const indianapolisUrl = 'https://example-blog.com/indianapolis-honda-rebrand';
+  let firecrawlRequests = 0;
+  global.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('google.serper.dev')) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({ organic: [
+          { title: 'ICL Autos Careers', snippet: 'Find Dover Honda and our other dealerships.', link: icalUrl, date: '2026-01-01' },
+          { title: 'Dover Honda Signs On as Dover Holiday Parade Sponsor', snippet: 'The Dover Holiday Parade committee announced Dover Honda as its lead sponsor.', link: paradeUrl, date: '2026-07-23' },
+          { title: 'Dover Honda hosts unveiling event', snippet: 'The Indianapolis, IN dealership celebrated its major rebrand with a new logo unveiling.', link: indianapolisUrl, date: '2028-01-01' }
+        ] })
+      };
+    }
+    if (u.includes('api.firecrawl.dev')) {
+      firecrawlRequests += 1;
+      const body = JSON.parse(opts.body);
+      // The exact live block shape from the founder's own diagnostics:
+      // numbered entry, address two lines below the name, compact ZIP.
+      const markdown = body.url === icalUrl
+        ? '09. **Dover Honda**\n1 Dover Point Rd\nDover,NH03820\n- Sales:(603) 242-1129\n10. **International Cars**\n382 NEWBURY ST\n'
+        : 'Community and event coverage.';
+      return { ok: true, status: 200, json: async () => ({ data: { markdown } }) };
+    }
+    if (u.includes('api.openai.com')) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          output_text: JSON.stringify({ signals: [
+            {
+              accountName: 'Dover Honda', signal_type: 'Community / CSR', concrete_trigger: 'Dover Holiday Parade sponsorship',
+              business_context: 'Dover Honda will be the lead sponsor of the 2026 Dover Holiday Parade.', sourceUrl: paradeUrl, confidence: 85
+            },
+            {
+              accountName: 'Dover Honda', signal_type: 'Rebrand', concrete_trigger: 'Logo unveiling event',
+              business_context: 'The Indianapolis, IN dealership celebrated its major rebrand with a new logo unveiling.', sourceUrl: indianapolisUrl, confidence: 70
+            }
+          ] }),
+          usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 }
+        })
+      };
+    }
+    throw new Error(`unexpected fetch call in live-shaped account-block regression test: ${u}`);
+  };
+  const req = {
+    method: 'POST', headers: {},
+    body: {
+      accounts: [{
+        name: 'Dover Honda',
+        intelligenceMode: 'mixed',
+        contacts: [{ name: 'Paula Redden', email: 'predden@iclautos.com', department: 'Sales' }]
+      }],
+      mode: 'warm-account'
+    }
+  };
+  const res = makeRes();
+  let threw = null;
+  try {
+    await handler(req, res);
+  } catch (err) {
+    threw = err;
+  } finally {
+    global.fetch = realFetch;
+  }
+
+  assert(threw === null, `1) no crash against the exact live account-block shape${threw ? `: ${threw.message}` : ''}`);
+  assert(res.statusCode === 200, `2) request succeeds (got ${res.statusCode})`);
+  assert(firecrawlRequests > 0, 'sanity: Firecrawl was actually invoked against the live-shaped page');
+  const paradeSignal = (res.body?.signals || []).find(s => s.sourceUrl === paradeUrl);
+  const indySignal = (res.body?.signals || []).find(s => s.sourceUrl === indianapolisUrl);
+  assert(!!paradeSignal, `3) the independent dovernh.org Parade signal reached the response (got signals: ${JSON.stringify((res.body?.signals || []).map(s => s.sourceUrl))})`);
+  assert(paradeSignal?.identityConfidence === 'confirmed', `4) the Dover, NH identity derived from the REAL live-shaped numbered-directory block (compact "Dover,NH03820", address two lines below the name) reaches grounding and confirms the Parade signal (got ${paradeSignal?.identityConfidence})`);
+  // 'rejected' signals are filtered out of the response entirely (existing,
+  // unchanged behavior -- see the rawSignals/finalSignals length difference
+  // this endpoint already reports as diagnostics.signalsRejected), so
+  // "rejected end to end" is proven by absence from signals[] plus the
+  // rejection actually being counted, not by a visible identityConfidence
+  // field on a returned item.
+  assert(!indySignal, `5) the SAME live-shaped derived identity makes the conflicting Indianapolis candidate reject outright through the real handler -- it never reaches the response at all (got signals: ${JSON.stringify((res.body?.signals || []).map(s => s.sourceUrl))})`);
+  assert(res.body?.diagnostics?.rawSignals === 2, `6a) sanity: OpenAI synthesized both raw signals (Parade + Indianapolis) before grounding filtered one (got ${res.body?.diagnostics?.rawSignals})`);
+  assert(res.body?.diagnostics?.signalsRejected === 1, `6b) exactly one signal was rejected by grounding -- the Indianapolis one, not the Parade one (got ${res.body?.diagnostics?.signalsRejected})`);
+  const serperQueries = res.body?.providerUsage?.serper?.queries;
+  const firecrawlSuccesses = res.body?.providerUsage?.firecrawl?.successes;
+  assert(serperQueries === 12, `7) query ceiling is unchanged by this round (still 12 queries for a single warm-account request, got ${serperQueries})`);
+  assert(typeof firecrawlSuccesses === 'number' && firecrawlSuccesses <= 6, `8) Firecrawl per-account ceiling (6) is unchanged by this round (got ${firecrawlSuccesses})`);
+}
+await testLiveShapedAccountBlockReachesGroundingThroughRealHandler();
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

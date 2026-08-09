@@ -289,29 +289,79 @@ function extractCityStatePairs(text = '') {
   return matches.map(m => ({ city: m[1], state: m[2].toUpperCase() }));
 }
 
+// Live-diagnosis round 5: a real iclautos.com numbered dealership directory
+// puts the address TWO lines after the account's own line, not on it --
+// "09. **Dover Honda**" / "1 Dover Point Rd" / "Dover,NH03820" / "- Sales:
+// (603) 242-1129" / "10. **International Cars**". Bare same-line
+// association (the previous rule) never had a chance against this real
+// shape. This widens association from "the account's own line" to "the
+// account's own line PLUS its own numbered-entry block," using the exact,
+// generic structural signal the live markup itself provides -- a leading
+// "N. " / "N) " enumerator -- rather than a character-count radius or any
+// hardcoded company name. A line that is NOT itself a numbered entry (any
+// other page shape -- prose, a bare "Name -- City, ST" line, etc.) gets NO
+// lookahead at all and keeps the exact previous same-line-only behavior.
+const LIST_ENTRY_BOUNDARY_RE = /^\d{1,3}[.)]\s/;
+// Safety bound only -- normal termination is hitting the next numbered
+// entry (LIST_ENTRY_BOUNDARY_RE), which the real fixture hits after 3
+// lines. This just prevents an unbounded scan if a numbered list is
+// malformed or never resumes; it is not the primary stop condition and is
+// far short of "arbitrarily forward through the page."
+const ACCOUNT_BLOCK_MAX_LOOKAHEAD_LINES = 8;
+
+// Returns the bounded set of lines that belong to ONE occurrence's own
+// account block, given the (already clean()'d, newline-split) `segments`
+// and the index of a line naming the account. Shared by
+// deriveAccountLocationFromContent() and diagnoseAccountLocationExtraction()
+// so the two can never disagree about what a "block" is.
+function accountBlockLines(segments, idx) {
+  if (!LIST_ENTRY_BOUNDARY_RE.test(segments[idx])) return [segments[idx]];
+  const block = [segments[idx]];
+  for (let j = idx + 1; j < segments.length && block.length <= ACCOUNT_BLOCK_MAX_LOOKAHEAD_LINES; j++) {
+    if (LIST_ENTRY_BOUNDARY_RE.test(segments[j])) break; // next entry starts -- never cross into it
+    block.push(segments[j]);
+  }
+  return block;
+}
+
+// Distinct City/ST pairs found within one occurrence's block. Each block
+// line is checked INDIVIDUALLY (never joined into one string first) so a
+// trailing word from one line (e.g. "...Point Rd") can never fuse with the
+// start of the next line's own city name inside the shared capture group --
+// this is exactly the same per-line scanning the original same-line rule
+// already used, just applied across the block's own lines instead of one.
+function accountBlockCityStatePairs(segments, idx) {
+  const block = accountBlockLines(segments, idx);
+  const pairs = [];
+  for (const line of block) pairs.push(...extractCityStatePairs(line));
+  return { block, distinct: [...new Map(pairs.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()] };
+}
+
 // Ephemeral identity-bootstrap: derives an account's city/state from real
 // fetched content (e.g. a trusted-domain page), but ONLY when the location
 // is genuinely ASSOCIATED with a specific mention of the account -- never
 // merely co-present on the same page. A dealer-group/network locations page
 // can list many companies and many addresses (the founder's own example:
 // "Dover Honda -- Dover, NH" / "Portsmouth Ford -- Portsmouth, NH" on
-// adjacent lines); finding the account name anywhere and then matching ANY
-// City/ST anywhere on the page would just as easily attach an unrelated
-// dealership's address to the target account.
+// adjacent lines, or a real numbered directory with the address a couple of
+// lines below the name); finding the account name anywhere and then
+// matching ANY City/ST anywhere on the page would just as easily attach an
+// unrelated dealership's address to the target account.
 //
 // Deterministic association rule, chosen for the format real directory/
 // listing content actually takes rather than an arbitrary character window
 // (which would incorrectly span into an adjacent, unrelated line): split
-// the content into lines: a "line" is the smallest deterministic unit this
-// module can reason about without knowing Firecrawl's exact markdown/text
-// shape, and it is exactly what separates "Dover Honda -- Dover, NH" from
-// "Portsmouth Ford -- Portsmouth, NH" in the founder's own example. For
-// each line that names the account (bare, case-insensitive phrase match --
-// the same standard entityMatch()'s "company named in source" bare check
-// uses), extract City/ST pairs FROM THAT LINE ONLY:
-//   - exactly one distinct pair on the line -> this occurrence's location.
+// the content into lines, then for each line that names the account (bare,
+// case-insensitive phrase match -- the same standard entityMatch()'s
+// "company named in source" bare check uses), extract City/ST pairs from
+// that occurrence's own BLOCK (see accountBlockLines()/
+// accountBlockCityStatePairs() above -- same line only, unless the line is
+// itself a numbered directory entry, in which case the block extends
+// through the immediately following lines up to, but never including, the
+// next numbered entry):
+//   - exactly one distinct pair in the block -> this occurrence's location.
 //   - zero pairs -> this occurrence contributes nothing (not an error).
-//   - more than one distinct pair on the same line -> ambiguous; this
+//   - more than one distinct pair in the block -> ambiguous; this
 //     occurrence contributes nothing rather than guessing which one.
 // Across every occurrence that contributed a location, they must all agree
 // on the exact same city+state -- any disagreement derives nothing at all,
@@ -333,12 +383,11 @@ function deriveAccountLocationFromContent(companyName = '', content = '') {
   // arbitrary wrong pair if more than one appears together with the name.
   const segments = lines.length ? lines : [clean(rawContent)];
   const candidateLocations = [];
-  for (const line of segments) {
-    if (!line.toLowerCase().includes(company)) continue;
-    const pairs = extractCityStatePairs(line);
-    const distinct = [...new Map(pairs.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
+  for (let idx = 0; idx < segments.length; idx++) {
+    if (!segments[idx].toLowerCase().includes(company)) continue;
+    const { distinct } = accountBlockCityStatePairs(segments, idx);
     if (distinct.length === 1) candidateLocations.push(distinct[0]);
-    // distinct.length === 0 -> no contribution; > 1 -> ambiguous line, skip.
+    // distinct.length === 0 -> no contribution; > 1 -> ambiguous block, skip.
   }
   if (!candidateLocations.length) return null;
   const uniqueLocations = [...new Map(candidateLocations.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
@@ -379,26 +428,25 @@ function diagnoseAccountLocationExtraction(companyName = '', content = '') {
   const segments = lines.length ? lines : [clean(rawContent)];
   const matchingLineIndices = [];
   segments.forEach((line, idx) => { if (line.toLowerCase().includes(company)) matchingLineIndices.push(idx); });
-  // Founder QA follow-up (round 4): a single after-line was not enough to
-  // tell whether a real multi-line address block (name / street / city,
-  // state zip -- three lines) follows the account's own line, since only
-  // line 1 of that block was ever visible. Widened to 5 following lines
-  // (still bounded, still read-only) -- enough to see a full address block
-  // without guessing at content this tool never displayed.
+  // Round 5: accountNameContexts now also reports each occurrence's real
+  // BLOCK (see accountBlockLines() above) alongside the previous fixed
+  // 5-line afterLines preview, so a human can see exactly what the real
+  // extractor treated as this occurrence's own block vs. what merely
+  // followed it on the page.
   const AFTER_LINES_WINDOW = 5;
   const accountNameContexts = matchingLineIndices.slice(0, 3).map(idx => ({
     before: idx > 0 ? segments[idx - 1].slice(0, 240) : '',
     line: segments[idx].slice(0, 240),
-    afterLines: segments.slice(idx + 1, idx + 1 + AFTER_LINES_WINDOW).map(l => l.slice(0, 240))
+    afterLines: segments.slice(idx + 1, idx + 1 + AFTER_LINES_WINDOW).map(l => l.slice(0, 240)),
+    block: accountBlockLines(segments, idx).map(l => l.slice(0, 240))
   }));
   const cityStateMatchesNearAccount = [];
-  let ambiguousLineFound = false;
+  let ambiguousBlockFound = false;
   const contributedLocations = [];
   for (const idx of matchingLineIndices) {
-    const pairs = extractCityStatePairs(segments[idx]);
-    const distinct = [...new Map(pairs.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
-    distinct.forEach(p => cityStateMatchesNearAccount.push({ city: p.city, state: p.state, line: segments[idx].slice(0, 240) }));
-    if (distinct.length > 1) ambiguousLineFound = true;
+    const { block, distinct } = accountBlockCityStatePairs(segments, idx);
+    distinct.forEach(p => cityStateMatchesNearAccount.push({ city: p.city, state: p.state, block: block.map(l => l.slice(0, 240)) }));
+    if (distinct.length > 1) ambiguousBlockFound = true;
     if (distinct.length === 1) contributedLocations.push(distinct[0]);
   }
   const uniqueContributed = [...new Map(contributedLocations.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
@@ -407,19 +455,19 @@ function diagnoseAccountLocationExtraction(companyName = '', content = '') {
   if (!matchingLineIndices.length) {
     extractionOutcome = 'account-name-not-found-in-raw-content';
     extractionFailureReason = 'the fetched page content contains no case-insensitive occurrence of the account name, despite the account looking eligible before fetch (search snippet/title match or trusted-domain probe)';
-  } else if (ambiguousLineFound) {
-    extractionOutcome = 'ambiguous-multiple-city-state-pairs-on-a-single-account-line';
-    extractionFailureReason = 'at least one line naming the account also contains more than one distinct City, ST pair -- refusing to guess which one belongs to the account';
+  } else if (ambiguousBlockFound) {
+    extractionOutcome = 'ambiguous-multiple-city-state-pairs-in-a-single-account-block';
+    extractionFailureReason = 'at least one occurrence\'s own block (its line, or its numbered-entry block) contains more than one distinct City, ST pair -- refusing to guess which one belongs to the account';
   } else if (!uniqueContributed.length) {
     extractionOutcome = globalPairs.length
-      ? 'account-name-found-but-no-city-state-on-the-same-line'
+      ? 'account-name-found-but-no-city-state-in-its-own-block'
       : 'account-name-found-but-no-city-state-pattern-recognized-anywhere-on-page';
     extractionFailureReason = globalPairs.length
-      ? 'a City, ST pattern exists elsewhere on the page, but never on the same line as the account name -- see accountNameContexts\' before/afterLines for whether it sits within the next few lines instead'
+      ? 'a City, ST pattern exists elsewhere on the page, but never within this occurrence\'s own block (its line, or -- for a numbered directory entry -- the lines up to the next numbered entry) -- see accountNameContexts.block'
       : 'no text on the page matches the City, ST pattern at all, near the account name or anywhere else on the page';
   } else if (uniqueContributed.length > 1) {
     extractionOutcome = 'conflicting-locations-across-multiple-account-mentions';
-    extractionFailureReason = `different lines naming the account associate it with different locations (${uniqueContributed.map(p => `${p.city}, ${p.state}`).join(' vs ')}) -- refusing to pick one`;
+    extractionFailureReason = `different occurrences of the account associate it with different locations (${uniqueContributed.map(p => `${p.city}, ${p.state}`).join(' vs ')}) -- refusing to pick one`;
   } else {
     extractionOutcome = 'derived';
     extractionFailureReason = '';
@@ -1151,7 +1199,30 @@ function normalizeForMatch(value = '') {
 // identically by both. A fresh RegExp is built per call site rather than one
 // shared object, since a global-flag regex's lastIndex is stateful across
 // matchAll()/exec() calls and this pattern is used both ways.
-const CITY_STATE_PATTERN = "([A-Z][a-zA-Z]+(?:\\s[A-Z][a-zA-Z]+)?),\\s*([A-Z]{2})";
+//
+// Identity-bootstrap live-diagnosis (round 5): every call site wraps this
+// pattern in `\b...\b`. A real Firecrawl-scraped iclautos.com dealership
+// directory renders the address as "Dover,NH03820" -- comma with no space,
+// state immediately fused to a 5-digit ZIP with no space either. Before
+// this trailing optional group existed, the wrapping `\b` right after the
+// bare `[A-Z]{2}` state capture could never match this exact real-world
+// shape: `\b` only fires at a transition between a word char and a non-word
+// char, and both "H" (end of "NH") and "0" (start of "03820") are word
+// characters, so there is no boundary between them at all -- the state
+// capture is a fixed two letters, so the regex has no way to extend past
+// "NH" and reach a real boundary. This is exactly why `icl-employee-
+// awards.htm` reported globalCityStateMatchCount: 0 despite its raw text
+// visibly containing the address. The appended group is optional and non-
+// capturing (an already-matching "Dover, NH" with no trailing ZIP is
+// completely unaffected -- same two capture groups, same trailing `\b`
+// firing on the space/punctuation that already followed it) and only
+// recognizes an immediately-adjacent standard 5 (or 5+4) digit US ZIP, with
+// zero or one space before it -- covers "Dover,NH03820", "Dover,NH 03820",
+// "Dover, NH03820", and the already-working "Dover, NH 03820" identically.
+// This is not a loosening of what counts as a state (still exactly two
+// capital letters) or a new state-name/locality guessing table -- purely
+// closing the one specific `\b`-adjacency gap a real, live scrape proved.
+const CITY_STATE_PATTERN = "([A-Z][a-zA-Z]+(?:\\s[A-Z][a-zA-Z]+)?),\\s*([A-Z]{2})(?:\\s?\\d{5}(?:-\\d{4})?)?";
 
 // Resolves free text into a canonical Business Event type. Returns candidateTypes
 // (plural) because some phrasing — bare "ribbon cutting" being the classic case —
