@@ -457,7 +457,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4689, 6151, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4712, 6194, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -469,7 +469,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4689, 6151, 
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
 // dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3383, 'function cleanOpportunityToken(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3406, 'function cleanOpportunityToken(');
 
 // QA round 2, item 3/4/7: covers salesPlayModeFromOpp, salesPlayModeLabel,
 // cleanSalesPlayText, pickPrimaryPromoCategory, trimToWords,
@@ -480,7 +480,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 29
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8445, 9753, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -489,26 +489,26 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8445, 9753, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9756, 10259, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 10996, 10999, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8360, 8362, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8365, 8367, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11069, 11072, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8403, 8405, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.
 const FORMAT_DASHBOARD_SCAN_DATE_SRC = extractBlock('formatDashboardScanDate', 2914, 2919, 'function formatDashboardScanDate(');
 const UNIQUE_DASHBOARD_OPPORTUNITIES_SRC = extractBlock('uniqueDashboardOpportunities', 2921, 2934, 'function uniqueDashboardOpportunities(');
-const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 3417, 3419, 'function newlyDetectedCount(');
-const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 3441, 3468, 'function renderCustomerDashboard(');
+const NEWLY_DETECTED_COUNT_SRC = extractBlock('newlyDetectedCount', 3440, 3442, 'function newlyDetectedCount(');
+const RENDER_CUSTOMER_DASHBOARD_SRC = extractBlock('renderCustomerDashboard', 3464, 3491, 'function renderCustomerDashboard(');
 // Stabilization round: renderCustomerDashboard() now delegates its DOM
 // population to this shared helper (also used by the fresh-upload render
 // path) instead of writing the panel/subtitle/tile text itself -- the real
 // function is required here too, or the extract above throws
 // showCustomerDashboardPanel-is-not-defined at run time.
-const SHOW_CUSTOMER_DASHBOARD_PANEL_SRC = extractBlock('showCustomerDashboardPanel', 3428, 3439, 'function showCustomerDashboardPanel(');
+const SHOW_CUSTOMER_DASHBOARD_PANEL_SRC = extractBlock('showCustomerDashboardPanel', 3451, 3462, 'function showCustomerDashboardPanel(');
 
 function makeSandbox(){
   const domElements = {};

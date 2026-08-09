@@ -1282,24 +1282,40 @@ export default async function handler(req, res) {
     // verifyCandidateCompanyGrounding() (signal-intelligence.js, shared with
     // api/research-batch.js) closes both gaps, scoped to the candidate's
     // query-scoped title+snippet only -- never Firecrawl's pageContent.
+    // Trust correction (entity-disambiguation): this account object must
+    // carry every identity signal this endpoint already has on hand --
+    // cityState and the emailDomain-derived domain were previously left off
+    // here (only { name: accountName } was passed), which meant this
+    // single-account pipeline could never reach 'confirmed' via a domain or
+    // location match, and could never detect a location contradiction
+    // either, even though normalizeSharedCandidate() above already builds
+    // this exact shape from the same request fields.
+    const groundingAccount = { name: accountName, location: cityState, website: domain };
     const normalizedSignals = [
       ...aiQualification.signals,
       ...acceptedSearchSignals
     ].map(signal => {
       const candidate = resolveAccountCandidate(allCandidates, signal.sourceUrl);
-      const normalized = normalizeOpportunity(signal, { name: accountName }, candidate || {});
+      const normalized = normalizeOpportunity(signal, groundingAccount, candidate || {});
       const validation = validateOpportunity(normalized);
       const groundingReasons = [];
+      let grounding = null;
       if (!candidate) {
         groundingReasons.push('source not matched to a discovered candidate');
-      } else if (!verifyCandidateCompanyGrounding(candidate, { name: accountName }).grounded) {
-        groundingReasons.push('company identity not confirmed in source evidence');
+      } else {
+        grounding = verifyCandidateCompanyGrounding(candidate, groundingAccount);
+        if (grounding.identityConfidence === 'rejected') {
+          groundingReasons.push(`company identity not confirmed in source evidence (${grounding.reasons.join('; ') || 'no corroborating evidence'})`);
+        }
       }
       if (!validation.valid || groundingReasons.length) {
         console.warn('[Signal Intelligence] account opportunity rejected', { accountName, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
         return null;
       }
-      return normalized;
+      // Trust correction: stamp the tri-state identity verdict for
+      // dashboard-side primary/Verified-Opportunity gating (see the parallel
+      // stamp in api/research-batch.js's madeSignalsRaw mapping).
+      return { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
     }).filter(Boolean);
 
     const signals = dedupeOpportunities(dedupeSignals(normalizedSignals)).slice(0, 4);

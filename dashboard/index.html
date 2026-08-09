@@ -3227,17 +3227,34 @@ function sourceStrengthScore(opp){
   if(/reuters|apnews|bloomberg|wsj\.com|forbes|businesswire|prnewswire|marketwatch/.test(domain)) return 2;
   return 1;
 }
-// Priority order per the sprint's explicit ranking: strongest source, most
-// specific factual description, explicit event/publication date, highest
-// confidence, most useful outreach context -- compared lexicographically
-// (each tier only breaks ties left by the one before it), not as a single
-// blended score.
+// Trust correction: identityConfidence outranks every other tier here.
+// dedupeOpportunities() runs BEFORE priorityEligibleOpportunities()'s
+// identity gate (see accountOpportunityCluster()), so a confirmed and an
+// unconfirmed write-up of what the app believes is the same initiative can
+// still reach this comparison -- without this tier, source-strength/
+// description-length could pick the unconfirmed variant as the merge
+// winner, and the merged card's identityConfidence would inherit
+// 'unconfirmed', hiding a real corroborated event from the priority feed
+// entirely. A legacy opportunity (identityConfidence absent -- predates the
+// tri-state grounding verifier) ranks between the two, matching its
+// unchanged/grandfathered eligibility elsewhere.
+function identityConfidenceRank(opp){
+  const identity = opp?.identityConfidence;
+  if(identity === 'confirmed') return 2;
+  if(identity === undefined || identity === null) return 1;
+  return 0;
+}
+// Priority order per the sprint's explicit ranking: identity confidence,
+// strongest source, most specific factual description, explicit event/
+// publication date, highest confidence, most useful outreach context --
+// compared lexicographically (each tier only breaks ties left by the one
+// before it), not as a single blended score.
 function initiativeCandidateRank(opp){
   const descLength = Math.min(String(opp?.signalSummary || opp?.signalDetail || opp?.whatChanged || '').length, 400);
   const hasDate = (opp?.eventDate || opp?.event_date || opp?.publicationDate || opp?.publishedDate) ? 1 : 0;
   const confidence = Number(opp?.confidence || opp?.confidenceScore || 0);
   const outreachUsefulness = (opp?.conversationStarter ? 1 : 0) + (Array.isArray(opp?.recommendedBuyingTeam) && opp.recommendedBuyingTeam.length ? 1 : 0);
-  return [sourceStrengthScore(opp), descLength, hasDate, confidence, outreachUsefulness];
+  return [identityConfidenceRank(opp), sourceStrengthScore(opp), descLength, hasDate, confidence, outreachUsefulness];
 }
 function compareInitiativeCandidates(a, b){
   const ra = initiativeCandidateRank(a);
@@ -3334,6 +3351,12 @@ function mergeBusinessSignalInitiatives(items){
       winner.canonicalEventType = bestType;
     }
     winner.mergedDuplicateCount = group.length - 1;
+    // Trust correction: mirrors resolveEvents()'s identityConfidence merge
+    // (api/signal-intelligence.js) -- a confirmed variant anywhere in the
+    // group means the merged initiative IS independently corroborated, even
+    // if the rank-winning variant itself (by source strength/description)
+    // was only unconfirmed on its own.
+    if(group.some(item => item?.identityConfidence === 'confirmed')) winner.identityConfidence = 'confirmed';
     return winner;
   });
 }
@@ -5841,7 +5864,15 @@ function renderVerifiedOpportunitySection(opp){
   const source = opp.sourceUrl
     ? `<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName || sourceDomain(opp.sourceUrl) || 'View source')}</a>`
     : escapeHtml(evidenceSourceLabel(opp) || 'Account history');
-  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">Verified Opportunity</h3><div class="sales-play-detail-grid">
+  // Trust correction: the "Verified Opportunity" label must never be able to
+  // lie, even defensively. isPriorityEligibleOpportunity() already keeps an
+  // unconfirmed/rejected signal out of Prepare for Call entirely, so this
+  // branch should not be reachable in practice -- but the label itself must
+  // stay honest independent of that upstream gate, in case some other caller
+  // ever reuses this renderer.
+  const isUnconfirmed = opp?.identityConfidence === 'unconfirmed' || opp?.identityConfidence === 'rejected';
+  const heading = isUnconfirmed ? 'Unconfirmed Research' : 'Verified Opportunity';
+  return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">${heading}</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
     <div class="sales-play-detail-item"><strong>Status</strong>${escapeHtml(dateLine)}</div>
     <div class="sales-play-detail-item"><strong>Event source</strong>${source}</div>
@@ -6086,6 +6117,15 @@ function renderSingleVerifiedSignal(signal){
   const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
     ? signal.likelyConversations
     : [signal.opportunityCategory || getSuggestedOpener(signal) || signal.whyNow || 'Relevant account conversation'];
+  // Trust correction (entity-disambiguation): an unconfirmed-identity signal
+  // must never carry active-tense outreach copy (why it matters, suggested
+  // contact, likely conversations) -- Research Details is the one surface an
+  // unconfirmed signal is still allowed to appear on at all (every active
+  // surface -- Prepare for Call, Additional Opportunities, the priorities
+  // grid -- already excludes it via isPriorityEligibleOpportunity()), and it
+  // must read as unconfirmed research, never as a verified reason to reach
+  // out. Same suppress-and-label pattern as the `!eligible` branch below.
+  const identityUnconfirmed = signal?.identityConfidence === 'unconfirmed' || signal?.identityConfidence === 'rejected';
   // Temporal-integrity round, item 4: this is the one venue an ineligible
   // (stale/expired/date-unavailable) signal is still allowed to appear at
   // all -- Research Details/account history, as clearly labeled historical
@@ -6102,7 +6142,7 @@ function renderSingleVerifiedSignal(signal){
   // outreach-copy rows entirely for an ineligible signal and replaces them
   // with one honest, generalized historical note -- never a per-account or
   // per-source special case.
-  const outreachRows = eligible ? `
+  const outreachRows = (eligible && !identityUnconfirmed) ? `
       <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
       <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
       <div class="verified-signal-row"><strong>Suggested Contact:</strong> ${escapeHtml(signal.suggestedContactDetails?.name || 'No verified individual identified')}${signal.suggestedContactDetails?.title ? ` — ${escapeHtml(signal.suggestedContactDetails.title)}` : ''}</div>
@@ -6111,9 +6151,11 @@ function renderSingleVerifiedSignal(signal){
         <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
       </div>
       ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
+  ` : (identityUnconfirmed ? `
+      <div class="verified-signal-row verified-signal-historical-note">Unconfirmed research -- company identity could not be corroborated for this source. Not shown as a reason to reach out.</div>
   ` : `
       <div class="verified-signal-row verified-signal-historical-note">Shown for account history only -- not a current reason to reach out.</div>
-  `;
+  `);
   return `
     <div class="verified-signal-simple">
       <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
@@ -6121,6 +6163,7 @@ function renderSingleVerifiedSignal(signal){
         ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
       </div>
       ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
+      ${identityUnconfirmed ? `<div class="verified-signal-meta verified-signal-not-current">Unconfirmed research -- identity not corroborated</div>` : ''}
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
       ${outreachRows}
     </div>`;
@@ -9053,8 +9096,13 @@ window.createSalesPlayPanel = function(opp, opts){
         <div class="sales-play-output">
 
           <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
+          <!-- Trust correction: this outer group label must stay honest for the
+               same reason renderVerifiedOpportunitySection() does -- the
+               upstream trust gate should keep an unconfirmed opp from ever
+               reaching this modal at all, but the label itself must not claim
+               "Verified" defensively either. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">Verified Signal / Evidence</div>
+            <div class="sales-play-group-label">${(opp?.identityConfidence === 'unconfirmed' || opp?.identityConfidence === 'rejected') ? 'Unconfirmed Research' : 'Verified Signal / Evidence'}</div>
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
@@ -10155,8 +10203,33 @@ function setActiveTimebox(timebox){
 // date, and signalDateAndActionabilityLine()'s own default ("Date
 // unavailable" when there's no publication date either) must not exclude
 // them.
+// Trust correction (entity-disambiguation): identityConfidence only exists on
+// a signal that has been through the tri-state grounding verifier (see
+// api/signal-intelligence.js's verifyCandidateCompanyGrounding()). A signal
+// with NO identityConfidence field at all is a LEGACY row, persisted before
+// this field existed -- it must keep its prior (unchanged) eligibility
+// behavior. Silently treating a legacy row as 'confirmed' would let an
+// already-persisted contamination slip through undetected; silently treating
+// it as 'unconfirmed' would empty the priority feed of every pre-existing
+// signal overnight, for accounts that have not been re-researched yet. Only
+// a NEW signal explicitly graded 'unconfirmed' or 'rejected' is excluded
+// here -- 'confirmed' and legacy (field absent) are both eligible, subject
+// to the existing rules below.
+function hasConfirmedOrLegacyIdentity(opp){
+  const identity = opp?.identityConfidence;
+  return identity === undefined || identity === null || identity === 'confirmed';
+}
+
 function isPriorityEligibleOpportunity(opp){
   if(!opp) return false;
+  // This is a hard trust gate, not a ranking preference -- an unconfirmed
+  // signal can never win a primary/priority slot, even when no confirmed
+  // alternative exists for the account (controlled-beta policy: telling the
+  // rep no verified opportunity was found beats presenting a possibly
+  // wrong-company one). Checked before the actionability/date checks below
+  // so a low-trust signal is excluded regardless of how fresh or "current"
+  // it otherwise looks.
+  if(!hasConfirmedOrLegacyIdentity(opp)) return false;
   if(isBusinessOpportunity(opp)){
     const label = signalDateAndActionabilityLine(opp);
     if(label === 'Date unavailable' || label === 'No longer current') return false;

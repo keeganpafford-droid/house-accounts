@@ -47,7 +47,7 @@ function extractLines(label, startLine, endLine, expectedFirst) {
 // conceptLedApproach() and every function getSuggestedOpener() itself calls
 // directly (isGroundedOpener/repairDanglingOpener/isPermissionBasedConceptOffer/
 // businessSuggestedOpener and its own dependency chain).
-const OPENER_SRC = extractLines('concept-led-preference', 4719, 5385, 'function shortText(text, max=145){');
+const OPENER_SRC = extractLines('concept-led-preference', 4742, 5408, 'function shortText(text, max=145){');
 
 const sandbox = {
   // Stubs: only reached by getSuggestedOpener()'s deep fallback branches

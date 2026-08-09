@@ -1,7 +1,14 @@
 // Regression test for the SHARED signal-to-account evidence-grounding
-// primitive (Sprint 1). Reproduced production failure: a Gallagher research
-// request returned an opportunity whose underlying evidence was actually
-// about Avidia Bank.
+// primitive (Sprint 1, extended by the trust-correction / entity-
+// disambiguation sprint). Reproduced production failure #1: a Gallagher
+// research request returned an opportunity whose underlying evidence was
+// actually about Avidia Bank. Reproduced production failure #2 (trust
+// correction): Dover Honda's dashboard surfaced an Instagram "Major Rebrand"
+// signal that actually belonged to an unrelated Honda dealership in
+// Indianapolis, IN -- a same-name-but-different-company failure entityMatch()'s
+// bare full-phrase match alone could not distinguish, because domain/location
+// were only ever optional bonuses, never required corroboration, and there
+// was no positive-contradiction veto at all.
 //
 // verifyCandidateCompanyGrounding() (and the distinctive-name fallback /
 // generic-word exclusion list it's built on) lives in signal-intelligence.js,
@@ -128,6 +135,122 @@ assert(
     url: 'https://news.example.com/gallagher-headline-field',
   }, GALLAGHER).grounded === true,
   '9) a candidate using .headline instead of .title (api/research-account.js\'s shape) is still correctly grounded'
+);
+
+// ---------------------------------------------------------------------------
+// Trust correction (entity-disambiguation): tri-state identityConfidence.
+// Reproduced production failure: Dover Honda's dashboard surfaced an
+// Instagram "Major Rebrand for 2028" candidate that actually belonged to an
+// unrelated Honda dealership in Indianapolis, IN, while the real Dover, NH
+// dealership's Holiday Parade sponsorship existed in the same account's
+// data. A bare "Dover Honda" text match alone (entityMatch()'s 58-point
+// full-phrase bonus) was sufficient to pass the old boolean grounded gate --
+// domain/location were only ever optional bonuses, never required
+// corroboration, and there was no positive-contradiction veto at all.
+// ---------------------------------------------------------------------------
+const DOVER_HONDA = { name: 'Dover Honda', location: 'Dover, NH' };
+const DOVER_HONDA_WITH_DOMAIN = { name: 'Dover Honda', website: 'doverhonda.com' };
+const GALLAGHER_WITH_LOCATION = { name: 'Arthur J. Gallagher & Co.', location: 'Rolling Meadows, IL' };
+const GALLAGHER_WITH_DOMAIN = { name: 'Arthur J. Gallagher & Co.', website: 'ajg.com' };
+
+// 1) exact name + correct location -> confirmed
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda celebrates grand opening of remodeled showroom',
+    snippet: 'The Dover, NH dealership unveiled its newly renovated facility to the community this week.',
+    url: 'https://news.example.com/dover-honda-remodel',
+  }, DOVER_HONDA).identityConfidence === 'confirmed',
+  '10) exact name + correct account location present in source -> confirmed'
+);
+
+// 2) exact name + correct domain -> confirmed
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda announces major rebrand for 2028',
+    snippet: 'The dealership unveiled a new logo and brand identity as part of a multi-year plan.',
+    url: 'https://doverhonda.com/news/rebrand-2028',
+  }, DOVER_HONDA_WITH_DOMAIN).identityConfidence === 'confirmed',
+  '11) exact name + source hosted on the account\'s own domain -> confirmed'
+);
+
+// 3) exact name only, no corroboration -> unconfirmed (the actual reproduced defect)
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda announces major rebrand for 2028',
+    snippet: 'The dealership unveiled a bold new logo and brand identity as part of a multi-year plan.',
+    url: 'https://example-blog.com/dover-honda-rebrand',
+  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
+  '12) exact name match with no location/domain/social corroboration and no contradiction -> unconfirmed, not confirmed (preserves recall without claiming truth)'
+);
+
+// 4) same name + explicitly contradictory city/state -> rejected
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda hosts unveiling event',
+    snippet: 'The Indianapolis, IN dealership celebrated its major rebrand for 2028 with a new logo unveiling.',
+    url: 'https://example-blog.com/indianapolis-honda-rebrand',
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '13) same name + source explicitly naming a different city/state than the account, with no compensating evidence -> rejected (the actual reproduced Indianapolis/Dover NH failure)'
+);
+
+// 4b) same contradiction, but WITH compensating domain evidence -> still confirmed
+// (a legitimate new-market press release from the company's own domain must
+// not be penalized merely because it covers a market other than headquarters).
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda expands to new Indianapolis, IN location',
+    snippet: 'The dealership group announced a new satellite location as part of its 2028 growth plan.',
+    url: 'https://doverhonda.com/news/indianapolis-expansion',
+  }, DOVER_HONDA_WITH_DOMAIN).identityConfidence === 'confirmed',
+  '14) same explicit-contradiction shape, but sourced from the account\'s own domain (compensating evidence) -> still confirmed, not rejected -- a genuine new-market/expansion signal is not penalized'
+);
+
+// 5) same name + clearly wrong social profile/handle -> rejected
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Regional dealer feature: Ed Martin Honda',
+    snippet: 'This Indianapolis, IN Honda dealership, also doing business as Dover Honda Group in local marketing, announced a rebrand.',
+    url: 'https://www.instagram.com/edmartinhonda',
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '15) same name match, on an unrelated dealership\'s own social handle, with an explicit conflicting city/state -> rejected'
+);
+
+// 6) ambiguous social candidate (name match, no location, unrecognized handle) -> unconfirmed
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda spotted at regional auto show',
+    snippet: 'Photos from the show floor featured several dealership booths including Dover Honda.',
+    url: 'https://www.instagram.com/newenglandautoscene',
+  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
+  '16) ambiguous social candidate: name match, no location/domain, and a handle that is neither the account\'s own nor explicitly a different named business -> unconfirmed (same general rule as non-social sources, no social-specific carve-out needed)'
+);
+
+// 7) legitimate target-company social signal confirms when the profile itself corroborates
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda announces platinum sponsorship of the 2026 Dover Holiday Parade',
+    snippet: 'We are proud to be the lead sponsor of this year\'s holiday parade!',
+    url: 'https://www.instagram.com/dover_honda',
+  }, DOVER_HONDA).identityConfidence === 'confirmed',
+  '17) official-looking social profile handle (matches the account name) -> confirmed, proving social sources are not banned, just held to the same corroboration bar'
+);
+
+// 8) distinctive-token fallback follows the SAME corroboration/contradiction rules
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Local insurance agency opens new Miami, FL office',
+    snippet: 'Gallagher confirmed the expansion as part of its regional growth strategy.',
+    url: 'https://example-blog.com/gallagher-miami',
+  }, GALLAGHER_WITH_LOCATION).identityConfidence === 'rejected',
+  '18) distinctive-token-only match ("Gallagher") + explicit contradictory location vs. the account\'s Rolling Meadows, IL -> rejected, same as a full-phrase match would be'
+);
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Insurance brokerage completes acquisition',
+    snippet: 'Gallagher acquired Wilson M. Beck Insurance Services in a deal announced this week.',
+    url: 'https://ajg.com/news/wilson-beck-acquisition',
+  }, GALLAGHER_WITH_DOMAIN).identityConfidence === 'confirmed',
+  '19) distinctive-token-only match ("Gallagher") + the account\'s own domain -> confirmed, same as a full-phrase match would be'
 );
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

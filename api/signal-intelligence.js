@@ -178,11 +178,92 @@ function hasDistinctiveNameFallbackMatch(companyName = '', text = '') {
   return tokens.some(token => new RegExp(`\\b${token}\\b`).test(normalizedText));
 }
 
+// Trust correction (entity-disambiguation): a same-name/near-same-name
+// business is not sufficient entity grounding when multiple real companies
+// can share that name (dealerships, franchises, healthcare practices, banks,
+// restaurants, regional companies). entityMatch()'s bare full-phrase name
+// match (58 points, already enough to clear the old boolean gate on its own)
+// is necessary but no longer sufficient by itself -- these helpers add an
+// INDEPENDENT-corroboration requirement and a positive-contradiction veto,
+// without touching entityMatch()'s own scoring (still reused unmodified;
+// other callers of entityMatch()/its score, e.g. commercialScore(), are
+// unaffected).
+const SOCIAL_URL_RE = /linkedin\.com|facebook\.com|instagram\.com|x\.com|twitter\.com/i;
+
+function isSocialUrl(url = '') {
+  return SOCIAL_URL_RE.test(url || '');
+}
+
+// Extracts the profile/page handle from a social URL's first path segment
+// (e.g. instagram.com/dover_honda -> "dover honda"). Used only to ask "does
+// this look like the account's OWN profile," never to identify a third-party
+// business by name -- so no hardcoded business list is needed.
+function socialHandleFromUrl(url = '') {
+  try {
+    const u = new URL(url);
+    if (!SOCIAL_URL_RE.test(u.hostname)) return '';
+    const segment = u.pathname.split('/').filter(Boolean)[0] || '';
+    return clean(segment.replace(/[._-]+/g, ' '));
+  } catch { return ''; }
+}
+
+function socialProfileMatchesCompany(companyName = '', url = '') {
+  const handle = normalizeCompany(socialHandleFromUrl(url)).replace(/\s+/g, '');
+  const company = normalizeCompany(companyName).replace(/\s+/g, '');
+  if (!handle || !company) return false;
+  return handle.includes(company) || company.includes(handle);
+}
+
+// Finds every explicit "City, ST" mention in text. A fresh RegExp is built
+// per call (see CITY_STATE_PATTERN comment) so repeated calls never share
+// exec()/matchAll() lastIndex state.
+function extractCityStatePairs(text = '') {
+  const matches = [...clean(text).matchAll(new RegExp(`\\b${CITY_STATE_PATTERN}\\b`, 'g'))];
+  return matches.map(m => ({ city: m[1], state: m[2].toUpperCase() }));
+}
+
+// Positive-contradiction check -- NOT a "does it agree" check. Absence of a
+// location mention is never a contradiction (a source that says nothing
+// about location is exactly what "unconfirmed" exists for). This only fires
+// when the account's own city/state is on file AND the candidate's
+// query-scoped text explicitly names at least one different city/state and
+// never names the account's own -- e.g. a source that plainly says
+// "Indianapolis, IN" for an account on file as "Dover, NH". A source that
+// legitimately covers the account's real move/expansion into a new market
+// will still typically restate the account's home city/state somewhere, and
+// even when it doesn't, verifyCandidateCompanyGrounding() below treats a
+// compensating corroborator (the account's own domain, or its own verified
+// social profile) as sufficient to override this veto -- so a genuine new-
+// market press release from the company's own domain is never penalized.
+function hasLocationContradiction(candidate = {}, account = {}) {
+  const accountLocationText = clean(account.location || account.cityState || '');
+  const accountPair = accountLocationText.match(new RegExp(`\\b${CITY_STATE_PATTERN}\\b`));
+  if (!accountPair) return false;
+  const mentioned = extractCityStatePairs(`${candidate.title || ''} ${candidate.snippet || ''}`);
+  if (!mentioned.length) return false;
+  const accountCity = normalizeForMatch(accountPair[1]);
+  // CITY_STATE_PATTERN's city group is greedy over an optional second
+  // capitalized word (by design -- real two-word city names like "West
+  // Springfield" need it), so a sentence-initial capitalized word right
+  // before the account's real city ("The Dover, NH...") can get folded into
+  // the captured city text. Agreement is checked as containment, not exact
+  // equality, so that spurious extra word never turns a genuine match into a
+  // false contradiction; a truly different city never contains the
+  // account's city name, so this does not weaken contradiction detection.
+  const agreesWithAccount = mentioned.some(p => normalizeForMatch(p.city).includes(accountCity) && p.state.toUpperCase() === accountPair[2].toUpperCase());
+  return !agreesWithAccount;
+}
+
 // Company-grounding check, scoped to ONLY the candidate's query-scoped
 // title+snippet -- never pageContent/rawContent (Firecrawl's full,
 // relevance-agnostic page scrape, which is where the reproduced Avidia
 // contamination actually lived). entityMatch() itself is reused unmodified;
-// only the object passed to it is scoped down to title+snippet+url.
+// only the object passed to it is scoped down to title+snippet+url. That
+// scoping decision is unchanged by this trust correction -- the failure this
+// fixes (a same-name-but-different-company source) lives INSIDE the scoped
+// title+snippet text itself, not in Firecrawl's full page content, so
+// widening the scope back to pageContent would not have helped and would
+// reopen the Avidia-class gap this scoping was built to close.
 //
 // Explicit scope: this proves the candidate's query-scoped evidence
 // credibly identifies the requested company. It does NOT prove event-local
@@ -192,16 +273,49 @@ function hasDistinctiveNameFallbackMatch(companyName = '', text = '') {
 // gap (see each endpoint's grounding regression tests). Closing that would
 // require a fuzzy event-local excerpt/fingerprint primitive this module does
 // not implement and this sprint does not build.
+//
+// Returns a tri-state identityConfidence rather than a boolean:
+//   'confirmed'   -- name match AND at least one independent corroborator
+//                    (official domain, a verified official social profile,
+//                    or an explicit account-location match in the source).
+//   'unconfirmed' -- a plausible name match with no corroborator and no
+//                    contradiction. Preserved for research recall, but never
+//                    eligible to be presented as a Verified Opportunity or to
+//                    win a primary-opportunity slot (see dashboard gating).
+//   'rejected'    -- no credible name match at all, OR a positive identity
+//                    contradiction (a different, explicitly-named city/state)
+//                    with no compensating corroborator.
+// `grounded` is kept (true whenever identityConfidence !== 'rejected') so
+// existing discard-on-false call sites keep working unchanged; new callers
+// should read identityConfidence directly.
 function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const scopedCandidate = { title: candidate.title || candidate.headline || '', snippet: candidate.snippet || '', url: candidate.url || '' };
   const entity = entityMatch(scopedCandidate, account);
-  if (entity.level !== 'rejected') return { grounded: true, reasons: entity.reasons };
   const companyName = account.name || account.companyName || '';
   const scopedText = `${scopedCandidate.title} ${scopedCandidate.snippet}`;
-  if (hasDistinctiveNameFallbackMatch(companyName, scopedText)) {
-    return { grounded: true, reasons: ['distinctive company name matched in source'] };
+  const distinctiveFallbackMatched = hasDistinctiveNameFallbackMatch(companyName, scopedText);
+  const nameMatched = entity.level !== 'rejected' || distinctiveFallbackMatched;
+  const reasons = [...entity.reasons];
+  if (distinctiveFallbackMatched && entity.level === 'rejected') reasons.push('distinctive company name matched in source');
+
+  if (!nameMatched) {
+    return { grounded: false, identityConfidence: 'rejected', reasons };
   }
-  return { grounded: false, reasons: entity.reasons };
+
+  const domainCorroborated = entity.reasons.includes('verified company domain');
+  const locationCorroborated = entity.reasons.includes('location match');
+  const socialUrl = isSocialUrl(scopedCandidate.url);
+  const socialCorroborated = socialUrl && socialProfileMatchesCompany(companyName, scopedCandidate.url);
+  if (socialCorroborated) reasons.push('official social profile matched account name');
+  else if (socialUrl) reasons.push('social source has no verifiable profile corroboration');
+
+  const contradicted = hasLocationContradiction(scopedCandidate, account);
+  if (contradicted && !domainCorroborated && !socialCorroborated) {
+    return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
+  }
+
+  const corroborated = domainCorroborated || locationCorroborated || socialCorroborated;
+  return { grounded: true, identityConfidence: corroborated ? 'confirmed' : 'unconfirmed', reasons };
 }
 
 // GUARDRAIL (product/commercial-opportunity-intelligence): this identity key
@@ -758,6 +872,14 @@ function normalizeForMatch(value = '') {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Shared "City, ST" pattern -- used both by extractFromOneField()'s existing
+// location extraction and by the trust-correction contradiction check below
+// (hasLocationContradiction()), so an explicit place mention is recognized
+// identically by both. A fresh RegExp is built per call site rather than one
+// shared object, since a global-flag regex's lastIndex is stateful across
+// matchAll()/exec() calls and this pattern is used both ways.
+const CITY_STATE_PATTERN = "([A-Z][a-zA-Z]+(?:\\s[A-Z][a-zA-Z]+)?),\\s*([A-Z]{2})";
+
 // Resolves free text into a canonical Business Event type. Returns candidateTypes
 // (plural) because some phrasing — bare "ribbon cutting" being the classic case —
 // is genuinely ambiguous until matched against accompanying evidence or an
@@ -899,7 +1021,7 @@ function extractFromOneField(t = '') {
   const possessiveLocationMatch = t.match(new RegExp(`(?:'s|its)\\s+(?:new\\s+)?(${PN})\\s+(?:location|branch|office|plant|facility)\\b`, 'i'));
   const branchNameMatchRaw = t.match(/\b([A-Z][a-zA-Z]{2,30})\s+[Bb]ranch\b/);
   const branchNameMatch = branchNameMatchRaw && !NON_LOCATION_WORDS.has(branchNameMatchRaw[1].toLowerCase()) ? branchNameMatchRaw : null;
-  const cityStateMatch = t.match(/\b([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)?),\s*([A-Z]{2})\b/);
+  const cityStateMatch = t.match(new RegExp(`\\b${CITY_STATE_PATTERN}\\b`));
 
   const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
   if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
@@ -1285,6 +1407,20 @@ function resolveEvents(candidates = []) {
     // must never enter this identity key.
     const fingerprint = `${ev.identity.company}|${primaryType}|${normalizeForMatch(ev.identity.location || ev.identity.subjectEntity || '')}|${ev.identity.year || 'unknown'}`;
 
+    // Trust correction: identityConfidence must be the STRONGEST verdict among
+    // every candidate merged into this event, never just whichever candidate
+    // happened to have the highest (unrelated) candidateScore. Two write-ups
+    // of the same real event independently corroborate each other -- exactly
+    // the "independently corroborated sources" case the trust policy treats
+    // as sufficient to confirm -- so one confirmed candidate must be able to
+    // lift the merged event even if a higher-candidateScore but unconfirmed
+    // write-up of the same event also exists. Falls back to the primary
+    // candidate's own value (or undefined, for callers/candidates that predate
+    // identityConfidence) when nothing in the group is explicitly confirmed.
+    const identityConfidence = ev.candidates.some(c => c.identityConfidence === 'confirmed') ? 'confirmed'
+      : ev.candidates.some(c => c.identityConfidence === 'unconfirmed') ? 'unconfirmed'
+      : primaryCandidate.identityConfidence;
+
     return {
       ...primaryCandidate,
       title: primaryCandidate.title || primaryCandidate.headline || title,
@@ -1297,7 +1433,8 @@ function resolveEvents(candidates = []) {
       sources: flatSources,
       canonicalTitle: title,
       eventIdentity,
-      evidence: ev.evidence
+      evidence: ev.evidence,
+      identityConfidence
     };
   }).sort((a, b) => (b.corroboratingCandidates || 0) - (a.corroboratingCandidates || 0));
 }
@@ -1354,6 +1491,7 @@ export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
+  isSocialUrl, socialProfileMatchesCompany, hasLocationContradiction, extractCityStatePairs,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,

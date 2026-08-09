@@ -339,40 +339,42 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
 
     return [
       // A. Growth / Launch / Corporate Change
-      `${quoted} AND ("subsidiary" OR "launch" OR "spin-off" OR acquired OR merger OR rebrand)`,
-      `${quoted} AND ("new facility" OR expansion OR "ribbon cutting" OR headquarters OR "manufacturing plant" OR "new location" OR "distribution center")`,
+      `${quoted}${loc} AND ("subsidiary" OR "launch" OR "spin-off" OR acquired OR merger OR rebrand)`,
+      `${quoted}${loc} AND ("new facility" OR expansion OR "ribbon cutting" OR headquarters OR "manufacturing plant" OR "new location" OR "distribution center")`,
 
       // B. Events / Conferences / Trade Shows
-      `${quoted} AND (exhibitor OR booth OR conference OR expo OR "trade show" OR summit OR "open house" OR "customer event" OR webinar)`,
-      industryEventTerms ? `${quoted} AND (${industryEventTerms})` : '',
+      `${quoted}${loc} AND (exhibitor OR booth OR conference OR expo OR "trade show" OR summit OR "open house" OR "customer event" OR webinar)`,
+      industryEventTerms ? `${quoted}${loc} AND (${industryEventTerms})` : '',
 
       // C. Hiring / People / Culture
-      `${quoted} AND (hiring OR careers OR jobs OR "now hiring")`,
-      `${quoted} AND ("employee experience" OR "talent acquisition" OR "people operations" OR HR OR onboarding)`,
-      `${quoted} AND ("event coordinator" OR "field marketing" OR "trade show manager" OR "marketing manager")`,
-      `${quoted} AND (appointed OR promoted OR "named president" OR "named CEO" OR "named vice president" OR "joins as" OR "new executive" OR "leadership change")`,
-      context.contactName ? `"${context.contactName}" "${company}" (appointed OR promoted OR promotion OR "new role" OR "joins" OR "named" OR "new company")` : '',
+      `${quoted}${loc} AND (hiring OR careers OR jobs OR "now hiring")`,
+      `${quoted}${loc} AND ("employee experience" OR "talent acquisition" OR "people operations" OR HR OR onboarding)`,
+      `${quoted}${loc} AND ("event coordinator" OR "field marketing" OR "trade show manager" OR "marketing manager")`,
+      `${quoted}${loc} AND (appointed OR promoted OR "named president" OR "named CEO" OR "named vice president" OR "joins as" OR "new executive" OR "leadership change")`,
+      context.contactName ? `"${context.contactName}" "${company}"${loc} (appointed OR promoted OR promotion OR "new role" OR "joins" OR "named" OR "new company")` : '',
 
       // D. Community / Sponsorship / CSR
-      `${quoted} AND (sponsor OR "community event" OR charity OR volunteer OR "golf tournament" OR "5K")`,
-      `${quoted} AND (school OR STEM OR foundation OR donation OR fundraiser)`,
+      `${quoted}${loc} AND (sponsor OR "community event" OR charity OR volunteer OR "golf tournament" OR "5K")`,
+      `${quoted}${loc} AND (school OR STEM OR foundation OR donation OR fundraiser)`,
 
       // E. Awards / Milestones / Recognition
-      `${quoted} AND (award OR recognized OR anniversary OR milestone)`,
-      `${quoted} AND ("safety milestone" OR "years without" OR "lost-time accident")`,
+      `${quoted}${loc} AND (award OR recognized OR anniversary OR milestone)`,
+      `${quoted}${loc} AND ("safety milestone" OR "years without" OR "lost-time accident")`,
 
       // F. Operational Friction / Internal Morale. These are only usable when handled with care.
-      `${quoted} AND (lawsuit OR "legal dispute" OR court OR town OR "power outage" OR "facility issue")`,
+      `${quoted}${loc} AND (lawsuit OR "legal dispute" OR court OR town OR "power outage" OR "facility issue")`,
 
       // G. Media / Trade Publication Coverage
-      `${quoted} AND ("featured in" OR interview OR magazine OR profile)`,
+      `${quoted}${loc} AND ("featured in" OR interview OR magazine OR profile)`,
 
       // Owned-site intent pages. Firecrawl enrichment will prioritize these later.
+      // (Already domain-scoped -- appending location here would only narrow
+      // an already-precise site: search, not disambiguate an ambiguous name.)
       domain ? `site:${domain} (news OR press OR "press release" OR blog OR careers OR jobs OR events OR community OR locations OR sustainability)` : '',
       domain ? `site:${domain} ("trade show" OR conference OR booth OR exhibitor OR "open house" OR webinar OR event OR summit)` : '',
       domain ? `site:${domain} ("new facility" OR "new location" OR expansion OR "ribbon cutting" OR anniversary OR award OR launch OR partnership)` : '',
-      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}" (interview OR podcast OR webinar OR conference OR speaker OR award OR promoted OR promotion OR article OR quoted OR patent OR LinkedIn)` : '',
-      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}" (community OR volunteer OR anniversary OR launch OR event OR initiative)` : ''
+      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}"${loc} (interview OR podcast OR webinar OR conference OR speaker OR award OR promoted OR promotion OR article OR quoted OR patent OR LinkedIn)` : '',
+      context.oneOffResearch && context.contactName ? `"${context.contactName}" "${company}"${loc} (community OR volunteer OR anniversary OR launch OR event OR initiative)` : ''
     ].filter(Boolean);
   }
   // Existing customer/house account workflows keep the original broader research strategy.
@@ -3131,18 +3133,37 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
       if (!mapped) return null;
       const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
-      const normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
+      let normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
       const validation = validateOpportunity(normalized);
       const groundingReasons = [];
+      let grounding = null;
       if (!accountCandidate) {
         groundingReasons.push('source not matched to a discovered candidate');
-      } else if (!verifyCandidateCompanyGrounding(accountCandidate, account).grounded) {
-        groundingReasons.push('company identity not confirmed in source evidence');
+      } else {
+        grounding = verifyCandidateCompanyGrounding(accountCandidate, account);
+        // Trust correction (entity-disambiguation): 'rejected' is the only
+        // hard-discard outcome now -- 'unconfirmed' still fails validation's
+        // old boolean expectation (grounding.grounded) but is a real,
+        // recall-preserving result that must reach persistence, just flagged.
+        // See normalizeOpportunity() below for identityConfidence stamping.
+        if (grounding.identityConfidence === 'rejected') {
+          groundingReasons.push(`company identity not confirmed in source evidence (${grounding.reasons.join('; ') || 'no corroborating evidence'})`);
+        }
       }
       if (!validation.valid || groundingReasons.length) {
         console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
         return null;
       }
+      // Trust correction: stamp the tri-state identity verdict onto the
+      // persisted opportunity so dashboard-side primary/Verified-Opportunity
+      // gating (accountOpportunityCluster()/renderVerifiedOpportunitySection())
+      // can enforce confirmed > unconfirmed as a trust gate BEFORE any ranking
+      // runs -- never inferred at render time from unrelated fields. (A
+      // missing accountCandidate already hard-rejects above via
+      // groundingReasons, so `grounding` is always set by the time this line
+      // runs; the fallback exists only so this can never silently default to
+      // a truthy/confirmed value if that invariant ever changes.)
+      normalized = { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
       return normalized;
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
@@ -3386,5 +3407,6 @@ export {
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
-  sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys
+  sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
+  queryTemplates
 };

@@ -94,7 +94,7 @@ assert(
 // refreshAggregateDashboard() for post-upload/post-research) -- the
 // personalEmpty/noData/skeleton logic these tests verify all now lives
 // there; loadSavedDashboard() itself is a thin email-validation wrapper.
-const loadSavedDashboardSrc = extractLines('fetchAndRenderAggregateDashboard', 3723, 3828, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const loadSavedDashboardSrc = extractLines('fetchAndRenderAggregateDashboard', 3746, 3851, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
 assert(
   /if\(skeleton\) skeleton\.classList\.add\('active'\);/.test(loadSavedDashboardSrc),
   'fetchAndRenderAggregateDashboard() shows the skeleton immediately on every call (a no-op when silent, since skeleton is null then), before any network round trip resolves'
@@ -166,7 +166,7 @@ assert(
   /<div class="ha-modal-backdrop add-customer-data-backdrop" id="addCustomerDataModal"[^>]*hidden>[\s\S]{0,700}?<div class="upload-zone" id="dropzone">/.test(dashboardHtml),
   '#dropzone is permanently mounted as a direct descendant of #addCustomerDataModal in the page markup (not moved/borrowed elsewhere)'
 );
-const addDataModalSrc = extractLines('add-customer-data-modal-and-route', 3470, 3593, 'let addCustomerDataModalTriggerEl = null;');
+const addDataModalSrc = extractLines('add-customer-data-modal-and-route', 3493, 3616, 'let addCustomerDataModalTriggerEl = null;');
 assert(
   /function openAddCustomerDataModalWhenReady\(\)\{\s*const ready = \(window\.HouseAuth && typeof HouseAuth\.authHeadersAsync/.test(addDataModalSrc),
   'openAddCustomerDataModalWhenReady() waits for HouseAuth.authHeadersAsync() (required init) before opening the modal'
@@ -186,7 +186,7 @@ assert(
 // Manage Customer Accounts, Upload Another List) never hide/replace the
 // dashboard, and closing either modal restores it unchanged.
 // ---------------------------------------------------------------------------
-const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 11005, 11055, 'function wireUploadSuccessStateControls(){');
+const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 11078, 11128, 'function wireUploadSuccessStateControls(){');
 assert(
   /viewPrioritiesBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*const header = document\.getElementById\('timeboxSectionHeader'\);\s*if\(header\) header\.scrollIntoView/.test(uploadSuccessWiringSrc),
   'View Priorities only dismisses the upload-success panel and scrolls to This Week\'s Priorities -- it never touches dashboard/account-card state'
@@ -199,7 +199,7 @@ assert(
   /anotherBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*openLightweightCustomerUpload\(\);/.test(uploadSuccessWiringSrc),
   'Upload Another List only dismisses the upload-success panel and opens the stable Add Customer Data modal -- no dashboard/account-card clearing call'
 );
-const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 11500, 11530, 'let accountManagerTriggerEl = null;');
+const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 11573, 11603, 'let accountManagerTriggerEl = null;');
 assert(
   /function open\(\)\{[\s\S]*document\.getElementById\('accountManagerModal'\)\.style\.display='block';/.test(accountManagerOpenCloseSrc) &&
   !/results'\)\.style\.display|customerDashboard'\)\.style\.display|exampleOpportunity/.test(accountManagerOpenCloseSrc),
@@ -223,7 +223,7 @@ assert(
 // real vm execution against a minimal fake DOM -- not a reimplementation.
 // ---------------------------------------------------------------------------
 {
-  const panelSrc = extractLines('showCustomerDashboardPanel', 3428, 3439, 'function showCustomerDashboardPanel({subtitleText, newCount, accountCount, signalCount, lastScanLabel}){');
+  const panelSrc = extractLines('showCustomerDashboardPanel', 3451, 3462, 'function showCustomerDashboardPanel({subtitleText, newCount, accountCount, signalCount, lastScanLabel}){');
   const registry = new Map();
   function fakeEl(id, tag){
     const el = { id, tagName: (tag || 'div').toUpperCase(), style: {}, _text: '' };
@@ -262,7 +262,7 @@ assert(
 // Required tests 13, 14 & 15: account-level research row action labels and
 // cross-list scoping.
 // ---------------------------------------------------------------------------
-const accountRowSrc = extractLines('accountRow', 11221, 11280, 'function accountRow(list, a){');
+const accountRowSrc = extractLines('accountRow', 11294, 11353, 'function accountRow(list, a){');
 assert(
   /researched \? 'Research Again' : 'Research Account'/.test(accountRowSrc),
   'accountRow() labels never-researched accounts "Research Account" and previously-researched accounts "Research Again"'
@@ -284,7 +284,7 @@ assert(
   /const researchDisabled = runActive && !canStopThisRow;/.test(accountRowSrc),
   'the row action is disabled only while a run is active for that list (and only that exact account shows "Researching…"), never due to list scope'
 );
-const researchFromModalSrc = extractLines('researchAccountFromManageModal', 6495, 6658, 'async function researchAccountFromManageModal(accountName, listId){');
+const researchFromModalSrc = extractLines('researchAccountFromManageModal', 6538, 6701, 'async function researchAccountFromManageModal(accountName, listId){');
 assert(
   researchFromModalSrc.includes('async function researchAccountFromManageModal(accountName, listId){'),
   'researchAccountFromManageModal(accountName, listId) still takes an explicit listId, so scoping happens automatically without the user re-finding/activating the list'
@@ -362,7 +362,7 @@ assert(
   /\.view-toggle-buttons\{\s*display:flex;\s*background:#F0F2F5;/.test(dashboardHtml) && /\.view-toggle-btn\.active\{\s*background:#fff;/.test(dashboardHtml),
   'the view switcher is styled as a true segmented control (shared background/border, active option highlighted)'
 );
-const renderSwitcherSrc = extractLines('renderDashboardViewSwitcher', 3623, 3637, 'function renderDashboardViewSwitcher(){');
+const renderSwitcherSrc = extractLines('renderDashboardViewSwitcher', 3646, 3660, 'function renderDashboardViewSwitcher(){');
 assert(
   !/hasCanonicalSnapshot|customerCount|prospectCount|dashboardTeamSnapshot/.test(renderSwitcherSrc),
   'renderDashboardViewSwitcher() no longer computes/writes the removed snapshot-description text'
