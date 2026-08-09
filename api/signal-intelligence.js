@@ -113,6 +113,45 @@ function freshnessScore(dateValue, family = 'unknown', now = new Date()) {
   return Math.max(5, Math.min(100, Math.round(100 * Math.pow(0.5, ageDays / halfLife))));
 }
 
+// Founder QA follow-up (Dover Holiday Parade false-negative): a third-party
+// publisher's domain can itself carry real geographic identity independent
+// of anything the article says (dovernh.org covering a Dover, NH event) --
+// but a city name ALONE is deliberately not treated as sufficient. Two
+// reasons: (1) for a franchise/dealer-style ambiguous name ("Dover Honda"),
+// the city name is already baked into the company name itself, so a loose
+// "does the account's city appear anywhere" check would be satisfied by a
+// wrong-company source exactly as easily as the right one -- the same trap
+// a bare name match already is. (2) even scoped to the PUBLISHER'S DOMAIN
+// rather than the article text, a bare city name in a domain is still
+// judged too weak on its own for this conservative beta (policy: false
+// negative > false attribution) -- CITY+STATE together in the domain is
+// required. Only fires when the account record has both parseable ("City,
+// ST" -- the same format hasLocationContradiction() already requires); an
+// account on file with just a city, or a non-comma-formatted location, does
+// not get this corroborator at all rather than falling back to a looser
+// check.
+//
+// Deliberately narrow/deterministic (no geocoding, no state-name spellout
+// table): checks for the normalized city+state concatenated with no
+// separator ("dovernh") and with a hyphen ("dover-nh") -- the two cheapest,
+// most common domain-naming conventions. A publisher that encodes its
+// region a different way (spelled-out state name, abbreviation-first, a
+// municipal .gov TLD with no text encoding at all) will not match; that is
+// an accepted recall gap, not a correctness gap, consistent with the
+// conservative policy above -- see the accompanying Return report's
+// "optional inspection" note for a documented, deliberately-deferred
+// stronger recall improvement (recognizing a location mention that occurs
+// independently of the company-name span in the article text itself).
+function accountCityStateGeoTokens(account = {}) {
+  const accountLocationText = clean(account.location || account.cityState || '');
+  const pair = accountLocationText.match(new RegExp(`\\b${CITY_STATE_PATTERN}\\b`));
+  if (!pair) return null;
+  const city = normalizeForMatch(pair[1]).replace(/\s+/g, '');
+  const state = normalizeForMatch(pair[2]).replace(/\s+/g, '');
+  if (city.length < 3 || !state) return null;
+  return [`${city}${state}`, `${city}-${state}`];
+}
+
 function entityMatch(candidate = {}, account = {}) {
   const company = normalizeCompany(account.name || account.companyName || candidate.companyName || candidate.accountName || '');
   if (!company) return { level: 'uncertain', score: 35, reasons: ['missing company name'] };
@@ -127,6 +166,8 @@ function entityMatch(candidate = {}, account = {}) {
   if (domain && (candidateDomain === domain || candidateDomain.endsWith(`.${domain}`))) { score += 38; reasons.push('verified company domain'); }
   const location = clean(account.location || account.cityState || '').toLowerCase();
   if (location && clean(`${candidate.title} ${candidate.snippet}`).toLowerCase().includes(location)) { score += 8; reasons.push('location match'); }
+  const geoTokens = accountCityStateGeoTokens(account);
+  if (geoTokens && candidateDomain && geoTokens.some(t => candidateDomain.includes(t))) { score += 20; reasons.push('publisher domain matches account city+state geography'); }
   score = Math.min(100, score);
   return { level: score >= 75 ? 'verified' : score >= 50 ? 'probable' : score >= 30 ? 'uncertain' : 'rejected', score, reasons };
 }
@@ -303,8 +344,12 @@ function hasLocationContradiction(candidate = {}, account = {}) {
 // Returns a tri-state identityConfidence rather than a boolean:
 //   'confirmed'   -- name match AND at least one INDEPENDENT corroborator:
 //                    official domain, the account's own location appearing
-//                    in the source, or a social profile House Accounts
-//                    already KNOWS is this account's own official profile
+//                    in the source, a THIRD-PARTY publisher whose own domain
+//                    is geographically tied to the account's city+state
+//                    (accountCityStateGeoTokens() -- e.g. dovernh.org for a
+//                    Dover, NH account; city alone is not enough), or a
+//                    social profile House Accounts already KNOWS is this
+//                    account's own official profile
 //                    (account.knownSocialProfiles). A social handle that
 //                    merely resembles the company name is NOT this -- see
 //                    the founder QA note below.
@@ -348,6 +393,18 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
 
   const domainCorroborated = entity.reasons.includes('verified company domain');
   const locationCorroborated = entity.reasons.includes('location match');
+  // Founder QA follow-up (Dover Holiday Parade): a THIRD-PARTY publisher
+  // whose own domain is geographically tied to the account (city+state, not
+  // city alone -- see accountCityStateGeoTokens()) is a real, independent
+  // corroborator. Deliberately weaker than domainCorroborated/
+  // knownSocialProfileMatch for one purpose only: it does NOT compensate for
+  // an explicit location contradiction below. The account's own domain or
+  // its own verified social profile is the company speaking for itself and
+  // can safely override a contradiction (e.g. a genuine new-market press
+  // release); a third-party publisher merely being geo-matched to the
+  // account's town is weaker evidence than that, so a geo-matched publisher
+  // that ALSO names a conflicting city/state stays conservative and rejects.
+  const publisherGeoCorroborated = entity.reasons.includes('publisher domain matches account city+state geography');
   const socialUrl = isSocialUrl(scopedCandidate.url);
   const knownSocialProfileMatch = socialUrl && accountKnownSocialProfileMatch(account, scopedCandidate.url);
   const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && socialProfileMatchesCompany(companyName, scopedCandidate.url);
@@ -360,7 +417,7 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
     return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
   }
 
-  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch;
+  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated;
   return { grounded: true, identityConfidence: corroborated ? 'confirmed' : 'unconfirmed', reasons };
 }
 
@@ -1537,7 +1594,7 @@ export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
-  isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, hasLocationContradiction, extractCityStatePairs,
+  isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,

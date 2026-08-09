@@ -282,5 +282,86 @@ assert(
   '19) distinctive-token-only match ("Gallagher") + the account\'s own domain -> confirmed, same as a full-phrase match would be'
 );
 
+// ---------------------------------------------------------------------------
+// Founder QA follow-up (Dover Holiday Parade false negative): a THIRD-PARTY
+// publisher whose own domain is geographically tied to the account's
+// city+state is now an independent corroborator -- but city ALONE in the
+// domain is deliberately not sufficient (see accountCityStateGeoTokens()'s
+// header comment for why: for a franchise-style name, the city is already
+// baked into the company name, so a bare-city check would be satisfied by
+// the wrong company exactly as easily as the right one).
+// ---------------------------------------------------------------------------
+
+// 20) Dover, NH + dovernh.org (city+state both encoded in the domain) +
+// company-name match -> confirmed. The actual reproduced false-negative.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda Signs On as Dover Holiday Parade Sponsor',
+    snippet: 'The Dover Holiday Parade committee announced Dover Honda as its lead sponsor for this year\'s event.',
+    url: 'https://www.dovernh.org/news/details/dover-honda-signs-on-as-dover-holiday-parade-sponsor-07-23-2026',
+  }, DOVER_HONDA).identityConfidence === 'confirmed',
+  '20) Dover, NH account + dovernh.org publisher (city+state both in the domain) + name match -> confirmed'
+);
+
+// 21) Dover, NH + a geographically neutral third-party domain -> unconfirmed,
+// not automatically confirmed just because a third party (not a social
+// profile) wrote about the company.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda mentioned in regional business roundup',
+    snippet: 'Local dealerships including Dover Honda were featured in this week\'s roundup.',
+    url: 'https://example-businessjournal.com/roundup',
+  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
+  '21) geographically neutral third-party publisher domain -> unconfirmed (no automatic third-party trust)'
+);
+
+// 22) Dover, NH + a domain containing ONLY the city (no state token) ->
+// does NOT automatically confirm -- the founder-specified conservative
+// requirement (city+state, not city alone).
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda featured on Dover community blog',
+    snippet: 'Local blog covering Dover area businesses featured Dover Honda this week.',
+    url: 'https://doverblog.com/dover-honda-feature',
+  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
+  '22) city-name-only third-party domain (no state token) -> does not automatically confirm, stays unconfirmed'
+);
+
+// 23) geo-matched publisher (city+state in domain) that ALSO names an
+// explicit conflicting city/state -> still rejected. Publisher geography
+// must never override an explicit contradiction the way the account's own
+// domain does.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda opens new Indianapolis, IN satellite lot',
+    snippet: 'The dealership announced a new Indianapolis, IN location as part of its growth plan.',
+    url: 'https://www.dovernh.org/news/details/dover-honda-indianapolis-expansion',
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '23) geo-matched publisher (dovernh.org) + explicit conflicting Indianapolis, IN text -> still rejected, geography corroboration does not compensate for a contradiction'
+);
+
+// 24) the original Indianapolis Instagram case remains rejected -- unaffected
+// by the new publisher-geography rule (instagram.com carries no geographic
+// identity to match against).
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda hosts unveiling event',
+    snippet: 'The Indianapolis, IN dealership celebrated its major rebrand for 2028 with a new logo unveiling.',
+    url: 'https://example-blog.com/indianapolis-honda-rebrand',
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '24) Indianapolis Instagram-shaped case remains rejected, unaffected by the new publisher-geography corroborator'
+);
+
+// 25) an account with no parseable city+state on file never gets this
+// corroborator at all -- degrades gracefully, no crash, no false positive.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda Signs On as Dover Holiday Parade Sponsor',
+    snippet: 'The Dover Holiday Parade committee announced Dover Honda as its lead sponsor.',
+    url: 'https://www.dovernh.org/news/details/dover-honda-parade-sponsor',
+  }, { name: 'Dover Honda' }).identityConfidence === 'unconfirmed',
+  '25) account with no location on file at all -> publisher-geography corroborator never fires, degrades to unconfirmed rather than confirmed or a crash'
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;
