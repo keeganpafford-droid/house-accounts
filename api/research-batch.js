@@ -19,6 +19,7 @@ import {
   resolveOpportunityEvents,
   verifyCandidateCompanyGrounding,
   deriveAccountLocationFromContent,
+  diagnoseAccountLocationExtraction,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
   normalizeCommercialIntelligence,
   findLikelyRelatedPurchase
@@ -3139,6 +3140,16 @@ export default async function handler(req, res) {
           ownedDomainCandidatesDiscovered: ownedPre.map(c => c.url),
           preFetchNameMatchCount,
           ownedDomainCandidatesEnriched: ownedEnriched.map(c => ({ url: c.url, pageContentRawSample: (c.pageContentRaw || c.pageContent || '').slice(0, 500) })),
+          // Live-diagnosis round 2 (extraction-stage detail): only computed
+          // once discovery/enrichment already both succeeded (failureReason
+          // above is the owned-domain-content-fetched-but-no-... case) --
+          // see diagnoseAccountLocationExtraction()'s own header comment in
+          // signal-intelligence.js for why this mirrors, rather than calls
+          // into, the real extractor.
+          extractionDetail: ownedEnriched.map(c => ({
+            url: c.url,
+            ...diagnoseAccountLocationExtraction(a.name, c.pageContentRaw || c.pageContent || '')
+          })),
           derivedIdentity: derived,
           failureReason
         };

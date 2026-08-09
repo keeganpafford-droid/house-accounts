@@ -347,6 +347,80 @@ function deriveAccountLocationFromContent(companyName = '', content = '') {
   return `${city}, ${state}`;
 }
 
+// Founder QA follow-up (identity-bootstrap live-diagnosis, round 3): a live
+// Dover Honda run found, discovered, and Firecrawl-enriched three real
+// iclautos.com pages, but deriveAccountLocationFromContent() derived nothing
+// from any of them -- and a bounded first-500-char raw-content sample was
+// not enough to tell WHY (the account name and any City/ST pattern could be
+// anywhere in a multi-KB scraped page, not necessarily near the start).
+// Read-only mirror of deriveAccountLocationFromContent()'s own line-split/
+// same-line-association rule above -- identical regex, identical clean()
+// sequencing -- so its outcome can never disagree with what that function
+// actually did. Exists purely to expose the real evidence a human can
+// read (which lines named the account, what City/ST pairs exist nearby vs.
+// merely somewhere on the page) instead of guessing from a truncated
+// sample. Never called by grounding or by deriveAccountLocationFromContent
+// itself -- changing this function cannot change what gets derived.
+function diagnoseAccountLocationExtraction(companyName = '', content = '') {
+  const company = clean(companyName).toLowerCase();
+  const rawContent = String(content || '');
+  const globalPairs = extractCityStatePairs(rawContent);
+  if (!company || !rawContent.trim()) {
+    return {
+      accountNameOccurrenceCount: 0,
+      accountNameContexts: [],
+      cityStateMatchesNearAccount: [],
+      globalCityStateMatchCount: globalPairs.length,
+      extractionOutcome: 'no-content-or-no-company-name',
+      extractionFailureReason: !rawContent.trim() ? 'page had no fetched content' : 'no company name provided'
+    };
+  }
+  const lines = rawContent.split(/\r?\n+/).map(line => clean(line)).filter(Boolean);
+  const segments = lines.length ? lines : [clean(rawContent)];
+  const matchingLineIndices = [];
+  segments.forEach((line, idx) => { if (line.toLowerCase().includes(company)) matchingLineIndices.push(idx); });
+  const accountNameContexts = matchingLineIndices.slice(0, 3).map(idx => ({
+    before: idx > 0 ? segments[idx - 1].slice(0, 240) : '',
+    line: segments[idx].slice(0, 240),
+    after: idx < segments.length - 1 ? segments[idx + 1].slice(0, 240) : ''
+  }));
+  const cityStateMatchesNearAccount = [];
+  let ambiguousLineFound = false;
+  const contributedLocations = [];
+  for (const idx of matchingLineIndices) {
+    const pairs = extractCityStatePairs(segments[idx]);
+    const distinct = [...new Map(pairs.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
+    distinct.forEach(p => cityStateMatchesNearAccount.push({ city: p.city, state: p.state, line: segments[idx].slice(0, 240) }));
+    if (distinct.length > 1) ambiguousLineFound = true;
+    if (distinct.length === 1) contributedLocations.push(distinct[0]);
+  }
+  const uniqueContributed = [...new Map(contributedLocations.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
+
+  let extractionOutcome, extractionFailureReason;
+  if (!matchingLineIndices.length) {
+    extractionOutcome = 'account-name-not-found-in-raw-content';
+    extractionFailureReason = 'the fetched page content contains no case-insensitive occurrence of the account name, despite the account looking eligible before fetch (search snippet/title match or trusted-domain probe)';
+  } else if (ambiguousLineFound) {
+    extractionOutcome = 'ambiguous-multiple-city-state-pairs-on-a-single-account-line';
+    extractionFailureReason = 'at least one line naming the account also contains more than one distinct City, ST pair -- refusing to guess which one belongs to the account';
+  } else if (!uniqueContributed.length) {
+    extractionOutcome = globalPairs.length
+      ? 'account-name-found-but-no-city-state-on-the-same-line'
+      : 'account-name-found-but-no-city-state-pattern-recognized-anywhere-on-page';
+    extractionFailureReason = globalPairs.length
+      ? 'a City, ST pattern exists elsewhere on the page, but never on the same line as the account name -- see accountNameContexts\' before/after lines for whether it sits on an adjacent line instead'
+      : 'no text on the page matches the City, ST pattern at all, near the account name or anywhere else on the page';
+  } else if (uniqueContributed.length > 1) {
+    extractionOutcome = 'conflicting-locations-across-multiple-account-mentions';
+    extractionFailureReason = `different lines naming the account associate it with different locations (${uniqueContributed.map(p => `${p.city}, ${p.state}`).join(' vs ')}) -- refusing to pick one`;
+  } else {
+    extractionOutcome = 'derived';
+    extractionFailureReason = '';
+  }
+
+  return { accountNameOccurrenceCount: matchingLineIndices.length, accountNameContexts, cityStateMatchesNearAccount, globalCityStateMatchCount: globalPairs.length, extractionOutcome, extractionFailureReason };
+}
+
 // Positive-contradiction check -- NOT a "does it agree" check. Absence of a
 // location mention is never a contradiction (a source that says nothing
 // about location is exactly what "unconfirmed" exists for). This only fires
@@ -1684,7 +1758,7 @@ export {
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
-  deriveAccountLocationFromContent,
+  deriveAccountLocationFromContent, diagnoseAccountLocationExtraction,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,
