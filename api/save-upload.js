@@ -1,7 +1,7 @@
 // Vercel Serverless Function: Save House Accounts uploads to Supabase.
 // Endpoint: POST /api/save-upload
 
-import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType } from './signal-intelligence.js';
+import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType, materiallyRepeats } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash } from 'crypto';
 
@@ -104,49 +104,110 @@ async function fetchLegacySignalsForAccounts(userId, accountNames){
   return rows;
 }
 
-// Mutates resolvedSignals in place: for any signal whose freshly-computed v2
-// eventFingerprint matches one or more legacy rows' recomputed v2-equivalent
-// identity, replaces that signal's eventFingerprint with the deterministic
-// winner's literal existing fingerprint. Every candidateRows/RPC mapping
-// downstream reads s.eventFingerprint, so this is the only touch point
-// needed for both the tracked (RPC) and untracked (direct REST) write paths.
+// Fingerprint Stability sprint, correction round: replaces literal
+// event_fingerprint STRING equality with a dedicated identity comparison.
+// A legacy row's payload is frequently INCOMPLETE relative to what a fresh
+// v2 resolution now captures -- an older payload may never have resolved an
+// exact date (v1's own fingerprint only ever encoded a bare year, so its
+// absence proves nothing about whether the payload's evidence text could
+// support one), or may predate rawTitle/rawSnippet threading entirely.
+// Requiring full-string equality means a genuinely-the-same event never
+// bridges merely because one side's resolution knows less than the other's
+// (confirmed production case: the Dover Holiday Parade legacy row, whose
+// exact-string fingerprint never matched a fresh, fully-resolved
+// re-research of the same event). This is intentionally LOOSER than
+// resolveEvents()'s own merge rule, and that looseness is scoped to the
+// bridge only -- resolveEvents()'s general merge gate is untouched.
+//
+// Rules (weak-to-strong temporal enrichment allowed, never masking a real
+// conflict):
+//   - both sides carry a distinctive anchor: identity iff they agree,
+//     regardless of URL/date -- a genuine anchor disagreement never bridges.
+//   - an exact-date vs. exact-date conflict never bridges.
+//   - a resolved-year vs. resolved-year conflict never bridges (this is
+//     also what catches a legacy bare year against a fresh exact date whose
+//     YEAR disagrees; a fresh exact date whose year AGREES with a legacy
+//     bare year is exactly the weak-to-strong enrichment case this bridge
+//     exists to allow).
+//   - past those checks, either a one-sided (or both-sided-agreeing) anchor
+//     is sufficient on its own ("strong event evidence"); with no anchor on
+//     either side, same normalized source URL is REQUIRED (never
+//     sufficient alone) plus the underlying evidence text materially
+//     agreeing (materiallyRepeats()) -- the same corroboration-strength bar
+//     resolveEvents() itself uses elsewhere.
+function legacyBridgeCompatible(fresh, legacy){
+  if(!fresh || !legacy) return false;
+  if(fresh.companyNorm && legacy.companyNorm && fresh.companyNorm !== legacy.companyNorm) return false;
+
+  const freshAnchor = fresh.anchor ? String(fresh.anchor).trim().toLowerCase() : '';
+  const legacyAnchor = legacy.anchor ? String(legacy.anchor).trim().toLowerCase() : '';
+  if(freshAnchor && legacyAnchor) return freshAnchor === legacyAnchor;
+
+  const freshExact = fresh.dateConfidence === 'exact' ? fresh.eventDate : null;
+  const legacyExact = legacy.dateConfidence === 'exact' ? legacy.eventDate : null;
+  if(freshExact && legacyExact && freshExact !== legacyExact) return false;
+
+  const freshYear = fresh.year || (freshExact ? freshExact.slice(0, 4) : null);
+  const legacyYear = legacy.year || (legacyExact ? legacyExact.slice(0, 4) : null);
+  if(freshYear && legacyYear && String(freshYear) !== String(legacyYear)) return false;
+
+  if(freshAnchor || legacyAnchor) return true; // one-sided anchor, no temporal conflict found above
+
+  const sameUrl = fresh.normalizedUrl && legacy.normalizedUrl && fresh.normalizedUrl === legacy.normalizedUrl;
+  if(!sameUrl) return false;
+  return materiallyRepeats(fresh.evidenceText || '', legacy.evidenceText || '');
+}
+
+// Recomputes each legacy row's v2-equivalent identity from its own stored
+// payload -- same reconstruction technique scripts/find-duplicate-signals.js
+// already uses for its read-only duplicate report.
+function recomputeLegacyIdentity(row){
+  if(String(row.event_fingerprint || '').startsWith('v2|')) return null; // already v2-format, nothing to bridge
+  const payload = row.payload || {};
+  const opportunity = {
+    ...payload,
+    accountName: payload.accountName || row.account_name,
+    companyName: payload.companyName || payload.accountName || row.account_name,
+    headline: payload.headline || payload.signalTitle || row.title,
+    whatChanged: payload.whatChanged || payload.businessContext || row.title,
+    rawTitle: payload.rawTitle || '',
+    rawSnippet: payload.rawSnippet || '',
+    rawContent: payload.rawContent || '',
+    sourceUrl: payload.sourceUrl || row.source_url,
+    eventDate: payload.eventDate || '',
+    publishedAt: payload.publishedAt || payload.eventDate || row.published_at
+  };
+  try {
+    const resolved = resolveOpportunityEvents([opportunity])[0];
+    return resolved?.eventIdentity || null;
+  } catch { return null; }
+}
+
+// Mutates resolvedSignals in place: for any signal whose fresh v2 identity
+// is bridge-compatible with one or more legacy rows' recomputed identity,
+// replaces that signal's eventFingerprint with the deterministic winner's
+// literal existing fingerprint. Every candidateRows/RPC mapping downstream
+// reads s.eventFingerprint, so this is the only touch point needed for both
+// the tracked (RPC) and untracked (direct REST) write paths.
 function applyLegacyFingerprintBridge(legacyRows, resolvedSignals){
   if(!legacyRows.length) return { bridged: 0, multiMatch: 0 };
-  const byRecomputedV2 = new Map();
-  for(const row of legacyRows){
-    if(String(row.event_fingerprint || '').startsWith('v2|')) continue; // already v2-format, nothing to bridge
-    const payload = row.payload || {};
-    const opportunity = {
-      ...payload,
-      accountName: payload.accountName || row.account_name,
-      companyName: payload.companyName || payload.accountName || row.account_name,
-      headline: payload.headline || payload.signalTitle || row.title,
-      whatChanged: payload.whatChanged || payload.businessContext || row.title,
-      rawTitle: payload.rawTitle || '',
-      rawSnippet: payload.rawSnippet || '',
-      rawContent: payload.rawContent || '',
-      sourceUrl: payload.sourceUrl || row.source_url,
-      eventDate: payload.eventDate || '',
-      publishedAt: payload.publishedAt || payload.eventDate || row.published_at
-    };
-    let recomputed;
-    try { recomputed = resolveOpportunityEvents([opportunity])[0]?.eventFingerprint; } catch { recomputed = null; }
-    if(!recomputed) continue;
-    if(!byRecomputedV2.has(recomputed)) byRecomputedV2.set(recomputed, []);
-    byRecomputedV2.get(recomputed).push(row);
-  }
+  const recomputed = legacyRows
+    .map(row => ({ row, identity: recomputeLegacyIdentity(row) }))
+    .filter(entry => entry.identity);
 
   let bridged = 0, multiMatch = 0;
   for(const s of resolvedSignals){
-    const matches = byRecomputedV2.get(s.eventFingerprint);
-    if(!matches || !matches.length) continue;
-    const winner = chooseRetainedLegacyRow(matches);
+    const fresh = s.eventIdentity;
+    if(!fresh) continue;
+    const matches = recomputed.filter(entry => legacyBridgeCompatible(fresh, entry.identity));
+    if(!matches.length) continue;
+    const winner = chooseRetainedLegacyRow(matches.map(m => m.row));
     if(matches.length > 1){
       multiMatch += 1;
       console.warn('[save-upload] legacy fingerprint bridge: multiple existing rows matched one v2 identity', {
         accountNameHash: shortHash(s.accountName),
         v2Fingerprint: s.eventFingerprint,
-        matchedLegacyFingerprints: matches.map(r => r.event_fingerprint),
+        matchedLegacyFingerprints: matches.map(m => m.row.event_fingerprint),
         winnerFingerprint: winner.event_fingerprint,
         ...(DEBUG_INSTRUMENTATION ? { accountName: s.accountName } : {})
       });
@@ -157,7 +218,7 @@ function applyLegacyFingerprintBridge(legacyRows, resolvedSignals){
   return { bridged, multiMatch };
 }
 
-export { chooseRetainedLegacyRow, applyLegacyFingerprintBridge, fetchLegacySignalsForAccounts };
+export { chooseRetainedLegacyRow, applyLegacyFingerprintBridge, fetchLegacySignalsForAccounts, legacyBridgeCompatible };
 
 function env(){
   const rawUrl = process.env.SUPABASE_URL;

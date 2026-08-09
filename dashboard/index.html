@@ -5637,13 +5637,13 @@ function structuredEvidenceRows(opp){
   return rows.slice(0,6);
 }
 
-// Priority 1 support: a short, human date string for either an event date
-// or a publication date -- never blends the two, never claims a date it
-// doesn't have.
+// Priority 1 support: a short, human date string for a calendar date (an
+// event or publication date, never an instant like last_seen_at) --
+// rendered in UTC below so the displayed day never shifts by timezone.
 function formatShortDate(value){
   const d = parseMaybeDate(value);
   if(!d) return '';
-  return d.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'});
+  return d.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'});
 }
 
 // Priority 4 (dashboard card item 3): "Event/publication date and

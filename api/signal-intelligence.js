@@ -1407,6 +1407,31 @@ function extractFromOneField(t = '', companyNorm = '') {
   // a community-sponsorship event with no other anchor candidate.
   const sponsorshipNameMatchRaw = t.match(new RegExp(`sponsor(?:ship)?\\s+(?:for|of)\\s+(?:the\\s+)?(?:\\d{4}\\s+)?(${PN})`, 'i'));
   const sponsorshipNameMatch = sponsorshipNameMatchRaw && !NON_LOCATION_WORDS.has(sponsorshipNameMatchRaw[1].toLowerCase()) ? sponsorshipNameMatchRaw : null;
+  // Fingerprint Stability sprint, correction round: the reversed word order
+  // ("Dover Honda Signs on as Dover Holiday Parade Sponsor") is at least as
+  // common as "sponsor for/of X" above -- confirmed against the real Dover
+  // Chamber source article this sprint's Preview QA round surfaced. The
+  // proper-noun run is captured directly before the trailing "Sponsor(s)"
+  // word; PN's own greediness naturally skips over an unrelated leading
+  // capitalized run (e.g. the company name) whenever it's broken by a
+  // lowercase connector ("Signs on as"). When there is no such break (e.g.
+  // "Acme Corp Named City Marathon Sponsor" -- every word capitalized), PN
+  // greedily includes the company name in its capture; stripLeadingCompany()
+  // below trims a leading company-name match off the captured text before
+  // it's used as the anchor, the same "never let the company's own name
+  // stand in for a distinctive anchor" principle already applied to
+  // acquisitionMatch/appointmentMatch above.
+  const sponsorshipReversedMatchRaw = t.match(new RegExp(`(${PN})\\s+[Ss]ponsors?\\b`));
+  const sponsorshipReversedMatch = sponsorshipReversedMatchRaw && !NON_LOCATION_WORDS.has(sponsorshipReversedMatchRaw[1].toLowerCase()) ? sponsorshipReversedMatchRaw : null;
+  const stripLeadingCompany = (captured) => {
+    if (!companyNorm) return captured;
+    const words = captured.trim().split(/\s+/);
+    const companyWordCount = companyNorm.split(/\s+/).length;
+    if (words.length > companyWordCount && normalizeForMatch(words.slice(0, companyWordCount).join(' ')) === companyNorm) {
+      return words.slice(companyWordCount).join(' ');
+    }
+    return captured;
+  };
 
   const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
   if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
@@ -1446,6 +1471,7 @@ function extractFromOneField(t = '', companyNorm = '') {
   else if (awardMatchRaw) anchor = trimTrailingPunct(awardMatchRaw[1].trim());
   else if (honorMatchRaw) anchor = trimTrailingPunct(honorMatchRaw[1].trim());
   else if (sponsorshipNameMatch) anchor = trimTrailingPunct(sponsorshipNameMatch[1].trim());
+  else if (sponsorshipReversedMatch) anchor = trimTrailingPunct(stripLeadingCompany(sponsorshipReversedMatch[1].trim()));
   else if (productNameMatch) anchor = trimTrailingPunct(productNameMatch[1].trim());
   else if (rebrandNameMatch) anchor = trimTrailingPunct(rebrandNameMatch[1].trim());
 
@@ -1498,6 +1524,32 @@ function normalizeMonthName(raw = '') {
 const MONTH_TOKEN = '(January|Jan\\.?|February|Feb\\.?|March|Mar\\.?|April|Apr\\.?|May|June|Jun\\.?|July|Jul\\.?|August|Aug\\.?|September|Sept\\.?|Sep\\.?|October|Oct\\.?|November|Nov\\.?|December|Dec\\.?)';
 const DATE_RANGE_RE = new RegExp(`\\b${MONTH_TOKEN}\\s+(\\d{1,2})\\s*(?:[-–—]|through|to)\\s*(\\d{1,2}),?\\s+(20\\d{2})\\b`, 'i');
 
+// Fingerprint Stability sprint, correction round -- identity-critical date
+// parsing. `new Date("November 29, 2026")` (or any non-ISO textual date
+// format) is parsed by the JS Date constructor in the RUNTIME'S LOCAL
+// TIMEZONE, unlike an ISO date-only string ("2026-11-29"), which the spec
+// requires to be parsed as UTC. Two research runs of the exact same source
+// text, executed under different server timezones (or the same server
+// across a DST change), could therefore extract calendar-date components
+// that are only hours apart in absolute time but land on different sides of
+// a UTC-vs-local day boundary -- directly undermining fingerprint stability,
+// since v2 fingerprints now carry the exact date as identity. Every textual
+// (non-ISO) calendar date used for event identity must be constructed via
+// explicit UTC components (Date.UTC) instead of handed to `new Date(text)`,
+// so the same input text always resolves to the same calendar day
+// regardless of the server's TZ.
+const MONTH_INDEX_BY_FULL_NAME = {
+  January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+  July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
+};
+function parseCalendarDateUTC(monthNameRaw, day, year) {
+  const monthName = normalizeMonthName(monthNameRaw) || monthNameRaw;
+  const monthIndex = MONTH_INDEX_BY_FULL_NAME[monthName];
+  if (monthIndex === undefined) return null;
+  const d = new Date(Date.UTC(Number(year), monthIndex, Number(day)));
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
 // Problem 2 (Preview QA follow-up round): the free text this function mines
 // routinely contains TWO different kinds of date -- when the real-world
 // event happened/happens, and when a SOURCE recorded/listed/posted its
@@ -1542,17 +1594,18 @@ function firstNonPublicationMatch(text, regex) {
 // if no publication-context date is present at all.
 function findPublicationContextDate(text = '') {
   const t = clean(text);
-  const patterns = [
-    /\b(20\d{2}-\d{2}-\d{2})\b/g,
-    /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/gi
-  ];
-  for (const re of patterns) {
-    const matches = Array.from(t.matchAll(re));
-    const pubMatch = matches.find(m => isPublicationDateContext(t, m.index));
-    if (pubMatch) {
-      const parsed = parseDate(pubMatch[1] || pubMatch[0]);
-      if (parsed) return parsed.toISOString().slice(0, 10);
-    }
+  const isoMatches = Array.from(t.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g));
+  const isoPubMatch = isoMatches.find(m => isPublicationDateContext(t, m.index));
+  if (isoPubMatch) {
+    // ISO date-only strings are UTC-anchored by spec -- parseDate() is safe here.
+    const parsed = parseDate(isoPubMatch[1]);
+    if (parsed) return parsed.toISOString().slice(0, 10);
+  }
+  const monthDayYearMatches = Array.from(t.matchAll(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(20\d{2})\b/gi));
+  const monthPubMatch = monthDayYearMatches.find(m => isPublicationDateContext(t, m.index));
+  if (monthPubMatch) {
+    const parsed = parseCalendarDateUTC(monthPubMatch[1], monthPubMatch[2], monthPubMatch[3]);
+    if (parsed) return parsed.toISOString().slice(0, 10);
   }
   return null;
 }
@@ -1560,7 +1613,7 @@ function findPublicationContextDate(text = '') {
 function extractEventDate(text = '') {
   const t = clean(text);
   const isoMatch = firstNonPublicationMatch(t, /\b(20\d{2}-\d{2}-\d{2})\b/g);
-  const monthDayYear = firstNonPublicationMatch(t, /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}\b/gi);
+  const monthDayYear = firstNonPublicationMatch(t, /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(20\d{2})\b/gi);
   // Common date-range phrasing ("September 18-20, 2026", "September 18–20,
   // 2026", "Sep. 18 through 20, 2026") -- extractEventDate() previously only
   // matched a single day, so a real, explicit range like an L.L.Bean grand
@@ -1570,26 +1623,38 @@ function extractEventDate(text = '') {
   // the range (when the event begins); displayEventDate preserves the full,
   // human-readable range text for rendering.
   const rangeMatch = t.match(DATE_RANGE_RE);
-  const monthYear = t.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}\b/i);
+  const monthYear = t.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})\b/i);
   const hasEventLanguage = /\b(on|opens?|opened|opening|effective|held|takes place|scheduled for|will open)\b/i.test(t);
 
-  let raw = null;
+  // Identity-critical: every non-ISO branch below constructs its Date via
+  // parseCalendarDateUTC() (explicit UTC components), never by handing
+  // textual "Month D, YYYY" content to `new Date()` -- see that helper's
+  // header comment for why the naive form is environment-dependent. The
+  // ISO branch is exempt: a bare "YYYY-MM-DD" string is UTC-anchored by the
+  // language spec itself, so parseDate() (a thin `new Date()` wrapper) is
+  // already safe there.
+  let parsed = null;
   let display = null;
   let confidence = 'unknown';
-  if (isoMatch) { raw = isoMatch[1]; confidence = 'exact'; }
-  else if (monthDayYear) { raw = monthDayYear[0]; confidence = 'exact'; }
-  else if (rangeMatch) {
+  if (isoMatch) {
+    parsed = parseDate(isoMatch[1]);
+    confidence = 'exact';
+  } else if (monthDayYear) {
+    parsed = parseCalendarDateUTC(monthDayYear[1], monthDayYear[2], monthDayYear[3]);
+    confidence = 'exact';
+  } else if (rangeMatch) {
     const monthName = normalizeMonthName(rangeMatch[1]);
     const [, , day1, day2, year] = rangeMatch;
     if (monthName) {
-      raw = `${monthName} ${day1}, ${year}`;
+      parsed = parseCalendarDateUTC(monthName, day1, year);
       confidence = 'exact';
       display = `${monthName} ${day1}–${day2}, ${year}`;
     }
+  } else if (monthYear && hasEventLanguage) {
+    parsed = parseCalendarDateUTC(monthYear[1], 1, monthYear[2]);
+    confidence = 'approximate';
   }
-  else if (monthYear && hasEventLanguage) { raw = monthYear[0]; confidence = 'approximate'; }
 
-  const parsed = raw ? parseDate(raw) : null;
   if (!parsed) return { eventDate: null, dateConfidence: 'unknown', year: null, displayEventDate: null };
   return {
     eventDate: parsed.toISOString().slice(0, 10),
@@ -1903,6 +1968,7 @@ function resolveEvents(candidates = []) {
 
     const eventIdentity = {
       company: ev.identity.companyDisplay || ev.identity.company,
+      companyNorm: ev.identity.company,
       eventType: primaryType,
       candidateTypes: ev.identity.candidateTypes,
       subjectEntity: ev.identity.subjectEntity,
@@ -1910,6 +1976,15 @@ function resolveEvents(candidates = []) {
       anchor: ev.identity.anchor || null,
       eventDate: ev.identity.eventDate,
       dateConfidence: ev.identity.dateConfidence,
+      // Fingerprint Stability sprint, correction round: exposed so callers
+      // outside resolveEvents() (specifically api/save-upload.js's legacy
+      // compatibility bridge) can compare identity components directly
+      // rather than requiring full event_fingerprint string equality, which
+      // is too strict for reconciling an incomplete legacy payload against a
+      // fully-resolved fresh one.
+      year: ev.identity.year || null,
+      normalizedUrl: ev.identity.normalizedUrl || null,
+      evidenceText: ev.identity.evidenceText || '',
       canonicalTitle: title,
       titleSource
     };
@@ -2028,7 +2103,7 @@ export {
   findPublicationContextDate,
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
   resolveOpportunityEvents, dedupeByEventFingerprint,
-  fallbackEventDiscriminator, stableHash,
+  fallbackEventDiscriminator, stableHash, normalizeForMatch,
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
