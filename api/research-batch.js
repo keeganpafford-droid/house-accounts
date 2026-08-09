@@ -3010,6 +3010,21 @@ export default async function handler(req, res) {
     // -- which never runs the block that would populate it -- still reads a
     // safe, empty result instead of throwing.
     let derivedIdentityByAccount = new Map();
+    // Founder QA follow-up (identity-bootstrap live-diagnosis, fd2b221 QA):
+    // the endpoint regression test proved the pipeline works end to end
+    // against a synthetic fixture, but the live Dover Honda run returned
+    // "no verified signals" with the identity states unchanged, and NOTHING
+    // in the existing response lets anyone tell WHERE in the multi-stage
+    // funnel (domain derivation -> owned-domain discovery -> Firecrawl
+    // enrichment -> location extraction) that happened -- searchDiagnostics
+    // is built inside discoverCandidatesForAccounts() BEFORE Firecrawl
+    // enrichment ever runs, so its own enrichedPages field is always 0 and
+    // says nothing about this pipeline. Populated below, once per account,
+    // from the SAME real candidates/derivedIdentityByAccount this request
+    // already computed -- adds no provider call, no new query, no DB
+    // write, and is never read by grounding itself (diagnostic-only,
+    // truthful reflection of what already happened).
+    let identityBootstrapDiagnostics = [];
     let rawText = '';
     // Diagnostics semantic correction (Sprint 1 follow-up): this default
     // used to read 'openai-web-search' because, before this commit, a
@@ -3084,6 +3099,7 @@ export default async function handler(req, res) {
       // an unrelated higher-scoring result.
       const safeAccountsByName = new Map(safeAccounts.map(a => [a.name, a]));
       candidates = prioritizeIdentityBootstrapCandidates(candidates, safeAccountsByName);
+      const preEnrichmentCandidates = candidates;
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
       firecrawlAttempted = enriched.attemptedCount || 0;
@@ -3096,6 +3112,37 @@ export default async function handler(req, res) {
       derivedIdentityByAccount = new Map(
         safeAccounts.map(a => [a.name, buildDerivedIdentity(a, candidates.filter(c => c && c.accountName === a.name))])
       );
+      // Live-diagnosis fields (see this block's own header comment above):
+      // isolates each of the funnel's real narrowing points using the exact
+      // same domain-match rule buildDerivedIdentity()/
+      // prioritizeIdentityBootstrapCandidates() already apply, so this can
+      // never disagree with what those functions actually did.
+      identityBootstrapDiagnostics = safeAccounts.map(a => {
+        const domain = clean(a.website || '');
+        if (!domain) return { accountName: a.name, domain: '', domainProvenance: '', ownedDomainCandidatesDiscovered: [], ownedDomainCandidatesEnriched: [], preFetchNameMatchCount: 0, derivedIdentity: null, failureReason: 'no-domain-derivable-from-upload-or-contact-email' };
+        const ownsDomain = (url) => { const d = sourceDomain(url || ''); return !!d && (d === domain || d.endsWith(`.${domain}`)); };
+        const ownedPre = preEnrichmentCandidates.filter(c => c && c.accountName === a.name && ownsDomain(c.url));
+        const ownedPost = candidates.filter(c => c && c.accountName === a.name && ownsDomain(c.url));
+        const ownedEnriched = ownedPost.filter(c => !!c.pageContent);
+        const preFetchNameMatchCount = ownedPre.filter(c => `${c.title || ''} ${c.snippet || ''}`.toLowerCase().includes(a.name.toLowerCase())).length;
+        const derived = derivedIdentityByAccount.get(a.name) || null;
+        let failureReason = '';
+        if (!derived) {
+          if (!ownedPre.length) failureReason = 'no-owned-domain-candidate-discovered-by-search-or-owned-page-probe';
+          else if (!ownedEnriched.length) failureReason = 'owned-domain-candidate-discovered-but-none-received-firecrawl-enrichment';
+          else failureReason = 'owned-domain-content-fetched-but-no-name-associated-location-extracted';
+        }
+        return {
+          accountName: a.name,
+          domain,
+          domainProvenance: a.websiteProvenance || '',
+          ownedDomainCandidatesDiscovered: ownedPre.map(c => c.url),
+          preFetchNameMatchCount,
+          ownedDomainCandidatesEnriched: ownedEnriched.map(c => ({ url: c.url, pageContentRawSample: (c.pageContentRaw || c.pageContent || '').slice(0, 500) })),
+          derivedIdentity: derived,
+          failureReason
+        };
+      });
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
         prospectDebugLog('Firecrawl enrichment complete', {
           // Benchmark diagnostic (scale/research-runtime-benchmark): see the
@@ -3590,6 +3637,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         sourceCoverage,
         candidateSamples,
         searchDiagnostics,
+        identityBootstrapDiagnostics,
         outputPreview: String(rawText || '').slice(0, 500),
         structuredSummary: {
           eligibleAccounts: safeAccounts.length,
