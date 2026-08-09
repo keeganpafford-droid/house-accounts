@@ -379,10 +379,17 @@ function diagnoseAccountLocationExtraction(companyName = '', content = '') {
   const segments = lines.length ? lines : [clean(rawContent)];
   const matchingLineIndices = [];
   segments.forEach((line, idx) => { if (line.toLowerCase().includes(company)) matchingLineIndices.push(idx); });
+  // Founder QA follow-up (round 4): a single after-line was not enough to
+  // tell whether a real multi-line address block (name / street / city,
+  // state zip -- three lines) follows the account's own line, since only
+  // line 1 of that block was ever visible. Widened to 5 following lines
+  // (still bounded, still read-only) -- enough to see a full address block
+  // without guessing at content this tool never displayed.
+  const AFTER_LINES_WINDOW = 5;
   const accountNameContexts = matchingLineIndices.slice(0, 3).map(idx => ({
     before: idx > 0 ? segments[idx - 1].slice(0, 240) : '',
     line: segments[idx].slice(0, 240),
-    after: idx < segments.length - 1 ? segments[idx + 1].slice(0, 240) : ''
+    afterLines: segments.slice(idx + 1, idx + 1 + AFTER_LINES_WINDOW).map(l => l.slice(0, 240))
   }));
   const cityStateMatchesNearAccount = [];
   let ambiguousLineFound = false;
@@ -408,7 +415,7 @@ function diagnoseAccountLocationExtraction(companyName = '', content = '') {
       ? 'account-name-found-but-no-city-state-on-the-same-line'
       : 'account-name-found-but-no-city-state-pattern-recognized-anywhere-on-page';
     extractionFailureReason = globalPairs.length
-      ? 'a City, ST pattern exists elsewhere on the page, but never on the same line as the account name -- see accountNameContexts\' before/after lines for whether it sits on an adjacent line instead'
+      ? 'a City, ST pattern exists elsewhere on the page, but never on the same line as the account name -- see accountNameContexts\' before/afterLines for whether it sits within the next few lines instead'
       : 'no text on the page matches the City, ST pattern at all, near the account name or anywhere else on the page';
   } else if (uniqueContributed.length > 1) {
     extractionOutcome = 'conflicting-locations-across-multiple-account-mentions';
