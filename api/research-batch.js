@@ -250,20 +250,31 @@ async function fetchWithTimeout(url, options = {}, timeoutMs) {
   }
 }
 
+// Identity-bootstrap sprint: returns BOTH the existing compacted string
+// (unchanged for every current consumer -- prompt-size-bounded, single-line,
+// exactly what it always was) and the raw scraped text before compact()'s
+// whitespace collapse. compact() calls clean(), which folds every \n into a
+// single space -- fine for a short prompt-ready summary, but it destroys the
+// exact line-boundary signal deriveAccountLocationFromContent() depends on
+// to tell "Dover Honda -- Dover, NH" apart from the next line down.
+// Confirmed production defect: a real, correctly-enriched candidate on the
+// account's own trusted domain still failed to yield derived identity,
+// because by the time its content reached pageContent, every dealer-group
+// directory entry had already been merged onto one line.
 async function firecrawlScrape(url) {
   const apiKey = process.env.FIRECRAWL_API_KEY;
-  if (!apiKey || !url) return '';
+  if (!apiKey || !url) return { compact: '', raw: '' };
   try {
     const resp = await fetchWithTimeout('https://api.firecrawl.dev/v2/scrape', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, timeout: 12000 })
     }, FIRECRAWL_CALL_TIMEOUT_MS);
-    if (!resp.ok) return '';
+    if (!resp.ok) return { compact: '', raw: '' };
     const data = await resp.json();
     const text = data?.data?.markdown || data?.markdown || data?.data?.text || data?.text || '';
-    return compact(text, 1800);
-  } catch { return ''; }
+    return { compact: compact(text, 1800), raw: String(text || '') };
+  } catch { return { compact: '', raw: '' }; }
 }
 
 async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 6, totalLimit = 100) {
@@ -283,7 +294,7 @@ async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 
     selected.push(c);
   }
   const scraped = await mapLimit(selected, 8, async c => ({ key: c.url.split('#')[0].toLowerCase(), content: await firecrawlScrape(c.url) }));
-  const contentMap = new Map((scraped || []).filter(x => x && x.content).map(x => [x.key, x.content]));
+  const contentMap = new Map((scraped || []).filter(x => x && x.content && x.content.compact).map(x => [x.key, x.content]));
   let scrapedCount = 0;
   // Prompt-size fix (scale/research-runtime-benchmark): previously this also
   // rewrote `snippet` to `${original snippet}\n\nPage content: ${content}` --
@@ -302,7 +313,13 @@ async function enrichCandidatesWithFirecrawl(candidates = [], perAccountLimit = 
     const content = contentMap.get((c.url || '').split('#')[0].toLowerCase());
     if (!content) return c;
     scrapedCount++;
-    return { ...c, pageContent: content, provider: `${c.provider || 'search'}+firecrawl` };
+    // pageContent stays exactly what every existing consumer (prompt
+    // synthesis, display) already expects -- compacted, single-line,
+    // prompt-size-bounded. pageContentRaw is new and additive: the same
+    // scraped text with its real line breaks intact, read ONLY by
+    // buildDerivedIdentity()'s name-associated-location extraction, which
+    // needs those line boundaries to tell one directory entry from the next.
+    return { ...c, pageContent: content.compact, pageContentRaw: content.raw, provider: `${c.provider || 'search'}+firecrawl` };
   });
   return { candidates: enriched, scrapedCount, attemptedCount: selected.length };
 }
@@ -497,7 +514,12 @@ function buildDerivedIdentity(account = {}, candidates = []) {
     return candidateDomain === domain || candidateDomain.endsWith(`.${domain}`);
   });
   for (const candidate of eligible) {
-    const location = deriveAccountLocationFromContent(account.name, candidate.pageContent);
+    // Prefer pageContentRaw (real line breaks intact -- see
+    // enrichCandidatesWithFirecrawl()'s own comment) so a dealer-group
+    // directory's line-by-line entries stay distinguishable. Falls back to
+    // the compacted pageContent only for a candidate shape that never had a
+    // raw variant (defensive, not the expected production path).
+    const location = deriveAccountLocationFromContent(account.name, candidate.pageContentRaw || candidate.pageContent);
     if (location) {
       return {
         domain,
@@ -2976,6 +2998,18 @@ export default async function handler(req, res) {
     let sourceCoverage = {};
     let candidateSamples = [];
     let searchDiagnostics = [];
+    // Identity-bootstrap sprint: declared here, in the SAME outer scope as
+    // `candidates` above, not inside the `if (hasSearchProvider)` block below
+    // -- that block is a plain `{...}`, not a function, so a `const` declared
+    // inside it goes out of scope the moment the block closes. The signal-
+    // mapping/grounding loop that reads this map runs well after that block
+    // closes (confirmed production defect: "derivedIdentityByAccount is not
+    // defined", thrown the instant any mixed/warm-account request with a
+    // configured search provider reached the grounding step). Defaults to an
+    // empty Map so the no-search-provider branch (hasSearchProvider === false)
+    // -- which never runs the block that would populate it -- still reads a
+    // safe, empty result instead of throwing.
+    let derivedIdentityByAccount = new Map();
     let rawText = '';
     // Diagnostics semantic correction (Sprint 1 follow-up): this default
     // used to read 'openai-web-search' because, before this commit, a
@@ -3059,7 +3093,7 @@ export default async function handler(req, res) {
       // account from the now-enriched candidate pool -- in-memory only for
       // this request, never persisted (see buildDerivedIdentity()'s own
       // header comment for the full ordering/non-circularity rationale).
-      const derivedIdentityByAccount = new Map(
+      derivedIdentityByAccount = new Map(
         safeAccounts.map(a => [a.name, buildDerivedIdentity(a, candidates.filter(c => c && c.accountName === a.name))])
       );
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
