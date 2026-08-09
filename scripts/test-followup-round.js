@@ -51,7 +51,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // off the list object; the underlying required-test guarantees (labels,
 // active-only confirmation count) are proven against the new mechanism
 // instead.
-const listCardSrc = extractLines('listCard', 11455, 11495, 'function listCard(list){');
+const listCardSrc = extractLines('listCard', 11470, 11510, 'function listCard(list){');
 assert(
   /const listResearchLabel = list\.everResearched \? 'Research All Accounts Again' : 'Research All Accounts';/.test(listCardSrc),
   'required tests 1 & 2: never-researched lists show "Research All Accounts", previously-researched lists show "Research All Accounts Again" -- now driven by the server-computed list.everResearched'
@@ -139,7 +139,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 11757, 11869, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractLines("handleListResearchClick", 11772, 11884, "async function handleListResearchClick(btn){");
 // Scaling round: the active-account count in the confirmation dialog now
 // comes from the server-computed list.activeCount (Prefer: count=exact) --
 // cachedLists no longer carries a full .accounts array to filter

@@ -375,20 +375,20 @@ const REAL_SOURCE = [
   extractFn('relativeResearchTimeLabel', 8296, 8303),
   extractFn('renderRecentlyResearchedSection', 8304, 8329),
   extractRaw('recentlyResearchedClickListener', 8330, 8348, "document.addEventListener('click', (event) => {"),
-  extractFn('escapeHtml', 11069, 11072),
-  extractRaw('modalFmtEsc', 11135, 11136, "const fmt=d=>"),
-  extractFn('request', 11157, 11174, {async: true}),
-  extractFn('accountRow', 11294, 11353),
-  extractFn('researchRunBanner', 11397, 11410),
-  extractFn('listCard', 11455, 11495),
-  extractFn('renderManager', 11501, 11515),
-  extractFn('isModalOpen', 11526, 11529),
-  extractFn('anyListHasActiveRun', 11538, 11540),
-  extractFn('stopResearchPoll', 11541, 11543),
-  extractFn('scheduleResearchPollIfNeeded', 11544, 11548),
-  extractFn('load', 11549, 11572, {async: true}),
-  extractRaw('openClose', 11574, 11594, "function open(){"),
-  extractFn('showInfoDialog', 12025, 12064)
+  extractFn('escapeHtml', 11084, 11087),
+  extractRaw('modalFmtEsc', 11150, 11151, "const fmt=d=>"),
+  extractFn('request', 11172, 11189, {async: true}),
+  extractFn('accountRow', 11309, 11368),
+  extractFn('researchRunBanner', 11412, 11425),
+  extractFn('listCard', 11470, 11510),
+  extractFn('renderManager', 11516, 11530),
+  extractFn('isModalOpen', 11541, 11544),
+  extractFn('anyListHasActiveRun', 11553, 11555),
+  extractFn('stopResearchPoll', 11556, 11558),
+  extractFn('scheduleResearchPollIfNeeded', 11559, 11563),
+  extractFn('load', 11564, 11587, {async: true}),
+  extractRaw('openClose', 11589, 11609, "function open(){"),
+  extractFn('showInfoDialog', 12040, 12079)
 ].join('\n\n');
 
 // Static regression proof for requirement 1, updated for
@@ -403,7 +403,7 @@ const REAL_SOURCE = [
 // (stopResearchPoll()), never the provider-facing research request.
 assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has real client-side cancellation (AbortController-backed Stop Research) -- see test-research-control-progress.js for its full behavioral contract');
 {
-  const closeSrc = extractRaw('closeOnly', 11595, 11603, "function close(){");
+  const closeSrc = extractRaw('closeOnly', 11610, 11618, "function close(){");
   assert(!/abort/i.test(closeSrc) && !/fetch\(/.test(closeSrc), '1) close()\'s own source contains no abort/cancel/fetch call');
   assert(/stopResearchPoll\(\)/.test(closeSrc), '1) close() stops only the modal\'s own UI polling loop (stopResearchPoll()), not the provider request');
 }
@@ -413,7 +413,7 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
 // identity-locked, and only falls back to alert() in the else branch (never
 // unconditionally) -- extracted directly from the real click handler.
 {
-  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 12112, 12141, "if(action==='delete-account'){");
+  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 12127, 12156, "if(action==='delete-account'){");
   assert(/if\(err\.identityLocked\)\{/.test(deleteAccountBranch), '6) the delete-account catch branch checks err.identityLocked');
   assert(/showInfoDialog\(/.test(deleteAccountBranch), '6) the identityLocked branch calls showInfoDialog(), the branded non-destructive dialog');
   assert(/\}else\{\s*alert\(err\.message\);\s*\}/.test(deleteAccountBranch), '6) alert() is reached ONLY in the else branch -- never unconditionally for this rejection');
@@ -435,7 +435,7 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
   // accountName) internally -- see the "durable" checks below for the
   // direct proof of that call site.
   assert(/!isResearchResultDismissed\(a\.uploadId, a\.name, a\.lastResearchedAt\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() filters using the composite (uploadId, name) identity, not account name alone');
-  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 11720, 11738, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
+  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 11735, 11753, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
   // Follow-up round: the toast's "View opportunities" action now calls the
   // shared openResearchedAccountOpportunities() production function (same
@@ -739,7 +739,7 @@ async function runClientTests(){
   // reopening can never itself claim another run or call a provider.
   // ---------------------------------------------------------------------
   {
-    const loadSrc = extractFn('load', 11549, 11572, { async: true });
+    const loadSrc = extractFn('load', 11564, 11587, { async: true });
     assert(/request\('GET'\)/.test(loadSrc), "5) load() calls request('GET')");
     assert(!/researchRunAction/.test(loadSrc) && !/claim/i.test(loadSrc), '5) load() never references a claim/researchRunAction -- reopening the modal cannot itself start or attach to a run beyond reading its state');
   }

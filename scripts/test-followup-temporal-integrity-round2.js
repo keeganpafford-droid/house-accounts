@@ -44,7 +44,7 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'funct
 const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
 const RR_BLOCK = extractBlock('recently-researched', 8269, 8329, 'function getRecentlyResearchedAccounts(){');
 const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 8073, 8168, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11069, 11072, 'function escapeHtml(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
 const FMT_MONEY_SRC = extractBlock('fmtMoney', 8403, 8405, 'function fmtMoney(');
 const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
 

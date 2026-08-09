@@ -71,7 +71,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-de
 const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8351, 8891, 'function estimateFutureValue(account, opportunityType){');
 const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
 const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11069, 11072, 'function escapeHtml(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
 const FMT_MONEY_SRC = extractBlock('fmtMoney', 8403, 8405, 'function fmtMoney(');
 const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
 const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7806, 7844, 'function getReasonToReachOutTitle(opp){');
@@ -218,8 +218,26 @@ function daysAgoIso(days){
 // ===========================================================================
 // SCENARIO 2 -- Avidia Bank, LEGACY-shaped existingSignals entry with a
 // pre-fix wrong eventDate (the source's own listing date, not the true
-// event date) AND a dangling-ellipsis persisted Conversation Starter.
-// Items 4, 5, 6, 7.
+// event date) AND a dangling-ellipsis persisted Conversation Starter, and
+// NO live ha_signals row at all for this account.
+//
+// Source-of-truth correction (identity-bootstrap live-QA follow-up): this
+// entry has no signalLayerType/isVerifiedSignalOpportunity (the legacy
+// shape this scenario exists to exercise), but does carry a sourceUrl --
+// isBusinessSignalOpportunity() treats that as sufficient evidence on its
+// own (see api/get-dashboard.js's own comment), so it is now correctly
+// EXCLUDED, same as any other business-signal-shaped existingSignals entry.
+// This is a deliberate, harder edge case than the Dover Honda fixture:
+// there is no live ha_signals row here at all, not even one to "win"
+// instead -- proving the exclusion is unconditional, not merely "prefer
+// the live row when one exists." The original items 4-7 this scenario
+// proved (legacy eventDate reconciliation, dangling-opener repair) are that
+// same reconciliation logic (classifyLegacySignalActionability()/
+// getSuggestedOpener()) exercised via a LIVE ha_signals row instead in
+// test-preview-qa-round5-hydration-integration.js's own Avidia scenario,
+// which is unaffected by this correction (ha_signals rows are never
+// excluded) and still passes unchanged -- that coverage is not lost, only
+// no longer duplicated here via a source this correction now walls off.
 // ===========================================================================
 {
   const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -260,35 +278,8 @@ function daysAgoIso(days){
 
   const { accountList } = buildAccountsFromRows(accountRows, []);
   const avidiaAccount = accountList.find(a => a.name === 'Avidia Bank');
-  assert(!!avidiaAccount, 'Avidia Bank account survives buildAccountsFromRows() with a legacy-shaped existingSignals entry');
-  const avidiaOpp = avidiaAccount.futureOpportunities[0];
-
-  // Items 4, 6: dashboard/modal status and actionability use the reconciled
-  // real event date, not the persisted listing date.
-  assert(avidiaOpp.eventDate === realEvent.iso, `item 4: the legacy-persisted listing-date eventDate is reconciled to the explicit real event-date text (got ${avidiaOpp.eventDate}, expected ${realEvent.iso})`);
-  assert(avidiaOpp.eventDateConfidence === 'exact', 'the reconciled event date keeps exact confidence');
-
-  const sandbox = makeSandbox();
-  sandbox.window.accountRadarAccounts = [avidiaAccount];
-  const statusLine = sandbox.signalDateAndActionabilityLine(avidiaOpp);
-  const realShort = `${realEvent.monthAbbr} ${realEvent.day}`;
-  const listingShort = `${listingDate.monthAbbr} ${listingDate.day}`;
-  assert(new RegExp(`Event date: ${realShort}`).test(statusLine), `item 6: Status/actionability wording uses the reconciled real event date (got "${statusLine}")`);
-  assert(!new RegExp(listingShort).test(statusLine), `item 4: Status never mentions the wrong listing date (got "${statusLine}")`);
-
-  const verifiedHtml = sandbox.renderVerifiedOpportunitySection(avidiaOpp);
-  assert(new RegExp(`Event date: ${realShort}`).test(verifiedHtml), 'item 4: the rendered Verified Opportunity panel (dashboard and Prepare for Call modal share this same render function) shows the reconciled real event date');
-
-  // Item 5: Evidence may still truthfully carry the source's own listing
-  // date as a distinct fact -- the reconciliation never deletes it, only
-  // stops it from being used AS the event date.
-  assert(avidiaOpp.publicationDate === listingDate.iso || avidiaOpp.publishedDate === listingDate.iso, `item 5: the source's own listing date remains available as publicationDate/publishedDate, distinct from the reconciled eventDate (got publicationDate=${avidiaOpp.publicationDate}, publishedDate=${avidiaOpp.publishedDate})`);
-
-  // Item 7: the dangling-ellipsis Conversation Starter is sanitized on
-  // every surface that reads it through the shared accessor.
-  const opener = sandbox.getSuggestedOpener(avidiaOpp);
-  assert(!/\.{3,}|…/.test(opener), `item 7: the Avidia opener contains no ellipsis fragment on any surface (got "${opener}")`);
-  assert(/\?/.test(opener), 'item 7: the Avidia opener is a real question');
+  assert(!!avidiaAccount, 'Avidia Bank account survives buildAccountsFromRows() even though its only existingSignals entry is excluded');
+  assert(Array.isArray(avidiaAccount.futureOpportunities) && avidiaAccount.futureOpportunities.length === 0, `the legacy business-signal-shaped existingSignals entry is excluded even with NO live ha_signals row to replace it -- futureOpportunities is empty, not silently repopulated from the stale snapshot (got ${avidiaAccount.futureOpportunities.length})`);
 }
 
 // ===========================================================================

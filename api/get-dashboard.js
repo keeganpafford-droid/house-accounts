@@ -361,11 +361,25 @@ function reconcileStoredOpportunity(opp){
 // Real-world, web-research-derived business-activity events only -- never
 // historical/repeat-pattern opportunities (order-history-derived, with no
 // canonical event identity to resolve). Mirrors dashboard/index.html's own
-// isBusinessOpportunity() partition exactly, so the client's later dedup
-// pass and this server-side canonicalization agree on which items are
-// "the same kind of thing" to begin with.
+// isBusinessOpportunity()/signalLayerLabel() partition exactly (including
+// its sourceUrl fallback, added here for the same reason -- see comment
+// below), so the client's later dedup pass and this server-side
+// canonicalization agree on which items are "the same kind of thing" to
+// begin with.
+//
+// Source-of-truth correction (identity-bootstrap live-QA follow-up): also
+// used, now, to EXCLUDE any raw_data.existingSignals entry classified as a
+// business-activity signal before it ever enters buildAccountsFromRows()'s
+// merge -- see that function's own comment. A stale entry written before
+// isVerifiedSignalOpportunity/signalLayerType existed on every opportunity
+// object would otherwise silently pass this check as "not business" and
+// keep resurrecting -- confirmed real gap already documented above this
+// function -- so a bare sourceUrl (any web-research signal's defining
+// trait; a historical/repeat-pattern opportunity never has one) is treated
+// as sufficient evidence on its own, exactly like the client's own
+// signalLayerLabel() already does.
 function isBusinessSignalOpportunity(o){
-  return Boolean(o) && (o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity === true);
+  return Boolean(o) && (o.signalLayerType === 'Business Activity Signal' || o.isVerifiedSignalOpportunity === true || Boolean(o.sourceUrl));
 }
 // Follow-up temporal-integrity round (Preview QA): the single canonicalization
 // boundary for one account's futureOpportunities, run ONCE here -- before the
@@ -418,8 +432,23 @@ function buildAccountsFromRows(accountRows, signalRows){
       dateStr: p.dateStr || p.date || p.orderDate || p.order_date || '',
       status: p.status || 'Historical'
     }));
+    // Source-of-truth correction: ha_signals is now the EXCLUSIVE source for
+    // canonical business/web-research opportunities -- a raw_data.existingSignals
+    // entry classified as one (isBusinessSignalOpportunity(), checked on the
+    // ORIGINAL entry, before reconcileStoredOpportunity() unconditionally
+    // forces isVerifiedSignalOpportunity:true on every survivor below, which
+    // would otherwise make this check meaningless) is dropped here,
+    // unconditionally -- never reconciled against a live ha_signals row by
+    // eventFingerprint or any other resemblance heuristic. A live row that
+    // has since been deleted/corrected must mean the opportunity is gone,
+    // not "find the old snapshot that looks like it." This is the one place
+    // a frozen pre-fix snapshot (e.g. a stale Instagram-sourced business
+    // signal written before this trust-correction era) is neutralized --
+    // physically still present in the database, but permanently inert from
+    // here on, with no migration required. repeatPatterns is untouched: it
+    // is order-history-derived and has no ha_signals representation at all.
     const storedOpps = [
-      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.map(reconcileStoredOpportunity) : []),
+      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.filter(o => !isBusinessSignalOpportunity(o)).map(reconcileStoredOpportunity) : []),
       ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
     ];
     byAccount.set(a.account_name, {

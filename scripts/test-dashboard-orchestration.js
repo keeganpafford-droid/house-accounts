@@ -154,14 +154,24 @@ const REAL_SOURCE = [
   // below.
   extractFn('researchAccountFromCard', 7965, 7993, {async: true}),
   extractFn('renderDetailedAccountViews', 10334, 10402),
-  extractFn('serializeAccountForStorage', 10412, 10478),
-  extractFn('performSaveCurrentUpload', 10488, 10588, {async: true}),
-  extractFn('saveCurrentUpload', 10597, 10601),
-  extractFn('toggleAccountMetadataEdit', 10609, 10615),
-  extractFn('saveAccountMetadataEdit', 10638, 10674, {async: true}),
-  extractRaw('delegatedClickListener', 10692, 10731, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 10744, 10760),
-  extractFn('escapeHtml', 11069, 11072)
+  // Source-of-truth correction: serializeAccountForStorage() below now
+  // calls isBusinessOpportunity() to keep canonical business signals out of
+  // existingSignals -- must be real, extracted source (not stubbed), plus
+  // its own dependency chain (signalLayerLabel() -> normalizeSignalLayerType()/
+  // isRecentAccountActivity()), since the exclusion is exactly what this
+  // round's fix depends on.
+  extractFn('isBusinessOpportunity', 3404, 3406),
+  extractFn('signalLayerLabel', 4719, 4724),
+  extractFn('isRecentAccountActivity', 4726, 4729),
+  extractFn('normalizeSignalLayerType', 9804, 9810),
+  extractFn('serializeAccountForStorage', 10412, 10493),
+  extractFn('performSaveCurrentUpload', 10503, 10603, {async: true}),
+  extractFn('saveCurrentUpload', 10612, 10616),
+  extractFn('toggleAccountMetadataEdit', 10624, 10630),
+  extractFn('saveAccountMetadataEdit', 10653, 10689, {async: true}),
+  extractRaw('delegatedClickListener', 10707, 10746, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 10759, 10775),
+  extractFn('escapeHtml', 11084, 11087)
 ].join('\n\n');
 
 // ===========================================================================

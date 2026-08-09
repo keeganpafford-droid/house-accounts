@@ -10462,7 +10462,22 @@ function serializeAccountForStorage(account, options = {}){
       activePipeline: account.activePipeline || [],
       recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date || p.dateStr).filter(Boolean).slice(0, 12),
       repeatPatterns: opportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').slice(0, 8),
-      existingSignals: opportunities.slice(0, 12),
+      // Source-of-truth correction: ha_signals is now the EXCLUSIVE canonical
+      // source for business/web-research opportunities (see
+      // api/get-dashboard.js's buildAccountsFromRows()/isBusinessSignalOpportunity()
+      // -- it now drops any existingSignals entry classified as one anyway,
+      // but the write boundary is corrected too so a save stops adding new
+      // ones for that read-side filter to have to keep dropping). Using the
+      // SAME isBusinessOpportunity() classifier this file already trusts
+      // elsewhere (calculateRevenueContext(), etc.) rather than inventing a
+      // second taxonomy. What survives this filter is Follow-Up Signal
+      // opportunities (order-history-derived, genuinely no ha_signals
+      // equivalent -- api/get-dashboard.js has no server-side path that
+      // regenerates them) plus Repeat / Pattern Signal ones (harmlessly
+      // redundant with the dedicated repeatPatterns field just above --
+      // unchanged, pre-existing overlap, not something this correction
+      // introduces or needs to resolve).
+      existingSignals: opportunities.filter(o => !isBusinessOpportunity(o)).slice(0, 12),
       records: (account.allRecords || []).slice(0, 100),
       contacts: account.contacts || [],
       contactTitle: account.contactTitle || '',

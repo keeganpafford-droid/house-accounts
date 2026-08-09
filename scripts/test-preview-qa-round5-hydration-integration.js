@@ -65,7 +65,7 @@ const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-de
 const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8351, 8891, 'function estimateFutureValue(account, opportunityType){');
 const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
 const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11069, 11072, 'function escapeHtml(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
 const FMT_MONEY_SRC = extractBlock('fmtMoney', 8403, 8405, 'function fmtMoney(');
 const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
 const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7806, 7844, 'function getReasonToReachOutTitle(opp){');
@@ -106,6 +106,21 @@ function makeSandbox(){
 // (empty sourceUrl, generic title, funding round matching by date), PLUS a
 // genuinely separate, much-earlier Series A round that must never merge into
 // the same cluster.
+//
+// Source-of-truth correction (identity-bootstrap live-QA follow-up): the
+// existingSignals entry above is a Business Activity Signal
+// (isBusinessSignalOpportunity()), so it is now EXCLUDED from the merge
+// entirely rather than reconciled against the live row -- ha_signals is the
+// exclusive source for canonical business/web opportunities now (founder-
+// approved architectural invariant; source exclusivity over fingerprint/
+// resemblance reconciliation). This is a deliberate behavior change from
+// this scenario's original intent (proving the two representations
+// deduped into one, keeping the existingSignals entry's more specific
+// title): the surviving opportunity is now the live ha_signals row alone,
+// under ITS OWN (more generic) title -- proving that is the whole point of
+// this round's fix, not a regression. The Series A dedup-boundary proof
+// (a genuinely separate event must never merge in) is unaffected and still
+// covered below.
 // ===========================================================================
 function daysAgoIso(days){
   return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
@@ -194,8 +209,17 @@ function daysAgoIso(days){
 
   assert(dispatchAccount.futureOpportunities.length === 2, `item 6: the genuinely separate Series A round remains a distinct opportunity from the June follow-on investment -- exactly 2 canonical opportunities survive full hydration (got ${dispatchAccount.futureOpportunities.length})`);
 
-  const followOn = dispatchAccount.futureOpportunities.find(o => /follow-on/i.test(o.signalTitle || '') || /follow-on/i.test(o.signalSummary || ''));
-  assert(!!followOn, 'the June follow-on investment opportunity is present after full hydration');
+  // The excluded existingSignals entry's own title ("Follow-on Investment
+  // from Santa Cruz Ventures") must never appear ANYWHERE in the hydrated
+  // account at all -- proof the source-of-truth exclusion actually happened,
+  // not merely that it was deduped away.
+  assert(
+    !dispatchAccount.futureOpportunities.some(o => /Follow-on Investment from Santa Cruz Ventures/.test(o.signalTitle || '')),
+    'the excluded existingSignals entry\'s own title never survives into futureOpportunities -- ha_signals is the exclusive source now'
+  );
+  const followOn = dispatchAccount.futureOpportunities.find(o => o.sourceUrl === 'https://santacruzworks.org/articles/dispatch-goods-follow-on');
+  assert(!!followOn, 'the live ha_signals row for the June follow-on investment is present after full hydration');
+  assert(followOn.signalTitle === 'Dispatch Goods Business Update', `the surviving opportunity carries the LIVE row's own title, not the excluded snapshot's more specific one (got "${followOn.signalTitle}")`);
   const seriesA = dispatchAccount.futureOpportunities.find(o => o !== followOn);
   assert(!!seriesA && seriesA.eventDate !== followOn.eventDate, 'item 6: the Series A opportunity keeps its own, different event date -- never overwritten by the other round');
 
@@ -209,15 +233,18 @@ function daysAgoIso(days){
 
   // Step 10: FINAL RENDERED HTML, not intermediate objects.
   const verifiedHtml = sandbox.renderVerifiedOpportunitySection(followOn);
-  assert(/Follow-on Investment from Santa Cruz Ventures/.test(verifiedHtml), 'item 4: the Verified Opportunity panel renders the real, specific signalTitle');
+  assert(/Dispatch Goods Business Update/.test(verifiedHtml), 'item 4: the Verified Opportunity panel renders the live row\'s real signalTitle');
+  assert(!/Follow-on Investment from Santa Cruz Ventures/.test(verifiedHtml), 'the excluded existingSignals snapshot\'s title never renders anywhere, including the Verified Opportunity panel');
   assert(!/Timely signal creates a reason to reconnect/.test(verifiedHtml), 'the Verified Opportunity panel never shows the generic fallback title when a real title exists');
 
   const additionalHtml = sandbox.renderAdditionalOpportunitiesForSalesPlay(followOn);
   assert(/Dispatch Goods Series A/.test(additionalHtml) || /Series A/.test(additionalHtml), 'item 4: Additional Opportunities renders the real, specific title for the genuinely distinct Series A round, not a generic fallback');
-  assert(!/Follow-on Investment from Santa Cruz Ventures/.test(additionalHtml), 'item 3 (rendered proof): the follow-on investment primary is never ALSO rendered inside Additional Opportunities');
+  assert(!/Dispatch Goods Business Update/.test(additionalHtml), 'item 3 (rendered proof): the follow-on investment primary is never ALSO rendered inside Additional Opportunities');
+  assert(!/Follow-on Investment from Santa Cruz Ventures/.test(additionalHtml), 'the excluded existingSignals snapshot\'s title never renders inside Additional Opportunities either');
 
   const cardHtml = sandbox.renderRepOpportunityCard(followOn);
-  assert(/Follow-on Investment from Santa Cruz Ventures/.test(cardHtml), 'item 4: the main dashboard grid card renders the real, specific signalTitle for the primary, not the classification-derived generic headline');
+  assert(/Dispatch Goods Business Update/.test(cardHtml), 'item 4: the main dashboard grid card renders the live row\'s real signalTitle for the primary, not the classification-derived generic headline');
+  assert(!/Follow-on Investment from Santa Cruz Ventures/.test(cardHtml), 'the excluded existingSignals snapshot\'s title never renders on the main dashboard card either');
 
   // Item 7: raw verified-signal count vs. canonical opportunity count stay
   // visibly distinct -- 2 raw evidence rows fed in (item 6's Series A row +

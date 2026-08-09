@@ -53,7 +53,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 29
 const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4712, 6194, 'function confidenceLabel(');
 const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
 const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11069, 11072, 'function escapeHtml(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
 const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
 
 function makeSandbox(){

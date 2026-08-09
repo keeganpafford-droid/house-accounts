@@ -170,7 +170,7 @@ assert(
   'fetchAndRenderAggregateDashboard() marks that a real aggregate has successfully loaded once it renders one -- the single source of truth processData() reads to decide whether an aggregate is already safely on screen'
 );
 
-const processDataSrc = extractLines('processData', 10839, 11067, 'function processData(records){');
+const processDataSrc = extractLines('processData', 10854, 11082, 'function processData(records){');
 assert(
   /if\(!aggregateDashboardEverLoaded\)\{\s*\/\/ Render the focused recommendation feed\s*renderWeeklyPrioritiesFeed\(futureOpportunities, accounts, \{/.test(processDataSrc),
   'required test 10: processData() only writes this single upload\'s own accounts/opportunities into the main #results/priorities feed when no aggregate dashboard has ever loaded yet this session -- it never overwrites an existing aggregate with a single-upload snapshot'
@@ -205,7 +205,7 @@ assert(
 // ---------------------------------------------------------------------------
 // Item 4: zero/one/multiple-account list-research completion workflow.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines('handleListResearchClick', 11757, 11869, 'async function handleListResearchClick(btn){');
+const handleListResearchClickSrc = extractLines('handleListResearchClick', 11772, 11884, 'async function handleListResearchClick(btn){');
 assert(
   /const opportunityAccounts = Array\.isArray\(result\.accountsWithOpportunities\) \? result\.accountsWithOpportunities : \[\];/.test(handleListResearchClickSrc),
   'handleListResearchClick() branches on the exact set of accounts from this run that produced an opportunity'

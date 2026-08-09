@@ -186,7 +186,7 @@ assert(
 // Manage Customer Accounts, Upload Another List) never hide/replace the
 // dashboard, and closing either modal restores it unchanged.
 // ---------------------------------------------------------------------------
-const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 11078, 11128, 'function wireUploadSuccessStateControls(){');
+const uploadSuccessWiringSrc = extractLines('upload-success-wiring', 11093, 11143, 'function wireUploadSuccessStateControls(){');
 assert(
   /viewPrioritiesBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*const header = document\.getElementById\('timeboxSectionHeader'\);\s*if\(header\) header\.scrollIntoView/.test(uploadSuccessWiringSrc),
   'View Priorities only dismisses the upload-success panel and scrolls to This Week\'s Priorities -- it never touches dashboard/account-card state'
@@ -199,7 +199,7 @@ assert(
   /anotherBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*openLightweightCustomerUpload\(\);/.test(uploadSuccessWiringSrc),
   'Upload Another List only dismisses the upload-success panel and opens the stable Add Customer Data modal -- no dashboard/account-card clearing call'
 );
-const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 11573, 11603, 'let accountManagerTriggerEl = null;');
+const accountManagerOpenCloseSrc = extractLines('account-manager-open-close', 11588, 11618, 'let accountManagerTriggerEl = null;');
 assert(
   /function open\(\)\{[\s\S]*document\.getElementById\('accountManagerModal'\)\.style\.display='block';/.test(accountManagerOpenCloseSrc) &&
   !/results'\)\.style\.display|customerDashboard'\)\.style\.display|exampleOpportunity/.test(accountManagerOpenCloseSrc),
@@ -262,7 +262,7 @@ assert(
 // Required tests 13, 14 & 15: account-level research row action labels and
 // cross-list scoping.
 // ---------------------------------------------------------------------------
-const accountRowSrc = extractLines('accountRow', 11294, 11353, 'function accountRow(list, a){');
+const accountRowSrc = extractLines('accountRow', 11309, 11368, 'function accountRow(list, a){');
 assert(
   /researched \? 'Research Again' : 'Research Account'/.test(accountRowSrc),
   'accountRow() labels never-researched accounts "Research Account" and previously-researched accounts "Research Again"'

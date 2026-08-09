@@ -88,13 +88,13 @@ const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3493
 // open()/load() each grew a few lines of their own (expand-state-aware
 // refresh, first-open loading state) -- extracted whole either way.
 const MANAGE_MODAL_SRC = [
-  extractLines('cachedLists', 11137, 11137, 'let cachedLists=[];'),
-  extractLines('request', 11157, 11174, 'async function request(method,body){'),
-  extractLines('renderManager', 11501, 11515, 'function renderManager(){'),
-  extractLines('research-poll-block', 11524, 11548, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
-  extractLines('load', 11549, 11572, 'async function load(){'),
-  extractLines('open-close', 11573, 11603, 'let accountManagerTriggerEl = null;'),
-  extractLines('closeAllMenus', 11622, 11628, 'function closeAllMenus(){')
+  extractLines('cachedLists', 11152, 11152, 'let cachedLists=[];'),
+  extractLines('request', 11172, 11189, 'async function request(method,body){'),
+  extractLines('renderManager', 11516, 11530, 'function renderManager(){'),
+  extractLines('research-poll-block', 11539, 11563, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
+  extractLines('load', 11564, 11587, 'async function load(){'),
+  extractLines('open-close', 11588, 11618, 'let accountManagerTriggerEl = null;'),
+  extractLines('closeAllMenus', 11637, 11643, 'function closeAllMenus(){')
 ].join('\n');
 
 // Real markup for the tour overlay, the Add Customer Data modal (minimal --

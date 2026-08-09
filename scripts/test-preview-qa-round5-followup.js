@@ -143,23 +143,50 @@ function makeSandbox(){
     title: 'Dispatch Goods Business Update',
     source_url: 'https://santacruzworks.org/articles/dispatch-goods-follow-on',
     source_domain: 'Santa Cruz Works', confidence: 78,
+    // published_at is what a real, fully-persisted ha_signals row always
+    // carries; added here for the source-of-truth correction below (a
+    // sparser fixture that relied on the excluded existingSignals entry to
+    // supply usable actionability/date data is no longer realistic once
+    // that entry is out of the merge -- see that correction's own comment).
+    published_at: '2026-06-23T00:00:00Z',
     payload: {
       isReal: true,
       whatChanged: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods, indicating confidence in their business model.',
       signalDetail: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods, indicating confidence in their business model.',
       eventDate: '2026-06-23', event_date: '2026-06-23',
+      // classifyLegacySignalActionability() (research-batch.js) is called
+      // with ONLY row.payload, never the outer row -- row.published_at above
+      // is invisible to it. A real persisted payload always carries its own
+      // publicationDate/publishedDate (makeSignal() sets both); without
+      // them here, this "ongoing"-category signal (a funding/investment
+      // description has no explicit event-like date language) falls into
+      // computeActionability()'s undated-ongoing branch and is marked
+      // ineligible -- unrelated to this round's fix, just newly exposed by
+      // it now that the excluded existingSignals entry no longer masks it.
+      publicationDate: '2026-06-23T00:00:00Z', publishedDate: '2026-06-23T00:00:00Z',
       actionabilityStatus: { status: 'recent-past', tense: 'past', isPriorityEligible: true },
       confidenceScore: 78
     },
     first_seen_at: '2026-06-24T00:00:00Z', last_seen_at: '2026-06-24T00:00:00Z'
   }];
 
+  // Source-of-truth correction (identity-bootstrap live-QA follow-up):
+  // ha_signals is now the EXCLUSIVE source for canonical business/web
+  // opportunities -- the existingSignals entry above (a Business Activity
+  // Signal, per isBusinessSignalOpportunity()) is now excluded from the
+  // merge entirely rather than reconciled/deduped against the live row, so
+  // this scenario no longer has "two representations of the same event" to
+  // collapse -- only the live ha_signals row ever contributes. This is a
+  // deliberate behavior change, not a regression: see the founder-approved
+  // architectural invariant this round implements (source exclusivity over
+  // fingerprint/resemblance reconciliation, in api/get-dashboard.js's
+  // buildAccountsFromRows()).
   const { accountList } = buildAccountsFromRows(accountRows, signalRows);
   const dispatch = accountList.find(a => a.name === 'Dispatch Goods');
   assert(!!dispatch, 'item 1: Dispatch Goods account is present in buildAccountsFromRows() output');
-  assert(dispatch.futureOpportunities.length === 1, `item 1: the persisted snapshot entry and the still-raw ha_signals row for the SAME real-world event collapse to exactly one futureOpportunities entry (got ${dispatch.futureOpportunities.length})`);
+  assert(dispatch.futureOpportunities.length === 1, `item 1: exactly one futureOpportunities entry survives -- the live ha_signals row (the persisted existingSignals snapshot is now excluded, not merged) (got ${dispatch.futureOpportunities.length})`);
   const primary = dispatch.futureOpportunities[0];
-  assert(primary.sourceUrl === 'https://santacruzworks.org/dispatch-goods-follow-on-investment' || primary.corroboratingCandidates >= 2, 'item 1: the surviving entry is the canonically-resolved event carrying evidence from both original representations');
+  assert(primary.sourceUrl === 'https://santacruzworks.org/articles/dispatch-goods-follow-on', `item 1: the surviving entry is the live ha_signals row, not the excluded existingSignals snapshot (got ${primary.sourceUrl})`);
 
   // items 2-3: feed the ALREADY-server-canonicalized array (exactly what a
   // real Preview payload would contain) into the real client-side cluster
