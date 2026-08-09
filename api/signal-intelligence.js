@@ -207,6 +207,32 @@ function socialHandleFromUrl(url = '') {
   } catch { return ''; }
 }
 
+// Founder QA follow-up: an INFERRED handle match (the profile's URL text
+// merely resembles the company name) is NOT independent identity evidence --
+// for an ambiguous name, a same-name-but-wrong-company profile ("@doverhonda"
+// belonging to a different real Dover Honda) satisfies this exactly as
+// easily as the real one does. This distinguishes it from a KNOWN official
+// profile: one House Accounts already holds on file for this specific
+// account (account.knownSocialProfiles -- no current caller populates this
+// yet, but the primitive exists so a future contact/account-enrichment field
+// can plug in without another grounding change). Only a known-profile match
+// counts as an independent corroborator; an inferred one is downgraded to a
+// same-tier signal as the bare name match itself -- real, but not sufficient
+// alone -- see verifyCandidateCompanyGrounding() below.
+function accountKnownSocialProfileMatch(account = {}, url = '') {
+  const known = Array.isArray(account.knownSocialProfiles) ? account.knownSocialProfiles : [];
+  if (!known.length || !url) return false;
+  const candidateNormalizedUrl = normalizeUrl(url);
+  const candidateHandle = normalizeCompany(socialHandleFromUrl(url)).replace(/\s+/g, '');
+  return known.some(entry => {
+    const raw = String(entry || '');
+    if (!raw) return false;
+    if (normalizeUrl(raw) === candidateNormalizedUrl) return true;
+    const knownHandle = normalizeCompany(socialHandleFromUrl(raw) || raw).replace(/\s+/g, '');
+    return Boolean(knownHandle) && knownHandle === candidateHandle;
+  });
+}
+
 function socialProfileMatchesCompany(companyName = '', url = '') {
   const handle = normalizeCompany(socialHandleFromUrl(url)).replace(/\s+/g, '');
   const company = normalizeCompany(companyName).replace(/\s+/g, '');
@@ -275,9 +301,13 @@ function hasLocationContradiction(candidate = {}, account = {}) {
 // not implement and this sprint does not build.
 //
 // Returns a tri-state identityConfidence rather than a boolean:
-//   'confirmed'   -- name match AND at least one independent corroborator
-//                    (official domain, a verified official social profile,
-//                    or an explicit account-location match in the source).
+//   'confirmed'   -- name match AND at least one INDEPENDENT corroborator:
+//                    official domain, the account's own location appearing
+//                    in the source, or a social profile House Accounts
+//                    already KNOWS is this account's own official profile
+//                    (account.knownSocialProfiles). A social handle that
+//                    merely resembles the company name is NOT this -- see
+//                    the founder QA note below.
 //   'unconfirmed' -- a plausible name match with no corroborator and no
 //                    contradiction. Preserved for research recall, but never
 //                    eligible to be presented as a Verified Opportunity or to
@@ -288,6 +318,20 @@ function hasLocationContradiction(candidate = {}, account = {}) {
 // `grounded` is kept (true whenever identityConfidence !== 'rejected') so
 // existing discard-on-false call sites keep working unchanged; new callers
 // should read identityConfidence directly.
+//
+// Founder QA follow-up (post-implementation pressure test): the FIRST
+// version of this function treated ANY social handle whose text resembled
+// the company name as sufficient independent corroboration on its own. That
+// is exactly the failure this whole correction exists to prevent -- for an
+// ambiguous name, an unrelated same-name business's own Instagram handle
+// ("@doverhonda" for the WRONG real-world Dover Honda) satisfies a text-
+// resemblance check exactly as easily as the right one does, so it is not
+// independent evidence, only a restatement of the same ambiguous name in a
+// different field. Only accountKnownSocialProfileMatch() (a handle/URL
+// House Accounts already holds on file specifically for this account) counts
+// toward `corroborated` now; an inferred-only handle match is recorded in
+// `reasons` for visibility but never on its own promotes a candidate past
+// 'unconfirmed', and never overrides a location contradiction either.
 function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const scopedCandidate = { title: candidate.title || candidate.headline || '', snippet: candidate.snippet || '', url: candidate.url || '' };
   const entity = entityMatch(scopedCandidate, account);
@@ -305,16 +349,18 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const domainCorroborated = entity.reasons.includes('verified company domain');
   const locationCorroborated = entity.reasons.includes('location match');
   const socialUrl = isSocialUrl(scopedCandidate.url);
-  const socialCorroborated = socialUrl && socialProfileMatchesCompany(companyName, scopedCandidate.url);
-  if (socialCorroborated) reasons.push('official social profile matched account name');
+  const knownSocialProfileMatch = socialUrl && accountKnownSocialProfileMatch(account, scopedCandidate.url);
+  const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && socialProfileMatchesCompany(companyName, scopedCandidate.url);
+  if (knownSocialProfileMatch) reasons.push('matches account\'s known official social profile');
+  else if (inferredSocialHandleMatch) reasons.push('social handle text resembles account name (not independently verified -- does not count as corroboration alone)');
   else if (socialUrl) reasons.push('social source has no verifiable profile corroboration');
 
   const contradicted = hasLocationContradiction(scopedCandidate, account);
-  if (contradicted && !domainCorroborated && !socialCorroborated) {
+  if (contradicted && !domainCorroborated && !knownSocialProfileMatch) {
     return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
   }
 
-  const corroborated = domainCorroborated || locationCorroborated || socialCorroborated;
+  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch;
   return { grounded: true, identityConfidence: corroborated ? 'confirmed' : 'unconfirmed', reasons };
 }
 
@@ -1491,7 +1537,7 @@ export {
   SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
-  isSocialUrl, socialProfileMatchesCompany, hasLocationContradiction, extractCityStatePairs,
+  isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, hasLocationContradiction, extractCityStatePairs,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,

@@ -225,14 +225,43 @@ assert(
   '16) ambiguous social candidate: name match, no location/domain, and a handle that is neither the account\'s own nor explicitly a different named business -> unconfirmed (same general rule as non-social sources, no social-specific carve-out needed)'
 );
 
-// 7) legitimate target-company social signal confirms when the profile itself corroborates
+// 7) Founder QA follow-up: an INFERRED social handle match (the handle text
+// merely resembles the company name, with no known-official-profile data on
+// file) must NOT confirm by itself -- this is the exact shape of the
+// original Dover Honda failure (an unrelated real "Dover Honda" could just
+// as easily post from "@dover_honda"). Same evidence as the old test 17,
+// different expected outcome: unconfirmed, not confirmed.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Dover Honda announces platinum sponsorship of the 2026 Dover Holiday Parade',
     snippet: 'We are proud to be the lead sponsor of this year\'s holiday parade!',
     url: 'https://www.instagram.com/dover_honda',
-  }, DOVER_HONDA).identityConfidence === 'confirmed',
-  '17) official-looking social profile handle (matches the account name) -> confirmed, proving social sources are not banned, just held to the same corroboration bar'
+  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
+  '17) inferred social handle match alone (text resembles account name, no known-official-profile data) -> unconfirmed, NOT confirmed -- a same-name-but-wrong-company profile would pass this exact check equally easily, so it is not independent evidence'
+);
+
+// 7b) the SAME evidence confirms once House Accounts actually knows this is
+// the account's own official profile (account.knownSocialProfiles) --
+// proving social sources are not banned, just held to a real independence
+// bar instead of a text-resemblance guess.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda announces platinum sponsorship of the 2026 Dover Holiday Parade',
+    snippet: 'We are proud to be the lead sponsor of this year\'s holiday parade!',
+    url: 'https://www.instagram.com/dover_honda',
+  }, { ...DOVER_HONDA, knownSocialProfiles: ['https://www.instagram.com/dover_honda'] }).identityConfidence === 'confirmed',
+  '17b) the identical candidate confirms once the account record carries a KNOWN official profile matching this exact handle/URL'
+);
+
+// 7c) an inferred handle match must not override a location contradiction
+// either -- only a KNOWN profile (or domain) counts as compensating evidence.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda expands to new Indianapolis, IN location',
+    snippet: 'We are proud to announce our new satellite location!',
+    url: 'https://www.instagram.com/dover_honda',
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '17c) inferred-only handle match does not compensate for an explicit location contradiction -- still rejected (contrast with test 14, where the account\'s own DOMAIN does compensate)'
 );
 
 // 8) distinctive-token fallback follows the SAME corroboration/contradiction rules
