@@ -289,6 +289,64 @@ function extractCityStatePairs(text = '') {
   return matches.map(m => ({ city: m[1], state: m[2].toUpperCase() }));
 }
 
+// Ephemeral identity-bootstrap: derives an account's city/state from real
+// fetched content (e.g. a trusted-domain page), but ONLY when the location
+// is genuinely ASSOCIATED with a specific mention of the account -- never
+// merely co-present on the same page. A dealer-group/network locations page
+// can list many companies and many addresses (the founder's own example:
+// "Dover Honda -- Dover, NH" / "Portsmouth Ford -- Portsmouth, NH" on
+// adjacent lines); finding the account name anywhere and then matching ANY
+// City/ST anywhere on the page would just as easily attach an unrelated
+// dealership's address to the target account.
+//
+// Deterministic association rule, chosen for the format real directory/
+// listing content actually takes rather than an arbitrary character window
+// (which would incorrectly span into an adjacent, unrelated line): split
+// the content into lines: a "line" is the smallest deterministic unit this
+// module can reason about without knowing Firecrawl's exact markdown/text
+// shape, and it is exactly what separates "Dover Honda -- Dover, NH" from
+// "Portsmouth Ford -- Portsmouth, NH" in the founder's own example. For
+// each line that names the account (bare, case-insensitive phrase match --
+// the same standard entityMatch()'s "company named in source" bare check
+// uses), extract City/ST pairs FROM THAT LINE ONLY:
+//   - exactly one distinct pair on the line -> this occurrence's location.
+//   - zero pairs -> this occurrence contributes nothing (not an error).
+//   - more than one distinct pair on the same line -> ambiguous; this
+//     occurrence contributes nothing rather than guessing which one.
+// Across every occurrence that contributed a location, they must all agree
+// on the exact same city+state -- any disagreement derives nothing at all,
+// per the explicit invariant that conflicting evidence must never be
+// resolved by picking one arbitrarily.
+function deriveAccountLocationFromContent(companyName = '', content = '') {
+  const company = clean(companyName).toLowerCase();
+  const rawContent = String(content || '');
+  if (!company || !rawContent.trim()) return null;
+  // Split on the RAW newlines first -- clean() collapses all whitespace
+  // (including \n) into single spaces, which would merge every dealership's
+  // entry onto one line before this function ever got a chance to isolate
+  // them, destroying the exact line-boundary signal this rule depends on.
+  // Each individual line is cleaned only after the split, never before it.
+  const lines = rawContent.split(/\r?\n+/).map(line => clean(line)).filter(Boolean);
+  // Single-blob fallback: content with no line breaks at all (some Firecrawl
+  // extractions collapse everything to one line) is treated as one line --
+  // the same-line ambiguity rule below still protects against picking an
+  // arbitrary wrong pair if more than one appears together with the name.
+  const segments = lines.length ? lines : [clean(rawContent)];
+  const candidateLocations = [];
+  for (const line of segments) {
+    if (!line.toLowerCase().includes(company)) continue;
+    const pairs = extractCityStatePairs(line);
+    const distinct = [...new Map(pairs.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
+    if (distinct.length === 1) candidateLocations.push(distinct[0]);
+    // distinct.length === 0 -> no contribution; > 1 -> ambiguous line, skip.
+  }
+  if (!candidateLocations.length) return null;
+  const uniqueLocations = [...new Map(candidateLocations.map(p => [`${normalizeForMatch(p.city)}|${p.state}`, p])).values()];
+  if (uniqueLocations.length !== 1) return null; // conflicting occurrences -- derive nothing
+  const { city, state } = uniqueLocations[0];
+  return `${city}, ${state}`;
+}
+
 // Positive-contradiction check -- NOT a "does it agree" check. Absence of a
 // location mention is never a contradiction (a source that says nothing
 // about location is exactly what "unconfirmed" exists for). This only fires
@@ -1626,6 +1684,7 @@ export {
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
+  deriveAccountLocationFromContent,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
   normalizeOpportunity, validateOpportunity, dedupeOpportunities, buildQueryPlan, materiallyRepeats,
   RECURRING_EVENT_TYPES, resolveEventType, extractEventEntities, extractEventDate,

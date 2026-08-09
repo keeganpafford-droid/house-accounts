@@ -18,6 +18,7 @@ import {
   findPublicationContextDate,
   resolveOpportunityEvents,
   verifyCandidateCompanyGrounding,
+  deriveAccountLocationFromContent,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
   normalizeCommercialIntelligence,
   findLikelyRelatedPurchase
@@ -462,6 +463,90 @@ function priorityOwnedPages(account = {}) {
     sourceType: 'owned-page',
     score: 18
   }));
+}
+
+// Ephemeral account-identity bootstrap (identity-bootstrap sprint). Only
+// ever used to strengthen grounding for THIS research run -- never
+// persisted to ha_accounts/ha_signals, never mutates safeAccounts itself.
+//
+// Ordering/non-circularity: this must be built ONLY from candidates that
+// are (a) real fetched content (never a synthetic priorityOwnedPages()
+// placeholder -- Firecrawl's own pageContent field is the only source
+// scanned) and (b) hosted on the account's own trusted domain (uploaded
+// website, or the contact-email-derived organizational domain). The
+// third-party candidate later evaluated USING this derived identity
+// (e.g. a dovernh.org signal) is never itself eligible to BE the identity
+// source -- it lives on a different domain entirely, and the caller
+// additionally excludes the exact sourceUrl this identity came from when
+// grounding candidates, so a page can never verify itself.
+//
+// Trust distinction preserved (see websiteProvenance on safeAccounts): an
+// uploaded website is a direct user assertion; a contact-derived domain
+// only proves an organizational relationship. Both are required to run
+// through the SAME strict extraction (deriveAccountLocationFromContent()'s
+// name-associated-location rule, never global co-presence) before
+// anything is derived -- a shared/group domain's page must explicitly tie
+// the account name to a location exactly like any other source would.
+function buildDerivedIdentity(account = {}, candidates = []) {
+  const domain = clean(account.website || '');
+  if (!domain) return null;
+  const eligible = (candidates || []).filter(c => {
+    if (!c || !c.pageContent) return false; // real fetched content only, never a synthetic placeholder
+    const candidateDomain = sourceDomain(c.url || '');
+    if (!candidateDomain) return false;
+    return candidateDomain === domain || candidateDomain.endsWith(`.${domain}`);
+  });
+  for (const candidate of eligible) {
+    const location = deriveAccountLocationFromContent(account.name, candidate.pageContent);
+    if (location) {
+      return {
+        domain,
+        domainProvenance: account.websiteProvenance || '',
+        location,
+        sourceUrl: candidate.url,
+        sourceType: 'official-domain-account-page',
+        confidence: 'confirmed'
+      };
+    }
+  }
+  return null;
+}
+
+// Firecrawl-slot prioritization (identity-bootstrap sprint): reorders the
+// pooled candidate list -- SAME array, same length, same total enrichment
+// ceiling -- so a candidate that already shows real, pre-fetch identity
+// specificity gets first claim on enrichCandidatesWithFirecrawl()'s
+// per-account slots, instead of competing on unrelated content-based
+// scoring alone. This spends the EXISTING budget differently; it adds no
+// query and no provider call.
+//
+// Conservative eligibility, exactly as scoped -- ALL THREE required:
+//   1. hosted on the account's own trusted domain (uploaded or contact-
+//      derived);
+//   2. its title/snippet ALREADY (pre-fetch) names the account by a bare
+//      phrase match -- a real search-result signal, not a guess;
+//   3. is not a synthetic owned-page placeholder -- automatically excluded
+//      by (2), since priorityOwnedPages()'s placeholders no longer contain
+//      the account name in their title/snippet at all (see the trust/
+//      provenance checkpoint fix). No separate check is needed for this,
+//      but the invariant is asserted directly in this function's own test.
+function prioritizeIdentityBootstrapCandidates(candidates = [], accountsByName = new Map()) {
+  const isEligible = (c) => {
+    if (!c || !c.url) return false;
+    const account = accountsByName.get(c.accountName);
+    const domain = clean(account?.website || '');
+    if (!domain) return false;
+    const candidateDomain = sourceDomain(c.url);
+    if (!candidateDomain || (candidateDomain !== domain && !candidateDomain.endsWith(`.${domain}`))) return false;
+    const companyName = clean(account?.name || '').toLowerCase();
+    if (!companyName) return false;
+    const text = `${c.title || ''} ${c.snippet || ''}`.toLowerCase();
+    return text.includes(companyName);
+  };
+  const prioritized = [];
+  const rest = [];
+  for (const c of candidates || []) (isEligible(c) ? prioritized : rest).push(c);
+  return [...prioritized, ...rest];
 }
 
 function parseSignalDate(dateText = '') {
@@ -2794,6 +2879,19 @@ export default async function handler(req, res) {
         // deliberately narrow (fallback-only, first-valid-contact, no
         // parent-vs-target-company disambiguation).
         website: clean(a.website || '') || (Array.isArray(a.contacts) ? (a.contacts.map(c => domainFromContactEmail(c?.email)).find(Boolean) || '') : ''),
+        // Identity-bootstrap provenance (in-memory only, never persisted --
+        // safeAccounts itself is a per-request shape, not a DB row): an
+        // uploaded website is the user directly asserting "this is my
+        // company's site." A contact-email-derived domain only proves an
+        // ORGANIZATIONAL relationship (the contact's employer's domain) --
+        // it does not by itself prove every page on that domain belongs
+        // specifically to this account (see domainFromContactEmail()'s own
+        // known-limitation comment: a shared dealer-group domain is the
+        // live, proven case). buildDerivedIdentity() below reads this to
+        // decide whether a page's content needs to explicitly re-establish
+        // account-specificity (always true for 'contact-derived') before it
+        // can be trusted as an identity source.
+        websiteProvenance: clean(a.website || '') ? 'uploaded' : ((Array.isArray(a.contacts) && a.contacts.some(c => domainFromContactEmail(c?.email))) ? 'contact-derived' : ''),
         categories: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
         contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 12) : [],
         oneOffResearch: a.oneOffResearch === true,
@@ -2943,11 +3041,27 @@ export default async function handler(req, res) {
       sourceCoverage = discovered.sourceCoverage;
       candidateSamples = discovered.samples.slice(0, 16);
       searchDiagnostics = discovered.diagnostics || [];
+      // Identity-bootstrap sprint: reorder (never filter/add/remove) so a
+      // candidate that already shows real, pre-fetch identity specificity on
+      // an account's own trusted domain gets first claim on
+      // enrichCandidatesWithFirecrawl()'s per-account slots -- SAME total
+      // call ceiling, just spent on the candidate most likely to yield
+      // account-specific official evidence instead of losing that slot to
+      // an unrelated higher-scoring result.
+      const safeAccountsByName = new Map(safeAccounts.map(a => [a.name, a]));
+      candidates = prioritizeIdentityBootstrapCandidates(candidates, safeAccountsByName);
       const enriched = await enrichCandidatesWithFirecrawl(candidates);
       candidates = enriched.candidates;
       firecrawlAttempted = enriched.attemptedCount || 0;
       firecrawlScraped = enriched.scrapedCount || 0;
       if (enriched.scrapedCount) sourceCoverage.firecrawl = enriched.scrapedCount;
+      // Identity-bootstrap sprint: build EPHEMERAL derived identity per
+      // account from the now-enriched candidate pool -- in-memory only for
+      // this request, never persisted (see buildDerivedIdentity()'s own
+      // header comment for the full ordering/non-circularity rationale).
+      const derivedIdentityByAccount = new Map(
+        safeAccounts.map(a => [a.name, buildDerivedIdentity(a, candidates.filter(c => c && c.accountName === a.name))])
+      );
       if (mode === 'prospect-intelligence' || mode === 'warm-account') {
         prospectDebugLog('Firecrawl enrichment complete', {
           // Benchmark diagnostic (scale/research-runtime-benchmark): see the
@@ -3194,7 +3308,23 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       if (!accountCandidate) {
         groundingReasons.push('source not matched to a discovered candidate');
       } else {
-        grounding = verifyCandidateCompanyGrounding(accountCandidate, account);
+        // Identity-bootstrap sprint: pass an AUGMENTED COPY of the account
+        // into the existing, unmodified grounding machinery -- never weaken
+        // verifyCandidateCompanyGrounding() itself, just give it the same
+        // location input an uploaded account would have had. Uploaded
+        // location always wins (account.location is checked first);
+        // derived identity only fills a genuine gap. Non-circularity: the
+        // exact candidate the identity was derived FROM is excluded from
+        // ever being evaluated WITH that same derived location -- it
+        // already grounds independently on its own merits (name + domain),
+        // so this guard costs nothing real while keeping the ordering
+        // honest. account/safeAccounts themselves are never mutated.
+        const derivedIdentity = derivedIdentityByAccount.get(account.name);
+        const candidateIsIdentitySource = Boolean(derivedIdentity?.sourceUrl) && accountCandidate.url === derivedIdentity.sourceUrl;
+        const groundingAccount = (!account.location && derivedIdentity?.location && !candidateIsIdentitySource)
+          ? { ...account, location: derivedIdentity.location }
+          : account;
+        grounding = verifyCandidateCompanyGrounding(accountCandidate, groundingAccount);
         // Trust correction (entity-disambiguation): 'rejected' is the only
         // hard-discard outcome now -- 'unconfirmed' still fails validation's
         // old boolean expectation (grounding.grounded) but is a real,
@@ -3462,5 +3592,6 @@ export {
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
   sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
-  queryTemplates, domainFromContactEmail, priorityOwnedPages
+  queryTemplates, domainFromContactEmail, priorityOwnedPages,
+  buildDerivedIdentity, prioritizeIdentityBootstrapCandidates
 };
