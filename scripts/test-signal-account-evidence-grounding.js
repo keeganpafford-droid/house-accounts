@@ -363,5 +363,84 @@ assert(
   '25) account with no location on file at all -> publisher-geography corroborator never fires, degrades to unconfirmed rather than confirmed or a crash'
 );
 
+// ---------------------------------------------------------------------------
+// Founder QA follow-up (ICL Autos live fixture): CORROBORATOR != ENTITY
+// MATCH. Domain/location/social corroboration must never manufacture a name
+// match that isn't there -- confirmed production risk: entityMatch()'s
+// domain bonus alone (38 points) used to clear the 'rejected' floor (30)
+// with zero name-text match required, so ANY page on account.website could
+// confirm even with no mention of the account at all. Harmless for an
+// exclusive single-company domain, but a real false-attribution vector once
+// a domain can be shared (e.g. derived from a contact's email at a
+// multi-brand dealer group like "iclautos.com").
+// ---------------------------------------------------------------------------
+const DOVER_HONDA_GROUP_DOMAIN = { name: 'Dover Honda', website: 'iclautos.com' };
+
+// 26) shared/group domain + zero target-name mention -> must NOT confirm.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'ICL Autos Group announces new careers page',
+    snippet: 'Explore career opportunities across the ICL Autos family of dealerships.',
+    url: 'https://iclautos.com/careers',
+  }, DOVER_HONDA_GROUP_DOMAIN).identityConfidence === 'rejected',
+  '26) shared group domain + zero mention of the target account name -> rejected, not confirmed (the exact live ICL Autos / Dover Honda risk)'
+);
+
+// 27) the SAME invariant holds even for an uploaded, EXCLUSIVE domain --
+// corroborator strength never substitutes for the name-match floor,
+// regardless of whether the domain came from upload or derivation.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Now hiring: service technicians',
+    snippet: 'Apply today for open positions.',
+    url: 'https://doverhonda.com/careers',
+  }, DOVER_HONDA_WITH_DOMAIN).identityConfidence === 'rejected',
+  '27) an uploaded, exclusive account.website ALSO cannot bypass the name-match floor via domain alone -- the invariant is unconditional, not just for shared domains'
+);
+
+// 28) domain + a TRUE target-name match -> corroboration remains fully
+// available (regression guard: the gate fix must not have broken the
+// legitimate confirmed path).
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda unveils new showroom',
+    snippet: 'The dealership announced a full renovation.',
+    url: 'https://doverhonda.com/news/showroom-renovation',
+  }, DOVER_HONDA_WITH_DOMAIN).identityConfidence === 'confirmed',
+  '28) domain + an actual name match still confirms -- the fix narrows the gate, it does not weaken the legitimate path'
+);
+
+// 29) distinctive-token fallback still works ONLY under its existing
+// intended rules (bounded generic-word exclusion, ANY-token match) -- the
+// gate rewrite must not have disturbed this separate mechanism.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Insurance brokerage completes acquisition',
+    snippet: 'Gallagher acquired Wilson M. Beck Insurance Services in a deal announced this week.',
+    url: 'https://example-blog.com/gallagher-shortname',
+  }, GALLAGHER).identityConfidence === 'unconfirmed',
+  '29) distinctive-token fallback ("Gallagher") still grounds (unconfirmed, no corroborator here) exactly as before -- the fallback mechanism itself is untouched by the gate rewrite'
+);
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Local bank expands mobile services',
+    snippet: 'The bank announced new mobile banking features for customers throughout the region.',
+    url: 'https://news.example.com/generic-bank-story',
+  }, AVIDIA).identityConfidence === 'rejected',
+  '29b) the bounded generic-word exclusion still prevents a bare "bank" mention from counting as the Avidia Bank fallback -- unaffected by the gate rewrite'
+);
+
+// 30) an account-specific ICL Autos page that actually names Dover Honda
+// passes the name floor -- proving the fix distinguishes "no evidence" from
+// "real evidence," not just tightening everything indiscriminately.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Dover Honda featured on ICL Autos locations page',
+    snippet: 'Dover Honda, located at 1 Dover Point Rd, Dover, NH 03820, is part of the ICL Autos family.',
+    url: 'https://iclautos.com/locations',
+  }, DOVER_HONDA_GROUP_DOMAIN).identityConfidence === 'confirmed',
+  '30) an account-specific group-domain page that explicitly names Dover Honda passes the name floor and confirms via domain corroboration -- proving the architecture is feasible once real evidence exists'
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

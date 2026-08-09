@@ -383,9 +383,28 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const companyName = account.name || account.companyName || '';
   const scopedText = `${scopedCandidate.title} ${scopedCandidate.snippet}`;
   const distinctiveFallbackMatched = hasDistinctiveNameFallbackMatch(companyName, scopedText);
-  const nameMatched = entity.level !== 'rejected' || distinctiveFallbackMatched;
+  // Trust correction (identity-bootstrap follow-up): CORROBORATOR != ENTITY
+  // MATCH. `entity.level !== 'rejected'` was previously used as a proxy for
+  // "the name was matched," but entityMatch()'s domain bonus alone (38
+  // points) already clears the 'rejected' floor (30) with ZERO name-text
+  // match required -- meaning a candidate hosted on account.website with no
+  // mention of the company anywhere could satisfy this gate purely from
+  // domain membership. Harmless as long as every account.website was an
+  // exclusive single-company domain (any page on your own exclusive site is
+  // trivially "about you"), but a proven live failure once a domain can be a
+  // shared/group domain (e.g. derived from a contact's email at a multi-
+  // brand dealer group): ANY page on that domain, even one with no mention
+  // of the target account, would confirm. Domain/location/social
+  // corroboration must STRENGTHEN an actual name match, never MANUFACTURE
+  // one -- so nameMatched is now derived directly from entityMatch()'s own
+  // name-text reasons (its bare full-phrase or normalized-form check),
+  // never from the blended score/level, which mixes in non-name evidence.
+  // This invariant holds even for an uploaded, exclusive account.website --
+  // corroborator strength never substitutes for the name-match floor.
+  const hasBareNameMatch = entity.reasons.includes('company named in source') || entity.reasons.includes('normalized company match');
+  const nameMatched = hasBareNameMatch || distinctiveFallbackMatched;
   const reasons = [...entity.reasons];
-  if (distinctiveFallbackMatched && entity.level === 'rejected') reasons.push('distinctive company name matched in source');
+  if (distinctiveFallbackMatched && !hasBareNameMatch) reasons.push('distinctive company name matched in source');
 
   if (!nameMatched) {
     return { grounded: false, identityConfidence: 'rejected', reasons };
@@ -903,8 +922,20 @@ function buildQueryPlan(company, context = {}) {
     ['partnership', `${q} (partnership OR "distribution agreement" OR collaboration OR contract)`],
     ['rebrand', `${q} (rebrand OR "brand identity" OR "new logo")`]
   ];
+  // Trust correction (identity-bootstrap follow-up): name-scoped, not a bare
+  // domain search. account.website is not guaranteed to be an exclusive
+  // single-company domain -- it may be a shared/group domain (e.g. derived
+  // from a contact's email at a multi-brand dealer group) -- so a bare
+  // `site:${domain}` search can surface pages about the domain owner's OTHER
+  // businesses just as easily as this account's. Quoting the company name
+  // targets exactly the identity-bootstrap evidence this query exists to
+  // find (a page on the domain that specifically names this account), and
+  // costs nothing extra: this replaces the prior query at the same array
+  // position, so query count/architecture is unchanged, and any result the
+  // bare-domain version would have found without naming the account would
+  // now be rejected by the name-match gate anyway (verifyCandidateCompanyGrounding()).
   if (domain) {
-    intents.unshift(['owned', `site:${domain} (news OR press OR events OR careers OR leadership OR awards OR expansion OR launch)`]);
+    intents.unshift(['owned', `${q} site:${domain} (news OR press OR events OR careers OR leadership OR awards OR expansion OR launch)`]);
   }
   if (contact) intents.push(['leadership', `"${contact}" ${q} (promoted OR appointed OR joined OR "new role")`]);
   const seen = new Set();

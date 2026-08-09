@@ -426,15 +426,33 @@ function queryTemplates(company, context = {}, mode = 'ranked') {
   ].filter(q => !q.startsWith('site: '));
 }
 
+// Trust correction (identity-bootstrap follow-up): title/snippet must NEVER
+// assert the account's name before any content has actually been fetched --
+// account.website may be a shared/group domain (e.g. derived from a
+// contact's email at a multi-brand dealer group, not necessarily this exact
+// account's own exclusive site), and entityMatch() scans title/snippet
+// directly. A synthetic placeholder that says "Dover Honda careers page"
+// would satisfy the bare-name-match check on its own say-so, before
+// Firecrawl ever confirms the fetched page has anything to do with the
+// account -- exactly the "corroborator manufactures the entity match"
+// failure mode the name-match gate fix (verifyCandidateCompanyGrounding())
+// exists to close. These placeholders describe only what House Accounts
+// itself did (probed this domain/path) and carry zero claim about what the
+// page contains -- accountName stays as ROUTING metadata (which account
+// this candidate belongs to, consumed by requireResolvedCandidate() and
+// similar), never as TEXT entityMatch() can read as evidence. Once
+// Firecrawl enrichment adds real pageContent, THAT content -- not this
+// placeholder -- is what establishes (or fails to establish) grounding.
 function priorityOwnedPages(account = {}) {
   const website = clean(account.website || '');
   if (!website) return [];
   let origin = '';
   try { origin = new URL(website.startsWith('http') ? website : `https://${website}`).origin; } catch { return []; }
   const paths = ['/news','/press','/press-releases','/blog','/careers','/jobs','/events','/community','/about','/sustainability','/locations'];
+  const domainLabel = sourceDomain(origin) || 'unverified source';
   return paths.map(path => ({
-    title: `${account.name} ${path.replace('/', '') || 'site'} page`,
-    snippet: `Owned website page targeted for buying moments: ${path}`,
+    title: `${domainLabel} ${path.replace('/', '') || 'site'} page (unverified, pending content fetch)`,
+    snippet: `Unverified candidate discovered by probing ${origin}${path} for this account's associated domain. No content has been fetched yet -- this placeholder is provenance only and cannot itself establish company identity.`,
     url: `${origin}${path}`,
     source: sourceDomain(origin),
     date: '',
@@ -3444,5 +3462,5 @@ export {
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
   sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
-  queryTemplates, domainFromContactEmail
+  queryTemplates, domainFromContactEmail, priorityOwnedPages
 };
