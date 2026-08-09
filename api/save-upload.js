@@ -119,29 +119,26 @@ async function fetchLegacySignalsForAccounts(userId, accountNames){
 // resolveEvents()'s own merge rule, and that looseness is scoped to the
 // bridge only -- resolveEvents()'s general merge gate is untouched.
 //
-// Rules (weak-to-strong temporal enrichment allowed, never masking a real
-// conflict):
-//   - both sides carry a distinctive anchor: identity iff they agree,
-//     regardless of URL/date -- a genuine anchor disagreement never bridges.
-//   - an exact-date vs. exact-date conflict never bridges.
-//   - a resolved-year vs. resolved-year conflict never bridges (this is
-//     also what catches a legacy bare year against a fresh exact date whose
-//     YEAR disagrees; a fresh exact date whose year AGREES with a legacy
-//     bare year is exactly the weak-to-strong enrichment case this bridge
-//     exists to allow).
-//   - past those checks, either a one-sided (or both-sided-agreeing) anchor
-//     is sufficient on its own ("strong event evidence"); with no anchor on
-//     either side, same normalized source URL is REQUIRED (never
-//     sufficient alone) plus the underlying evidence text materially
-//     agreeing (materiallyRepeats()) -- the same corroboration-strength bar
-//     resolveEvents() itself uses elsewhere.
+// Temporal conflict checks apply first and always veto, regardless of
+// anchor status -- an exact-date-vs-exact-date or year-vs-year disagreement
+// is fatal even when anchors would otherwise agree. Weak-to-strong
+// enrichment is allowed (a legacy bare year plus a fresh exact date in the
+// same year is compatible granularity, not itself proof of identity --
+// temporal agreement only ever PERMITS a bridge once event sameness is
+// established below, it never ESTABLISHES sameness by itself):
+//   A. both sides carry a distinctive anchor -- agreement is sufficient on
+//      its own; disagreement is fatal, full stop.
+//   B/C. zero or one side has an anchor -- anchor existence by itself
+//      (one-sided), bare year/date agreement by itself, and bare location
+//      agreement are each explicitly NOT sufficient. Requires the same
+//      normalized source URL AND the underlying evidence text materially
+//      agreeing (materiallyRepeats(), the same corroboration-strength bar
+//      resolveEvents() itself uses elsewhere). If the historical
+//      representation is too incomplete to establish this, the correct
+//      outcome is a tolerated duplicate, not a risked wrong-event refresh.
 function legacyBridgeCompatible(fresh, legacy){
   if(!fresh || !legacy) return false;
   if(fresh.companyNorm && legacy.companyNorm && fresh.companyNorm !== legacy.companyNorm) return false;
-
-  const freshAnchor = fresh.anchor ? String(fresh.anchor).trim().toLowerCase() : '';
-  const legacyAnchor = legacy.anchor ? String(legacy.anchor).trim().toLowerCase() : '';
-  if(freshAnchor && legacyAnchor) return freshAnchor === legacyAnchor;
 
   const freshExact = fresh.dateConfidence === 'exact' ? fresh.eventDate : null;
   const legacyExact = legacy.dateConfidence === 'exact' ? legacy.eventDate : null;
@@ -151,8 +148,14 @@ function legacyBridgeCompatible(fresh, legacy){
   const legacyYear = legacy.year || (legacyExact ? legacyExact.slice(0, 4) : null);
   if(freshYear && legacyYear && String(freshYear) !== String(legacyYear)) return false;
 
-  if(freshAnchor || legacyAnchor) return true; // one-sided anchor, no temporal conflict found above
+  const freshAnchor = fresh.anchor ? String(fresh.anchor).trim().toLowerCase() : '';
+  const legacyAnchor = legacy.anchor ? String(legacy.anchor).trim().toLowerCase() : '';
+  if(freshAnchor && legacyAnchor) return freshAnchor === legacyAnchor; // A
 
+  // B/C: zero or one anchor present. Neither a lone anchor, nor the
+  // temporal agreement already confirmed above, nor a bare location
+  // agreement, establishes identity by itself -- same URL plus materially
+  // agreeing evidence is the floor, regardless of anchor status.
   const sameUrl = fresh.normalizedUrl && legacy.normalizedUrl && fresh.normalizedUrl === legacy.normalizedUrl;
   if(!sameUrl) return false;
   return materiallyRepeats(fresh.evidenceText || '', legacy.evidenceText || '');

@@ -154,7 +154,7 @@ const DOVER_FRESH_SIGNAL = {
   );
   assert(
     legacyBridgeCompatible({ ...base, anchor: 'Dover Holiday Parade' }, { ...base, anchor: 'Dover Holiday Parade', normalizedUrl: 'different.example.com/b' }),
-    '4) agreeing anchors match even with different URLs (anchor is sufficient on its own for the bridge)'
+    '4) BOTH sides anchored and agreeing matches even with different URLs (case A -- distinct from one-sided anchor, which is never sufficient alone)'
   );
   assert(
     !legacyBridgeCompatible({ ...base, normalizedUrl: 'a.example.com/x' }, { ...base, normalizedUrl: 'b.example.com/y' }),
@@ -167,6 +167,30 @@ const DOVER_FRESH_SIGNAL = {
   assert(
     legacyBridgeCompatible(base, base),
     '4) same URL + materially agreeing evidence, no anchor either side, matches ("strong event evidence")'
+  );
+
+  // Correction round 2: one-sided anchor existence must NOT establish
+  // identity by itself, even with agreeing year and no conflict -- the
+  // founder's exact negative fixture (same company/year, fresh side
+  // anchored, legacy side anchorless, different URL/evidence).
+  assert(
+    !legacyBridgeCompatible(
+      { ...base, anchor: 'Dover Holiday Parade', year: '2026', normalizedUrl: 'fresh.example.com/parade', evidenceText: 'dover honda sponsors the 2026 dover holiday parade' },
+      { ...base, anchor: null, year: '2026', normalizedUrl: 'legacy.example.com/unrelated', evidenceText: 'dover honda opens a new detailing bay this spring' }
+    ),
+    '4) one-sided anchor existence alone never bridges, even with agreeing year and no explicit conflict -- different URL/evidence means tolerate the duplicate'
+  );
+
+  // Case B positive: exactly one side anchored, but the SAME URL and
+  // materially agreeing evidence supply the required corroboration -- the
+  // bridge is not categorically closed for a one-sided anchor, only for a
+  // one-sided anchor with nothing else behind it.
+  assert(
+    legacyBridgeCompatible(
+      { ...base, anchor: 'Dover Holiday Parade', year: '2026', normalizedUrl: 'shared.example.com/parade-story', evidenceText: 'dover honda signs on as dover holiday parade sponsor for 2026' },
+      { ...base, anchor: null, year: '2026', normalizedUrl: 'shared.example.com/parade-story', evidenceText: 'dover honda signs on as dover holiday parade sponsor for 2026' }
+    ),
+    '4) one-sided anchor PLUS same URL and materially agreeing evidence does bridge -- the anchor alone was the problem, not real corroboration'
   );
 }
 
