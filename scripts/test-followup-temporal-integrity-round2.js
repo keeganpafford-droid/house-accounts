@@ -38,15 +38,15 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3406, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4712, 6194, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
-const RR_BLOCK = extractBlock('recently-researched', 8269, 8329, 'function getRecentlyResearchedAccounts(){');
-const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 8073, 8168, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8403, 8405, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3417, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6219, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9854, 10424, 'function normalizeSignalLayerType(');
+const RR_BLOCK = extractBlock('recently-researched', 8308, 8374, 'function getRecentlyResearchedAccounts(){');
+const OPEN_RESEARCHED_BLOCK = extractBlock('openResearchedAccountOpportunities', 8107, 8207, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11175, 11178, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8448, 8450, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8453, 8455, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -386,15 +386,18 @@ function realBusinessOpp(overrides = {}){
   assert(entries.some(e => e.name === 'Weatherby Healthcare'), 'additional test 4: Weatherby Healthcare remains visible in Recently Researched -- historical research is never hidden merely because no opportunity is currently active');
 
   // required item 23 (regression): the empty-state modal wording uses
-  // correct singular/plural grammar and distinguishes verified-signal count
-  // from active-opportunity count honestly.
+  // correct singular/plural grammar and distinguishes found-signal count
+  // from active-opportunity count honestly. Verified-terminology sprint:
+  // "verified" dropped from this wording entirely -- dedupedCluster mixes
+  // confirmed, unconfirmed, and legacy signals, and this message is
+  // fundamentally about ACTIVENESS eligibility, not identity confirmation.
   assert(
-    /Research found \$\{researchedSignalCount\} verified signal\$\{researchedSignalCount === 1 \? '' : 's'\}/.test(OPEN_RESEARCHED_BLOCK),
+    /Research found \$\{researchedSignalCount\} signal\$\{researchedSignalCount === 1 \? '' : 's'\}/.test(OPEN_RESEARCHED_BLOCK),
     'additional test 5: the "No active opportunity to show" empty-state body uses the real researched-signal count with correct singular/plural grammar, honestly distinct from the zero eligible opportunities'
   );
   assert(
     /none \$\{researchedSignalCount === 1 \? 'is' : 'are'\} currently active/.test(OPEN_RESEARCHED_BLOCK),
-    'additional test 5: the empty-state sentence uses correct is/are agreement for the verified-signal count'
+    'additional test 5: the empty-state sentence uses correct is/are agreement for the found-signal count'
   );
 }
 

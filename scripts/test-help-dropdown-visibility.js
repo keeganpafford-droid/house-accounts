@@ -71,10 +71,10 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // wireGuidedTourControls, guidedTourKeydownHandler, and every state/DOM
 // helper they depend on. Same block scripts/test-guided-tour-and-import-experience.js
 // already extracts and keeps in sync.
-const GUIDED_TOUR_SRC = extractLines('guided-tour', 3899, 4289, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';");
+const GUIDED_TOUR_SRC = extractLines('guided-tour', 3910, 4300, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';");
 
 // The real, unmodified Add Customer Data modal open/close implementation.
-const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3493, 3556, 'let addCustomerDataModalTriggerEl = null;');
+const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3504, 3567, 'let addCustomerDataModalTriggerEl = null;');
 
 // The real, unmodified Manage Customer Accounts modal subset needed for
 // open()/close() to run -- see the file-level scope note above for why
@@ -88,13 +88,13 @@ const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3493
 // open()/load() each grew a few lines of their own (expand-state-aware
 // refresh, first-open loading state) -- extracted whole either way.
 const MANAGE_MODAL_SRC = [
-  extractLines('cachedLists', 11152, 11152, 'let cachedLists=[];'),
-  extractLines('request', 11172, 11189, 'async function request(method,body){'),
-  extractLines('renderManager', 11516, 11530, 'function renderManager(){'),
-  extractLines('research-poll-block', 11539, 11563, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
-  extractLines('load', 11564, 11587, 'async function load(){'),
-  extractLines('open-close', 11588, 11618, 'let accountManagerTriggerEl = null;'),
-  extractLines('closeAllMenus', 11637, 11643, 'function closeAllMenus(){')
+  extractLines('cachedLists', 11243, 11243, 'let cachedLists=[];'),
+  extractLines('request', 11263, 11280, 'async function request(method,body){'),
+  extractLines('renderManager', 11607, 11621, 'function renderManager(){'),
+  extractLines('research-poll-block', 11630, 11654, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
+  extractLines('load', 11655, 11678, 'async function load(){'),
+  extractLines('open-close', 11679, 11709, 'let accountManagerTriggerEl = null;'),
+  extractLines('closeAllMenus', 11728, 11734, 'function closeAllMenus(){')
 ].join('\n');
 
 // Real markup for the tour overlay, the Add Customer Data modal (minimal --

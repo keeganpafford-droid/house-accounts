@@ -49,12 +49,12 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // priorityEligibleOpportunities(), sortDailyReasons(), calculateOpportunityScore().
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3406, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4712, 6194, 'function confidenceLabel(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8488, 9801, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9804, 10332, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11084, 11087, 'function escapeHtml(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8408, 8410, 'function clampScore(');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3417, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6219, 'function confidenceLabel(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9854, 10424, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11175, 11178, 'function escapeHtml(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8453, 8455, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -184,9 +184,20 @@ assert(
   !unconfirmedHtml.includes('Verified Opportunity') && unconfirmedHtml.includes('Unconfirmed Research'),
   '12b) an unconfirmed opportunity never renders "Verified Opportunity" -- it renders an explicit "Unconfirmed Research" label instead'
 );
+// Verified-terminology sprint: this assertion is DELIBERATELY inverted from
+// its prior form. The old heading logic defaulted to "Verified Opportunity"
+// for anything that wasn't explicitly 'unconfirmed'/'rejected', which
+// silently included a legacy row with identityConfidence missing entirely
+// -- confirmed production defect (Dover Honda's "Major Rebrand for 2028").
+// Eligibility (11c above, hasConfirmedOrLegacyIdentity()) is a SEPARATE
+// question and remains unchanged: a legacy row can still win a priority
+// slot. Whether it may be LABELED "verified" is this different question,
+// and per the product invariant only an explicit 'confirmed' grade
+// qualifies -- isExplicitlyVerifiedIdentity() is a positive, 'confirmed'-
+// only check, so a legacy row now correctly reads "Unconfirmed Research."
 assert(
-  legacyHtml.includes('Verified Opportunity'),
-  '12c) a legacy opportunity (no identityConfidence field) keeps rendering "Verified Opportunity" -- unchanged prior behavior'
+  !legacyHtml.includes('Verified Opportunity') && legacyHtml.includes('Unconfirmed Research'),
+  '12c) a legacy opportunity (no identityConfidence field) never renders "Verified Opportunity" -- it renders "Unconfirmed Research," since it was never actually run through the tri-state grounding verifier'
 );
 
 // ---------------------------------------------------------------------------

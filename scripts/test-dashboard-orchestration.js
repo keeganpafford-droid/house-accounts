@@ -119,59 +119,59 @@ const REAL_SOURCE = [
   extractFn('heartbeatCurrentResearchRun', 2657, 2674, {async: true}),
   extractFn('reportResearchRunOutcome', 2688, 2713, {async: true}),
   extractFn('normalizeSavedAccount', 2849, 2911),
-  extractFn('accountCardFor', 4682, 4688),
-  extractFn('accountSignalsPanel', 4689, 4692),
+  extractFn('accountCardFor', 4693, 4699),
+  extractFn('accountSignalsPanel', 4700, 4703),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6501, 6536, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 6365, 6387, {async: true}),
-  extractFn('persistScopedResearchResult', 6395, 6440, {async: true}),
-  extractFn('researchAccountFromManageModal', 6538, 6701, {async: true}),
-  extractFn('researchAccountByName', 6979, 7140, {async: true}),
-  extractFn('getAccountsForResearch', 7144, 7157),
-  extractFn('batchPayloadForAccounts', 7159, 7215),
-  extractFn('applyBusinessSignalAccountBoost', 7218, 7226),
-  extractFn('researchAccountsBatch', 7228, 7348, {async: true}),
-  extractFn('signalTopicKeyClient', 7350, 7358),
-  extractFn('dedupeSignalsClient', 7360, 7373),
-  extractFn('researchTopAccounts', 7390, 7594, {async: true}),
-  extractFn('refreshOpportunityViews', 7878, 7898),
+  extractFn('safeParseResearchResponse', 6532, 6567, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 6396, 6418, {async: true}),
+  extractFn('persistScopedResearchResult', 6426, 6471, {async: true}),
+  extractFn('researchAccountFromManageModal', 6569, 6732, {async: true}),
+  extractFn('researchAccountByName', 7010, 7171, {async: true}),
+  extractFn('getAccountsForResearch', 7175, 7188),
+  extractFn('batchPayloadForAccounts', 7190, 7246),
+  extractFn('applyBusinessSignalAccountBoost', 7249, 7257),
+  extractFn('researchAccountsBatch', 7259, 7379, {async: true}),
+  extractFn('signalTopicKeyClient', 7381, 7389),
+  extractFn('dedupeSignalsClient', 7391, 7404),
+  extractFn('researchTopAccounts', 7421, 7625, {async: true}),
+  extractFn('refreshOpportunityViews', 7912, 7932),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 7934, 7944),
+  extractFn('applyModalResearchResultToDashboard', 7968, 7978),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 7965, 7993, {async: true}),
-  extractFn('renderDetailedAccountViews', 10334, 10402),
+  extractFn('researchAccountFromCard', 7999, 8027, {async: true}),
+  extractFn('renderDetailedAccountViews', 10425, 10493),
   // Source-of-truth correction: serializeAccountForStorage() below now
   // calls isBusinessOpportunity() to keep canonical business signals out of
   // existingSignals -- must be real, extracted source (not stubbed), plus
   // its own dependency chain (signalLayerLabel() -> normalizeSignalLayerType()/
   // isRecentAccountActivity()), since the exclusion is exactly what this
   // round's fix depends on.
-  extractFn('isBusinessOpportunity', 3404, 3406),
-  extractFn('signalLayerLabel', 4719, 4724),
-  extractFn('isRecentAccountActivity', 4726, 4729),
-  extractFn('normalizeSignalLayerType', 9804, 9810),
-  extractFn('serializeAccountForStorage', 10412, 10493),
-  extractFn('performSaveCurrentUpload', 10503, 10603, {async: true}),
-  extractFn('saveCurrentUpload', 10612, 10616),
-  extractFn('toggleAccountMetadataEdit', 10624, 10630),
-  extractFn('saveAccountMetadataEdit', 10653, 10689, {async: true}),
-  extractRaw('delegatedClickListener', 10707, 10746, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 10759, 10775),
-  extractFn('escapeHtml', 11084, 11087)
+  extractFn('isBusinessOpportunity', 3415, 3417),
+  extractFn('signalLayerLabel', 4730, 4735),
+  extractFn('isRecentAccountActivity', 4737, 4740),
+  extractFn('normalizeSignalLayerType', 9854, 9860),
+  extractFn('serializeAccountForStorage', 10503, 10584),
+  extractFn('performSaveCurrentUpload', 10594, 10694, {async: true}),
+  extractFn('saveCurrentUpload', 10703, 10707),
+  extractFn('toggleAccountMetadataEdit', 10715, 10721),
+  extractFn('saveAccountMetadataEdit', 10744, 10780, {async: true}),
+  extractRaw('delegatedClickListener', 10798, 10837, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 10850, 10866),
+  extractFn('escapeHtml', 11175, 11178)
 ].join('\n\n');
 
 // ===========================================================================
@@ -203,7 +203,9 @@ function assignOpportunityScore(opp, account){ return opp; }
 function getOpportunityScore(opp){ return 0; }
 function sortDailyReasons(opps){ return opps; }
 function dedupeOpportunities(items){ return items; }
-function dedupeVerifiedSignals(signals){ return signals || []; }
+function dedupeFoundSignals(signals){ return signals || []; }
+function isExplicitlyVerifiedIdentity(opp){ return opp?.identityConfidence === 'confirmed'; }
+function foundAndVerifiedSuffix(signals){ const n = (signals || []).filter(isExplicitlyVerifiedIdentity).length; return n ? (' - ' + n + ' verified') : ''; }
 function recommendationBadgeMeta(o){ return {label:'Reach Out'}; }
 function buyingConversationLabel(o){ return ''; }
 function recommendationOneLine(o){ return ''; }

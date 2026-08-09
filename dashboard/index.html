@@ -2891,7 +2891,7 @@ function normalizeSavedAccount(account){
   const rawSignals = Array.isArray(raw.existingSignals) ? raw.existingSignals : [];
   const rawRepeats = Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [];
   a.futureOpportunities = dedupeOpportunities([...storedOpps, ...rawSignals, ...rawRepeats]);
-  a.signals = dedupeVerifiedSignals(Array.isArray(a.signals) ? a.signals : []);
+  a.signals = dedupeFoundSignals(Array.isArray(a.signals) ? a.signals : []);
   a.futureOpportunities.forEach(opp => {
     opp.account = opp.account || a.name || a.accountName || 'Saved account';
     // ROUND 13 fix: opportunities loaded from persisted storage (existing
@@ -3380,18 +3380,29 @@ function dedupeOpportunities(items){
   return [...mergedBusinessSignals, ...Array.from(map.values())];
 }
 
-function verifiedSignalDedupeKey(signal){
+function foundSignalDedupeKey(signal){
   const type = String(signal?.signalType || signal?.type || '').toLowerCase().trim();
   const title = String(signal?.signalDetail || signal?.title || signal?.signalTitle || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,100);
   const source = sourceDomain(signal?.sourceUrl || '') || String(signal?.cleanSourceName || '').toLowerCase().trim();
   return `${type}|${title}|${source}`;
 }
 
-function dedupeVerifiedSignals(signals){
+// Verified-terminology sprint: renamed from dedupeVerifiedSignals() --
+// despite the old name, this only ever filtered on isReal !== false (a
+// legitimate/real discovered signal, as opposed to a synthetic fallback),
+// never on identityConfidence. Calling its output "verified" is exactly the
+// terminology bug this sprint corrects: a signal can survive this dedup and
+// still be 'unconfirmed', 'rejected' (filtered upstream before it ever
+// reaches here in practice), or a legacy row with no identityConfidence at
+// all. Behavior is completely unchanged -- this is a rename only. Callers
+// that need an actual verified COUNT filter this function's own output
+// through isExplicitlyVerifiedIdentity() separately, rather than this
+// function silently deciding that for them.
+function dedupeFoundSignals(signals){
   const map = new Map();
   for(const signal of (signals || [])){
     if(!signal || signal.isReal === false) continue;
-    const key = verifiedSignalDedupeKey(signal);
+    const key = foundSignalDedupeKey(signal);
     if(!key.trim()) continue;
     const existing = map.get(key);
     const score = Number(signal.confidenceScore || signal.confidence || 0);
@@ -5864,14 +5875,22 @@ function renderVerifiedOpportunitySection(opp){
   const source = opp.sourceUrl
     ? `<a target="_blank" rel="noopener" href="${escapeHtml(opp.sourceUrl)}">${escapeHtml(opp.cleanSourceName || sourceDomain(opp.sourceUrl) || 'View source')}</a>`
     : escapeHtml(evidenceSourceLabel(opp) || 'Account history');
-  // Trust correction: the "Verified Opportunity" label must never be able to
-  // lie, even defensively. isPriorityEligibleOpportunity() already keeps an
-  // unconfirmed/rejected signal out of Prepare for Call entirely, so this
-  // branch should not be reachable in practice -- but the label itself must
-  // stay honest independent of that upstream gate, in case some other caller
-  // ever reuses this renderer.
-  const isUnconfirmed = opp?.identityConfidence === 'unconfirmed' || opp?.identityConfidence === 'rejected';
-  const heading = isUnconfirmed ? 'Unconfirmed Research' : 'Verified Opportunity';
+  // Verified-terminology sprint: the "Verified Opportunity" label must never
+  // be able to lie, even defensively -- and must never default to true.
+  // isPriorityEligibleOpportunity() already keeps an unconfirmed/rejected
+  // signal out of Prepare for Call entirely, so this should not be
+  // reachable for those states in practice -- but the label itself must
+  // stay honest independent of that upstream gate, in case some other
+  // caller ever reuses this renderer. Confirmed production defect this
+  // fixes: the previous negative check (isUnconfirmed ? ... : 'Verified
+  // Opportunity') defaulted to "Verified" for anything that WASN'T
+  // explicitly 'unconfirmed'/'rejected' -- which silently included a legacy
+  // row with identityConfidence missing entirely (the Dover Honda "Major
+  // Rebrand for 2028" case). isExplicitlyVerifiedIdentity() is a positive,
+  // 'confirmed'-only check -- a legacy row now correctly reads "Unconfirmed
+  // Research" here, matching the product invariant that ONLY an explicit
+  // 'confirmed' grade may be described as verified.
+  const heading = isExplicitlyVerifiedIdentity(opp) ? 'Verified Opportunity' : 'Unconfirmed Research';
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">${heading}</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
     <div class="sales-play-detail-item"><strong>Status</strong>${escapeHtml(dateLine)}</div>
@@ -6158,7 +6177,7 @@ function renderSingleVerifiedSignal(signal){
   `);
   return `
     <div class="verified-signal-simple">
-      <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Verified business signal')}</div>
+      <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Business signal')}</div>
       <div class="verified-signal-meta">
         ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
       </div>
@@ -6170,12 +6189,18 @@ function renderSingleVerifiedSignal(signal){
 }
 
 function renderVerifiedSignals(signals){
-  const verified = dedupeVerifiedSignals((signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl));
-  if(!verified.length){
-    return `<div class="no-signals-message">No verified external signals found.</div>`;
+  // Verified-terminology sprint: `found` (not `verified`) -- this renders
+  // EVERY real discovered signal (confirmed, unconfirmed, and legacy alike);
+  // renderSingleVerifiedSignal() already labels each one honestly per its
+  // own identityConfidence via identityUnconfirmed above. Calling the whole
+  // list "verified" here would restate the exact bug this sprint fixes one
+  // level up.
+  const found = dedupeFoundSignals((signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl));
+  if(!found.length){
+    return `<div class="no-signals-message">No external signals found.</div>`;
   }
-  const primary = verified.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) >= 55);
-  const lower = verified.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) < 55);
+  const primary = found.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) >= 55);
+  const lower = found.filter(signal => Number(signal.confidenceScore || signal.confidence || 0) < 55);
   const primaryHtml = primary.map(renderSingleVerifiedSignal).join('');
   const lowerHtml = lower.length ? `
     <details class="low-confidence-signals">
@@ -6242,7 +6267,13 @@ function addSignalDerivedOpportunities(account, signals){
     // fallback. See formatSignalAge()'s own header comment.
     opp.signalDate = signal.publishedDate || signal.eventDate || signal.event_date || signal.publicationDate || '';
     opp.sourceUrl = signal.sourceUrl;
-    opp.whyNow = signal.whyNow || `Verified signal found: ${signal.signalDetail || signal.title || type}`;
+    // Verified-terminology sprint: this fallback fires for EVERY discovered
+    // business signal regardless of identityConfidence (gated on
+    // isVerifiedSignalOpportunity/sourceUrl -- "is this a web-research
+    // signal," a content-type check, never a trust check) -- "Verified"
+    // here would describe an unconfirmed or legacy signal exactly as
+    // confidently as a confirmed one.
+    opp.whyNow = signal.whyNow || `Signal found: ${signal.signalDetail || signal.title || type}`;
     opp.valueSource = hasHistory ? 'Historical Orders + Verified Signal' : (signal.valueSource || 'Signal Only');
     opp.estimatedValueRange = signal.estimatedValueRange || null;
     opp.opportunityCategory = signal.opportunityCategory || (Array.isArray(signal.likelyConversations) ? signal.likelyConversations[0] : '') || 'Signal-Driven Conversation';
@@ -7788,9 +7819,12 @@ onResearchTrackerChange(() => renderDashboardResearchProgress());
 function getWhyNowText(opp){
   if(!opp) return 'Review this account for a focused next step.';
   if(opp.whyNow) return opp.whyNow;
+  // Verified-terminology sprint: gated on isVerifiedSignalOpportunity/
+  // sourceUrl -- "is this a web-research business signal" (content type),
+  // never identityConfidence -- so this fallback must never say "Verified."
   if(opp.isVerifiedSignalOpportunity || opp.signalTitle || opp.sourceUrl){
-    const title = opp.signalTitle || 'Verified external signal';
-    return `Verified signal: ${title}`;
+    const title = opp.signalTitle || 'external signal';
+    return `Signal: ${title}`;
   }
   const rel = Number(opp.relationshipStrength || 0);
   const close = Number(opp.closeProbability || 0);
@@ -7813,7 +7847,7 @@ function getReasonToReachOutTitle(opp){
     if(type.includes('award') || type.includes('recognition')) return 'Recognition creates a timely reason to check in';
     if(type.includes('leadership')) return 'Leadership change creates a timely reason to check in';
     if(type.includes('launch')) return 'Launch activity creates a timely reason to check in';
-    return 'Verified signal creates a reason to reach out';
+    return 'Business signal creates a reason to reach out';
   }
   return `Past buying suggests a ${category.toLowerCase()} conversation`;
 }
@@ -7982,8 +8016,8 @@ async function researchAccountFromCard(accountName, uploadId){
   if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
   const signalCount = Array.isArray(fresh.signals) ? fresh.signals.length : 0;
   const toastMessage = signalCount
-    ? `${signalCount} verified signal${signalCount === 1 ? '' : 's'} found for ${accountName}.`
-    : `Research complete for ${accountName} — no verified signals found.`;
+    ? `${signalCount} signal${signalCount === 1 ? '' : 's'} found for ${accountName}${foundAndVerifiedSuffix(fresh.signals)}.`
+    : `Research complete for ${accountName} — no signals found.`;
   if(typeof showToast === 'function'){
     showToast(toastMessage, signalCount ? {
       label: 'View opportunities',
@@ -8141,14 +8175,19 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   const opportunities = priorityEligibleOpportunities(dedupedCluster);
   if(!opportunities.length){
     if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
-      // Preview QA item 5: keep "verified signal(s) found" and "active
-      // opportunity" honestly distinct -- researchedSignalCount reflects
-      // everything actually verified/persisted for this account (dedupedCluster,
-      // before the eligibility filter above removes the non-current ones),
-      // never conflated with the zero that remain eligible as a live play.
+      // Preview QA item 5 / verified-terminology sprint: keep "signal(s)
+      // found" and "active opportunity" honestly distinct -- researchedSignalCount
+      // reflects everything actually discovered/persisted for this account
+      // (dedupedCluster, before the eligibility filter above removes the
+      // non-current ones), never conflated with the zero that remain
+      // eligible as a live play. Dropped "verified" from the wording
+      // entirely here (not just softened) -- dedupedCluster mixes
+      // confirmed, unconfirmed, and legacy signals alike, and this message
+      // is fundamentally about ACTIVENESS eligibility, not identity
+      // confirmation.
       const researchedSignalCount = dedupedCluster.length;
       const bodyHtml = researchedSignalCount
-        ? `Research found ${researchedSignalCount} verified signal${researchedSignalCount === 1 ? '' : 's'} for ${escapeHtml(accountName)}, but none ${researchedSignalCount === 1 ? 'is' : 'are'} currently active enough to recommend as a live opportunity. The research has been saved and will continue to be monitored.`
+        ? `Research found ${researchedSignalCount} signal${researchedSignalCount === 1 ? '' : 's'} for ${escapeHtml(accountName)}, but none ${researchedSignalCount === 1 ? 'is' : 'are'} currently active enough to recommend as a live opportunity. The research has been saved and will continue to be monitored.`
         : `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`;
       await window.HouseAccountManager.showError({
         title: 'No active opportunity to show',
@@ -8275,18 +8314,24 @@ function getRecentlyResearchedAccounts(){
       uploadId: a.uploadId,
       name: a.name,
       ts: new Date(a.lastResearchedAt).getTime(),
-      // Preview QA item 5: verified-signal count and active-opportunity
-      // count are two genuinely different facts and must never be
-      // conflated -- signalCount is everything actually verified/persisted
-      // for this account (dedupeVerifiedSignals(a.signals)), while
-      // activeOpportunityCount runs the SAME canonical dedupe/eligibility
-      // pipeline accountOpportunityCluster()/openResearchedAccountOpportunities()
+      // Preview QA item 5 / verified-terminology sprint: found-signal count
+      // and active-opportunity count are two genuinely different facts and
+      // must never be conflated -- signalCount is everything actually
+      // discovered/persisted for this account (dedupeFoundSignals(a.signals),
+      // renamed from dedupeVerifiedSignals() -- it never checked
+      // identityConfidence, only isReal), while activeOpportunityCount runs
+      // the SAME canonical dedupe/eligibility pipeline
+      // accountOpportunityCluster()/openResearchedAccountOpportunities()
       // use (dedupeOpportunities(collapseDuplicateAccountHistorySignals(...)),
       // then priorityEligibleOpportunities()) on a.futureOpportunities, so a
-      // researched account can honestly show verified signals with zero
+      // researched account can honestly show found signals with zero
       // currently-active opportunities (confirmed production case:
-      // Weatherby Healthcare -- 3 verified signals, 0 eligible plays).
-      signalCount: dedupeVerifiedSignals(a.signals || []).length,
+      // Weatherby Healthcare -- 3 signals found, 0 eligible plays).
+      // verifiedCount is the strict, 'confirmed'-only subset of signalCount
+      // -- the two are rendered together ("N found · M verified") rather
+      // than letting the render layer re-derive its own definition.
+      signalCount: dedupeFoundSignals(a.signals || []).length,
+      verifiedCount: dedupeFoundSignals(a.signals || []).filter(isExplicitlyVerifiedIdentity).length,
       activeOpportunityCount: priorityEligibleOpportunities(dedupeOpportunities(collapseDuplicateAccountHistorySignals((a.futureOpportunities || []).slice()))).length
     }))
     .filter(e => Number.isFinite(e.ts) && e.ts >= cutoff)
@@ -8318,7 +8363,7 @@ function renderRecentlyResearchedSection(){
         <div class="recently-researched-card" data-account-name="${escapeHtml(e.name)}" data-upload-id="${escapeHtml(e.uploadId)}" data-completed-at="${escapeHtml(new Date(e.ts).toISOString())}">
           <div class="rr-info">
             <div class="rr-name">${escapeHtml(e.name)}</div>
-            <div class="rr-meta">${e.signalCount ? `${e.signalCount} verified signal${e.signalCount === 1 ? '' : 's'} found` : 'No verified signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
+            <div class="rr-meta">${e.signalCount ? `${e.signalCount} signal${e.signalCount === 1 ? '' : 's'} found${e.verifiedCount ? ` · ${e.verifiedCount} verified` : ''}` : 'No signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
           </div>
           <div class="rr-actions">
             ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">${e.activeOpportunityCount ? 'View opportunities' : 'View research'}</button>` : ''}
@@ -9006,7 +9051,10 @@ window.createSalesPlayPanel = function(opp, opts){
   const reasonTitle = cleanSalesPlayText(getReasonToReachOutTitle(opp));
   const whyNow = cleanSalesPlayText(getRepFriendlyWhy(opp));
   const relationshipStrength = Math.round(Number(opp.relationshipStrength || 0));
-  const sourceLabel = opp.sourceUrl ? 'verified public signal' : 'account history';
+  // Verified-terminology sprint: gated on sourceUrl alone (has a web
+  // source vs. is account-history-derived) -- not identityConfidence -- so
+  // this label must not claim "verified."
+  const sourceLabel = opp.sourceUrl ? 'public signal' : 'account history';
   const category = pickPrimaryPromoCategory(opp);
   const signalType = inferSalesPlaySignalType(opp, reasonTitle, whyNow, category);
   // QA round 2, item 3/4: ground Best Next Move / email / call script /
@@ -9096,13 +9144,15 @@ window.createSalesPlayPanel = function(opp, opts){
         <div class="sales-play-output">
 
           <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
-          <!-- Trust correction: this outer group label must stay honest for the
-               same reason renderVerifiedOpportunitySection() does -- the
-               upstream trust gate should keep an unconfirmed opp from ever
-               reaching this modal at all, but the label itself must not claim
-               "Verified" defensively either. -->
+          <!-- Verified-terminology sprint: this outer group label must stay
+               honest for the same reason renderVerifiedOpportunitySection()
+               does, and via the SAME positive, 'confirmed'-only check
+               (isExplicitlyVerifiedIdentity()) -- a negative "not explicitly
+               unconfirmed/rejected" check silently defaults a legacy row
+               (identityConfidence missing) to "verified", which is exactly
+               the bug this sprint fixes. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">${(opp?.identityConfidence === 'unconfirmed' || opp?.identityConfidence === 'rejected') ? 'Unconfirmed Research' : 'Verified Signal / Evidence'}</div>
+            <div class="sales-play-group-label">${isExplicitlyVerifiedIdentity(opp) ? 'Verified Signal / Evidence' : 'Unconfirmed Research'}</div>
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
@@ -10026,7 +10076,11 @@ function dailyReasonSummary(opp){
   const type = normalizeSignalLayerType(opp.signalLayerType);
   if(type === 'Follow-Up Signal') return 'Recent account activity creates a low-friction reason to check in.';
   if(type === 'Repeat / Pattern Signal') return 'Past buying pattern creates a simple reason to ask if the need is coming up again.';
-  return 'Verified public business activity creates a timely reason to reach out.';
+  // Verified-terminology sprint: 'Business Activity Signal' means "this is
+  // a web-research signal" (content type), not "this signal's identity is
+  // confirmed" -- an unconfirmed or legacy signal reaches this branch just
+  // as easily as a confirmed one.
+  return 'Public business activity creates a timely reason to reach out.';
 }
 
 
@@ -10220,6 +10274,43 @@ function hasConfirmedOrLegacyIdentity(opp){
   return identity === undefined || identity === null || identity === 'confirmed';
 }
 
+// Trust correction (verified-terminology sprint): a SEPARATE, stricter
+// question from hasConfirmedOrLegacyIdentity() above. That function answers
+// "can this appear as a priority opportunity at all" (ELIGIBILITY) -- legacy
+// rows (identityConfidence absent) are deliberately included there, per its
+// own grandfather-policy rationale, and this function does not change that.
+// This answers a different question: "has this signal's identity actually
+// passed the current entity-trust standard, such that it may be DESCRIBED
+// or COUNTED as verified to the rep." Only an EXPLICIT 'confirmed' grade
+// qualifies -- a legacy row is eligible to display (unchanged), but was
+// never actually run through verifyCandidateCompanyGrounding()'s tri-state
+// check, so calling it "verified" would be a claim the data was never asked
+// to support. Confirmed production defect this closes: the Dover Honda
+// "Major Rebrand for 2028" legacy row (identityConfidence: NULL) rendered
+// as "Verified Opportunity" purely because the old heading logic defaulted
+// to "verified" for anything that wasn't explicitly 'unconfirmed'/'rejected'
+// -- the inverse of the correct rule. This is the ONE canonical place "is
+// this signal verified" is decided; every verified-count/verified-label
+// call site below reuses it rather than re-deriving its own definition.
+function isExplicitlyVerifiedIdentity(opp){
+  return opp?.identityConfidence === 'confirmed';
+}
+
+// Verified-terminology sprint: single canonical "N signal(s) found[ · M
+// verified]" suffix, reused by every research-completion toast/status
+// message (researchAccountFromCard(), handleResearchClick()'s two call
+// sites) so this wording -- and the exact bug class it fixes (an inflated
+// count of ALL discovered signals mislabeled as "verified") -- cannot drift
+// independently per call site again. Deliberately terse: only appends the
+// verified count when at least one signal actually is (per the founder's
+// own "avoid noisy trust labels everywhere" guidance) -- a research run
+// that found only unconfirmed/legacy signals just says "N signals found,"
+// with no verified claim at all, positive or negative.
+function foundAndVerifiedSuffix(signals){
+  const verifiedCount = (Array.isArray(signals) ? signals : []).filter(isExplicitlyVerifiedIdentity).length;
+  return verifiedCount ? ` · ${verifiedCount} verified` : '';
+}
+
 function isPriorityEligibleOpportunity(opp){
   if(!opp) return false;
   // This is a hard trust gate, not a ranking preference -- an unconfirmed
@@ -10345,7 +10436,7 @@ function renderDetailedAccountViews(accounts){
         <div class="rank">#${idx + 1}</div>
         <div>
           <div class="acct-name">${escapeHtml(a.name)}</div>
-          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Opportunities${a.signals && a.signals.length ? ` · ${dedupeVerifiedSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
+          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Opportunities${a.signals && a.signals.length ? ` · ${dedupeFoundSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
         </div>
         <div class="score-block">
           <div class="score">${Math.round(a.confidence)}</div>
@@ -10364,7 +10455,7 @@ function renderDetailedAccountViews(accounts){
           <div class="bd-item"><div class="lbl">Account Type</div><div class="val" style="font-size:1rem;">Warm Assigned</div></div>
           <div class="bd-item"><div class="lbl">Imported Contacts</div><div class="val">${(a.contacts||[]).length}</div></div>
           <div class="bd-item"><div class="lbl">Assigned Rep</div><div class="val" style="font-size:1rem;">${escapeHtml(a.assignedRep||'Known relationship')}</div></div>
-          <div class="bd-item"><div class="lbl">Verified Signals</div><div class="val">${dedupeVerifiedSignals(a.signals||[]).length}</div></div>
+          <div class="bd-item"><div class="lbl">Signals Found</div><div class="val">${dedupeFoundSignals(a.signals||[]).length}</div></div>
           <div class="bd-item"><div class="lbl">Monitoring Status</div><div class="val" style="font-size:1rem;">Active</div></div>
         </div>` : `<div class="breakdown">
           <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
@@ -10375,12 +10466,12 @@ function renderDetailedAccountViews(accounts){
         </div>`}
         <div class="section-title">🎯 Reasons To Reach Out</div>
         <ul class="opps">
-          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || (isWarmAccount(a) ? '<li>No current verified business signal was found. This account remains monitored for future activity.</li>' : '<li>No reasons to reach out generated from closed historical orders.</li>')}
+          ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || (isWarmAccount(a) ? '<li>No current business signal was found. This account remains monitored for future activity.</li>' : '<li>No reasons to reach out generated from closed historical orders.</li>')}
         </ul>
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : `<div class="no-signals-message">${isWarmAccount(a) ? 'No historical orders were included for this account. Public business signals and uploaded contact context will drive recommendations.' : 'No closed/converted historical orders found for this account.'}</div>`}
         ${renderPipelineTable(a.activePipeline || [])}
-        <div class="section-title">📡 Verified Business Signals</div>
+        <div class="section-title">📡 Business Signals Found</div>
         <button class="btn btn-secondary research-account-btn" type="button">Research Account</button>
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
         <div class="signal-research-panel" id="signals-${idx}">${renderVerifiedSignals(a.signals)}</div>
@@ -11714,9 +11805,14 @@ else wireUploadSuccessStateControls();
      // since that's the only place a Research button is rendered from).
      const acctEntry = expandedPage && expandedPage.uploadId === listId && (expandedPage.accounts||[]).find(x => x.name === accountName);
      if(acctEntry) acctEntry.lastResearchedAt = (fresh && fresh.lastResearchedAt) || new Date().toISOString();
+     // Verified-terminology sprint: "found" (all discovered signals),
+     // "verified" only appended for the strict, 'confirmed'-only subset --
+     // see foundAndVerifiedSuffix()'s own header comment (main script,
+     // shared global scope) for why this must never say "N verified" for a
+     // raw discovered-signal count.
      setRowStatus(row, 'success', signalCount
-       ? `Research complete — ${signalCount} verified signal${signalCount===1?'':'s'} found.`
-       : 'Research complete — no verified signals found.');
+       ? `Research complete — ${signalCount} signal${signalCount===1?'':'s'} found${typeof foundAndVerifiedSuffix === 'function' ? foundAndVerifiedSuffix(fresh.signals) : ''}.`
+       : 'Research complete — no signals found.');
      btn.disabled = false;
      btn.textContent = 'Research Again';
 
@@ -11742,8 +11838,8 @@ else wireUploadSuccessStateControls();
      // are correct the moment research completes.
      if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
      const toastMessage = signalCount
-       ? `${signalCount} verified signal${signalCount===1?'':'s'} found for ${accountName}.`
-       : `Research complete for ${accountName} — no verified signals found.`;
+       ? `${signalCount} signal${signalCount===1?'':'s'} found for ${accountName}${typeof foundAndVerifiedSuffix === 'function' ? foundAndVerifiedSuffix(fresh.signals) : ''}.`
+       : `Research complete for ${accountName} — no signals found.`;
      showToast(toastMessage, signalCount ? {
        label:'View opportunities',
        // Requirements 8/9: the SAME production function the Recently

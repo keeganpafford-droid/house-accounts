@@ -71,12 +71,12 @@ function extractFn(name, startLine, endLine) {
 // serializeAccountForStorage() itself -- the actual write boundary under
 // test, not a reimplementation of it.
 const CLASSIFIER_SRC = [
-  extractFn('isBusinessOpportunity', 3404, 3406),
-  extractFn('signalLayerLabel', 4719, 4724),
-  extractFn('isRecentAccountActivity', 4726, 4729),
-  extractFn('normalizeSignalLayerType', 9804, 9810)
+  extractFn('isBusinessOpportunity', 3415, 3417),
+  extractFn('signalLayerLabel', 4730, 4735),
+  extractFn('isRecentAccountActivity', 4737, 4740),
+  extractFn('normalizeSignalLayerType', 9854, 9860)
 ].join('\n\n');
-const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10412, 10493);
+const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10503, 10584);
 
 function makeSandbox() {
   const sandbox = { console, Array, Object, String, Number, Boolean, JSON };
