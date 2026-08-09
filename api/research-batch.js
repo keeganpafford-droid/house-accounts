@@ -16,6 +16,7 @@ import {
   displayLabelForEventType,
   extractEventDate,
   findPublicationContextDate,
+  calendarDaysBetween,
   resolveOpportunityEvents,
   verifyCandidateCompanyGrounding,
   deriveAccountLocationFromContent,
@@ -1623,13 +1624,20 @@ function confidenceWithContextFloor(confidencePct = 0, raw = {}, type = '', summ
 // Phase 1B mismatches on ranks 5, 8, 11, 14, 17) it silently discarded its
 // own correctly-computed answer and returned the AI's original label
 // unchanged. resolveCanonicalEventType() never consults the AI's declared
-// type at all: it computes signal-intelligence.js's resolveEventType()
-// (the same canonical, ALL_CAPS taxonomy that drives event_fingerprint) on
-// the same evidence text, and that is the only classification used from
-// here on for this signal, both for the display label and — carried via
-// canonicalEventType on the returned object — for event resolution/
-// fingerprinting downstream, so both are guaranteed to agree by
-// construction rather than by coincidence.
+// type at all: it computes signal-intelligence.js's resolveEventType() (the
+// same canonical, ALL_CAPS taxonomy) on the same evidence text, and that is
+// the only classification used from here on for this signal's display
+// label, carried via canonicalEventType on the returned object.
+//
+// Foundation-freeze correction: canonicalEventType does NOT drive the
+// persisted event_fingerprint -- the Fingerprint Stability sprint removed
+// it from the v2 identity key entirely (proven unstable across reruns; see
+// resolveOpportunityEvents()'s "canonicalEventType is deliberately EXCLUDED"
+// comment in signal-intelligence.js). canonicalEventType still feeds event
+// CATEGORIZATION (signalEventCategory()'s event-like/ongoing split, which
+// computeActionability() branches on) and the display label, both of which
+// this same evidence text drives deterministically -- but it is not part of
+// event identity/deduplication.
 function resolveCanonicalEventType(raw = {}) {
   const text = clean(`${raw.concrete_trigger || raw.concreteTrigger || ''} ${raw.buying_moment || raw.buyingMoment || ''} ${raw.signalTitle || raw.title || ''} ${raw.whatChanged || raw.summary || raw.signalDetail || ''} ${raw.business_context || raw.businessContext || ''}`);
   const family = classifySignalFamily(text);
@@ -1758,7 +1766,12 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
     if (eventDate && dateConfidence !== 'unknown') {
       const parsed = parseSignalDate(eventDate);
       if (parsed) {
-        const diffDays = Math.round((parsed.getTime() - now.getTime()) / 86400000);
+        // Foundation freeze, Phase 1C: calendar-day difference, not a
+        // calendar-date-vs-wall-clock-instant mixture -- see
+        // calendarDaysBetween()'s header comment (signal-intelligence.js)
+        // for why the previous `Math.round((parsed - now) / 86400000)` form
+        // could misclassify a same-day exact event depending on time of day.
+        const diffDays = calendarDaysBetween(parsed, now);
         // QA round 3, item 1: "Upcoming" requires an explicit (exact-
         // confidence) future date. An approximate/inferred one (e.g. a bare
         // "Month Year" mention, or the past-year-only bare-year fallback in
@@ -1782,7 +1795,7 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
   if (!parsedPub) {
     return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Date unavailable' };
   }
-  const ageDays = Math.round((now.getTime() - parsedPub.getTime()) / 86400000);
+  const ageDays = calendarDaysBetween(now, parsedPub);
   if (ageDays <= ONGOING_RECENCY_CEILING_DAYS) {
     return { status: 'ongoing', tense: 'ongoing', isPriorityEligible: true, excludeFromPriorities: false, usesPublicationDate: true, label: 'Ongoing business change' };
   }

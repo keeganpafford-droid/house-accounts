@@ -803,7 +803,19 @@ function normalizeOpportunity(raw = {}, account = {}, candidate = {}) {
     // the model-authored fields every existing consumer already expects.
     // Lets downstream identity resolution (resolveOpportunityEvents()) prefer
     // genuinely raw text over LLM-resynthesized wording when both exist.
-    rawTitle: clean(candidate.headline || ''),
+    //
+    // Foundation-freeze correction: this was checking candidate.headline
+    // alone, but every real candidate on both production paths (research-
+    // batch.js's discoverCandidatesForAccounts()/scoreCandidate() and
+    // research-account.js's search-result mapping) carries the search
+    // provider's own title under `.title`, never `.headline` -- confirmed by
+    // direct inspection, matching every other candidate-title read in this
+    // same function (see `headline` above) and file, which all check
+    // candidate.title first. rawTitle was therefore always '' on the real
+    // path -- inert since it was introduced -- even though genuinely
+    // source-derived text (the search result's own headline, pre-LLM-
+    // synthesis) was available the whole time.
+    rawTitle: clean(candidate.title || candidate.headline || ''),
     rawSnippet: clean(candidate.snippet || ''),
     rawContent: clean(candidate.rawContent || raw.rawContent || raw.pageContent || ''),
     eventFingerprint: fingerprint,
@@ -1143,7 +1155,15 @@ function buildQueryPlan(company, context = {}) {
 // ---------------------------------------------------------------------------
 // Sprint 4.5.1 — Stage A: Business Event resolution (additive; clusterCandidates()
 // and eventFingerprint() above are UNCHANGED and remain the active production
-// path. Nothing below is wired into research-account.js or research-batch.js yet.
+// path for api/research-account.js).
+//
+// Foundation-freeze correction: this comment's "nothing below is wired in
+// yet" claim is stale. resolveOpportunityEvents() below has since become
+// the SAME canonical event-resolution engine api/research-batch.js calls at
+// persistence time, and is shared (via api/save-upload.js's exported bridge
+// primitives) by api/weekly-scan.js and api/save-upload.js's own upload
+// path too. api/research-account.js's single-account research flow is the
+// one caller that still uses clusterCandidates() above, unchanged.
 // ---------------------------------------------------------------------------
 
 // Event types where the same real-world event legitimately recurs on a cadence
@@ -1542,12 +1562,48 @@ const MONTH_INDEX_BY_FULL_NAME = {
   January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
   July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
 };
+// Foundation freeze, Phase 1D: days-in-month lookup (leap-year aware) used
+// to REJECT an impossible calendar date (September 31, April 31, February 29
+// in a non-leap year) rather than silently rolling it over to the next
+// month -- Date.UTC() itself has no concept of an invalid day, it just
+// normalizes past month-end, which would otherwise turn a mis-parsed or
+// malformed date into a stable-but-wrong value baked directly into the
+// persisted v2 event fingerprint (exact date is identity-bearing there).
+function isLeapYear(year) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+function daysInMonth(year, monthIndex) {
+  const DAYS = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return DAYS[monthIndex];
+}
 function parseCalendarDateUTC(monthNameRaw, day, year) {
   const monthName = normalizeMonthName(monthNameRaw) || monthNameRaw;
   const monthIndex = MONTH_INDEX_BY_FULL_NAME[monthName];
   if (monthIndex === undefined) return null;
-  const d = new Date(Date.UTC(Number(year), monthIndex, Number(day)));
-  return Number.isFinite(d.getTime()) ? d : null;
+  const y = Number(year);
+  const d = Number(day);
+  if (!Number.isFinite(y) || !Number.isFinite(d) || d < 1 || d > daysInMonth(y, monthIndex)) return null;
+  const parsed = new Date(Date.UTC(y, monthIndex, d));
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+// Foundation freeze, Phase 1C: a calendar-date difference (e.g. "how many
+// days until/since this event") must compare UTC-midnight-normalized values
+// on BOTH sides, never a calendar date against a real wall-clock instant
+// carrying its own time-of-day -- mixing the two makes the result depend on
+// what time of day the comparison happens to run, not on the actual
+// difference in calendar days (confirmed production-adjacent defect:
+// formatSignalAge()'s test in scripts/test-temporal-integrity-fixtures.js
+// flips between floor/round agreement depending on time of day; the same
+// mixture in computeActionability() below can misclassify a same-day exact
+// event as 'recent-past' instead of 'upcoming' depending on time of day).
+// Positive when `laterDate` is chronologically after `earlierDate`. This is
+// the one authoritative backend implementation; dashboard/index.html
+// (browser-loaded inline script, cannot import this module) carries a
+// mirrored implementation -- see formatSignalAge()'s own comment there.
+function calendarDaysBetween(laterDate, earlierDate) {
+  const utcMidnight = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return Math.round((utcMidnight(laterDate) - utcMidnight(earlierDate)) / 86400000);
 }
 
 // Problem 2 (Preview QA follow-up round): the free text this function mines
@@ -2046,8 +2102,18 @@ function resolveEvents(candidates = []) {
 // resolution pass across the full combined set right before writing to the
 // database. This is intentionally the only place that changes the
 // persisted event_fingerprint; normalizeOpportunity()'s own eventFingerprint
-// (legacy, per-title-token) is left untouched for intra-request plumbing
-// (e.g. matching an opportunity back to its source candidate).
+// (per-title-token, computed once per candidate within THIS request) is
+// left untouched for intra-request plumbing (e.g. matching an opportunity
+// back to its source candidate).
+//
+// Foundation-freeze correction: normalizeOpportunity()'s eventFingerprint
+// was previously labeled "legacy" here, which conflates two unrelated
+// things named "legacy" elsewhere in this codebase: this is a fresh,
+// per-title-token value computed EVERY request purely for same-request
+// candidate matching, and never persisted as event_fingerprint -- it has
+// nothing to do with a "legacy" pre-v2 DB row (api/save-upload.js's
+// fetchLegacySignalsForAccounts()/applyLegacyFingerprintBridge(), the v1->v2
+// compatibility bridge for rows already written to the database).
 // ---------------------------------------------------------------------------
 function resolveOpportunityEvents(opportunities = []) {
   const candidates = (opportunities || []).filter(Boolean).map(o => ({
@@ -2104,6 +2170,7 @@ export {
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
   resolveOpportunityEvents, dedupeByEventFingerprint,
   fallbackEventDiscriminator, stableHash, normalizeForMatch,
+  calendarDaysBetween,
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,

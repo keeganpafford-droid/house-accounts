@@ -4796,16 +4796,31 @@ function parseMaybeDate(value){
 // every source of this value (a source's own publication date, an account's
 // real order/activity date) and does not imply House Accounts' own
 // discovery activity the way "Detected" does.
+// Foundation freeze, Phase 1C: mirrors api/signal-intelligence.js's
+// calendarDaysBetween() (this file is a plain browser-loaded inline script
+// and cannot import that module) -- UTC-midnight-normalize BOTH sides
+// before differencing, so the result is an exact calendar-day count that
+// never depends on what time of day "now" happens to be. Root cause this
+// closes: comparing a calendar date directly against `new Date()` (a real
+// wall-clock instant carrying its own time-of-day) made formatSignalAge()'s
+// day count flip depending on time of day -- confirmed via
+// scripts/test-temporal-integrity-fixtures.js, previously misdiagnosed as
+// flakiness.
+function calendarDaysAgo(dateValue, now = new Date()){
+  const d = parseMaybeDate(dateValue);
+  if(!d) return null;
+  const utcMidnight = (x) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
+  return Math.round((utcMidnight(now) - utcMidnight(d)) / 86400000);
+}
 function formatSignalAge(opp){
   const raw = opp.signalDate || opp.lastActivityDate || opp.orderDate || '';
-  const d = parseMaybeDate(raw);
-  if(!d) return '';
-  const now = new Date();
-  const days = Math.max(0, Math.floor((now - d) / (1000*60*60*24)));
+  const rawDays = calendarDaysAgo(raw);
+  if(rawDays === null) return '';
+  const days = Math.max(0, rawDays);
   if(days === 0) return 'Dated today';
   if(days === 1) return 'Dated 1 day ago';
   if(days <= 30) return `Dated ${days} days ago`;
-  return `Dated ${d.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
+  return `Dated ${parseMaybeDate(raw).toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'})}`;
 }
 
 

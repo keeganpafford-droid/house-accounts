@@ -41,7 +41,7 @@ function extractLines(label, startLine, endLine, expectedFirst) {
   return slice;
 }
 
-const GUARD_SRC = extractLines('northern-pool-zero-accounts-guard', 7412, 7625, 'function hideUploadDecisionForZeroAcceptedAccounts(){');
+const GUARD_SRC = extractLines('northern-pool-zero-accounts-guard', 7427, 7640, 'function hideUploadDecisionForZeroAcceptedAccounts(){');
 
 // Fresh DOM/state stub + fresh vm context per scenario -- avoids any
 // cross-scenario state bleed, and keeps each run's assertions about

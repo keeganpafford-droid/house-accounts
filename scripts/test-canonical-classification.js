@@ -136,8 +136,21 @@ for(const c of cases){
     // refreshable display metadata via eventIdentity.eventType/signal_type,
     // asserted above; the fingerprint itself only needs to be a v2-tagged,
     // non-empty, company-scoped identity string.
+    //
+    // Foundation-freeze correction: the embed check below is now
+    // case-insensitive. Every fingerprint segment is lowercase (company/
+    // discriminator pass through normalizeForMatch(), the temporal anchor is
+    // a date or bare year), while canonicalEventType is always ALL_CAPS
+    // (e.g. "ACQUISITION") -- the original case-SENSITIVE .includes() check
+    // could therefore never fail regardless of whether type actually leaked
+    // into the fingerprint, since no fingerprint segment can ever contain an
+    // ALL_CAPS substring. This was a provably vacuous assertion, not a real
+    // regression guard. (The stronger, genuinely non-vacuous proof that type
+    // cannot drive identity already lives in scripts/test-fingerprint-stability-v2.js's
+    // mandatory cases 1/2: the SAME real event classified under two
+    // DIFFERENT canonical types there still resolves to one merged identity.)
     assert(resolved[0].eventFingerprint.startsWith('v2|'), `rank ${c.rank} (${c.account}): the persisted event_fingerprint is v2-tagged ("${resolved[0].eventFingerprint}")`);
-    assert(!resolved[0].eventFingerprint.includes(signal.canonicalEventType), `rank ${c.rank} (${c.account}): the persisted event_fingerprint no longer embeds canonical type, by design ("${resolved[0].eventFingerprint}")`);
+    assert(!resolved[0].eventFingerprint.toLowerCase().includes(String(signal.canonicalEventType).toLowerCase()), `rank ${c.rank} (${c.account}): the persisted event_fingerprint no longer embeds canonical type, by design, case-insensitively ("${resolved[0].eventFingerprint}")`);
   }
 }
 

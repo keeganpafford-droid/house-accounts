@@ -457,7 +457,7 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // renderAccountContextSection, renderSupportingResearchDetails,
 // renderRepOpportunityCard, renderSingleVerifiedSignal,
 // renderVerifiedSignals, isSignalPriorityEligible.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6219, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6234, 'function confidenceLabel(');
 
 // QA round 2, item 2/6: covers cleanOpportunityToken, primaryCategoryFromOpportunity,
 // departmentFromText, likelyDepartmentFromOpportunity, isGenericContactLabel,
@@ -480,7 +480,7 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 29
 // buildReplyFirstEmail, buildNaturalCallScript, conciseSubject,
 // ownerPhraseForSignal, triggerPhraseForSignal, buildConciseSalesPlay,
 // questionsForSignal, subjectRationale, inferSalesPlaySignalType.
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'function salesPlayModeFromOpp(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8548, 9866, 'function salesPlayModeFromOpp(');
 
 // Covers: normalizeSignalLayerType, signalTypePriority, daysSinceDate,
 // scoreFromFreshness, normalizedConfidenceValue, evidenceCount,
@@ -489,13 +489,13 @@ const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'funct
 // sortDailyReasons, collapseDuplicateFollowUps, limitReasonsPerAccount,
 // getOpportunityPlanningWindow, opportunityMatchesTimebox,
 // prepareTimeboxReasons, prepareAllOpportunities, pluralize, feedSummary.
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9854, 10424, 'function normalizeSignalLayerType(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9869, 10439, 'function normalizeSignalLayerType(');
 
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11175, 11178, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8448, 8450, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8453, 8455, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11190, 11193, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8463, 8465, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8468, 8470, 'function clampScore(');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
 // (and, since the fix, the summary banner) both route through.

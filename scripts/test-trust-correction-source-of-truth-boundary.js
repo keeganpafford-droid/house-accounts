@@ -74,9 +74,9 @@ const CLASSIFIER_SRC = [
   extractFn('isBusinessOpportunity', 3415, 3417),
   extractFn('signalLayerLabel', 4730, 4735),
   extractFn('isRecentAccountActivity', 4737, 4740),
-  extractFn('normalizeSignalLayerType', 9854, 9860)
+  extractFn('normalizeSignalLayerType', 9869, 9875)
 ].join('\n\n');
-const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10503, 10584);
+const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10518, 10599);
 
 function makeSandbox() {
   const sandbox = { console, Array, Object, String, Number, Boolean, JSON };

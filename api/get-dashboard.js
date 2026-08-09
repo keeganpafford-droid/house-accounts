@@ -333,28 +333,54 @@ function signalToOpportunity(row){
 // eventDate=2026-06-22 (Eventbrite's listing date) directly into
 // existingSignals with exact confidence; every later dashboard load kept
 // serving that wrong date verbatim because nothing ever re-examined it.
-// A second, independent defect shares this exact boundary: existingSignals
-// entries written before isVerifiedSignalOpportunity/signalLayerType were
-// set on every opportunity object (an even older shape) silently fail
-// isBusinessSignalOpportunity()/isBusinessOpportunity() (both here and in
-// dashboard/index.html), which defeats resolveOpportunityEvents()'s and the
-// client's business-signal identity merge entirely for that one persisted
-// object -- a freshly re-derived ha_signals row for the SAME real-world
-// event then survives alongside it as an apparent duplicate (confirmed
-// production case: Dispatch Goods' "Follow-on Investment from Santa Cruz
-// Ventures"). Reconciling every existingSignals entry through the SAME
-// classifyLegacySignalActionability() used for ha_signals rows, and
-// re-asserting the two identity flags every CURRENT signal always carries,
-// closes both gaps at their one shared hydration boundary -- no database
-// write, no provider call, applies on the very next dashboard read.
+// A second, independent defect shares this exact boundary: an old-shaped
+// existingSignals entry (written before isVerifiedSignalOpportunity/
+// signalLayerType existed on every opportunity object, AND with no
+// sourceUrl either) silently fails isBusinessSignalOpportunity() at the
+// CALL SITE below, so it is never excluded -- it reaches this function
+// still classified as "not business," letting a freshly re-derived
+// ha_signals row for the SAME real-world event survive alongside it as an
+// apparent duplicate (confirmed production case: Dispatch Goods' "Follow-on
+// Investment from Santa Cruz Ventures", persisted with sourceUrl: '').
+//
+// Foundation-freeze correction: this function must NOT blindly force
+// isVerifiedSignalOpportunity/signalLayerType onto everything it's handed --
+// most entries that reach it (Follow-Up Signal / Repeat-Pattern Signal) have
+// ALREADY been correctly proven non-business by the caller, and forcing
+// those two flags on them inverted that classification right back, which
+// then made isBusinessOpportunity() (dashboard/index.html) treat a Follow-Up
+// Signal as a business signal and silently exclude it from the next
+// existingSignals write (serializeAccountForStorage()) -- Follow-Up Signals
+// have no ha_signals home, so that was a real, confirmed data-loss path (a
+// Follow-Up could be permanently erased by one load-then-save cycle).
+//
+// But the Dispatch Goods gap above is real and still needs closing: unlike
+// a Follow-Up/Repeat-Pattern opportunity, a genuine legacy business entry
+// that slips past the sourceUrl/flag check still carries sourceName/
+// cleanSourceName (the source PUBLICATION's name, set only by the web-
+// research normalizer in api/signal-intelligence.js and never present on an
+// order-history-derived Follow-Up/Repeat-Pattern opportunity, which has no
+// source at all). Unlike canonicalEventType -- which classifyLegacySignal-
+// Actionability() below unconditionally assigns a BUSINESS_ACTIVITY_* value
+// to even for a Follow-Up Signal's ordinary text, so it can't be trusted as
+// "is business" evidence once an entry has round-tripped through this
+// function even once -- sourceName/cleanSourceName are never written by
+// that call, so they stay a stable signal across any number of load/save
+// cycles. This is the one case where re-asserting business identity here is
+// correct: it lets buildAccountsFromRows()'s later
+// canonicalizeAccountOpportunities() pass recognize this entry as the SAME
+// event as the fresh ha_signals row and merge them (resolveOpportunityEvents()
+// keeps the richer signalTitle), instead of the fresh row's generic title
+// standing in for it or the two surviving side by side as an apparent
+// duplicate.
 function reconcileStoredOpportunity(opp){
   if(!opp || typeof opp !== 'object') return opp;
   const legacyFields = classifyLegacySignalActionability(opp);
+  const isGenuineLegacyBusinessEntry = Boolean(opp.sourceName) || Boolean(opp.cleanSourceName);
   return {
     ...opp,
     ...legacyFields,
-    isVerifiedSignalOpportunity: true,
-    signalLayerType: opp.signalLayerType || 'Business Activity Signal'
+    ...(isGenuineLegacyBusinessEntry ? { isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal' } : {})
   };
 }
 
@@ -434,11 +460,10 @@ function buildAccountsFromRows(accountRows, signalRows){
     }));
     // Source-of-truth correction: ha_signals is now the EXCLUSIVE source for
     // canonical business/web-research opportunities -- a raw_data.existingSignals
-    // entry classified as one (isBusinessSignalOpportunity(), checked on the
-    // ORIGINAL entry, before reconcileStoredOpportunity() unconditionally
-    // forces isVerifiedSignalOpportunity:true on every survivor below, which
-    // would otherwise make this check meaningless) is dropped here,
-    // unconditionally -- never reconciled against a live ha_signals row by
+    // entry classified as one via isBusinessSignalOpportunity(), checked here
+    // on the ORIGINAL entry (its own sourceUrl/flag-based check, before
+    // reconcileStoredOpportunity() runs), is dropped from this filter's
+    // output -- never reconciled against a live ha_signals row by
     // eventFingerprint or any other resemblance heuristic. A live row that
     // has since been deleted/corrected must mean the opportunity is gone,
     // not "find the old snapshot that looks like it." This is the one place
@@ -447,6 +472,10 @@ function buildAccountsFromRows(accountRows, signalRows){
     // physically still present in the database, but permanently inert from
     // here on, with no migration required. repeatPatterns is untouched: it
     // is order-history-derived and has no ha_signals representation at all.
+    // (See reconcileStoredOpportunity()'s own comment for the one entry
+    // shape -- a legacy business signal with neither sourceUrl nor flags --
+    // that slips past this filter and is instead reconciled forward into a
+    // later merge with its live ha_signals duplicate.)
     const storedOpps = [
       ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.filter(o => !isBusinessSignalOpportunity(o)).map(reconcileStoredOpportunity) : []),
       ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])

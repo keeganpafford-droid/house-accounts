@@ -252,15 +252,15 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
   return slice;
 }
 
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6219, 'function confidenceLabel(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers', 4723, 6234, 'function confidenceLabel(');
 const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3417, 'function cleanOpportunityToken(');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9854, 10424, 'function normalizeSignalLayerType(');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8548, 9866, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9869, 10439, 'function normalizeSignalLayerType(');
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11175, 11178, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8448, 8450, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8453, 8455, 'function clampScore(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11190, 11193, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8463, 8465, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8468, 8470, 'function clampScore(');
 
 function makeSandbox(){
   const domElements = {};
@@ -400,16 +400,19 @@ function asBusinessOpportunity(opp){
   const age = sandbox.formatSignalAge(noRealDateOpp);
   assert(age === '', `required test 12/13: formatSignalAge() returns no age line at all (never "Detected today") when only discovery timestamps are present and no real signalDate/lastActivityDate/orderDate exists (got "${age}")`);
 
-  // Preview QA hygiene: derive the expected day count from real elapsed
-  // wall-clock time (matching what formatSignalAge() itself computes off
-  // Date.now()) rather than a value hardcoded against this file's fixed
-  // fixture-only NOW -- daysAgo(5) is 5 days before NOW, but the REAL
-  // elapsed time between that date-only string and the actual moment this
-  // suite runs can be off by a day depending on how far NOW itself has
-  // drifted from the real calendar date.
+  // Foundation-freeze correction (Phase 1C): derive the expected day count
+  // via the SAME UTC-calendar-day primitive formatSignalAge() itself now
+  // uses (calendarDaysAgo()) rather than a raw Date.now()-minus-midnight ms
+  // difference -- daysAgo(5) is 5 CALENDAR days before NOW, but Date.now()
+  // carries a real time-of-day component, so Math.round(msDiff / 86400000)
+  // could round to a different integer than the exact calendar-day count
+  // depending on what wall-clock time this suite happens to run at. This
+  // was the confirmed root cause of this test's previous flakiness, not a
+  // one-off fluke -- see calendarDaysAgo()'s own comment in
+  // dashboard/index.html.
   const realDateOpp = { signalDate: daysAgo(5) };
   const realAge = sandbox.formatSignalAge(realDateOpp);
-  const realElapsedDays = Math.round((Date.now() - new Date(daysAgo(5) + 'T00:00:00Z').getTime()) / 86400000);
+  const realElapsedDays = sandbox.calendarDaysAgo(daysAgo(5));
   assert(new RegExp(`Dated ${realElapsedDays} days? ago`).test(realAge), `formatSignalAge() still correctly reports age from a real date, using the Preview-QA-clarified "Dated" wording (got "${realAge}", expected ~${realElapsedDays} days ago)`);
 }
 

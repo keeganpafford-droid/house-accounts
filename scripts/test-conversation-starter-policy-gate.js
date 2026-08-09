@@ -41,7 +41,7 @@ function extractLines(label, startLine, endLine, expectedFirst) {
 // mentionsProductOrMerchOffer -> isMeaningfulConversationQuestion ->
 // isDirectSchedulingClose -> isPermissionBasedConceptOffer -> isGroundedOpener,
 // all contiguous.
-const GATE_SRC = extractLines('conversation-starter-policy-gate', 5083, 5289, 'function mentionsProductOrMerchOffer(text){');
+const GATE_SRC = extractLines('conversation-starter-policy-gate', 5098, 5304, 'function mentionsProductOrMerchOffer(text){');
 
 const sandbox = {};
 vm.createContext(sandbox);

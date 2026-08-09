@@ -24,6 +24,16 @@
 
 import { timingSafeEqual } from 'crypto';
 import { resolveOpportunityEvents, dedupeByEventFingerprint, isCommercialIntelligenceSignal } from './signal-intelligence.js';
+// Foundation freeze, Phase 1B -- weekly scan writes through the identical
+// resolveOpportunityEvents() -> event_fingerprint -> ha_signals insert path
+// api/save-upload.js uses, but previously had no legacy compatibility
+// bridge at all, meaning an unattended weekly rediscovery of an event that
+// already has a legacy-format row could reinsert exactly the v1->v2
+// duplicate the bridge exists to prevent. Reusing save-upload.js's own
+// tested primitives here (rather than a second, divergent implementation)
+// is deliberate -- see that file's header comment on the bridge for the
+// full rationale.
+import { fetchLegacySignalsForAccounts, applyLegacyFingerprintBridge } from './save-upload.js';
 // QA round 3, item 1/6: digest eligibility is validated through the SAME
 // canonical actionability boundary as every other reader (get-dashboard.js),
 // never by trusting a persisted row's actionabilityStatus.isPriorityEligible
@@ -822,6 +832,12 @@ export default async function handler(req, res){
         // same real-world event — produced by two chunks, two sources, or two
         // differently phrased AI generations — from being written as two rows.
         const resolvedSignals = resolveOpportunityEvents(research.signals);
+        // Foundation freeze, Phase 1B -- same batched pre-flight + bridge
+        // api/save-upload.js runs before every write, reused verbatim here.
+        // One query, scoped to the accounts actually touched in this
+        // upload's chunk, never per-signal/per-account.
+        const legacyRowsForBridge = await fetchLegacySignalsForAccounts(user.id, resolvedSignals.map(s => s.accountName));
+        const bridgeStats = applyLegacyFingerprintBridge(legacyRowsForBridge, resolvedSignals);
         const candidateRows = resolvedSignals.map(s => ({
           user_id:user.id,
           upload_id:upload.id,
@@ -881,6 +897,9 @@ export default async function handler(req, res){
               body: JSON.stringify(refreshRows.slice(i, i+chunkSize))
             });
           }
+        }
+        if(bridgeStats.bridged || bridgeStats.multiMatch){
+          console.log('[weekly-scan.instrumentation] legacy fingerprint bridge', JSON.stringify({ uploadId: upload.id, legacyFingerprintsBridged: bridgeStats.bridged, legacyMultiMatchCount: bridgeStats.multiMatch }));
         }
         // Priority 6 (paid-beta weekly digest correction): no email is sent
         // here per-upload. Eligible signals are accumulated into

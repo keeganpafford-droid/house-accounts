@@ -57,9 +57,9 @@ const CORE_SRC = [
   extractFn('sourceDomain', 4749, 4751),
   extractFn('foundSignalDedupeKey', 3383, 3388),
   extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('hasConfirmedOrLegacyIdentity', 10272, 10275),
-  extractFn('isExplicitlyVerifiedIdentity', 10295, 10297),
-  extractFn('foundAndVerifiedSuffix', 10309, 10312)
+  extractFn('hasConfirmedOrLegacyIdentity', 10287, 10290),
+  extractFn('isExplicitlyVerifiedIdentity', 10310, 10312),
+  extractFn('foundAndVerifiedSuffix', 10324, 10327)
 ].join('\n\n');
 
 function makeCoreSandbox() {
@@ -77,10 +77,10 @@ const RR_SRC = [
   extractFn('sourceDomain', 4749, 4751),
   extractFn('foundSignalDedupeKey', 3383, 3388),
   extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('isExplicitlyVerifiedIdentity', 10295, 10297),
-  extractFn('getRecentlyResearchedAccounts', 8308, 8340),
-  extractFn('relativeResearchTimeLabel', 8341, 8348),
-  extractFn('renderRecentlyResearchedSection', 8349, 8374)
+  extractFn('isExplicitlyVerifiedIdentity', 10310, 10312),
+  extractFn('getRecentlyResearchedAccounts', 8323, 8355),
+  extractFn('relativeResearchTimeLabel', 8356, 8363),
+  extractFn('renderRecentlyResearchedSection', 8364, 8389)
 ].join('\n\n');
 
 function makeRecentlyResearchedSandbox(accounts) {

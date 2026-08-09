@@ -61,14 +61,14 @@ const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 29
 // itself (5723-5815) -- no prior test file in this suite actually invoked
 // that function, which is exactly how its re-injection defect (see R5-1)
 // went unexercised by automated tests until this integration fixture.
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4723, 6339, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8396, 8936, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8533, 9851, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9854, 10424, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11175, 11178, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8448, 8450, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8453, 8455, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7840, 7878, 'function getReasonToReachOutTitle(opp){');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4723, 6354, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8411, 8951, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8548, 9866, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9869, 10439, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11190, 11193, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8463, 8465, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8468, 8470, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7855, 7893, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   const sandbox = {

@@ -50,27 +50,27 @@ const REAL_SOURCE = [
   extractFn('checkDuplicateCompanyResearch', 2608, 2624, { async: true }),
   extractFn('heartbeatCurrentResearchRun', 2657, 2674, { async: true }),
   extractFn('reportResearchRunOutcome', 2688, 2713, { async: true }),
-  extractFn('fetchUploadScopedSnapshot', 6396, 6418, { async: true }),
-  extractFn('persistScopedResearchResult', 6426, 6471, { async: true }),
-  extractFn('setActiveResearchBreadcrumb', 6493, 6499),
-  extractFn('clearActiveResearchBreadcrumb', 6500, 6511),
-  extractFn('getActiveResearchBreadcrumb', 6512, 6519),
-  extractFn('safeParseResearchResponse', 6532, 6567, { async: true }),
-  extractFn('researchAccountFromManageModal', 6569, 6732, { async: true }),
-  extractFn('researchListFromManageModal', 6747, 6977, { async: true }),
-  extractFn('researchAccountByName', 7010, 7171, { async: true }),
-  extractFn('getAccountsForResearch', 7175, 7188),
-  extractFn('batchPayloadForAccounts', 7190, 7246),
-  extractFn('applyBusinessSignalAccountBoost', 7249, 7257),
-  extractFn('researchAccountsBatch', 7259, 7379, { async: true }),
-  extractFn('researchTopAccounts', 7421, 7625, { async: true }),
+  extractFn('fetchUploadScopedSnapshot', 6411, 6433, { async: true }),
+  extractFn('persistScopedResearchResult', 6441, 6486, { async: true }),
+  extractFn('setActiveResearchBreadcrumb', 6508, 6514),
+  extractFn('clearActiveResearchBreadcrumb', 6515, 6526),
+  extractFn('getActiveResearchBreadcrumb', 6527, 6534),
+  extractFn('safeParseResearchResponse', 6547, 6582, { async: true }),
+  extractFn('researchAccountFromManageModal', 6584, 6747, { async: true }),
+  extractFn('researchListFromManageModal', 6762, 6992, { async: true }),
+  extractFn('researchAccountByName', 7025, 7186, { async: true }),
+  extractFn('getAccountsForResearch', 7190, 7203),
+  extractFn('batchPayloadForAccounts', 7205, 7261),
+  extractFn('applyBusinessSignalAccountBoost', 7264, 7272),
+  extractFn('researchAccountsBatch', 7274, 7394, { async: true }),
+  extractFn('researchTopAccounts', 7436, 7640, { async: true }),
 ].join('\n\n');
 
 // The shared research tracker module, run for real (not stubbed) -- these
 // tests exist specifically to prove ITS stop/progress behavior actually
 // takes effect inside the real orchestration functions above.
 const TRACKER_SRC = (() => {
-  const start = 7655, end = 7769;
+  const start = 7670, end = 7784;
   const slice = LINES.slice(start - 1, end).join('\n');
   if (!slice.startsWith('const researchRunTrackers = new Map();')) {
     throw new Error('tracker module extraction: dashboard/index.html has shifted -- update the line range in this test.');
