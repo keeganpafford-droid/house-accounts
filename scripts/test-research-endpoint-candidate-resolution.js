@@ -46,7 +46,7 @@ function extractLines(filePath, label, startLine, endLine, expectedFirst) {
 
 // --- api/research-batch.js: requireResolvedCandidate(candidates, mapped, account) ---
 const RESEARCH_BATCH_PATH = path.join(__dirname, '..', 'api', 'research-batch.js');
-const REQUIRE_RESOLVED_CANDIDATE_SRC = extractLines(RESEARCH_BATCH_PATH, 'requireResolvedCandidate', 2138, 2141, 'function requireResolvedCandidate(candidates, mapped, account) {');
+const REQUIRE_RESOLVED_CANDIDATE_SRC = extractLines(RESEARCH_BATCH_PATH, 'requireResolvedCandidate', 2169, 2172, 'function requireResolvedCandidate(candidates, mapped, account) {');
 const batchSandbox = {};
 vm.createContext(batchSandbox);
 vm.runInContext(`${REQUIRE_RESOLVED_CANDIDATE_SRC}\nthis.requireResolvedCandidate = requireResolvedCandidate;`, batchSandbox);

@@ -131,6 +131,37 @@ function clean(text = '') {
     .trim();
 }
 
+// Founder QA follow-up (identity-bootstrap trace): api/research-account.js's
+// single-account pipeline already derives an account's likely domain from a
+// non-free contact email (see its own domainFromEmailDomain(), fed a
+// pre-extracted domain from dashboard/index.html's extractEmailDomain()) --
+// but a warm/mixed account (any account with BOTH order history and any
+// contact -- see deriveAccountIntelligenceMode()) routes to THIS endpoint
+// instead, whose safeAccounts mapping never derived a domain from a contact
+// email at all. Confirmed production case: Dover Honda has an order history
+// (-> 'mixed' mode -> routed here) and an uploaded contact with a corporate
+// email, but no uploaded website/location -- this endpoint had no path to
+// ever learn that domain. Mirrors research-account.js's exact free-provider
+// exclusion list. Only ever used as a FALLBACK when no website was uploaded
+// -- an explicit account.website always wins.
+//
+// Known, accepted limitation (not solved here): this cannot distinguish a
+// contact's own company domain from a parent/dealer-group domain shared
+// across many locations (e.g. a large auto group's email domain used by
+// several differently-named dealerships). entityMatch()'s domain bonus is
+// still additive to, not a replacement for, the bare company-name match, so
+// a parent-domain source still has to name the specific account by name to
+// benefit at all -- but this does not fully close that gap. Flagged for the
+// founder rather than solved with an entity-specific exclusion list.
+const FREE_EMAIL_DOMAINS_RE = /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/;
+function domainFromContactEmail(email = '') {
+  const match = String(email || '').trim().toLowerCase().match(/@([^\s>]+)$/);
+  if (!match) return '';
+  const domain = match[1].replace(/^www\./, '');
+  if (!domain || FREE_EMAIL_DOMAINS_RE.test(domain)) return '';
+  return domain;
+}
+
 // Problem 3 (Preview QA follow-up round): every AI-generated free-text field
 // -- Conversation Starter, why-now copy, business context, etc. -- is capped
 // through this single function, which previously always hard-cut at exactly
@@ -2739,7 +2770,12 @@ export default async function handler(req, res) {
         location: clean(a.cityState || a.location || ''),
         cityState: clean(a.cityState || a.location || ''),
         notes: clean(a.notes || ''),
-        website: clean(a.website || ''),
+        // Falls back to a non-free contact email's domain ONLY when no
+        // website was uploaded -- an explicit account.website always wins.
+        // See domainFromContactEmail()'s header comment for why this is
+        // deliberately narrow (fallback-only, first-valid-contact, no
+        // parent-vs-target-company disambiguation).
+        website: clean(a.website || '') || (Array.isArray(a.contacts) ? (a.contacts.map(c => domainFromContactEmail(c?.email)).find(Boolean) || '') : ''),
         categories: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
         contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 12) : [],
         oneOffResearch: a.oneOffResearch === true,
@@ -3408,5 +3444,5 @@ export {
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
   sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
-  queryTemplates
+  queryTemplates, domainFromContactEmail
 };
