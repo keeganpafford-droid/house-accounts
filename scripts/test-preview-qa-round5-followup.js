@@ -223,7 +223,16 @@ function makeSandbox(){
     }
   ];
   const events = resolveEvents(candidates);
-  assert(events.length === 1, `item 4: two differently-titled representations of the same company/source/date/event merge into one resolveEvents() event (got ${events.length})`);
+  // Fingerprint Stability sprint (superseding this item's original intent):
+  // neither representation's generic investment-update wording extracts a
+  // distinctive anchor, and the two URLs differ -- company+date+sourceName
+  // agreement alone is no longer sufficient to merge (canonical-type/location/
+  // date agreement was proven to also cause FALSE merges across genuinely
+  // different events -- see the Fingerprint Stability design rounds). This is
+  // now an intentionally tolerated duplicate, not a regression: false
+  // separation is preferred over a false merge when no anchor or shared URL
+  // grounds the match.
+  assert(events.length === 2, `item 4 (superseded): with no distinctive anchor on either side and different URLs, the two representations are now intentionally kept distinct rather than merged on date/sourceName agreement alone (got ${events.length})`);
 }
 
 // ===========================================================================
@@ -248,7 +257,11 @@ function makeSandbox(){
     }
   ];
   const events = resolveEvents(candidates);
-  assert(events.length === 1, `item 5: a missing source URL never prevents a match when account, type, source name, and event date already agree (got ${events.length})`);
+  // Fingerprint Stability sprint (superseding this item's original intent):
+  // same reasoning as item 4 above -- no distinctive anchor on either side,
+  // and a missing URL can't satisfy the same-URL bridge either. Intentionally
+  // a tolerated duplicate now, not a regression.
+  assert(events.length === 2, `item 5 (superseded): with no distinctive anchor and no shared URL to bridge on, a missing source URL no longer causes a merge on date/sourceName agreement alone (got ${events.length})`);
 }
 
 // ===========================================================================

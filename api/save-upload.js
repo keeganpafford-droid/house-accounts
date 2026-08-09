@@ -55,6 +55,110 @@ function refreshableSignalRow(row){
     last_seen_at: row.last_seen_at
   };
 }
+// Fingerprint Stability sprint -- lazy legacy compatibility bridge.
+//
+// Existing ha_signals rows keep their original (pre-v2) event_fingerprint
+// forever; rewriting that column to v2 format is an explicit, separately
+// authorized backfill, not attempted here. This bridge's only job is to
+// stop a v2-era rediscovery of an event that already has a legacy-format
+// row from inserting a THIRD, duplicate row: it recomputes each existing
+// row's v2-equivalent identity from its own stored payload -- the same
+// technique scripts/find-duplicate-signals.js already uses for its
+// read-only duplicate report -- and, on a match, submits the WINNING
+// existing row's own literal fingerprint so the normal on-conflict upsert
+// refreshes it in place instead of inserting alongside it. Every other
+// legacy row (including a non-winner duplicate) is left completely
+// untouched -- historical duplicate cleanup remains a separate,
+// out-of-scope backfill/reconciliation concern.
+//
+// Deterministic winner rule, identical to find-duplicate-signals.js's
+// chooseRetained(): highest confidence, then earliest first_seen_at
+// (preserve original discovery), then id for total determinism regardless
+// of SELECT ordering.
+function chooseRetainedLegacyRow(rows){
+  return [...rows].sort((a, b) => {
+    const confDiff = Number(b.confidence || 0) - Number(a.confidence || 0);
+    if (confDiff !== 0) return confDiff;
+    const timeDiff = new Date(a.first_seen_at || 0) - new Date(b.first_seen_at || 0);
+    if (timeDiff !== 0) return timeDiff;
+    return String(a.id).localeCompare(String(b.id));
+  })[0];
+}
+
+// ONE batched query per save-upload call (chunked only if the account list
+// is large enough to risk a practical URL-length limit), scoped only to the
+// accounts that actually have resolved signals in this save -- never the
+// full table, never per-signal, never per-account. Mirrors the same
+// account-scoped query shape find-duplicate-signals.js already uses.
+async function fetchLegacySignalsForAccounts(userId, accountNames){
+  const names = [...new Set((accountNames || []).map(n => clean(n)).filter(Boolean))];
+  if(!names.length) return [];
+  const chunkSize = 100;
+  const rows = [];
+  for(let i=0;i<names.length;i+=chunkSize){
+    const chunk = names.slice(i, i+chunkSize);
+    const inFilter = `in.(${chunk.map(n => encodeURIComponent(`"${n.replace(/"/g,'\\"')}"`)).join(',')})`;
+    const page = await supabase(`ha_signals?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter}&select=id,account_name,event_fingerprint,confidence,first_seen_at,payload,source_url,source_domain,title`, {method:'GET'}).catch(() => []);
+    if(Array.isArray(page)) rows.push(...page);
+  }
+  return rows;
+}
+
+// Mutates resolvedSignals in place: for any signal whose freshly-computed v2
+// eventFingerprint matches one or more legacy rows' recomputed v2-equivalent
+// identity, replaces that signal's eventFingerprint with the deterministic
+// winner's literal existing fingerprint. Every candidateRows/RPC mapping
+// downstream reads s.eventFingerprint, so this is the only touch point
+// needed for both the tracked (RPC) and untracked (direct REST) write paths.
+function applyLegacyFingerprintBridge(legacyRows, resolvedSignals){
+  if(!legacyRows.length) return { bridged: 0, multiMatch: 0 };
+  const byRecomputedV2 = new Map();
+  for(const row of legacyRows){
+    if(String(row.event_fingerprint || '').startsWith('v2|')) continue; // already v2-format, nothing to bridge
+    const payload = row.payload || {};
+    const opportunity = {
+      ...payload,
+      accountName: payload.accountName || row.account_name,
+      companyName: payload.companyName || payload.accountName || row.account_name,
+      headline: payload.headline || payload.signalTitle || row.title,
+      whatChanged: payload.whatChanged || payload.businessContext || row.title,
+      rawTitle: payload.rawTitle || '',
+      rawSnippet: payload.rawSnippet || '',
+      rawContent: payload.rawContent || '',
+      sourceUrl: payload.sourceUrl || row.source_url,
+      eventDate: payload.eventDate || '',
+      publishedAt: payload.publishedAt || payload.eventDate || row.published_at
+    };
+    let recomputed;
+    try { recomputed = resolveOpportunityEvents([opportunity])[0]?.eventFingerprint; } catch { recomputed = null; }
+    if(!recomputed) continue;
+    if(!byRecomputedV2.has(recomputed)) byRecomputedV2.set(recomputed, []);
+    byRecomputedV2.get(recomputed).push(row);
+  }
+
+  let bridged = 0, multiMatch = 0;
+  for(const s of resolvedSignals){
+    const matches = byRecomputedV2.get(s.eventFingerprint);
+    if(!matches || !matches.length) continue;
+    const winner = chooseRetainedLegacyRow(matches);
+    if(matches.length > 1){
+      multiMatch += 1;
+      console.warn('[save-upload] legacy fingerprint bridge: multiple existing rows matched one v2 identity', {
+        accountNameHash: shortHash(s.accountName),
+        v2Fingerprint: s.eventFingerprint,
+        matchedLegacyFingerprints: matches.map(r => r.event_fingerprint),
+        winnerFingerprint: winner.event_fingerprint,
+        ...(DEBUG_INSTRUMENTATION ? { accountName: s.accountName } : {})
+      });
+    }
+    s.eventFingerprint = winner.event_fingerprint;
+    bridged += 1;
+  }
+  return { bridged, multiMatch };
+}
+
+export { chooseRetainedLegacyRow, applyLegacyFingerprintBridge, fetchLegacySignalsForAccounts };
+
 function env(){
   const rawUrl = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -451,6 +555,8 @@ export default async function handler(req, res){
         }
       }
       const resolvedSignals = resolveOpportunityEvents(rawSignals);
+      const legacyRowsForBridge = await fetchLegacySignalsForAccounts(user.id, unlockedAccounts.map(a => clean(a.name || a.accountName)));
+      const bridgeStats = applyLegacyFingerprintBridge(legacyRowsForBridge, resolvedSignals);
       let classificationCorrections = 0;
       for(const s of resolvedSignals){
         const canonicalLabel = s.eventIdentity?.eventType ? displayLabelForEventType(s.eventIdentity.eventType) : null;
@@ -524,6 +630,8 @@ export default async function handler(req, res){
         canonicalEventsAfterResolution: resolvedSignals.length,
         uniqueEventFingerprints: new Set(resolvedSignals.map(s => s.eventFingerprint)).size,
         classificationCorrections,
+        legacyFingerprintsBridged: bridgeStats.bridged,
+        legacyMultiMatchCount: bridgeStats.multiMatch,
         attemptedSignalInserts: signalRows.length,
         persistedSignalRows: insertedFingerprints.length,
         conflictIgnoredRows: conflictIgnoredCount,
@@ -570,6 +678,8 @@ export default async function handler(req, res){
       }
     }
     const resolvedSignals = resolveOpportunityEvents(rawSignals);
+    const legacyRowsForBridge = await fetchLegacySignalsForAccounts(user.id, unlockedAccounts.map(a => clean(a.name || a.accountName)));
+    const bridgeStats = applyLegacyFingerprintBridge(legacyRowsForBridge, resolvedSignals);
     // Phase 2A / B3 defense in depth: contradictory fields cannot persist.
     // By construction (see api/research-batch.js makeSignal() and
     // resolveEvents()'s reuse of canonicalEventType) signal_type and
@@ -675,6 +785,8 @@ export default async function handler(req, res){
       canonicalEventsAfterResolution: resolvedSignals.length,
       uniqueEventFingerprints: new Set(resolvedSignals.map(s => s.eventFingerprint)).size,
       classificationCorrections,
+      legacyFingerprintsBridged: bridgeStats.bridged,
+      legacyMultiMatchCount: bridgeStats.multiMatch,
       attemptedSignalInserts: signalsAttempted,
       persistedSignalRows: signalsPersisted,
       conflictIgnoredRows: conflictIgnoredCount,

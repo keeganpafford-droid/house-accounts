@@ -129,7 +129,15 @@ for(const c of cases){
   assert(resolved.length === 1, `rank ${c.rank} (${c.account}): resolves to exactly one canonical event`);
   if(resolved.length === 1){
     assert(resolved[0].eventIdentity.eventType === signal.canonicalEventType, `rank ${c.rank} (${c.account}): eventIdentity.eventType (from resolveOpportunityEvents) matches the canonical type computed at generation time, not a freshly-recomputed independent one`);
-    assert(resolved[0].eventFingerprint.includes(signal.canonicalEventType), `rank ${c.rank} (${c.account}): the persisted event_fingerprint embeds the canonical type ("${resolved[0].eventFingerprint}")`);
+    // Fingerprint Stability sprint: canonical type is deliberately EXCLUDED
+    // from the persisted event_fingerprint -- classification is proven
+    // unstable across reruns (the same real event can classify differently
+    // run to run) and must not decide identity. Type remains available as
+    // refreshable display metadata via eventIdentity.eventType/signal_type,
+    // asserted above; the fingerprint itself only needs to be a v2-tagged,
+    // non-empty, company-scoped identity string.
+    assert(resolved[0].eventFingerprint.startsWith('v2|'), `rank ${c.rank} (${c.account}): the persisted event_fingerprint is v2-tagged ("${resolved[0].eventFingerprint}")`);
+    assert(!resolved[0].eventFingerprint.includes(signal.canonicalEventType), `rank ${c.rank} (${c.account}): the persisted event_fingerprint no longer embeds canonical type, by design ("${resolved[0].eventFingerprint}")`);
   }
 }
 

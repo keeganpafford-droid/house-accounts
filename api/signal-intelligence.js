@@ -797,6 +797,15 @@ function normalizeOpportunity(raw = {}, account = {}, candidate = {}) {
     sources,
     sourceUrl: clean(raw.sourceUrl || raw.source_url || sources[0]?.url || candidate.url || ''),
     sourceName: clean(raw.sourceName || raw.source_name || sources[0]?.name || candidate.sourceName || ''),
+    // Fingerprint Stability sprint: preserve the original candidate's
+    // source-derived title/snippet/content under distinct field names --
+    // additive only, never overwrites headline/whatChanged above, which stay
+    // the model-authored fields every existing consumer already expects.
+    // Lets downstream identity resolution (resolveOpportunityEvents()) prefer
+    // genuinely raw text over LLM-resynthesized wording when both exist.
+    rawTitle: clean(candidate.headline || ''),
+    rawSnippet: clean(candidate.snippet || ''),
+    rawContent: clean(candidate.rawContent || raw.rawContent || raw.pageContent || ''),
     eventFingerprint: fingerprint,
     commercialScore: Number(raw.commercialScore || candidate.candidateScore || raw.whyNowScore || raw.why_now_score || 0),
     diagnostics: { ...(raw.diagnostics || {}), candidate: candidate.diagnostics || null }
@@ -1291,9 +1300,11 @@ function resolveEventType(text = '', family = '') {
   // branch"). Two write-ups of the SAME real location event, phrased
   // slightly differently, must not receive incompatible canonical types
   // merely because one happens to use "open house" language and the other
-  // doesn't -- that mismatch is exactly what breaks resolveEvents()'s
-  // typesCompatible() merge check downstream, producing duplicate
-  // opportunities for one real event (confirmed production case: two
+  // doesn't -- classification disagreement no longer blocks the identity
+  // merge itself (see the Fingerprint Stability sprint notes on resolveEvents()),
+  // but a stable, well-disambiguated type is still what feeds the display
+  // label and merge-history metadata, so this precedence still matters
+  // (confirmed production case: two
   // Avidia Bank Westborough branch write-ups). A genuine location-opening
   // signal (ribbon cutting/grand opening, or a new/reopened/renovated
   // branch qualifier) always takes precedence over the generic community-
@@ -1341,11 +1352,12 @@ function resolveEventType(text = '', family = '') {
   return { primaryType: generic, candidateTypes: [generic], recurring: false };
 }
 
-function extractFromOneField(t = '') {
-  if (!t) return { subjectEntity: null, location: null, role: null };
+function extractFromOneField(t = '', companyNorm = '') {
+  if (!t) return { subjectEntity: null, location: null, role: null, anchor: null };
   let subjectEntity = null;
   let location = null;
   let role = null;
+  let anchor = null;
 
   const NON_LOCATION_WORDS = new Set(['new', 'our', 'its', 'their', 'the', 'this', 'next', 'another', 'a', 'an', 'latest', 'newest', 'grand', 'corp', 'inc', 'llc', 'co', 'company', 'corporation', 'ltd']);
   // Proper-noun sequence: 1-5 consecutive capitalized tokens. Used for any entity/place
@@ -1367,6 +1379,35 @@ function extractFromOneField(t = '') {
   const branchNameMatch = branchNameMatchRaw && !NON_LOCATION_WORDS.has(branchNameMatchRaw[1].toLowerCase()) ? branchNameMatchRaw : null;
   const cityStateMatch = t.match(new RegExp(`\\b${CITY_STATE_PATTERN}\\b`));
 
+  // Fingerprint Stability sprint: bounded distinctive-name anchors for the
+  // event categories extractFromOneField() previously had zero coverage for
+  // (award/recognition, product launch, rebrand). These are deliberately
+  // narrow, named-entity captures -- the award/product/brand's own proper
+  // name -- not a broadening of what counts as identity-bearing text.
+  //
+  // Anchored to a required trigger verb/phrase (wins/receives/recipient of/
+  // etc.), not left to match "<proper-noun run> Award" anywhere in the text:
+  // a fully title-cased headline ("Dover Honda Wins Presidents Award") would
+  // otherwise let PN's greedy proper-noun-sequence swallow the company name
+  // and verb along with the award's own name, since every word is
+  // capitalized. Requiring the verb first bounds where the proper-noun
+  // capture is allowed to start.
+  const awardMatchRaw = t.match(new RegExp(`\\b(?:wins?|won|receives?|received|awarded|honored with|honoured with|recognized with|recognised with|recipient of)\\s+(?:the\\s+)?(${PN}\\s+Awards?)\\b`, 'i'));
+  const honorMatchRaw = t.match(new RegExp(`\\b(?:wins?|won|receives?|received|awarded|honored with|honoured with|recognized with|recognised with|recipient of|earns?|earned)\\s+(?:the\\s+)?(${PN}\\s+(?:Recognition|Honors?|Honours?))\\b`, 'i'));
+  const productNameMatchRaw = t.match(new RegExp(`(?:launches|unveils|introduces)\\s+(?:its\\s+|the\\s+|a\\s+|new\\s+)*(${PN})`, 'i'));
+  const productNameMatch = productNameMatchRaw && !NON_LOCATION_WORDS.has(productNameMatchRaw[1].toLowerCase()) ? productNameMatchRaw : null;
+  const rebrandNameMatchRaw = t.match(new RegExp(`new\\s+(${PN})\\s+(?:logo|brand identity|brand)\\b`, 'i'));
+  const rebrandNameMatch = rebrandNameMatchRaw && !NON_LOCATION_WORDS.has(rebrandNameMatchRaw[1].toLowerCase()) ? rebrandNameMatchRaw : null;
+  // Same category as the award/product/rebrand anchors above -- a sponsorship
+  // or participation names a specific, real, recurring program/event (e.g.
+  // "lead Platinum Sponsor for the 2026 Dover Holiday Parade" -> "Dover
+  // Holiday Parade"), which is exactly the kind of distinctive, stable named
+  // entity this sprint's anchor concept exists to capture -- discovered
+  // during implementation via a real refresh-reliability regression test for
+  // a community-sponsorship event with no other anchor candidate.
+  const sponsorshipNameMatchRaw = t.match(new RegExp(`sponsor(?:ship)?\\s+(?:for|of)\\s+(?:the\\s+)?(?:\\d{4}\\s+)?(${PN})`, 'i'));
+  const sponsorshipNameMatch = sponsorshipNameMatchRaw && !NON_LOCATION_WORDS.has(sponsorshipNameMatchRaw[1].toLowerCase()) ? sponsorshipNameMatchRaw : null;
+
   const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
   if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
   if (appointmentMatch) { subjectEntity = trimTrailingPunct(appointmentMatch[1].trim()); role = appointmentMatch[2].trim(); }
@@ -1378,28 +1419,60 @@ function extractFromOneField(t = '') {
   else if (cityStateMatch) location = `${cityStateMatch[1]}, ${cityStateMatch[2]}`;
   else if (branchNameMatch) location = trimTrailingPunct(branchNameMatch[1].trim());
 
-  return { subjectEntity, location, role };
+  // Distinctive-entity anchor: computed independently of the `location`
+  // display field's priority chain above (never derived from cityStateMatch),
+  // so a genuine facility/branch name (e.g. "Westborough Branch") is never
+  // masked by a bare "City, ST" pattern also present in the same text, and a
+  // bare city/state is never promoted to identity-bearing status. This is
+  // the fingerprint's identity-bearing field; `location` remains display/
+  // corroboration metadata only.
+  //
+  // An acquisition/appointment capture that merely restates the company's
+  // own name (e.g. passive "Dover Honda was named as a recipient of the
+  // Presidents Award" -> subjectEntity="Dover Honda") is skipped for anchor
+  // purposes -- it adds no discriminating power over the company field
+  // itself -- so the chain falls through to a genuinely distinctive anchor
+  // (the award's own name) later in the same sentence, rather than masking
+  // it. subjectEntity/role above are unaffected; this only changes what
+  // counts as the identity-bearing anchor.
+  const isCompanyRedundant = (s) => companyNorm && normalizeForMatch(s) === companyNorm;
+  if (acquisitionMatch && !isCompanyRedundant(acquisitionMatch[1])) anchor = trimTrailingPunct(acquisitionMatch[1].trim());
+  else if (appointmentMatch && !isCompanyRedundant(appointmentMatch[1])) anchor = trimTrailingPunct(appointmentMatch[1].trim());
+  else if (facilityInAtMatch) anchor = trimTrailingPunct(facilityInAtMatch[1].trim());
+  else if (openingOfXLocationMatch) anchor = trimTrailingPunct(openingOfXLocationMatch[1].trim());
+  else if (openingLocationMatch) anchor = trimTrailingPunct(openingLocationMatch[1].trim());
+  else if (possessiveLocationMatch) anchor = trimTrailingPunct(possessiveLocationMatch[1].trim());
+  else if (branchNameMatch) anchor = trimTrailingPunct(branchNameMatch[1].trim());
+  else if (awardMatchRaw) anchor = trimTrailingPunct(awardMatchRaw[1].trim());
+  else if (honorMatchRaw) anchor = trimTrailingPunct(honorMatchRaw[1].trim());
+  else if (sponsorshipNameMatch) anchor = trimTrailingPunct(sponsorshipNameMatch[1].trim());
+  else if (productNameMatch) anchor = trimTrailingPunct(productNameMatch[1].trim());
+  else if (rebrandNameMatch) anchor = trimTrailingPunct(rebrandNameMatch[1].trim());
+
+  return { subjectEntity, location, role, anchor };
 }
 
 // Runs extraction on each field SEPARATELY (never on a blind concatenation of
 // title+snippet+rawContent) and takes the first field that yields a value, per
 // sub-field. This avoids a permissive capture group in one field silently
 // extending across the boundary into an unrelated adjacent field's text.
-function extractEventEntities(title = '', snippet = '', rawContent = '') {
+function extractEventEntities(title = '', snippet = '', rawContent = '', companyNorm = '') {
   const fields = [clean(title), clean(snippet), clean(rawContent)].filter(Boolean);
-  let subjectEntity = null, location = null, role = null;
+  let subjectEntity = null, location = null, role = null, anchor = null;
   for (const f of fields) {
-    const r = extractFromOneField(f);
+    const r = extractFromOneField(f, companyNorm);
     if (!subjectEntity && r.subjectEntity) subjectEntity = r.subjectEntity;
     if (!location && r.location) location = r.location;
     if (!role && r.role) role = r.role;
-    if (subjectEntity && location && role) break;
+    if (!anchor && r.anchor) anchor = r.anchor;
+    if (subjectEntity && location && role && anchor) break;
   }
   if (!subjectEntity && location) subjectEntity = location;
   return {
     subjectEntity: subjectEntity ? subjectEntity.slice(0, 60) : null,
     location: location ? location.slice(0, 60) : null,
-    role: role ? role.slice(0, 70) : null
+    role: role ? role.slice(0, 70) : null,
+    anchor: anchor ? anchor.slice(0, 60) : null
   };
 }
 
@@ -1606,23 +1679,45 @@ function locationsAgree(a, b) {
   return na === nb || na.includes(nb) || nb.includes(na);
 }
 
-function dateWindowDays(eventType = '') {
-  if (eventType === 'LEADERSHIP_APPOINTMENT') return 14;
-  return 30;
+// Deterministic, non-cryptographic string hash (FNV-1a) -- same algorithm
+// api/save-upload.js's hashString() already uses for signal_hash. Used only
+// to compress the fallback-discriminator evidence bundle into a fixed-width
+// token; never a source of identity on its own, always paired with a scoped
+// prefix (src:/dom:/ev:) below.
+function stableHash(input = '') {
+  let h = 2166136261;
+  const s = String(input || '');
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16);
 }
 
-function datesAgree(idA = {}, idB = {}, eventTypeForWindow = '') {
-  if (idA.dateConfidence === 'unknown' || idB.dateConfidence === 'unknown') return false;
-  if (!idA.eventDate || !idB.eventDate) return false;
-  const da = parseDate(idA.eventDate);
-  const db = parseDate(idB.eventDate);
-  if (!da || !db) return false;
-  const diffDays = Math.abs(da.getTime() - db.getTime()) / 86400000;
-  return diffDays <= dateWindowDays(eventTypeForWindow);
-}
-
-function typesCompatible(candTypes = [], eventTypes = []) {
-  return candTypes.some(t => eventTypes.includes(t));
+// Fingerprint Stability sprint -- non-empty fallback discriminator for an
+// event that produced no distinctive anchor. Ordered, deterministic evidence
+// bundle: source-derived per-candidate material first (rawTitle/rawSnippet --
+// never the shared pageContent/rawContent blob, which is identical for every
+// event sourced from the same fetched URL and would defeat discrimination
+// between two genuinely different events on one page), model-authored fields
+// only as a last-resort supplement. Instability in the model-authored tier
+// is an accepted tradeoff: it produces a fresh discriminator (a tolerated
+// duplicate on rediscovery), never a collision with a deliberately-separate
+// event -- the required failure direction per this sprint's false-separation-
+// over-false-merge policy. Never returns an empty discriminator: normalized
+// URL, then domain, then a hash of the evidence bundle itself are always
+// available for anything that reached persistence.
+function fallbackEventDiscriminator(ev, primaryCandidate = {}) {
+  const normalizedUrl = normalizeUrl(ev.evidence?.[0]?.url || primaryCandidate.url || primaryCandidate.sourceUrl || '');
+  const bundle = [
+    clean(primaryCandidate.rawTitle || ''),
+    clean(primaryCandidate.rawSnippet || ''),
+    ev.identity.dateConfidence === 'exact' ? (ev.identity.eventDate || '') : '',
+    clean(primaryCandidate.concreteTrigger || primaryCandidate.concrete_trigger || ''),
+    clean(primaryCandidate.whatChanged || ''),
+    clean(primaryCandidate.signalTitle || primaryCandidate.headline || primaryCandidate.title || '')
+  ].filter(Boolean).map(normalizeForMatch).join('|');
+  if (normalizedUrl) return `src:${normalizedUrl}|${stableHash(bundle || normalizedUrl)}`;
+  const domain = sourceDomain(primaryCandidate.url || primaryCandidate.sourceUrl || '');
+  if (domain) return `dom:${domain}|${stableHash(bundle || domain)}`;
+  return `ev:${stableHash(bundle || JSON.stringify(ev.evidence || []))}`;
 }
 
 // Resolves a batch of candidates (same shape clusterCandidates() consumes) into
@@ -1648,7 +1743,29 @@ function resolveEvents(candidates = []) {
     const typeInfo = c.canonicalEventType
       ? { primaryType: c.canonicalEventType, candidateTypes: [c.canonicalEventType], recurring: RECURRING_EVENT_TYPES.has(c.canonicalEventType) }
       : resolveEventType(text, family);
-    const { subjectEntity, location, role } = extractEventEntities(c.title || c.headline || '', c.snippet || '', c.rawContent || c.pageContent || '');
+    const companyDisplay = clean(c.companyName || c.accountName || '');
+    const company = normalizeCompany(companyDisplay);
+    // Fingerprint Stability sprint: prefer source-derived per-candidate text
+    // (rawTitle/rawSnippet, threaded through by resolveOpportunityEvents())
+    // over model-authored title/snippet when both are available -- the
+    // model re-synthesizes headline/whatChanged wording on every research
+    // run, while rawTitle/rawSnippet reflect the actual fetched source.
+    // Falls back to the existing fields when raw text wasn't captured, so
+    // behavior is unchanged for any caller that never threads raw text
+    // through (e.g. api/weekly-scan.js's plain search-result candidates).
+    // company is passed through so an appointment/acquisition-style capture
+    // that merely restates the company's own name (e.g. "Dover Honda was
+    // named as a recipient of the Presidents Award" -> subjectEntity="Dover
+    // Honda") is never used AS the anchor -- it adds no discriminating power
+    // over the company field itself, and would otherwise mask a genuinely
+    // distinctive anchor (the award's own name) present later in the same
+    // sentence.
+    const { subjectEntity, location, role, anchor } = extractEventEntities(
+      c.rawTitle || c.title || c.headline || '',
+      c.rawSnippet || c.snippet || '',
+      c.rawContent || c.pageContent || '',
+      company
+    );
     // Prefer the candidate's own structured event date (already resolved by
     // an upstream stage — e.g. research-batch.js's makeSignal() or a
     // previously-persisted opportunity's eventDate) over re-deriving one by
@@ -1665,16 +1782,16 @@ function resolveEvents(candidates = []) {
     const eventDate = structuredDate ? structuredDate.toISOString().slice(0, 10) : textDate.eventDate;
     const dateConfidence = structuredDate ? 'exact' : textDate.dateConfidence;
     const dateYear = structuredDate ? structuredDate.getUTCFullYear() : textDate.year;
-    const companyDisplay = clean(c.companyName || c.accountName || '');
-    const company = normalizeCompany(companyDisplay);
     const year = dateYear || extractYearFallback(text, c.publishedAt);
 
     const candidateIdentity = {
       company, companyDisplay,
       candidateTypes: typeInfo.candidateTypes,
       recurring: typeInfo.recurring,
-      subjectEntity, location, role,
-      eventDate, dateConfidence, year
+      subjectEntity, location, role, anchor,
+      eventDate, dateConfidence, year,
+      normalizedUrl: normalizeUrl(c.url || c.sourceUrl || ''),
+      evidenceText: text
     };
 
     const evidenceItem = {
@@ -1688,21 +1805,65 @@ function resolveEvents(candidates = []) {
       corroboration: 'unknown'
     };
 
+    // Fingerprint Stability sprint: canonical-type agreement (typesCompatible())
+    // is no longer the merge gate -- classification is proven unstable across
+    // reruns (the same real event can be classified REBRAND one run and
+    // PRODUCT_LAUNCH the next) and must not decide identity. Replaced with a
+    // conservative anchor/same-URL rule: a distinctive named-entity anchor
+    // (award/product/rebrand/facility name -- never bare city/state) is the
+    // primary merge evidence; a shared exact source URL is the only fallback
+    // bridge, and only when at least one side carries some anchor and both
+    // agree on an exact event date. Bare location/date/domain agreement alone
+    // never establishes identity -- false separation (a tolerated duplicate)
+    // is preferred over a false merge throughout this loop.
     let matched = null;
     for (const ev of events) {
       const id = ev.identity;
       if (id.company !== company || !company) continue;
-      if (!typesCompatible(candidateIdentity.candidateTypes, id.candidateTypes)) continue;
 
+      // Recurring event types (annual awards/conferences/etc.) require an
+      // exact-year match to merge -- but only when BOTH sides actually have
+      // a resolved year. An undated representation is missing evidence, not
+      // conflicting evidence (the same positive-agreement-vs-absence-of-
+      // conflict principle used throughout this loop), and must not block a
+      // merge a genuine anchor match already establishes.
       if (RECURRING_EVENT_TYPES.has(id.candidateTypes[0]) || candidateIdentity.recurring) {
-        if (!id.year || !candidateIdentity.year || id.year !== candidateIdentity.year) continue;
+        if (id.year && candidateIdentity.year && id.year !== candidateIdentity.year) continue;
       }
 
-      const locAgree = locationsAgree(id.location || id.subjectEntity, candidateIdentity.location || candidateIdentity.subjectEntity);
-      const dateAgree = datesAgree(id, candidateIdentity, id.candidateTypes[0]);
-      if (!locAgree && !dateAgree) continue; // positive-agreement requirement — absence of conflict is not agreement
+      const explicitLocationConflict = id.location && candidateIdentity.location && !locationsAgree(id.location, candidateIdentity.location);
+      const candAnchor = candidateIdentity.anchor ? normalizeForMatch(candidateIdentity.anchor) : '';
+      const idAnchor = id.anchor ? normalizeForMatch(id.anchor) : '';
 
-      if (id.location && candidateIdentity.location && !locationsAgree(id.location, candidateIdentity.location) && !dateAgree) continue; // explicit-mismatch veto
+      if (candAnchor && idAnchor) {
+        // Both sides carry a distinctive anchor: two different anchors are two
+        // different events by definition -- URL/date/location agreement never
+        // overrides a genuine anchor disagreement.
+        if (candAnchor !== idAnchor) continue;
+        if (explicitLocationConflict) continue;
+        matched = ev;
+        break;
+      }
+
+      // Fewer than two agreeing anchors: the only remaining path is the
+      // same-URL bridge, gated by exact-date agreement (Guardrail 2). When
+      // NEITHER side has an anchor at all, exact date + shared URL alone is
+      // still not enough on its own -- two unrelated candidates can share a
+      // page and a publication date (see case 7 below) -- so this branch
+      // additionally requires the underlying evidence text to materially
+      // agree (materiallyRepeats(), the same corroboration-strength check
+      // classifyCorroboration() already uses elsewhere in this file), which
+      // is what "no conflicting evidence" means when there is no anchor to
+      // conflict on. One side carrying a real anchor is already strong
+      // enough evidence on its own and skips this extra text check.
+      const sameUrl = candidateIdentity.normalizedUrl && id.normalizedUrl && candidateIdentity.normalizedUrl === id.normalizedUrl;
+      if (!sameUrl || explicitLocationConflict) continue;
+
+      const exactDateAgree = candidateIdentity.dateConfidence === 'exact' && id.dateConfidence === 'exact'
+        && candidateIdentity.eventDate && id.eventDate && candidateIdentity.eventDate === id.eventDate;
+      if (!exactDateAgree) continue;
+
+      if (!candAnchor && !idAnchor && !materiallyRepeats(candidateIdentity.evidenceText, id.evidenceText)) continue;
 
       matched = ev;
       break;
@@ -1711,10 +1872,17 @@ function resolveEvents(candidates = []) {
     if (matched) {
       evidenceItem.corroboration = classifyCorroboration(evidenceItem, matched.evidence);
       matched.evidence.push(evidenceItem);
-      matched.identity.candidateTypes = matched.identity.candidateTypes.filter(t => candidateIdentity.candidateTypes.includes(t));
+      const intersectedTypes = matched.identity.candidateTypes.filter(t => candidateIdentity.candidateTypes.includes(t));
+      // Type is refreshable display metadata, not identity -- when merged
+      // evidence genuinely disagrees on classification (exactly the drift
+      // this sprint fixes), keep the event's existing display type rather
+      // than collapsing to an empty/generic fallback.
+      matched.identity.candidateTypes = intersectedTypes.length ? intersectedTypes : matched.identity.candidateTypes;
       if (!matched.identity.location && candidateIdentity.location) matched.identity.location = candidateIdentity.location;
       if (!matched.identity.subjectEntity && candidateIdentity.subjectEntity) matched.identity.subjectEntity = candidateIdentity.subjectEntity;
       if (!matched.identity.role && candidateIdentity.role) matched.identity.role = candidateIdentity.role;
+      if (!matched.identity.anchor && candidateIdentity.anchor) matched.identity.anchor = candidateIdentity.anchor;
+      if (!matched.identity.normalizedUrl && candidateIdentity.normalizedUrl) matched.identity.normalizedUrl = candidateIdentity.normalizedUrl;
       if (matched.identity.dateConfidence === 'unknown' && candidateIdentity.dateConfidence !== 'unknown') {
         matched.identity.eventDate = candidateIdentity.eventDate;
         matched.identity.dateConfidence = candidateIdentity.dateConfidence;
@@ -1739,6 +1907,7 @@ function resolveEvents(candidates = []) {
       candidateTypes: ev.identity.candidateTypes,
       subjectEntity: ev.identity.subjectEntity,
       location: ev.identity.location,
+      anchor: ev.identity.anchor || null,
       eventDate: ev.identity.eventDate,
       dateConfidence: ev.identity.dateConfidence,
       canonicalTitle: title,
@@ -1746,10 +1915,18 @@ function resolveEvents(candidates = []) {
     };
 
     const flatSources = ev.evidence.map(e => ({ name: e.sourceName, url: e.url, publishedAt: e.publishedDate || '' }));
-    // GUARDRAIL: company/eventType/location/year only -- see eventFingerprint()'s
-    // guardrail comment above. commercialPlay/activationIdeas/expansionPotential
-    // must never enter this identity key.
-    const fingerprint = `${ev.identity.company}|${primaryType}|${normalizeForMatch(ev.identity.location || ev.identity.subjectEntity || '')}|${ev.identity.year || 'unknown'}`;
+    // GUARDRAIL: company/anchor(or fallback discriminator)/date-or-year only --
+    // see eventFingerprint()'s guardrail comment above. commercialPlay/
+    // activationIdeas/expansionPotential must never enter this identity key.
+    // canonicalEventType is deliberately EXCLUDED (v1 included it; proven
+    // unstable across reruns -- see Fingerprint Stability sprint design docs).
+    // The discriminator segment is never empty: a distinctive anchor when one
+    // extracted, otherwise the non-empty fallbackEventDiscriminator() chain.
+    const discriminator = ev.identity.anchor
+      ? `a:${normalizeForMatch(ev.identity.anchor)}`
+      : fallbackEventDiscriminator(ev, primaryCandidate);
+    const temporalAnchor = ev.identity.dateConfidence === 'exact' && ev.identity.eventDate ? ev.identity.eventDate : (ev.identity.year || 'unknown');
+    const fingerprint = `v2|${ev.identity.company}|${discriminator}|${temporalAnchor}`;
 
     // Trust correction: identityConfidence must be the STRONGEST verdict among
     // every candidate merged into this event, never just whichever candidate
@@ -1802,6 +1979,14 @@ function resolveOpportunityEvents(opportunities = []) {
     ...o,
     title: o.headline || o.signalTitle || '',
     snippet: o.whatChanged || o.businessContext || '',
+    // Fingerprint Stability sprint: thread source-derived raw text through
+    // (populated by normalizeOpportunity() when it has a raw candidate to
+    // read from) so anchor extraction and the fallback discriminator can
+    // prefer it over model-authored title/snippet. Absent for callers that
+    // never had raw candidate text -- falls back to today's behavior.
+    rawTitle: o.rawTitle || '',
+    rawSnippet: o.rawSnippet || '',
+    rawContent: o.rawContent || o.pageContent || '',
     url: o.sourceUrl || (Array.isArray(o.sources) && o.sources[0]?.url) || '',
     candidateScore: Number(o.commercialScore || o.whyNowScore || o.why_now_score || o.confidenceScore || 0)
   }));
@@ -1843,6 +2028,7 @@ export {
   findPublicationContextDate,
   classifyCorroboration, generateCanonicalTitle, resolveEvents,
   resolveOpportunityEvents, dedupeByEventFingerprint,
+  fallbackEventDiscriminator, stableHash,
   EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
