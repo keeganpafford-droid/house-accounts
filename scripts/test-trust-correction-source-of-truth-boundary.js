@@ -29,7 +29,7 @@
 // function's own header comment already documented).
 // Write-side change: dashboard/index.html's serializeAccountForStorage(),
 // using the SAME classifier the client already trusts elsewhere
-// (isBusinessOpportunity()) rather than inventing a new taxonomy -- stops
+// (isWebResearchSignal()) rather than inventing a new taxonomy -- stops
 // putting canonical business signals into existingSignals going forward, so
 // old data is harmless and new saves stop creating more duplicate truth. No
 // DB migration: old frozen snapshots stay physically present but become
@@ -67,16 +67,16 @@ function extractFn(name, startLine, endLine) {
 }
 
 // Real, verbatim client-side functions: the classifier the write-side fix
-// reuses (isBusinessOpportunity() and its own dependency chain), plus
+// reuses (isWebResearchSignal() and its own dependency chain), plus
 // serializeAccountForStorage() itself -- the actual write boundary under
 // test, not a reimplementation of it.
 const CLASSIFIER_SRC = [
-  extractFn('isBusinessOpportunity', 3415, 3417),
-  extractFn('signalLayerLabel', 4730, 4735),
-  extractFn('isRecentAccountActivity', 4737, 4740),
-  extractFn('normalizeSignalLayerType', 9869, 9875)
+  extractFn('isWebResearchSignal', 3434, 3439),
+  extractFn('signalLayerLabel', 4752, 4760),
+  extractFn('isRecentAccountActivity', 4762, 4765),
+  extractFn('normalizeSignalLayerType', 9898, 9904)
 ].join('\n\n');
-const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10518, 10599);
+const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10547, 10634);
 
 function makeSandbox() {
   const sandbox = { console, Array, Object, String, Number, Boolean, JSON };

@@ -57,26 +57,26 @@ function extractLines(label, startLine, endLine, expectedFirst, expectedLast){
 const SRC = [
   extractLines('timebox-config', 2784, 2789, 'const TIMEBOX_CONFIG = {', '};'),
   extractLines('opportunity-identity-helpers', 2937, 3022, 'function cleanOpportunityToken(value){', '}'),
-  extractLines('is-business-opportunity', 3415, 3417, 'function isBusinessOpportunity(opp){', '}'),
-  extractLines('signal-layer-label', 4730, 4740, 'function signalLayerLabel(opp){', '}'),
-  extractLines('is-likely-invalid-account-name', 4714, 4721, 'function isLikelyInvalidAccountName(name){', '}'),
-  extractLines('parse-maybe-date', 4766, 4771, 'function parseMaybeDate(value){', '}'),
-  extractLines('parse-csv', 4473, 4591, 'function parseCSV(text){', '}'),
-  extractLines('infer-promo-category', 4593, 4613, 'function inferPromoCategory(text){', '}'),
-  extractLines('infer-industry', 4615, 4623, 'function inferIndustry(client, projects){', '}'),
+  extractLines('is-web-research-signal', 3434, 3439, 'function isWebResearchSignal(opp){', '}'),
+  extractLines('signal-layer-label', 4752, 4765, 'function signalLayerLabel(opp){', '}'),
+  extractLines('is-likely-invalid-account-name', 4736, 4743, 'function isLikelyInvalidAccountName(name){', '}'),
+  extractLines('parse-maybe-date', 4791, 4796, 'function parseMaybeDate(value){', '}'),
+  extractLines('parse-csv', 4495, 4613, 'function parseCSV(text){', '}'),
+  extractLines('infer-promo-category', 4615, 4635, 'function inferPromoCategory(text){', '}'),
+  extractLines('infer-industry', 4637, 4645, 'function inferIndustry(client, projects){', '}'),
   // Commercial-readiness correction round: the account-history-specific
   // status classification (isAccountHistoryOpportunity/reorderWindowStatus/
   // accountHistoryStatusLine) that createRepeatPatternOpportunities() now
   // calls to ground its reasonToReachOut/conversationStarter text -- and
   // that this test also verifies directly for required tests 1-3.
-  extractLines('format-short-date', 5658, 5662, 'function formatShortDate(value){', '}'),
-  extractLines('account-history-status', 5693, 5758, 'function isAccountHistoryOpportunity(opp){', '}'),
-  extractLines('opportunity-generation', 8411, 8951, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 9822, 9850, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 9869, 9875, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 9887, 9986, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 9988, 10059, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 10190, 10246, 'function monthIndexFromName(name){', '}'),
+  extractLines('format-short-date', 5683, 5687, 'function formatShortDate(value){', '}'),
+  extractLines('account-history-status', 5718, 5787, 'function isAccountHistoryOpportunity(opp){', '}'),
+  extractLines('opportunity-generation', 8440, 8980, 'function estimateFutureValue(account, opportunityType){', '}'),
+  extractLines('order-history-filters', 9851, 9879, 'function isClosedHistoricalRecord(record){', '}'),
+  extractLines('normalize-signal-layer-type', 9898, 9904, 'function normalizeSignalLayerType(type){', '}'),
+  extractLines('recommendation-type', 9916, 10015, 'function daysSinceDate(value){', '}'),
+  extractLines('opportunity-scoring', 10017, 10088, 'function calculateOpportunityScore(opp){', '}'),
+  extractLines('timebox-classification', 10219, 10275, 'function monthIndexFromName(name){', '}'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the
   // uploaded contact/real order history (not a generic public-signal
   // department framing) drives the Conversation Starter/Best Next Move/
@@ -85,7 +85,7 @@ const SRC = [
   // never invoked below -- it is DOM-heavy (document.body...) and inert as
   // long as it is only assigned, not called (same pattern already relied
   // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
-  extractLines('sales-play-account-history-grounding', 8953, 9567, 'function cleanSalesPlayText(value){', '}')
+  extractLines('sales-play-account-history-grounding', 8982, 9596, 'function cleanSalesPlayText(value){', '}')
 ].join('\n\n');
 
 const EXPORT_NAMES = [
@@ -93,7 +93,7 @@ const EXPORT_NAMES = [
   'isClosedHistoricalRecord', 'isActivePipelineRecord', 'hasOrderHistoryEvidence', 'sumRevenue',
   'findRepeatPatternGroups', 'createRepeatPatternOpportunities', 'categoryToPromoSuggestions',
   'generateFutureOpportunities', 'createOpportunity',
-  'signalLayerLabel', 'isBusinessOpportunity', 'isRecentAccountActivity',
+  'signalLayerLabel', 'isWebResearchSignal', 'isRecentAccountActivity',
   'isAccountHistoryOpportunity', 'reorderWindowStatus', 'accountHistoryStatusLine', 'formatShortDate',
   'accountHistoryPlayLabel', 'salesPlayModeLabelForOpp',
   'groundedDepartmentForOpportunity', 'initiativeLeadIn', 'ownerAskPhrase', 'ideaOfferPhrase',
@@ -399,7 +399,7 @@ console.log(`\n(Test run date: ${TODAY.toISOString().slice(0,10)} -- planning-wi
   };
   assert(dash.signalLayerLabel(simulatedBusinessOpp) === 'Business Activity Signal', 'a real, sourced business-activity opportunity is classified "Business Activity Signal"');
   assert(dash.signalLayerLabel(patternOpp) !== dash.signalLayerLabel(simulatedBusinessOpp), 'scenario 6 required proof (repeat/pattern distinct from business-activity): the two signal types receive different signalLayerType classifications for the same account');
-  assert(dash.isBusinessOpportunity(simulatedBusinessOpp) === true && dash.isBusinessOpportunity(patternOpp) === false, 'isBusinessOpportunity() correctly separates the two into different buckets before any cross-source merge logic would run');
+  assert(dash.isWebResearchSignal(simulatedBusinessOpp) === true && dash.isWebResearchSignal(patternOpp) === false, 'isWebResearchSignal() correctly separates the two into different buckets before any cross-source merge logic would run');
 
   const realCategories = new Set(a.purchases.map(p => p.category));
   assert(!realCategories.has('New Flagship Store Opening'), 'scenario 6 required proof (category provenance under a business trigger): the business-trigger opportunity name never contaminates the account\'s real prior-purchase category set');

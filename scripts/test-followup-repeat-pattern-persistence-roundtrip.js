@@ -8,7 +8,7 @@
 // non-business entries ever reach it now, that force-set INVERTED their
 // classification right back: a Follow-Up Signal loaded from a saved account
 // would come back out of reconcileStoredOpportunity() looking exactly like
-// a business signal to isBusinessOpportunity() (dashboard/index.html), and
+// a business signal to isWebResearchSignal() (dashboard/index.html), and
 // the client's own write-side exclusion (serializeAccountForStorage()) would
 // then drop it from the next save. Follow-Up Signals have no ha_signals
 // home -- only regenerated at CSV upload -- so this was a genuine, silent,
@@ -17,7 +17,7 @@
 // This test proves the full real cycle end to end: a saved account's
 // raw_data is read through buildAccountsFromRows() (the real server
 // function, real reconciliation), and the reconciled result is fed through
-// the real client serializeAccountForStorage()/isBusinessOpportunity() (the
+// the real client serializeAccountForStorage()/isWebResearchSignal() (the
 // exact functions extracted verbatim from dashboard/index.html, not
 // reimplemented) to prove what actually gets written back.
 //
@@ -55,12 +55,12 @@ function extractFn(name, startLine, endLine) {
 // Real, verbatim client-side functions -- the exact write boundary under
 // test, not a reimplementation of it.
 const CLASSIFIER_SRC = [
-  extractFn('isBusinessOpportunity', 3415, 3417),
-  extractFn('signalLayerLabel', 4730, 4735),
-  extractFn('isRecentAccountActivity', 4737, 4740),
-  extractFn('normalizeSignalLayerType', 9869, 9875)
+  extractFn('isWebResearchSignal', 3434, 3439),
+  extractFn('signalLayerLabel', 4752, 4760),
+  extractFn('isRecentAccountActivity', 4762, 4765),
+  extractFn('normalizeSignalLayerType', 9898, 9904)
 ].join('\n\n');
-const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10518, 10599);
+const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10547, 10634);
 
 function makeSandbox() {
   const sandbox = { console, Array, Object, String, Number, Boolean, JSON };

@@ -50,15 +50,15 @@ function extractBlock(label, startLine, endLine, expectedPrefix){
 // Same verified-working ranges as scripts/test-preview-qa-round7-live-render.js.
 const TIMEBOX_CONFIG_SRC = extractBlock('TIMEBOX_CONFIG', 2784, 2789, 'const TIMEBOX_CONFIG = {');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractBlock('isRelationshipExpansionOpportunity', 3019, 3022, 'function isRelationshipExpansionOpportunity(');
-const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3417, 'function cleanOpportunityToken(');
-const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4723, 6354, 'function confidenceLabel(');
-const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8411, 8951, 'function estimateFutureValue(account, opportunityType){');
-const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8548, 9866, 'function salesPlayModeFromOpp(');
-const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9869, 10439, 'function normalizeSignalLayerType(');
-const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11190, 11193, 'function escapeHtml(');
-const FMT_MONEY_SRC = extractBlock('fmtMoney', 8463, 8465, 'function fmtMoney(');
-const CLAMP_SCORE_SRC = extractBlock('clampScore', 8468, 8470, 'function clampScore(');
-const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7855, 7893, 'function getReasonToReachOutTitle(opp){');
+const DEDUPE_AND_IDENTITY_BLOCK = extractBlock('dedupe-and-identity-helpers', 2937, 3439, 'function cleanOpportunityToken(');
+const CARD_AND_MODAL_BLOCK = extractBlock('card-and-modal-helpers-plus-signal-derived', 4745, 6383, 'function confidenceLabel(');
+const OPPORTUNITY_GENERATION_BLOCK = extractBlock('opportunity-generation', 8440, 8980, 'function estimateFutureValue(account, opportunityType){');
+const SALES_PLAY_BLOCK = extractBlock('sales-play-grounding', 8577, 9895, 'function salesPlayModeFromOpp(');
+const SCORING_AND_TIMEBOX_BLOCK = extractBlock('scoring-and-timebox-helpers', 9898, 10468, 'function normalizeSignalLayerType(');
+const ESCAPE_HTML_SRC = extractBlock('escapeHtml', 11225, 11228, 'function escapeHtml(');
+const FMT_MONEY_SRC = extractBlock('fmtMoney', 8492, 8494, 'function fmtMoney(');
+const CLAMP_SCORE_SRC = extractBlock('clampScore', 8497, 8499, 'function clampScore(');
+const REASON_AND_STARTER_BLOCK = extractBlock('reason-and-starter-helpers', 7884, 7922, 'function getReasonToReachOutTitle(opp){');
 
 function makeSandbox(){
   // QA correction 1: document.body.insertAdjacentHTML/lastElementChild are

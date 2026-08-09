@@ -38,8 +38,8 @@ function extractLines(label, startLine, endLine, expectedFirst) {
   return LINES.slice(startLine - 1, endLine).join('\n');
 }
 
-const TRACKER_SRC = extractLines('research-tracker-module', 7670, 7784, 'const researchRunTrackers = new Map();');
-const PROGRESS_LABEL_SRC = extractLines('researchProgressLabel', 7790, 7805, 'function researchProgressLabel(snap){');
+const TRACKER_SRC = extractLines('research-tracker-module', 7699, 7813, 'const researchRunTrackers = new Map();');
+const PROGRESS_LABEL_SRC = extractLines('researchProgressLabel', 7819, 7834, 'function researchProgressLabel(snap){');
 
 const sandbox = { Map, Set, AbortController, setTimeout, clearTimeout, console: { warn(){} } };
 vm.createContext(sandbox);

@@ -119,59 +119,59 @@ const REAL_SOURCE = [
   extractFn('heartbeatCurrentResearchRun', 2657, 2674, {async: true}),
   extractFn('reportResearchRunOutcome', 2688, 2713, {async: true}),
   extractFn('normalizeSavedAccount', 2849, 2911),
-  extractFn('accountCardFor', 4693, 4699),
-  extractFn('accountSignalsPanel', 4700, 4703),
+  extractFn('accountCardFor', 4715, 4721),
+  extractFn('accountSignalsPanel', 4722, 4725),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6547, 6582, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 6411, 6433, {async: true}),
-  extractFn('persistScopedResearchResult', 6441, 6486, {async: true}),
-  extractFn('researchAccountFromManageModal', 6584, 6747, {async: true}),
-  extractFn('researchAccountByName', 7025, 7186, {async: true}),
-  extractFn('getAccountsForResearch', 7190, 7203),
-  extractFn('batchPayloadForAccounts', 7205, 7261),
-  extractFn('applyBusinessSignalAccountBoost', 7264, 7272),
-  extractFn('researchAccountsBatch', 7274, 7394, {async: true}),
-  extractFn('signalTopicKeyClient', 7396, 7404),
-  extractFn('dedupeSignalsClient', 7406, 7419),
-  extractFn('researchTopAccounts', 7436, 7640, {async: true}),
-  extractFn('refreshOpportunityViews', 7927, 7947),
+  extractFn('safeParseResearchResponse', 6576, 6611, {async: true}),
+  extractFn('fetchUploadScopedSnapshot', 6440, 6462, {async: true}),
+  extractFn('persistScopedResearchResult', 6470, 6515, {async: true}),
+  extractFn('researchAccountFromManageModal', 6613, 6776, {async: true}),
+  extractFn('researchAccountByName', 7054, 7215, {async: true}),
+  extractFn('getAccountsForResearch', 7219, 7232),
+  extractFn('batchPayloadForAccounts', 7234, 7290),
+  extractFn('applyBusinessSignalAccountBoost', 7293, 7301),
+  extractFn('researchAccountsBatch', 7303, 7423, {async: true}),
+  extractFn('signalTopicKeyClient', 7425, 7433),
+  extractFn('dedupeSignalsClient', 7435, 7448),
+  extractFn('researchTopAccounts', 7465, 7669, {async: true}),
+  extractFn('refreshOpportunityViews', 7956, 7976),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 7983, 7993),
+  extractFn('applyModalResearchResultToDashboard', 8012, 8022),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 8014, 8042, {async: true}),
-  extractFn('renderDetailedAccountViews', 10440, 10508),
+  extractFn('researchAccountFromCard', 8043, 8071, {async: true}),
+  extractFn('renderDetailedAccountViews', 10469, 10537),
   // Source-of-truth correction: serializeAccountForStorage() below now
-  // calls isBusinessOpportunity() to keep canonical business signals out of
+  // calls isWebResearchSignal() to keep canonical business signals out of
   // existingSignals -- must be real, extracted source (not stubbed), plus
   // its own dependency chain (signalLayerLabel() -> normalizeSignalLayerType()/
   // isRecentAccountActivity()), since the exclusion is exactly what this
   // round's fix depends on.
-  extractFn('isBusinessOpportunity', 3415, 3417),
-  extractFn('signalLayerLabel', 4730, 4735),
-  extractFn('isRecentAccountActivity', 4737, 4740),
-  extractFn('normalizeSignalLayerType', 9869, 9875),
-  extractFn('serializeAccountForStorage', 10518, 10599),
-  extractFn('performSaveCurrentUpload', 10609, 10709, {async: true}),
-  extractFn('saveCurrentUpload', 10718, 10722),
-  extractFn('toggleAccountMetadataEdit', 10730, 10736),
-  extractFn('saveAccountMetadataEdit', 10759, 10795, {async: true}),
-  extractRaw('delegatedClickListener', 10813, 10852, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 10865, 10881),
-  extractFn('escapeHtml', 11190, 11193)
+  extractFn('isWebResearchSignal', 3434, 3439),
+  extractFn('signalLayerLabel', 4752, 4760),
+  extractFn('isRecentAccountActivity', 4762, 4765),
+  extractFn('normalizeSignalLayerType', 9898, 9904),
+  extractFn('serializeAccountForStorage', 10547, 10634),
+  extractFn('performSaveCurrentUpload', 10644, 10744, {async: true}),
+  extractFn('saveCurrentUpload', 10753, 10757),
+  extractFn('toggleAccountMetadataEdit', 10765, 10771),
+  extractFn('saveAccountMetadataEdit', 10794, 10830, {async: true}),
+  extractRaw('delegatedClickListener', 10848, 10887, "document.addEventListener('click', (event) => {"),
+  extractFn('importedContactsFromRecords', 10900, 10916),
+  extractFn('escapeHtml', 11225, 11228)
 ].join('\n\n');
 
 // ===========================================================================

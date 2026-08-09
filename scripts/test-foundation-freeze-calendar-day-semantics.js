@@ -55,8 +55,8 @@ function extractFn(name, startLine, endLine){
   return slice;
 }
 
-const PARSE_MAYBE_DATE_SRC = extractFn('parseMaybeDate', 4766, 4771);
-const CALENDAR_DAYS_AGO_SRC = extractFn('calendarDaysAgo', 4809, 4814);
+const PARSE_MAYBE_DATE_SRC = extractFn('parseMaybeDate', 4791, 4796);
+const CALENDAR_DAYS_AGO_SRC = extractFn('calendarDaysAgo', 4834, 4839);
 
 function makeClientSandbox(fixedNow){
   const sandbox = { console, Date, Math };

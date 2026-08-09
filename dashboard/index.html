@@ -3128,7 +3128,7 @@ function opportunitiesLikelySameInitiative(a, b){
   if(!accA || accA !== accB) return false;
   // Scoped to real, sourced business-activity signals only -- historical/
   // repeat-pattern opportunities are untouched by this pass.
-  if(!isBusinessOpportunity(a) || !isBusinessOpportunity(b)) return false;
+  if(!isWebResearchSignal(a) || !isWebResearchSignal(b)) return false;
   // QA final round, item 1/2: opportunityType also carries the generic
   // display-category label ('SIGNAL-DRIVEN'/'REPEAT PATTERN', see
   // getOpportunityType()) for non-canonical opportunities -- canonicalEventType
@@ -3366,7 +3366,7 @@ function dedupeOpportunities(items){
   const others = [];
   for(const item of (items || [])){
     if(!item) continue;
-    if(isBusinessOpportunity(item)) businessSignals.push(item); else others.push(item);
+    if(isWebResearchSignal(item)) businessSignals.push(item); else others.push(item);
   }
   const mergedBusinessSignals = mergeBusinessSignalInitiatives(businessSignals);
   const map = new Map();
@@ -3412,19 +3412,41 @@ function dedupeFoundSignals(signals){
   return Array.from(map.values());
 }
 
-function isBusinessOpportunity(opp){
-  return signalLayerLabel(opp || {}) === 'Business Activity Signal' || Boolean(opp?.isVerifiedSignalOpportunity);
+// Foundation freeze, Phase 2 (Business Activity Classification Unification):
+// THE one authoritative "is this opportunity a Business Activity/web-research
+// signal" predicate -- mirrors api/get-dashboard.js's isWebResearchSignal()
+// exactly (this file is a plain browser-loaded inline script and cannot
+// import that module); scripts/test-foundation-freeze-classification-parity.js
+// proves both sides answer identically across a shared fixture table.
+// Answers ONLY what family/source this opportunity is -- never identity
+// confirmation (identityConfidence/isExplicitlyVerifiedIdentity(), a
+// completely separate concept despite the historical isVerifiedSignalOpportunity
+// field name), commercial quality, actionability, or ranking.
+//
+// An EXPLICIT, exact-match signalLayerType wins outright in either
+// direction (even over a stale isVerifiedSignalOpportunity:true left over
+// from a since-fixed producer bug); absent that, falls back to sourceUrl or
+// isVerifiedSignalOpportunity===true. See the server-side twin's comment for
+// why sourceName/cleanSourceName -- a narrow, explicitly-scoped legacy
+// compatibility rule used only inside api/get-dashboard.js's
+// reconcileStoredOpportunity() -- is deliberately NOT part of this general
+// contract.
+function isWebResearchSignal(opp){
+  const o = opp || {};
+  if(o.signalLayerType === 'Business Activity Signal') return true;
+  if(o.signalLayerType === 'Follow-Up Signal' || o.signalLayerType === 'Repeat / Pattern Signal') return false;
+  return Boolean(o.sourceUrl) || o.isVerifiedSignalOpportunity === true;
 }
 
 function reasonListMeta(opp){
-  if(isBusinessOpportunity(opp)) return 'Signal-only opportunity';
+  if(isWebResearchSignal(opp)) return 'Signal-only opportunity';
   return `${getValueDisplay(opp)} · ${Math.round(opp.confidence || 0)}% quick-win score`;
 }
 
 function calculateRevenueContext(accounts, opportunities){
   const opps = dedupeOpportunities(opportunities || []);
-  const historicalOpps = opps.filter(o => !isBusinessOpportunity(o));
-  const newBusinessOpps = opps.filter(isBusinessOpportunity);
+  const historicalOpps = opps.filter(o => !isWebResearchSignal(o));
+  const newBusinessOpps = opps.filter(isWebResearchSignal);
   const accountByName = new Map((accounts || []).map(a => [String(a.name || '').toLowerCase().trim(), a]));
   const representedAccounts = new Set(historicalOpps.map(o => String(o.account || '').toLowerCase().trim()).filter(Boolean));
   let historicalRevenue = 0;
@@ -4729,7 +4751,10 @@ function confidenceLabel(score){
 
 function signalLayerLabel(opp){
   if(opp.signalLayerType) return normalizeSignalLayerType(opp.signalLayerType);
-  if(opp.isVerifiedSignalOpportunity || opp.sourceUrl) return 'Business Activity Signal';
+  // Foundation freeze, Phase 2: the business-evidence fallback below is the
+  // SAME authoritative check isWebResearchSignal() makes elsewhere, reused
+  // here instead of a second, redundant inline copy of it.
+  if(isWebResearchSignal(opp)) return 'Business Activity Signal';
   if(isRecentAccountActivity(opp)) return 'Follow-Up Signal';
   return 'Repeat / Pattern Signal';
 }
@@ -5691,14 +5716,18 @@ function formatShortDate(value){
 // honest-but-wrong default, "Date unavailable", even though a real order
 // date and calculated cadence were sitting right on the opportunity.
 function isAccountHistoryOpportunity(opp){
+  // Foundation freeze, Phase 2: the isVerifiedSignalOpportunity/sourceUrl
+  // half of this guard is now the shared isWebResearchSignal() check.
   // opp.actionabilityStatus is set EXCLUSIVELY by the business-signal
   // pipeline (makeSignal() in api/research-batch.js) -- an account-history
   // opportunity (createOpportunity()/createRepeatPatternOpportunities())
-  // never sets it. Checking for its presence (not just isVerifiedSignal
-  // Opportunity/sourceUrl) is what keeps this from misclassifying a
-  // business-signal-shaped object that simply lacks those two fields (e.g.
-  // a test fixture, or an already-persisted legacy row) as account history.
-  if(!opp || opp.isVerifiedSignalOpportunity || opp.sourceUrl || opp.actionabilityStatus) return false;
+  // never sets it. Checking for its presence is an ADDITIONAL, orthogonal
+  // guard kept alongside isWebResearchSignal() (not folded into it) because
+  // it catches a narrower case that check alone would miss: a business-
+  // signal-shaped object that simply lacks sourceUrl/isVerifiedSignalOpportunity/
+  // an exact signalLayerType (e.g. a test fixture, or an already-persisted
+  // legacy row) but still carries this business-pipeline-only field.
+  if(!opp || isWebResearchSignal(opp) || opp.actionabilityStatus) return false;
   const layer = signalLayerLabel(opp);
   return layer === 'Follow-Up Signal' || layer === 'Repeat / Pattern Signal';
 }
@@ -5854,7 +5883,7 @@ function accountOpportunityCluster(opp){
   // longer current" can never appear here, regardless of its internal score.
   // Historical/repeat-pattern opportunities (not signal-derived) are
   // unaffected -- priorityEligibleOpportunities() only gates
-  // isBusinessOpportunity() items.
+  // isWebResearchSignal() items.
   return priorityEligibleOpportunities(sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(opportunities)))).filter(item=>!item?false:true);
 }
 
@@ -5874,7 +5903,7 @@ function sameOpportunity(a,b){
   // already trusts) is checked FIRST and is authoritative; only when it does
   // not apply (non-business opportunities, or business opportunities that
   // are genuinely unrelated events) does the buying-conversation key decide.
-  if(isBusinessOpportunity(a) && isBusinessOpportunity(b) && opportunitiesLikelySameInitiative(a, b)) return true;
+  if(isWebResearchSignal(a) && isWebResearchSignal(b) && opportunitiesLikelySameInitiative(a, b)) return true;
   return opportunityDedupeKey(a||{})===opportunityDedupeKey(b||{});
 }
 
@@ -7893,7 +7922,7 @@ function getConversationStarterText(opp){
 }
 
 function getValueDisplay(opp){
-  if(isBusinessOpportunity(opp)) return 'Signal-only opportunity';
+  if(isWebResearchSignal(opp)) return 'Signal-only opportunity';
   if(opp.estimatedValueRange && opp.estimatedValueRange.label){
     return escapeHtml(opp.estimatedValueRange.label);
   }
@@ -10336,7 +10365,7 @@ function isPriorityEligibleOpportunity(opp){
   // so a low-trust signal is excluded regardless of how fresh or "current"
   // it otherwise looks.
   if(!hasConfirmedOrLegacyIdentity(opp)) return false;
-  if(isBusinessOpportunity(opp)){
+  if(isWebResearchSignal(opp)){
     const label = signalDateAndActionabilityLine(opp);
     if(label === 'Date unavailable' || label === 'No longer current') return false;
   }
@@ -10567,14 +10596,20 @@ function serializeAccountForStorage(account, options = {}){
       allProjects: account.allProjects || [],
       activePipeline: account.activePipeline || [],
       recentOrderDates: (account.purchases || []).map(p => p.orderDate || p.date || p.order_date || p.dateStr).filter(Boolean).slice(0, 12),
-      repeatPatterns: opportunities.filter(o => o.signalLayerType === 'Repeat / Pattern Signal').slice(0, 8),
+      // Foundation freeze, Phase 2: reads via signalLayerLabel() (not a raw
+      // signalLayerType equality check) so a Repeat/Pattern-shaped
+      // opportunity relying on inference (no explicit signalLayerType field
+      // set) is still captured here, agreeing with the existingSignals
+      // exclusion just below, which already goes through the full
+      // classifier rather than a raw field read.
+      repeatPatterns: opportunities.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal').slice(0, 8),
       // Source-of-truth correction: ha_signals is now the EXCLUSIVE canonical
       // source for business/web-research opportunities (see
-      // api/get-dashboard.js's buildAccountsFromRows()/isBusinessSignalOpportunity()
+      // api/get-dashboard.js's buildAccountsFromRows()/isWebResearchSignal()
       // -- it now drops any existingSignals entry classified as one anyway,
       // but the write boundary is corrected too so a save stops adding new
       // ones for that read-side filter to have to keep dropping). Using the
-      // SAME isBusinessOpportunity() classifier this file already trusts
+      // SAME isWebResearchSignal() classifier this file already trusts
       // elsewhere (calculateRevenueContext(), etc.) rather than inventing a
       // second taxonomy. What survives this filter is Follow-Up Signal
       // opportunities (order-history-derived, genuinely no ha_signals
@@ -10583,7 +10618,7 @@ function serializeAccountForStorage(account, options = {}){
       // redundant with the dedicated repeatPatterns field just above --
       // unchanged, pre-existing overlap, not something this correction
       // introduces or needs to resolve).
-      existingSignals: opportunities.filter(o => !isBusinessOpportunity(o)).slice(0, 12),
+      existingSignals: opportunities.filter(o => !isWebResearchSignal(o)).slice(0, 12),
       records: (account.allRecords || []).slice(0, 100),
       contacts: account.contacts || [],
       contactTitle: account.contactTitle || '',

@@ -54,12 +54,12 @@ function extractFn(name, startLine, endLine) {
 // Real, verbatim primitives this sprint added/renamed, plus their own
 // dependency chain.
 const CORE_SRC = [
-  extractFn('sourceDomain', 4749, 4751),
+  extractFn('sourceDomain', 4774, 4776),
   extractFn('foundSignalDedupeKey', 3383, 3388),
   extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('hasConfirmedOrLegacyIdentity', 10287, 10290),
-  extractFn('isExplicitlyVerifiedIdentity', 10310, 10312),
-  extractFn('foundAndVerifiedSuffix', 10324, 10327)
+  extractFn('hasConfirmedOrLegacyIdentity', 10316, 10319),
+  extractFn('isExplicitlyVerifiedIdentity', 10339, 10341),
+  extractFn('foundAndVerifiedSuffix', 10353, 10356)
 ].join('\n\n');
 
 function makeCoreSandbox() {
@@ -74,13 +74,13 @@ function makeCoreSandbox() {
 // stubbed as a harmless pass-through, matching the established pattern in
 // scripts/test-research-run-reattachment.js.
 const RR_SRC = [
-  extractFn('sourceDomain', 4749, 4751),
+  extractFn('sourceDomain', 4774, 4776),
   extractFn('foundSignalDedupeKey', 3383, 3388),
   extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('isExplicitlyVerifiedIdentity', 10310, 10312),
-  extractFn('getRecentlyResearchedAccounts', 8323, 8355),
-  extractFn('relativeResearchTimeLabel', 8356, 8363),
-  extractFn('renderRecentlyResearchedSection', 8364, 8389)
+  extractFn('isExplicitlyVerifiedIdentity', 10339, 10341),
+  extractFn('getRecentlyResearchedAccounts', 8352, 8384),
+  extractFn('relativeResearchTimeLabel', 8385, 8392),
+  extractFn('renderRecentlyResearchedSection', 8393, 8418)
 ].join('\n\n');
 
 function makeRecentlyResearchedSandbox(accounts) {
