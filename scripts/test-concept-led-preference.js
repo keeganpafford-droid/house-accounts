@@ -22,8 +22,8 @@
 // must still produce a real, plausible question, not throw.
 //
 // Usage: node scripts/test-concept-led-preference.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -31,23 +31,11 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const DASHBOARD_PATH = new URL('../dashboard/index.html', import.meta.url);
-const LINES = readFileSync(DASHBOARD_PATH, 'utf8').split('\n');
-
-function extractLines(label, startLine, endLine, expectedFirst) {
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const first = LINES[startLine - 1];
-  if (!first.startsWith(expectedFirst)) {
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice;
-}
-
 // shortText() through getSuggestedOpener() -- one contiguous block covering
 // conceptLedApproach() and every function getSuggestedOpener() itself calls
 // directly (isGroundedOpener/repairDanglingOpener/isPermissionBasedConceptOffer/
 // businessSuggestedOpener and its own dependency chain).
-const OPENER_SRC = extractLines('concept-led-preference', 4778, 5459, 'function shortText(text, max=145){');
+const OPENER_SRC = extractRange(loadDashboardSource(), 'function shortText(text, max=145){', 'function getSuggestedOpener(opp){');
 
 const sandbox = {
   // Stubs: only reached by getSuggestedOpener()'s deep fallback branches

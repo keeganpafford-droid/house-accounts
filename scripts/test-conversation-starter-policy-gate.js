@@ -9,15 +9,13 @@
 // Extracts the real, verbatim gate functions from dashboard/index.html
 // (mentionsProductOrMerchOffer, isMeaningfulConversationQuestion,
 // isDirectSchedulingClose, isGroundedOpener) into a vm sandbox and calls
-// them for real -- this is a hardcoded contiguous line range; if
-// dashboard/index.html changes shape, extractLines() below throws instead
-// of silently testing stale/wrong code.
+// them for real -- located via the shared semantic extractor (extractRange),
+// not a physical line number; if dashboard/index.html changes shape,
+// extractRange() below throws instead of silently testing stale/wrong code.
 //
 // Usage: node scripts/test-conversation-starter-policy-gate.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -25,23 +23,12 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
-const LINES = DASHBOARD_SRC.split('\n');
-
-function extractLines(label, startLine, endLine, expectedFirst) {
-  const first = LINES[startLine - 1];
-  if (!first || !first.startsWith(expectedFirst)) {
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return LINES.slice(startLine - 1, endLine).join('\n');
-}
+const DASHBOARD_SRC = loadDashboardSource();
 
 // mentionsProductOrMerchOffer -> isMeaningfulConversationQuestion ->
 // isDirectSchedulingClose -> isPermissionBasedConceptOffer -> isGroundedOpener,
 // all contiguous.
-const GATE_SRC = extractLines('conversation-starter-policy-gate', 5123, 5329, 'function mentionsProductOrMerchOffer(text){');
+const GATE_SRC = extractRange(DASHBOARD_SRC, 'function mentionsProductOrMerchOffer(text){', 'function isGroundedOpener(text, opp){');
 
 const sandbox = {};
 vm.createContext(sandbox);

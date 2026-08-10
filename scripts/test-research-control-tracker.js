@@ -15,10 +15,8 @@
 // "researching" forever).
 //
 // Usage: node scripts/test-research-control-tracker.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -26,20 +24,10 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const LINES = readFileSync(DASHBOARD_PATH, 'utf8').split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractLines(label, startLine, endLine, expectedFirst) {
-  const first = LINES[startLine - 1];
-  if (!first || !first.startsWith(expectedFirst)) {
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return LINES.slice(startLine - 1, endLine).join('\n');
-}
-
-const TRACKER_SRC = extractLines('research-tracker-module', 7699, 7813, 'const researchRunTrackers = new Map();');
-const PROGRESS_LABEL_SRC = extractLines('researchProgressLabel', 7819, 7834, 'function researchProgressLabel(snap){');
+const TRACKER_SRC = extractRange(DASHBOARD_SRC, 'const researchRunTrackers = new Map();', 'function researchTrackerAccountState(uploadId, accountName){');
+const PROGRESS_LABEL_SRC = extractFn(DASHBOARD_SRC, 'researchProgressLabel');
 
 const sandbox = { Map, Set, AbortController, setTimeout, clearTimeout, console: { warn(){} } };
 vm.createContext(sandbox);

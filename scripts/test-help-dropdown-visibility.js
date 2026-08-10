@@ -41,6 +41,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import os from 'os';
 import { chromium } from 'playwright';
+import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..');
@@ -51,19 +52,9 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const DASHBOARD_SRC = readFileSync(path.join(REPO_ROOT, 'dashboard', 'index.html'), 'utf8');
-const DASHBOARD_LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 const SITE_HEADER_JS = readFileSync(path.join(REPO_ROOT, 'site-header.js'), 'utf8');
 const SITE_HEADER_CSS = readFileSync(path.join(REPO_ROOT, 'site-header.css'), 'utf8');
-
-function extractLines(label, startLine, endLine, expectedFirst){
-  const slice = DASHBOARD_LINES.slice(startLine - 1, endLine);
-  const first = slice[0].trim();
-  if(!first.startsWith(expectedFirst)){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice.join('\n');
-}
 
 // The real, unmodified guided-tour implementation -- covers
 // isHelpRelatedGuidedTourTrigger, launchGuidedTour, closeGuidedTour,
@@ -71,10 +62,10 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // wireGuidedTourControls, guidedTourKeydownHandler, and every state/DOM
 // helper they depend on. Same block scripts/test-guided-tour-and-import-experience.js
 // already extracts and keeps in sync.
-const GUIDED_TOUR_SRC = extractLines('guided-tour', 3932, 4322, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';");
+const GUIDED_TOUR_SRC = extractRange(DASHBOARD_SRC, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';", 'function wireGuidedTourControls(){');
 
 // The real, unmodified Add Customer Data modal open/close implementation.
-const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3526, 3589, 'let addCustomerDataModalTriggerEl = null;');
+const ADD_CUSTOMER_DATA_MODAL_SRC = extractRange(DASHBOARD_SRC, 'let addCustomerDataModalTriggerEl = null;', 'function wireAddCustomerDataModalControls(){');
 
 // The real, unmodified Manage Customer Accounts modal subset needed for
 // open()/close() to run -- see the file-level scope note above for why
@@ -88,13 +79,13 @@ const ADD_CUSTOMER_DATA_MODAL_SRC = extractLines('add-customer-data-modal', 3526
 // open()/load() each grew a few lines of their own (expand-state-aware
 // refresh, first-open loading state) -- extracted whole either way.
 const MANAGE_MODAL_SRC = [
-  extractLines('cachedLists', 11293, 11293, 'let cachedLists=[];'),
-  extractLines('request', 11313, 11330, 'async function request(method,body){'),
-  extractLines('renderManager', 11657, 11671, 'function renderManager(){'),
-  extractLines('research-poll-block', 11680, 11704, 'const RESEARCH_POLL_INTERVAL_MS = 6000;'),
-  extractLines('load', 11705, 11728, 'async function load(){'),
-  extractLines('open-close', 11729, 11759, 'let accountManagerTriggerEl = null;'),
-  extractLines('closeAllMenus', 11778, 11784, 'function closeAllMenus(){')
+  extractFn(DASHBOARD_SRC, 'cachedLists'),
+  extractFn(DASHBOARD_SRC, 'request'),
+  extractFn(DASHBOARD_SRC, 'renderManager'),
+  extractRange(DASHBOARD_SRC, 'const RESEARCH_POLL_INTERVAL_MS = 6000;', 'function scheduleResearchPollIfNeeded(){'),
+  extractFn(DASHBOARD_SRC, 'load'),
+  extractRange(DASHBOARD_SRC, 'let accountManagerTriggerEl = null;', 'function close(){'),
+  extractFn(DASHBOARD_SRC, 'closeAllMenus')
 ].join('\n');
 
 // Real markup for the tour overlay, the Add Customer Data modal (minimal --

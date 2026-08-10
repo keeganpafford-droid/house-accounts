@@ -38,6 +38,7 @@ delete process.env.BRAVE_SEARCH_API_KEY;
 
 import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 import handler, {
   resolveDuplicateCheckScopeUserIds,
   findActiveDuplicateCompanyCollisions,
@@ -555,18 +556,11 @@ async function run(){
 // and fail-open behavior (unaffected by this round, carried forward).
 // ===========================================================================
 {
-  const DASHBOARD_LINES = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8').split('\n');
-  function extractFn(name, startLine, endLine, { async: isAsync = false } = {}){
-    const slice = DASHBOARD_LINES.slice(startLine - 1, endLine).join('\n');
-    const expectedPrefix = `${isAsync ? 'async ' : ''}function ${name}(`;
-    if(!slice.startsWith(expectedPrefix)) throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range.`);
-    if(!slice.trimEnd().endsWith('}')) throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-    return slice;
-  }
+  const DASHBOARD_SRC = loadDashboardSource();
   const REAL_SOURCE = [
-    extractFn('claimAutomaticResearchRun', 2584, 2594, { async: true }),
-    extractFn('checkDuplicateCompanyResearch', 2608, 2624, { async: true }),
-    extractFn('duplicateCompanyResearchMessage', 2634, 2637)
+    extractFn(DASHBOARD_SRC, 'claimAutomaticResearchRun'),
+    extractFn(DASHBOARD_SRC, 'checkDuplicateCompanyResearch'),
+    extractFn(DASHBOARD_SRC, 'duplicateCompanyResearchMessage')
   ].join('\n\n');
 
   function makeSandbox(fetchImpl, houseAuthOverride){

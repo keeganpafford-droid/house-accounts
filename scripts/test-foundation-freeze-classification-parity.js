@@ -13,11 +13,9 @@
 // write-side agree exactly on the same fixture.
 //
 // Usage: node scripts/test-foundation-freeze-classification-parity.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
 import { isWebResearchSignal as serverIsWebResearchSignal } from '../api/get-dashboard.js';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message){
@@ -25,23 +23,9 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const LINES = readFileSync(DASHBOARD_PATH, 'utf8').split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractFn(name, startLine, endLine){
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const expectedPrefix = `function ${name}(`;
-  if(!slice.startsWith(expectedPrefix)){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in this test.`);
-  }
-  if(!slice.trimEnd().endsWith('}')){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
-
-const CLIENT_SRC = extractFn('isWebResearchSignal', 3434, 3439);
+const CLIENT_SRC = extractFn(DASHBOARD_SRC, 'isWebResearchSignal');
 const sandbox = {};
 vm.createContext(sandbox);
 new vm.Script(CLIENT_SRC, { filename: 'client-is-web-research-signal.js' }).runInContext(sandbox);
@@ -141,7 +125,7 @@ for(const { label, opp, expected } of FIXTURES){
 // never by isWebResearchSignal()/signalLayerType/isVerifiedSignalOpportunity.
 // ===========================================================================
 {
-  const ISEXPLICITLY_VERIFIED_SRC = extractFn('isExplicitlyVerifiedIdentity', 10339, 10341);
+  const ISEXPLICITLY_VERIFIED_SRC = extractFn(DASHBOARD_SRC, 'isExplicitlyVerifiedIdentity');
   const identitySandbox = {};
   vm.createContext(identitySandbox);
   new vm.Script(ISEXPLICITLY_VERIFIED_SRC, { filename: 'is-explicitly-verified-identity.js' }).runInContext(identitySandbox);

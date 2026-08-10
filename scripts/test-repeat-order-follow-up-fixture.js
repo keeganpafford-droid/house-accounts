@@ -5,12 +5,13 @@
 // the REAL, verbatim source of the relevant dashboard/index.html functions
 // (CSV parsing/normalization, order-history filtering, repeat-pattern
 // detection, opportunity generation, signal-layer classification, and
-// timebox/planning-window classification) by exact line range -- each
-// range is defensively checked against its expected first/last line so a
-// future edit to dashboard/index.html that shifts these functions fails
-// this test loudly instead of silently testing stale code -- and runs
-// them in a vm sandbox against scripts/fixtures/repeat-order-follow-up-fixture.csv,
-// the same file format and columns a real customer upload would use.
+// timebox/planning-window classification) via the shared semantic
+// extractor (extractFn/extractRange) -- each function/range is located by
+// name, not physical line position, so a future edit to dashboard/index.html
+// that moves these functions cannot make this test silently exercise stale
+// or wrong code -- and runs them in a vm sandbox against
+// scripts/fixtures/repeat-order-follow-up-fixture.csv, the same file format
+// and columns a real customer upload would use.
 //
 // What is deliberately OUT of scope (and why):
 //   - Rendering/DOM functions (renderWeeklyPrioritiesFeed, processData's
@@ -31,6 +32,7 @@
 // Usage: node scripts/test-repeat-order-follow-up-fixture.js
 import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message){
@@ -38,45 +40,31 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const html = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
-const lines = html.split('\n');
-
-function extractLines(label, startLine, endLine, expectedFirst, expectedLast){
-  const slice = lines.slice(startLine - 1, endLine);
-  const first = slice[0].trim();
-  const last = slice[slice.length - 1].trim();
-  if(!first.startsWith(expectedFirst)){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  if(last !== expectedLast){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${endLine} is "${last}", expected "${expectedLast}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice.join('\n');
-}
+const DASHBOARD_SRC = loadDashboardSource();
 
 const SRC = [
-  extractLines('timebox-config', 2784, 2789, 'const TIMEBOX_CONFIG = {', '};'),
-  extractLines('opportunity-identity-helpers', 2937, 3022, 'function cleanOpportunityToken(value){', '}'),
-  extractLines('is-web-research-signal', 3434, 3439, 'function isWebResearchSignal(opp){', '}'),
-  extractLines('signal-layer-label', 4752, 4765, 'function signalLayerLabel(opp){', '}'),
-  extractLines('is-likely-invalid-account-name', 4736, 4743, 'function isLikelyInvalidAccountName(name){', '}'),
-  extractLines('parse-maybe-date', 4791, 4796, 'function parseMaybeDate(value){', '}'),
-  extractLines('parse-csv', 4495, 4613, 'function parseCSV(text){', '}'),
-  extractLines('infer-promo-category', 4615, 4635, 'function inferPromoCategory(text){', '}'),
-  extractLines('infer-industry', 4637, 4645, 'function inferIndustry(client, projects){', '}'),
+  extractFn(DASHBOARD_SRC, 'TIMEBOX_CONFIG'),
+  extractRange(DASHBOARD_SRC, 'function cleanOpportunityToken(value){', 'function isRelationshipExpansionOpportunity(opp){'),
+  extractFn(DASHBOARD_SRC, 'isWebResearchSignal'),
+  extractRange(DASHBOARD_SRC, 'function signalLayerLabel(opp){', 'function isRecentAccountActivity(opp){'),
+  extractFn(DASHBOARD_SRC, 'isLikelyInvalidAccountName'),
+  extractFn(DASHBOARD_SRC, 'parseMaybeDate'),
+  extractFn(DASHBOARD_SRC, 'parseCSV'),
+  extractFn(DASHBOARD_SRC, 'inferPromoCategory'),
+  extractFn(DASHBOARD_SRC, 'inferIndustry'),
   // Commercial-readiness correction round: the account-history-specific
   // status classification (isAccountHistoryOpportunity/reorderWindowStatus/
   // accountHistoryStatusLine) that createRepeatPatternOpportunities() now
   // calls to ground its reasonToReachOut/conversationStarter text -- and
   // that this test also verifies directly for required tests 1-3.
-  extractLines('format-short-date', 5683, 5687, 'function formatShortDate(value){', '}'),
-  extractLines('account-history-status', 5718, 5787, 'function isAccountHistoryOpportunity(opp){', '}'),
-  extractLines('opportunity-generation', 8440, 8980, 'function estimateFutureValue(account, opportunityType){', '}'),
-  extractLines('order-history-filters', 9851, 9879, 'function isClosedHistoricalRecord(record){', '}'),
-  extractLines('normalize-signal-layer-type', 9898, 9904, 'function normalizeSignalLayerType(type){', '}'),
-  extractLines('recommendation-type', 9916, 10015, 'function daysSinceDate(value){', '}'),
-  extractLines('opportunity-scoring', 10017, 10088, 'function calculateOpportunityScore(opp){', '}'),
-  extractLines('timebox-classification', 10219, 10275, 'function monthIndexFromName(name){', '}'),
+  extractFn(DASHBOARD_SRC, 'formatShortDate'),
+  extractRange(DASHBOARD_SRC, 'function isAccountHistoryOpportunity(opp){', 'function accountHistoryStatusLine(opp){'),
+  extractRange(DASHBOARD_SRC, 'function estimateFutureValue(account, opportunityType){', 'function getPriorityTier(opp){'),
+  extractRange(DASHBOARD_SRC, 'function isClosedHistoricalRecord(record){', 'function sumRevenue(records){'),
+  extractFn(DASHBOARD_SRC, 'normalizeSignalLayerType'),
+  extractRange(DASHBOARD_SRC, 'function daysSinceDate(value){', 'function getRecommendationType(opp){'),
+  extractRange(DASHBOARD_SRC, 'function calculateOpportunityScore(opp){', 'function assignOpportunityScore(opp, account){'),
+  extractRange(DASHBOARD_SRC, 'function monthIndexFromName(name){', 'function opportunityMatchesTimebox(opp, timebox){'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the
   // uploaded contact/real order history (not a generic public-signal
   // department framing) drives the Conversation Starter/Best Next Move/
@@ -85,7 +73,7 @@ const SRC = [
   // never invoked below -- it is DOM-heavy (document.body...) and inert as
   // long as it is only assigned, not called (same pattern already relied
   // on in scripts/test-paid-beta-sprint.js's SALES_PLAY_BLOCK).
-  extractLines('sales-play-account-history-grounding', 8982, 9596, 'function cleanSalesPlayText(value){', '}')
+  extractRange(DASHBOARD_SRC, 'function cleanSalesPlayText(value){', 'function buildAccountHistorySalesPlay(ctx){')
 ].join('\n\n');
 
 const EXPORT_NAMES = [

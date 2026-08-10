@@ -1,17 +1,18 @@
 // Onboarding sprint + correction round: guided product tour, canonical
 // Add Customer Data workflow, and the simplified dashboard heading/header/
 // footer. Extracts the REAL, verbatim source of the relevant
-// dashboard/index.html functions by exact line range (same defensive
-// pattern as every other extraction test in this repo -- a future edit
-// that shifts these lines fails this test loudly instead of silently
-// testing stale code) and runs them against a minimal fake DOM/
-// localStorage/HouseAuth sandbox. Static content assertions (export guide
-// copy, nav/footer wiring) are checked directly against the real on-disk
-// HTML/JS files.
+// dashboard/index.html functions via the shared semantic extractor
+// (extractFn/extractRange) -- functions/ranges are located by name, not
+// physical line position, so a future edit that moves them cannot make
+// this test silently exercise stale or wrong code -- and runs them
+// against a minimal fake DOM/localStorage/HouseAuth sandbox. Static
+// content assertions (export guide copy, nav/footer wiring) are checked
+// directly against the real on-disk HTML/JS files.
 //
 // Usage: node scripts/test-guided-tour-and-import-experience.js
 import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message){
@@ -19,32 +20,17 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const html = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
-const lines = html.split('\n');
+const html = loadDashboardSource();
+const DASHBOARD_SRC = html;
 
-function extractLines(label, startLine, endLine, expectedFirst){
-  const slice = lines.slice(startLine - 1, endLine);
-  const first = slice[0].trim();
-  if(!first.startsWith(expectedFirst)){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice.join('\n');
-}
-
-// FR2 round: line ranges re-derived after this round's guided-tour-focus
-// and aggregate-dashboard-lifecycle changes shifted every block below.
-// extractLines()'s own start-line signature check is the actual guarantee
-// of correctness -- these numbers were re-derived mechanically (parse-
-// complete / last-top-level-declaration scan from each block's real start
-// line), not hand-counted.
 const SRC = [
-  extractLines('currentUploadName', 2535, 2535, "let currentUploadName"),
-  extractLines('add-customer-data-modal-and-route', 3526, 3649, 'let addCustomerDataModalTriggerEl = null;'),
-  extractLines('guided-tour', 3932, 4322, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';"),
-  extractLines('beta-welcome-modal', 4324, 4337, 'function showBetaWelcomeModal(){'),
-  extractLines('upload-success-state', 10938, 10993, 'const MISSING_FIELD_LABELS = {'),
-  extractLines('escapeHtml', 11225, 11228, 'function escapeHtml(text){'),
-  extractLines('dismissUploadSuccessState-and-wiring', 11230, 11284, 'function dismissUploadSuccessState(){')
+  extractFn(DASHBOARD_SRC, 'currentUploadName'),
+  extractRange(DASHBOARD_SRC, 'let addCustomerDataModalTriggerEl = null;', 'function handleMvpDashboardRoute(){'),
+  extractRange(DASHBOARD_SRC, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';", 'function wireGuidedTourControls(){'),
+  extractFn(DASHBOARD_SRC, 'showBetaWelcomeModal'),
+  extractRange(DASHBOARD_SRC, 'const MISSING_FIELD_LABELS = {', 'function renderUploadSuccessState(records, accounts){'),
+  extractFn(DASHBOARD_SRC, 'escapeHtml'),
+  extractRange(DASHBOARD_SRC, 'function dismissUploadSuccessState(){', 'function wireUploadSuccessStateControls(){')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------

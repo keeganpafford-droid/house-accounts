@@ -17,10 +17,8 @@
 // uses for the same class of requirement.
 //
 // Usage: node scripts/test-research-control-orchestration.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn as sharedExtractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -28,55 +26,42 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
+const DASHBOARD_SRC = loadDashboardSource();
 const LINES = DASHBOARD_SRC.split('\n');
 
-function extractFn(name, startLine, endLine, { async: isAsync = false } = {}) {
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const expectedPrefix = `${isAsync ? 'async ' : ''}function ${name}(`;
-  if (!slice.startsWith(expectedPrefix)) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in this test.`);
-  }
-  if (!slice.trimEnd().endsWith('}')) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
+// Locates the named top-level declaration by semantic structure (shared
+// library) rather than a physical line range -- immune to ordinary edits
+// anywhere earlier in dashboard/index.html. The {async} option some call
+// sites still pass is accepted but no longer needed for correctness.
+function extractFn(name) {
+  return sharedExtractFn(DASHBOARD_SRC, name);
 }
 
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2584, 2594, { async: true }),
-  extractFn('checkDuplicateCompanyResearch', 2608, 2624, { async: true }),
-  extractFn('heartbeatCurrentResearchRun', 2657, 2674, { async: true }),
-  extractFn('reportResearchRunOutcome', 2688, 2713, { async: true }),
-  extractFn('fetchUploadScopedSnapshot', 6440, 6462, { async: true }),
-  extractFn('persistScopedResearchResult', 6470, 6515, { async: true }),
-  extractFn('setActiveResearchBreadcrumb', 6537, 6543),
-  extractFn('clearActiveResearchBreadcrumb', 6544, 6555),
-  extractFn('getActiveResearchBreadcrumb', 6556, 6563),
-  extractFn('safeParseResearchResponse', 6576, 6611, { async: true }),
-  extractFn('researchAccountFromManageModal', 6613, 6776, { async: true }),
-  extractFn('researchListFromManageModal', 6791, 7021, { async: true }),
-  extractFn('researchAccountByName', 7054, 7215, { async: true }),
-  extractFn('getAccountsForResearch', 7219, 7232),
-  extractFn('batchPayloadForAccounts', 7234, 7290),
-  extractFn('applyBusinessSignalAccountBoost', 7293, 7301),
-  extractFn('researchAccountsBatch', 7303, 7423, { async: true }),
-  extractFn('researchTopAccounts', 7465, 7669, { async: true }),
+  extractFn('claimAutomaticResearchRun'),
+  extractFn('checkDuplicateCompanyResearch'),
+  extractFn('heartbeatCurrentResearchRun'),
+  extractFn('reportResearchRunOutcome'),
+  extractFn('fetchUploadScopedSnapshot'),
+  extractFn('persistScopedResearchResult'),
+  extractFn('setActiveResearchBreadcrumb'),
+  extractFn('clearActiveResearchBreadcrumb'),
+  extractFn('getActiveResearchBreadcrumb'),
+  extractFn('safeParseResearchResponse'),
+  extractFn('researchAccountFromManageModal'),
+  extractFn('researchListFromManageModal'),
+  extractFn('researchAccountByName'),
+  extractFn('getAccountsForResearch'),
+  extractFn('batchPayloadForAccounts'),
+  extractFn('applyBusinessSignalAccountBoost'),
+  extractFn('researchAccountsBatch'),
+  extractFn('researchTopAccounts'),
 ].join('\n\n');
 
 // The shared research tracker module, run for real (not stubbed) -- these
 // tests exist specifically to prove ITS stop/progress behavior actually
 // takes effect inside the real orchestration functions above.
-const TRACKER_SRC = (() => {
-  const start = 7699, end = 7813;
-  const slice = LINES.slice(start - 1, end).join('\n');
-  if (!slice.startsWith('const researchRunTrackers = new Map();')) {
-    throw new Error('tracker module extraction: dashboard/index.html has shifted -- update the line range in this test.');
-  }
-  return slice;
-})();
+const TRACKER_SRC = extractRange(DASHBOARD_SRC, 'const researchRunTrackers = new Map();', 'function researchTrackerAccountState(uploadId, accountName){');
 
 const STUB_SOURCE = `
 function normalizeSavedAccount(a){ return a; }

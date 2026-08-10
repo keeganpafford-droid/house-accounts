@@ -14,6 +14,7 @@
 // Usage: node scripts/test-followup-round.js
 import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message){
@@ -21,23 +22,14 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const dashboardHtml = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
-const dashboardLines = dashboardHtml.split('\n');
+const dashboardHtml = loadDashboardSource();
+const DASHBOARD_SRC = dashboardHtml;
 const siteHeaderJs = readFileSync(new URL('../site-header.js', import.meta.url), 'utf8');
 const siteHeaderCss = readFileSync(new URL('../site-header.css', import.meta.url), 'utf8');
 // Scaling round: everResearched/activeCount moved server-side (see
 // api/monitoring-lists.js's loadLists()) since cachedLists no longer
 // carries a full .accounts array for listCard() to derive them from.
 const dashboardApiMonitoringListsSrc = readFileSync(new URL('../api/monitoring-lists.js', import.meta.url), 'utf8');
-
-function extractLines(label, startLine, endLine, expectedFirst){
-  const slice = dashboardLines.slice(startLine - 1, endLine);
-  const first = slice[0].trim();
-  if(!first.startsWith(expectedFirst)){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice.join('\n');
-}
 
 // ---------------------------------------------------------------------------
 // Required tests 1-5: list-level research labels, active-account scoping,
@@ -51,7 +43,7 @@ function extractLines(label, startLine, endLine, expectedFirst){
 // off the list object; the underlying required-test guarantees (labels,
 // active-only confirmation count) are proven against the new mechanism
 // instead.
-const listCardSrc = extractLines('listCard', 11611, 11651, 'function listCard(list){');
+const listCardSrc = extractFn(DASHBOARD_SRC, 'listCard');
 assert(
   /const listResearchLabel = list\.everResearched \? 'Research All Accounts Again' : 'Research All Accounts';/.test(listCardSrc),
   'required tests 1 & 2: never-researched lists show "Research All Accounts", previously-researched lists show "Research All Accounts Again" -- now driven by the server-computed list.everResearched'
@@ -102,7 +94,7 @@ assert(
 // persistScopedResearchResult() -- and excludes paused accounts before
 // ever claiming a run or building a provider payload.
 // ---------------------------------------------------------------------------
-const researchListSrc = extractLines('researchListFromManageModal', 6791, 7021, 'async function researchListFromManageModal(listId, options = {}){');
+const researchListSrc = extractFn(DASHBOARD_SRC, 'researchListFromManageModal');
 assert(
   /let activeAccounts = allAccounts\.filter\(a => a\.monitoringStatus !== 'paused'\);/.test(researchListSrc),
   'required test 3: researchListFromManageModal() excludes paused accounts from the snapshot before doing anything else'
@@ -139,7 +131,7 @@ assert(
 // truth driven via an early re-render; and completion reports
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractLines("handleListResearchClick", 11918, 12030, "async function handleListResearchClick(btn){");
+const handleListResearchClickSrc = extractFn(DASHBOARD_SRC, 'handleListResearchClick');
 // Scaling round: the active-account count in the confirmation dialog now
 // comes from the server-computed list.activeCount (Prefer: count=exact) --
 // cachedLists no longer carries a full .accounts array to filter
@@ -184,7 +176,7 @@ assert(
 // result, and relies on the existing Additional Opportunities section for
 // the rest.
 // ---------------------------------------------------------------------------
-const openResearchedSrc = extractLines('openResearchedAccountOpportunities', 8151, 8251, 'async function openResearchedAccountOpportunities(uploadId, accountName){');
+const openResearchedSrc = extractFn(DASHBOARD_SRC, 'openResearchedAccountOpportunities');
 assert(
   !/opportunityMatchesTimebox|findTimeboxForAccountOpportunity|activeTimebox|showAllWeeklyPriorities/.test(openResearchedSrc),
   'required test 8: openResearchedAccountOpportunities() never calls any TIMEBOX-matching helper (This Week/Month/Quarter/Year) -- it is independent of timebox eligibility (comments discussing the requirement do not count as a dependency)'
@@ -243,7 +235,7 @@ assert(
 // uploaded list, the upload-success panel stays visible throughout, and
 // post-research totals update without a manual refresh.
 // ---------------------------------------------------------------------------
-const fetchAggregateSrc = extractLines('fetchAndRenderAggregateDashboard', 3779, 3884, "async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){");
+const fetchAggregateSrc = extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard');
 assert(
   /fetch\(`\/api\/get-dashboard\?email=\$\{encodeURIComponent\(e\)\}&view=\$\{encodeURIComponent\(dashboardViewMode \|\| defaultDashboardView\(\)\)\}`/.test(fetchAggregateSrc),
   'required test 11: fetchAndRenderAggregateDashboard() calls the real /api/get-dashboard aggregate endpoint (every uploaded list the user owns), the exact same source loadSavedDashboard() has always used -- never a single-upload-scoped request'

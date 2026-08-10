@@ -38,11 +38,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import monitoringListsHandler from '../api/monitoring-lists.js';
+import { extractFn, extractRange, extractStatementAfter, findMatchingBracket, loadDashboardSource } from './lib/dashboard-extract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
-const DASHBOARD_SRC = readFileSync(join(REPO_ROOT, 'dashboard', 'index.html'), 'utf8');
-const DASHBOARD_LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 const MONITORING_LISTS_SRC = readFileSync(join(REPO_ROOT, 'api', 'monitoring-lists.js'), 'utf8');
 
 let failures = 0;
@@ -51,27 +51,18 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-// Tolerant of the modal IIFE's single-space indentation, same contract as
-// scripts/test-dashboard-auth-headers.js's extractFn().
-function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
-  const slice = DASHBOARD_LINES.slice(startLine - 1, endLine).join('\n');
-  const trimmedStart = slice.replace(/^\s+/, '');
-  const expectedPrefix = `${isAsync ? 'async ' : ''}function ${name}(`;
-  if(!trimmedStart.startsWith(expectedPrefix)){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-research-run-reattachment.js.`);
-  }
-  if(!slice.trimEnd().endsWith('}')){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
-function extractRaw(label, startLine, endLine, expectedPrefixTrimmed){
-  const slice = DASHBOARD_LINES.slice(startLine - 1, endLine).join('\n');
-  const trimmedStart = slice.replace(/^\s+/, '');
-  if(!trimmedStart.startsWith(expectedPrefixTrimmed)){
-    throw new Error(`extractRaw(${label}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefixTrimmed}" -- source has shifted, update the line range in scripts/test-research-run-reattachment.js.`);
-  }
-  return slice;
+// For the one-off case of a globally-unique marker that isn't itself a
+// nameable declaration but does open a brace block (e.g. `if(...){`) --
+// built on the shared findMatchingBracket() primitive, same as
+// extractStatementAfter() is for a bare call statement.
+function extractBraceBlock(source, marker){
+  const start = source.indexOf(marker);
+  if(start === -1) throw new Error(`extractBraceBlock: marker ${JSON.stringify(marker)} not found.`);
+  const second = source.indexOf(marker, start + 1);
+  if(second !== -1) throw new Error(`extractBraceBlock: marker ${JSON.stringify(marker)} is AMBIGUOUS -- appears more than once.`);
+  const openBrace = source.indexOf('{', start);
+  const closeBrace = findMatchingBracket(source, openBrace);
+  return source.slice(start, closeBrace + 1);
 }
 
 // ===========================================================================
@@ -336,59 +327,57 @@ async function runServerTests(){
 
 // ===========================================================================
 // PART 2 -- client: extracted verbatim from dashboard/index.html.
-// ===========================================================================
-// ROUND 14 note: line ranges re-derived after the durable-dismissal fix
-// shifted the file further -- extractFn()/extractRaw()'s own signature/
-// closing checks are the actual correctness guarantee, not these numbers.
-// Scaling round: every number below was recomputed programmatically against
-// the post-pagination-rewrite dashboard/index.html (a CSS insertion at
-// ~line 2006 and several new pagination functions/state shifted almost
-// everything after it) -- see the PAG3 commit for the derivation. Three
-// entries changed SHAPE, not just position: renderManager() went from a
-// one-line function (extractRaw of a single line) to a real multi-line
-// function body (now extractFn, brace-matched), and open()/load() grew new
-// lines of their own (the expand-state-aware refresh and the first-open
-// loading state) so their own extraction ranges are wider than before, not
-// just shifted.
+// Foundation freeze, Phase 3: every extraction below locates its target by
+// NAME (extractFn) or by a real declaration's own text (extractRange),
+// never by a physical line number -- immune to any ordinary edit
+// elsewhere in dashboard/index.html shifting positions. See
+// scripts/lib/dashboard-extract.js for the extraction contract and
+// scripts/test-dashboard-extract-lib.js for its direct proof.
+const OPEN_CLOSE_SRC = extractRange(DASHBOARD_SRC, 'function open(){', 'function close(){');
 const REAL_SOURCE = [
-  extractRaw('ACTIVE_RESEARCH_BREADCRUMB_KEY', 6536, 6536, 'const ACTIVE_RESEARCH_BREADCRUMB_KEY'),
-  extractFn('setActiveResearchBreadcrumb', 6537, 6543),
-  extractFn('clearActiveResearchBreadcrumb', 6544, 6555),
-  extractFn('getActiveResearchBreadcrumb', 6556, 6563),
-  extractFn('applyModalResearchResultToDashboard', 8012, 8022),
-  extractFn('normalizeAccountNameForKey', 8076, 8076),
-  extractFn('recentlyResearchedKey', 8081, 8081),
-  extractFn('findTimeboxForAccountOpportunity', 8089, 8096),
-  extractFn('highlightResultElement', 8098, 8104),
-  extractFn('scrollToAccountResult', 8118, 8138),
-  extractRaw('RECENTLY_RESEARCHED_WINDOW_MS', 8265, 8265, 'const RECENTLY_RESEARCHED_WINDOW_MS'),
-  extractRaw('DISMISSED_RESEARCH_STORAGE_PREFIX', 8294, 8294, 'const DISMISSED_RESEARCH_STORAGE_PREFIX'),
-  extractRaw('DISMISSED_RESEARCH_PRUNE_AFTER_MS', 8301, 8301, 'const DISMISSED_RESEARCH_PRUNE_AFTER_MS'),
-  extractFn('dismissedResearchNamespace', 8302, 8308),
-  extractFn('dismissedResearchStorageKey', 8309, 8309),
-  extractFn('readDismissedResearchMap', 8310, 8319),
-  extractFn('writeDismissedResearchMap', 8320, 8323),
-  extractFn('pruneDismissedResearchMap', 8324, 8331),
-  extractFn('isResearchResultDismissed', 8336, 8344),
-  extractFn('dismissResearchResult', 8345, 8349),
-  extractFn('getRecentlyResearchedAccounts', 8352, 8384),
-  extractFn('relativeResearchTimeLabel', 8385, 8392),
-  extractFn('renderRecentlyResearchedSection', 8393, 8418),
-  extractRaw('recentlyResearchedClickListener', 8419, 8437, "document.addEventListener('click', (event) => {"),
-  extractFn('escapeHtml', 11225, 11228),
-  extractRaw('modalFmtEsc', 11291, 11292, "const fmt=d=>"),
-  extractFn('request', 11313, 11330, {async: true}),
-  extractFn('accountRow', 11450, 11509),
-  extractFn('researchRunBanner', 11553, 11566),
-  extractFn('listCard', 11611, 11651),
-  extractFn('renderManager', 11657, 11671),
-  extractFn('isModalOpen', 11682, 11685),
-  extractFn('anyListHasActiveRun', 11694, 11696),
-  extractFn('stopResearchPoll', 11697, 11699),
-  extractFn('scheduleResearchPollIfNeeded', 11700, 11704),
-  extractFn('load', 11705, 11728, {async: true}),
-  extractRaw('openClose', 11730, 11750, "function open(){"),
-  extractFn('showInfoDialog', 12186, 12225)
+  extractFn(DASHBOARD_SRC, 'ACTIVE_RESEARCH_BREADCRUMB_KEY'),
+  extractFn(DASHBOARD_SRC, 'setActiveResearchBreadcrumb'),
+  extractFn(DASHBOARD_SRC, 'clearActiveResearchBreadcrumb'),
+  extractFn(DASHBOARD_SRC, 'getActiveResearchBreadcrumb'),
+  extractFn(DASHBOARD_SRC, 'applyModalResearchResultToDashboard'),
+  extractFn(DASHBOARD_SRC, 'normalizeAccountNameForKey'),
+  extractFn(DASHBOARD_SRC, 'recentlyResearchedKey'),
+  extractFn(DASHBOARD_SRC, 'findTimeboxForAccountOpportunity'),
+  extractFn(DASHBOARD_SRC, 'highlightResultElement'),
+  extractFn(DASHBOARD_SRC, 'scrollToAccountResult'),
+  extractFn(DASHBOARD_SRC, 'RECENTLY_RESEARCHED_WINDOW_MS'),
+  extractFn(DASHBOARD_SRC, 'DISMISSED_RESEARCH_STORAGE_PREFIX'),
+  extractFn(DASHBOARD_SRC, 'DISMISSED_RESEARCH_PRUNE_AFTER_MS'),
+  extractFn(DASHBOARD_SRC, 'dismissedResearchNamespace'),
+  extractFn(DASHBOARD_SRC, 'dismissedResearchStorageKey'),
+  extractFn(DASHBOARD_SRC, 'readDismissedResearchMap'),
+  extractFn(DASHBOARD_SRC, 'writeDismissedResearchMap'),
+  extractFn(DASHBOARD_SRC, 'pruneDismissedResearchMap'),
+  extractFn(DASHBOARD_SRC, 'isResearchResultDismissed'),
+  extractFn(DASHBOARD_SRC, 'dismissResearchResult'),
+  extractFn(DASHBOARD_SRC, 'getRecentlyResearchedAccounts'),
+  extractFn(DASHBOARD_SRC, 'relativeResearchTimeLabel'),
+  extractFn(DASHBOARD_SRC, 'renderRecentlyResearchedSection'),
+  (() => {
+    const anchor = extractFn(DASHBOARD_SRC, 'renderRecentlyResearchedSection');
+    const anchorIndex = DASHBOARD_SRC.indexOf(anchor) + anchor.length;
+    return extractStatementAfter(DASHBOARD_SRC, anchorIndex, "document.addEventListener('click'");
+  })(),
+  extractFn(DASHBOARD_SRC, 'escapeHtml'),
+  extractFn(DASHBOARD_SRC, 'fmt'),
+  extractFn(DASHBOARD_SRC, 'esc'),
+  extractFn(DASHBOARD_SRC, 'request'),
+  extractFn(DASHBOARD_SRC, 'accountRow'),
+  extractFn(DASHBOARD_SRC, 'researchRunBanner'),
+  extractFn(DASHBOARD_SRC, 'listCard'),
+  extractFn(DASHBOARD_SRC, 'renderManager'),
+  extractFn(DASHBOARD_SRC, 'isModalOpen'),
+  extractFn(DASHBOARD_SRC, 'anyListHasActiveRun'),
+  extractFn(DASHBOARD_SRC, 'stopResearchPoll'),
+  extractFn(DASHBOARD_SRC, 'scheduleResearchPollIfNeeded'),
+  extractFn(DASHBOARD_SRC, 'load'),
+  OPEN_CLOSE_SRC,
+  extractFn(DASHBOARD_SRC, 'showInfoDialog')
 ].join('\n\n');
 
 // Static regression proof for requirement 1, updated for
@@ -403,7 +392,7 @@ const REAL_SOURCE = [
 // (stopResearchPoll()), never the provider-facing research request.
 assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has real client-side cancellation (AbortController-backed Stop Research) -- see test-research-control-progress.js for its full behavioral contract');
 {
-  const closeSrc = extractRaw('closeOnly', 11751, 11759, "function close(){");
+  const closeSrc = OPEN_CLOSE_SRC.slice(OPEN_CLOSE_SRC.indexOf('function close(){'));
   assert(!/abort/i.test(closeSrc) && !/fetch\(/.test(closeSrc), '1) close()\'s own source contains no abort/cancel/fetch call');
   assert(/stopResearchPoll\(\)/.test(closeSrc), '1) close() stops only the modal\'s own UI polling loop (stopResearchPoll()), not the provider request');
 }
@@ -413,7 +402,7 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
 // identity-locked, and only falls back to alert() in the else branch (never
 // unconditionally) -- extracted directly from the real click handler.
 {
-  const deleteAccountBranch = extractRaw('deleteAccountCatchBranch', 12273, 12302, "if(action==='delete-account'){");
+  const deleteAccountBranch = extractBraceBlock(DASHBOARD_SRC, "if(action==='delete-account'){");
   assert(/if\(err\.identityLocked\)\{/.test(deleteAccountBranch), '6) the delete-account catch branch checks err.identityLocked');
   assert(/showInfoDialog\(/.test(deleteAccountBranch), '6) the identityLocked branch calls showInfoDialog(), the branded non-destructive dialog');
   assert(/\}else\{\s*alert\(err\.message\);\s*\}/.test(deleteAccountBranch), '6) alert() is reached ONLY in the else branch -- never unconditionally for this rejection');
@@ -435,7 +424,10 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
   // accountName) internally -- see the "durable" checks below for the
   // direct proof of that call site.
   assert(/!isResearchResultDismissed\(a\.uploadId, a\.name, a\.lastResearchedAt\)/.test(DASHBOARD_SRC), 'composite: getRecentlyResearchedAccounts() filters using the composite (uploadId, name) identity, not account name alone');
-  const handoffSrc = extractRaw('viewOpportunitiesHandoff', 11881, 11899, "if(fresh && typeof applyModalResearchResultToDashboard === 'function') applyModalResearchResultToDashboard(fresh, listId);");
+  // The handoff statements live inside handleResearchClick()'s own body --
+  // extracted by name rather than as an isolated raw span, since the
+  // assertions below only need to confirm these patterns are present.
+  const handoffSrc = extractFn(DASHBOARD_SRC, 'handleResearchClick');
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
   // Follow-up round: the toast's "View opportunities" action now calls the
   // shared openResearchedAccountOpportunities() production function (same
@@ -741,7 +733,7 @@ async function runClientTests(){
   // reopening can never itself claim another run or call a provider.
   // ---------------------------------------------------------------------
   {
-    const loadSrc = extractFn('load', 11705, 11728, { async: true });
+    const loadSrc = extractFn(DASHBOARD_SRC, 'load');
     assert(/request\('GET'\)/.test(loadSrc), "5) load() calls request('GET')");
     assert(!/researchRunAction/.test(loadSrc) && !/claim/i.test(loadSrc), '5) load() never references a claim/researchRunAction -- reopening the modal cannot itself start or attach to a run beyond reading its state');
   }
@@ -857,7 +849,7 @@ async function runClientTests(){
     // ranking comparator -- applyModalResearchResultToDashboard() only
     // patches signals/lastResearchedAt/futureOpportunities and calls the
     // existing render pipeline; it contains no sort/comparator of its own.
-    const src = extractFn('applyModalResearchResultToDashboard', 8012, 8022);
+    const src = extractFn(DASHBOARD_SRC, 'applyModalResearchResultToDashboard');
     assert(!/\.sort\(/.test(src), '9) applyModalResearchResultToDashboard() itself performs no sorting -- it cannot distort priority order, by construction');
   }
   {

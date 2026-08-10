@@ -19,10 +19,8 @@
 // mention must produce no exact date, not a stable-but-wrong fingerprint.
 //
 // Usage: node scripts/test-foundation-freeze-calendar-day-semantics.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 import { calendarDaysBetween, extractEventDate } from '../api/signal-intelligence.js';
 import { computeActionability } from '../api/research-batch.js';
 
@@ -38,25 +36,11 @@ function assert(condition, message){
 // so extract the real, verbatim source into a vm sandbox, exactly like the
 // established pattern in scripts/test-avidia-date-fixed-clock-regression.js.
 // ===========================================================================
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
-const LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractFn(name, startLine, endLine){
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  if(!/^(async )?function/.test(slice)){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with a function declaration -- source has shifted, update the line range in this test.`);
-  }
-  const trimmed = slice.trimEnd();
-  if(!trimmed.endsWith('}')){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
 
-const PARSE_MAYBE_DATE_SRC = extractFn('parseMaybeDate', 4791, 4796);
-const CALENDAR_DAYS_AGO_SRC = extractFn('calendarDaysAgo', 4834, 4839);
+const PARSE_MAYBE_DATE_SRC = extractFn(DASHBOARD_SRC, 'parseMaybeDate');
+const CALENDAR_DAYS_AGO_SRC = extractFn(DASHBOARD_SRC, 'calendarDaysAgo');
 
 function makeClientSandbox(fixedNow){
   const sandbox = { console, Date, Math };

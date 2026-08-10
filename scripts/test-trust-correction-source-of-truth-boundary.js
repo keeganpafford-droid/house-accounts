@@ -36,10 +36,8 @@
 // inert the moment this read-side filter is live.
 //
 // Usage: node scripts/test-trust-correction-source-of-truth-boundary.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 import { buildAccountsFromRows } from '../api/get-dashboard.js';
 
 let failures = 0;
@@ -48,35 +46,20 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
-const LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractFn(name, startLine, endLine) {
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const expectedPrefix = `function ${name}(`;
-  if (!slice.startsWith(expectedPrefix)) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in this test.`);
-  }
-  const trimmed = slice.trimEnd();
-  if (!trimmed.endsWith('}')) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
 
 // Real, verbatim client-side functions: the classifier the write-side fix
 // reuses (isWebResearchSignal() and its own dependency chain), plus
 // serializeAccountForStorage() itself -- the actual write boundary under
 // test, not a reimplementation of it.
 const CLASSIFIER_SRC = [
-  extractFn('isWebResearchSignal', 3434, 3439),
-  extractFn('signalLayerLabel', 4752, 4760),
-  extractFn('isRecentAccountActivity', 4762, 4765),
-  extractFn('normalizeSignalLayerType', 9898, 9904)
+  extractFn(DASHBOARD_SRC, 'isWebResearchSignal'),
+  extractFn(DASHBOARD_SRC, 'signalLayerLabel'),
+  extractFn(DASHBOARD_SRC, 'isRecentAccountActivity'),
+  extractFn(DASHBOARD_SRC, 'normalizeSignalLayerType')
 ].join('\n\n');
-const SERIALIZE_SRC = extractFn('serializeAccountForStorage', 10547, 10634);
+const SERIALIZE_SRC = extractFn(DASHBOARD_SRC, 'serializeAccountForStorage');
 
 function makeSandbox() {
   const sandbox = { console, Array, Object, String, Number, Boolean, JSON };

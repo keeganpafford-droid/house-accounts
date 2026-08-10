@@ -46,6 +46,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(here, '..');
@@ -85,32 +86,16 @@ function assert(condition, message){
 // of the single-space indentation this specific region of dashboard/index.html
 // happens to use).
 // ===========================================================================
-const DASHBOARD_SRC = readFileSync(join(REPO_ROOT, 'dashboard', 'index.html'), 'utf8');
-const DASHBOARD_LINES = DASHBOARD_SRC.split('\n');
-function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
-  const slice = DASHBOARD_LINES.slice(startLine - 1, endLine).join('\n');
-  const trimmedStart = slice.replace(/^\s+/, '');
-  const expectedPrefix = `${isAsync ? 'async ' : ''}function ${name}(`;
-  if(!trimmedStart.startsWith(expectedPrefix)){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-dashboard-auth-headers.js.`);
-  }
-  if(!slice.trimEnd().endsWith('}')){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
-// ROUND 12: line ranges re-derived after this round's changes shifted the
-// file -- extractFn()'s own signature/closing-brace checks are the actual
-// correctness guarantee, not these numbers.
+const DASHBOARD_SRC = loadDashboardSource();
 const EXTRACTED = {
   // Scaling round: shifted by the pagination-rewrite's CSS insertion
   // (~line 2006) and dashboard/index.html's Manage Customer Accounts
   // additions further down -- bodies of these functions are unchanged.
-  claimAutomaticResearchRun: extractFn('claimAutomaticResearchRun', 2584, 2594, {async: true}),
-  heartbeatCurrentResearchRun: extractFn('heartbeatCurrentResearchRun', 2657, 2674, {async: true}),
-  reportResearchRunOutcome: extractFn('reportResearchRunOutcome', 2688, 2713, {async: true}),
-  loadDashboardUsage: extractFn('loadDashboardUsage', 2735, 2745, {async: true}),
-  request: extractFn('request', 11313, 11330, {async: true})
+  claimAutomaticResearchRun: extractFn(DASHBOARD_SRC, 'claimAutomaticResearchRun'),
+  heartbeatCurrentResearchRun: extractFn(DASHBOARD_SRC, 'heartbeatCurrentResearchRun'),
+  reportResearchRunOutcome: extractFn(DASHBOARD_SRC, 'reportResearchRunOutcome'),
+  loadDashboardUsage: extractFn(DASHBOARD_SRC, 'loadDashboardUsage'),
+  request: extractFn(DASHBOARD_SRC, 'request')
 };
 const REAL_DASHBOARD_SOURCE = Object.values(EXTRACTED).join('\n\n');
 

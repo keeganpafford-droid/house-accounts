@@ -22,10 +22,8 @@
 // cover.
 //
 // Usage: node scripts/test-trust-correction-verified-terminology.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -33,33 +31,18 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
-const LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractFn(name, startLine, endLine) {
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const expectedPrefix = `function ${name}(`;
-  if (!slice.startsWith(expectedPrefix)) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in this test.`);
-  }
-  const trimmed = slice.trimEnd();
-  if (!trimmed.endsWith('}')) {
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
-}
 
 // Real, verbatim primitives this sprint added/renamed, plus their own
 // dependency chain.
 const CORE_SRC = [
-  extractFn('sourceDomain', 4774, 4776),
-  extractFn('foundSignalDedupeKey', 3383, 3388),
-  extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('hasConfirmedOrLegacyIdentity', 10316, 10319),
-  extractFn('isExplicitlyVerifiedIdentity', 10339, 10341),
-  extractFn('foundAndVerifiedSuffix', 10353, 10356)
+  extractFn(DASHBOARD_SRC, 'sourceDomain'),
+  extractFn(DASHBOARD_SRC, 'foundSignalDedupeKey'),
+  extractFn(DASHBOARD_SRC, 'dedupeFoundSignals'),
+  extractFn(DASHBOARD_SRC, 'hasConfirmedOrLegacyIdentity'),
+  extractFn(DASHBOARD_SRC, 'isExplicitlyVerifiedIdentity'),
+  extractFn(DASHBOARD_SRC, 'foundAndVerifiedSuffix')
 ].join('\n\n');
 
 function makeCoreSandbox() {
@@ -74,13 +57,13 @@ function makeCoreSandbox() {
 // stubbed as a harmless pass-through, matching the established pattern in
 // scripts/test-research-run-reattachment.js.
 const RR_SRC = [
-  extractFn('sourceDomain', 4774, 4776),
-  extractFn('foundSignalDedupeKey', 3383, 3388),
-  extractFn('dedupeFoundSignals', 3401, 3413),
-  extractFn('isExplicitlyVerifiedIdentity', 10339, 10341),
-  extractFn('getRecentlyResearchedAccounts', 8352, 8384),
-  extractFn('relativeResearchTimeLabel', 8385, 8392),
-  extractFn('renderRecentlyResearchedSection', 8393, 8418)
+  extractFn(DASHBOARD_SRC, 'sourceDomain'),
+  extractFn(DASHBOARD_SRC, 'foundSignalDedupeKey'),
+  extractFn(DASHBOARD_SRC, 'dedupeFoundSignals'),
+  extractFn(DASHBOARD_SRC, 'isExplicitlyVerifiedIdentity'),
+  extractFn(DASHBOARD_SRC, 'getRecentlyResearchedAccounts'),
+  extractFn(DASHBOARD_SRC, 'relativeResearchTimeLabel'),
+  extractFn(DASHBOARD_SRC, 'renderRecentlyResearchedSection')
 ].join('\n\n');
 
 function makeRecentlyResearchedSandbox(accounts) {

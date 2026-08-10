@@ -37,38 +37,32 @@
 import { readFileSync, writeFileSync } from 'fs';
 import vm from 'vm';
 import { reportHtml, weeklySummaryFromSignals, accountPayload, deriveAccountHistoryDigestRows, dedupeDigestRows } from '../api/weekly-scan.js';
+import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
-const html = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
-const lines = html.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
-function extractLines(label, startLine, endLine, expectedFirst){
-  const slice = lines.slice(startLine - 1, endLine);
-  const first = slice[0].trim();
-  if(!first.startsWith(expectedFirst)){
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this script.`);
-  }
-  return slice.join('\n');
-}
-
-// Same verbatim extraction ranges as scripts/test-repeat-order-follow-up-fixture.js.
+// Same real dashboard functions scripts/test-repeat-order-follow-up-fixture.js
+// exercises, located by name/semantic range (not physical line position) via
+// the shared extractor -- so a future dashboard edit that moves these
+// functions cannot silently make this preview render from stale/wrong code.
 const SRC = [
-  extractLines('timebox-config', 2570, 2575, 'const TIMEBOX_CONFIG = {'),
-  extractLines('opportunity-identity-helpers', 2711, 2796, 'function cleanOpportunityToken(value){'),
-  extractLines('is-business-opportunity', 3127, 3129, 'function isBusinessOpportunity(opp){'),
-  extractLines('signal-layer-label', 4256, 4266, 'function signalLayerLabel(opp){'),
-  extractLines('is-likely-invalid-account-name', 4240, 4247, 'function isLikelyInvalidAccountName(name){'),
-  extractLines('parse-maybe-date', 4292, 4297, 'function parseMaybeDate(value){'),
-  extractLines('parse-csv', 4013, 4131, 'function parseCSV(text){'),
-  extractLines('infer-promo-category', 4133, 4153, 'function inferPromoCategory(text){'),
-  extractLines('infer-industry', 4155, 4163, 'function inferIndustry(client, projects){'),
-  extractLines('format-short-date', 4723, 4727, 'function formatShortDate(value){'),
-  extractLines('account-history-status', 4758, 4823, 'function isAccountHistoryOpportunity(opp){'),
-  extractLines('opportunity-generation', 6415, 6955, 'function estimateFutureValue(account, opportunityType){'),
-  extractLines('order-history-filters', 7740, 7768, 'function isClosedHistoricalRecord(record){'),
-  extractLines('normalize-signal-layer-type', 7787, 7793, 'function normalizeSignalLayerType(type){'),
-  extractLines('recommendation-type', 7805, 7907, 'function daysSinceDate(value){'),
-  extractLines('opportunity-scoring', 7909, 7980, 'function calculateOpportunityScore(opp){'),
-  extractLines('timebox-classification', 8107, 8163, 'function monthIndexFromName(name){')
+  extractFn(DASHBOARD_SRC, 'TIMEBOX_CONFIG'),
+  extractRange(DASHBOARD_SRC, 'function cleanOpportunityToken(value){', 'function isRelationshipExpansionOpportunity(opp){'),
+  extractFn(DASHBOARD_SRC, 'isWebResearchSignal'),
+  extractRange(DASHBOARD_SRC, 'function signalLayerLabel(opp){', 'function isRecentAccountActivity(opp){'),
+  extractFn(DASHBOARD_SRC, 'isLikelyInvalidAccountName'),
+  extractFn(DASHBOARD_SRC, 'parseMaybeDate'),
+  extractFn(DASHBOARD_SRC, 'parseCSV'),
+  extractFn(DASHBOARD_SRC, 'inferPromoCategory'),
+  extractFn(DASHBOARD_SRC, 'inferIndustry'),
+  extractFn(DASHBOARD_SRC, 'formatShortDate'),
+  extractRange(DASHBOARD_SRC, 'function isAccountHistoryOpportunity(opp){', 'function accountHistoryStatusLine(opp){'),
+  extractRange(DASHBOARD_SRC, 'function estimateFutureValue(account, opportunityType){', 'function getPriorityTier(opp){'),
+  extractRange(DASHBOARD_SRC, 'function isClosedHistoricalRecord(record){', 'function sumRevenue(records){'),
+  extractFn(DASHBOARD_SRC, 'normalizeSignalLayerType'),
+  extractRange(DASHBOARD_SRC, 'function daysSinceDate(value){', 'function getRecommendationType(opp){'),
+  extractRange(DASHBOARD_SRC, 'function calculateOpportunityScore(opp){', 'function assignOpportunityScore(opp, account){'),
+  extractRange(DASHBOARD_SRC, 'function monthIndexFromName(name){', 'function opportunityMatchesTimebox(opp, timebox){')
 ].join('\n\n');
 
 const EXPORT_NAMES = [
@@ -76,7 +70,7 @@ const EXPORT_NAMES = [
   'isClosedHistoricalRecord', 'isActivePipelineRecord', 'hasOrderHistoryEvidence', 'sumRevenue',
   'findRepeatPatternGroups', 'createRepeatPatternOpportunities', 'categoryToPromoSuggestions',
   'generateFutureOpportunities', 'createOpportunity',
-  'signalLayerLabel', 'isBusinessOpportunity', 'isRecentAccountActivity',
+  'signalLayerLabel', 'isWebResearchSignal', 'isRecentAccountActivity',
   'isAccountHistoryOpportunity', 'reorderWindowStatus', 'accountHistoryStatusLine', 'formatShortDate',
   'getRecommendationType', 'getOpportunityPlanningWindow', 'opportunityMatchesTimebox',
   'classifyMonthWindow', 'monthDistanceFromNow', 'inferPurchaseMonth'

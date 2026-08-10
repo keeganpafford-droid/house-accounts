@@ -27,13 +27,9 @@
 // Usage: node scripts/test-dashboard-orchestration.js
 import { readFileSync } from 'fs';
 import vm from 'vm';
-import { fileURLToPath } from 'url';
-import path from 'path';
+import { extractFn as sharedExtractFn, extractStatementAfter, loadDashboardSource } from './lib/dashboard-extract.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PATH = path.join(__dirname, '..', 'dashboard', 'index.html');
-const DASHBOARD_SRC = readFileSync(DASHBOARD_PATH, 'utf8');
-const LINES = DASHBOARD_SRC.split('\n');
+const DASHBOARD_SRC = loadDashboardSource();
 
 let failures = 0;
 function assert(condition, message){
@@ -41,36 +37,25 @@ function assert(condition, message){
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-// Slices dashboard/index.html by 1-indexed, inclusive line numbers and
-// verifies the slice actually starts with the expected function signature
-// -- so a source reshuffle fails loudly here instead of silently running
-// stale/wrong text.
-function extractFn(name, startLine, endLine, {async: isAsync = false} = {}){
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const expectedPrefix = `${isAsync ? 'async ' : ''}function ${name}(`;
-  if(!slice.startsWith(expectedPrefix)){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-dashboard-orchestration.js.`);
-  }
-  const lastLine = slice.trimEnd();
-  if(!lastLine.endsWith('}')){
-    throw new Error(`extractFn(${name}): dashboard/index.html line ${endLine} does not close the function body as expected -- update the line range.`);
-  }
-  return slice;
+// Locates the named top-level declaration by semantic structure (shared
+// library) rather than a physical line range -- immune to ordinary edits
+// anywhere earlier in dashboard/index.html. Signature kept name-only,
+// matching every other call site in this file; the {async} option some
+// call sites still pass is accepted but no longer needed for correctness
+// (the shared extractor recognizes async functions on its own).
+function extractFn(name){
+  return sharedExtractFn(DASHBOARD_SRC, name);
 }
 
 // Same guarantee as extractFn(), for a non-function source block (the
 // delegated click listener is a bare `document.addEventListener(...)`
-// statement, not a named function declaration).
-function extractRaw(label, startLine, endLine, expectedPrefix){
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  if(!slice.startsWith(expectedPrefix)){
-    throw new Error(`extractRaw(${label}): dashboard/index.html line ${startLine} no longer starts with "${expectedPrefix}" -- source has shifted, update the line range in scripts/test-dashboard-orchestration.js.`);
-  }
-  const lastLine = slice.trimEnd();
-  if(!lastLine.endsWith('});')){
-    throw new Error(`extractRaw(${label}): dashboard/index.html line ${endLine} does not close the block as expected -- update the line range.`);
-  }
-  return slice;
+// statement, not a named function declaration) -- anchored immediately
+// after the already-extracted saveAccountMetadataEdit(), never a bare line
+// number.
+function extractDelegatedClickListener(){
+  const anchorSrc = extractFn('saveAccountMetadataEdit');
+  const anchorIndex = DASHBOARD_SRC.indexOf(anchorSrc) + anchorSrc.length;
+  return extractStatementAfter(DASHBOARD_SRC, anchorIndex, "document.addEventListener('click'");
 }
 
 // ===========================================================================
@@ -107,71 +92,71 @@ function extractRaw(label, startLine, endLine, expectedPrefix){
 // numbers were re-derived mechanically (parse-complete scan from each
 // function's real signature line), not hand-counted.
 const REAL_SOURCE = [
-  extractFn('claimAutomaticResearchRun', 2584, 2594, {async: true}),
+  extractFn('claimAutomaticResearchRun'),
   // Duplicate-company research control (beta round): researchAccountFromManageModal(),
   // researchListFromManageModal(), and researchTopAccounts() (all extracted
   // below) now call checkDuplicateCompanyResearch() before ever claiming a
   // run -- it must be real, extracted source (not stubbed), since its own
   // fetch call and fail-open contract are directly part of the orchestration
   // under test here.
-  extractFn('checkDuplicateCompanyResearch', 2608, 2624, {async: true}),
-  extractFn('duplicateCompanyResearchMessage', 2634, 2637),
-  extractFn('heartbeatCurrentResearchRun', 2657, 2674, {async: true}),
-  extractFn('reportResearchRunOutcome', 2688, 2713, {async: true}),
-  extractFn('normalizeSavedAccount', 2849, 2911),
-  extractFn('accountCardFor', 4715, 4721),
-  extractFn('accountSignalsPanel', 4722, 4725),
+  extractFn('checkDuplicateCompanyResearch'),
+  extractFn('duplicateCompanyResearchMessage'),
+  extractFn('heartbeatCurrentResearchRun'),
+  extractFn('reportResearchRunOutcome'),
+  extractFn('normalizeSavedAccount'),
+  extractFn('accountCardFor'),
+  extractFn('accountSignalsPanel'),
   // FR2 round: researchAccountFromManageModal()/researchAccountByName() now
   // parse every research response through this real function instead of a
   // blind res.json() -- it must be extracted as real source (not stubbed)
   // since it directly participates in the request/response orchestration
   // under test here, exactly like fetchUploadScopedSnapshot() below.
-  extractFn('safeParseResearchResponse', 6576, 6611, {async: true}),
-  extractFn('fetchUploadScopedSnapshot', 6440, 6462, {async: true}),
-  extractFn('persistScopedResearchResult', 6470, 6515, {async: true}),
-  extractFn('researchAccountFromManageModal', 6613, 6776, {async: true}),
-  extractFn('researchAccountByName', 7054, 7215, {async: true}),
-  extractFn('getAccountsForResearch', 7219, 7232),
-  extractFn('batchPayloadForAccounts', 7234, 7290),
-  extractFn('applyBusinessSignalAccountBoost', 7293, 7301),
-  extractFn('researchAccountsBatch', 7303, 7423, {async: true}),
-  extractFn('signalTopicKeyClient', 7425, 7433),
-  extractFn('dedupeSignalsClient', 7435, 7448),
-  extractFn('researchTopAccounts', 7465, 7669, {async: true}),
-  extractFn('refreshOpportunityViews', 7956, 7976),
+  extractFn('safeParseResearchResponse'),
+  extractFn('fetchUploadScopedSnapshot'),
+  extractFn('persistScopedResearchResult'),
+  extractFn('researchAccountFromManageModal'),
+  extractFn('researchAccountByName'),
+  extractFn('getAccountsForResearch'),
+  extractFn('batchPayloadForAccounts'),
+  extractFn('applyBusinessSignalAccountBoost'),
+  extractFn('researchAccountsBatch'),
+  extractFn('signalTopicKeyClient'),
+  extractFn('dedupeSignalsClient'),
+  extractFn('researchTopAccounts'),
+  extractFn('refreshOpportunityViews'),
   // FR3 round: display-only patch of window.accountRadarAccounts after a
   // scoped save has already succeeded -- researchAccountFromCard() below
   // calls this exactly like the Manage Customer Accounts modal's own
   // handleResearchClick() wrapper does (that wrapper lives in the OTHER
   // inline <script>, not extracted here; its own dedicated coverage is the
   // scoped-research family of tests further down this file).
-  extractFn('applyModalResearchResultToDashboard', 8012, 8022),
+  extractFn('applyModalResearchResultToDashboard'),
   // FR3 round root-cause fix: the dashboard card's "Research Account" /
   // "Research Again" button's new, single target -- built directly on the
   // already-scoped researchAccountFromManageModal() above instead of the
   // name-only/currentUploadId-dependent researchAccountByName(). This is
   // the function under test in the collision/duplicate-name scenarios
   // below.
-  extractFn('researchAccountFromCard', 8043, 8071, {async: true}),
-  extractFn('renderDetailedAccountViews', 10469, 10537),
+  extractFn('researchAccountFromCard'),
+  extractFn('renderDetailedAccountViews'),
   // Source-of-truth correction: serializeAccountForStorage() below now
   // calls isWebResearchSignal() to keep canonical business signals out of
   // existingSignals -- must be real, extracted source (not stubbed), plus
   // its own dependency chain (signalLayerLabel() -> normalizeSignalLayerType()/
   // isRecentAccountActivity()), since the exclusion is exactly what this
   // round's fix depends on.
-  extractFn('isWebResearchSignal', 3434, 3439),
-  extractFn('signalLayerLabel', 4752, 4760),
-  extractFn('isRecentAccountActivity', 4762, 4765),
-  extractFn('normalizeSignalLayerType', 9898, 9904),
-  extractFn('serializeAccountForStorage', 10547, 10634),
-  extractFn('performSaveCurrentUpload', 10644, 10744, {async: true}),
-  extractFn('saveCurrentUpload', 10753, 10757),
-  extractFn('toggleAccountMetadataEdit', 10765, 10771),
-  extractFn('saveAccountMetadataEdit', 10794, 10830, {async: true}),
-  extractRaw('delegatedClickListener', 10848, 10887, "document.addEventListener('click', (event) => {"),
-  extractFn('importedContactsFromRecords', 10900, 10916),
-  extractFn('escapeHtml', 11225, 11228)
+  extractFn('isWebResearchSignal'),
+  extractFn('signalLayerLabel'),
+  extractFn('isRecentAccountActivity'),
+  extractFn('normalizeSignalLayerType'),
+  extractFn('serializeAccountForStorage'),
+  extractFn('performSaveCurrentUpload'),
+  extractFn('saveCurrentUpload'),
+  extractFn('toggleAccountMetadataEdit'),
+  extractFn('saveAccountMetadataEdit'),
+  extractDelegatedClickListener(),
+  extractFn('importedContactsFromRecords'),
+  extractFn('escapeHtml')
 ].join('\n\n');
 
 // ===========================================================================

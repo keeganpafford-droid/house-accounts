@@ -20,8 +20,8 @@
 // everything AFTER that guard is never reached and does not need stubbing.
 //
 // Usage: node scripts/test-northern-pool-zero-accounts-guard.js
-import { readFileSync } from 'fs';
 import vm from 'vm';
+import { extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -29,19 +29,7 @@ function assert(condition, message) {
   else { failures += 1; console.error(`FAIL: ${message}`); }
 }
 
-const DASHBOARD_PATH = new URL('../dashboard/index.html', import.meta.url);
-const LINES = readFileSync(DASHBOARD_PATH, 'utf8').split('\n');
-
-function extractLines(label, startLine, endLine, expectedFirst) {
-  const slice = LINES.slice(startLine - 1, endLine).join('\n');
-  const first = LINES[startLine - 1];
-  if (!first.startsWith(expectedFirst)) {
-    throw new Error(`extractLines(${label}): dashboard/index.html line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return slice;
-}
-
-const GUARD_SRC = extractLines('northern-pool-zero-accounts-guard', 7456, 7669, 'function hideUploadDecisionForZeroAcceptedAccounts(){');
+const GUARD_SRC = extractRange(loadDashboardSource(), 'function hideUploadDecisionForZeroAcceptedAccounts(){', 'async function researchTopAccounts(options = {}){');
 
 // Fresh DOM/state stub + fresh vm context per scenario -- avoids any
 // cross-scenario state bleed, and keeps each run's assertions about
