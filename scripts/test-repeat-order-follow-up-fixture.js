@@ -25,7 +25,7 @@
 //     (external providers), which this branch is not permitted to run.
 //     Distinctness between a Business Activity Signal and a local
 //     repeat/follow-up signal is proven at the classification level
-//     (signalLayerLabel/isBusinessOpportunity), which is the layer that
+//     (signalLayerLabel/isWebResearchSignal), which is the layer that
 //     decides which bucket an opportunity belongs to before any merge
 //     logic would ever see it.
 //
@@ -369,7 +369,7 @@ console.log(`\n(Test run date: ${TODAY.toISOString().slice(0,10)} -- planning-wi
 // in the exact shape addSignalDerivedOpportunities() in
 // dashboard/index.html produces (isVerifiedSignalOpportunity: true,
 // sourceUrl set) -- the same classification function
-// (signalLayerLabel/isBusinessOpportunity) that the real pipeline's output
+// (signalLayerLabel/isWebResearchSignal) that the real pipeline's output
 // would be run through.
 // ===========================================================================
 {

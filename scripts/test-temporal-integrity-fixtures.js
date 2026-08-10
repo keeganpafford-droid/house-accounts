@@ -283,7 +283,7 @@ const sandbox = makeSandbox();
 
 // Give each fixture opportunity the isVerifiedSignalOpportunity flag makeSignal()
 // -> addSignalDerivedOpportunities() would set on a real business-signal
-// opportunity, so isBusinessOpportunity()/signalLayerLabel() classify it the
+// opportunity, so isWebResearchSignal()/signalLayerLabel() classify it the
 // same way the real client-side pipeline would.
 function asBusinessOpportunity(opp){
   return { ...opp, isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal', account: opp.accountName };

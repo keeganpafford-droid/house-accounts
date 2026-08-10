@@ -5,7 +5,7 @@
 // raw_data.existingSignals entries persisted before
 // isVerifiedSignalOpportunity/signalLayerType were set on every opportunity
 // object (a genuinely older, "legacy" object shape) silently fail
-// isBusinessOpportunity()/isBusinessSignalOpportunity() -- both client
+// isWebResearchSignal()/isBusinessSignalOpportunity() -- both client
 // (dashboard/index.html) and server (api/get-dashboard.js) -- which defeats
 // business-signal identity merge/dedup AND read-time date reconciliation
 // for that one persisted object, even though a freshly re-derived

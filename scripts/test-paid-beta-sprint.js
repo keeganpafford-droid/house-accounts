@@ -451,7 +451,7 @@ const CARD_AND_MODAL_BLOCK = extractRange(DASHBOARD_SRC, 'function confidenceLab
 // clusterBusinessSignalOpportunities, sourceStrengthScore,
 // initiativeCandidateRank, compareInitiativeCandidates,
 // mergeBusinessSignalInitiatives), dedupeOpportunities, verifiedSignalDedupeKey,
-// dedupeVerifiedSignals, isBusinessOpportunity, buyingOpportunityIdentity,
+// dedupeVerifiedSignals, isWebResearchSignal, buyingOpportunityIdentity,
 // buyingConversationLabel, suggestedIntroductionPath.
 const DEDUPE_AND_IDENTITY_BLOCK = extractRange(DASHBOARD_SRC, 'function cleanOpportunityToken(', 'function isWebResearchSignal(opp){');
 
