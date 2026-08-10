@@ -6775,6 +6775,24 @@ async function researchAccountFromManageModal(accountName, listId){
   }
 }
 
+// Pre-beta blocker hardening correction: mirrors api/research-batch.js's own
+// within-request near-duplicate-name key EXACTLY (see its `safeAccounts`
+// filter, `seenAccountKeys`) -- the server silently drops every account
+// AFTER the first one whose key collides, with NO trace of this in its
+// response (skippedDuplicateAccountNames only covers a DIFFERENT upload's
+// ACTIVE run, never a within-request collision). Left unhandled, the
+// dropped account would still get `data.byAccount[account.name]` fall back
+// to an empty array client-side and be stamped lastResearchedAt anyway --
+// a false "researched, nothing found" claim for an account the server never
+// actually searched at all. Deduplicating here, BEFORE a chunk is ever
+// built/sent, means the server's own internal collapse can never fire in
+// the first place, and the account this happens to is honestly reported as
+// a duplicate (skippedDuplicates) rather than falsely marked researched.
+function researchDedupeNameKey(name){
+  const key = String(name || '').toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company)\b\.?/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  return key || String(name || '').toLowerCase();
+}
+
 // Follow-up round item 1: list-level research ("Research Entire List" /
 // "Research Entire List Again") for the Manage Customer Accounts modal.
 // Deliberately built from the SAME production primitives
@@ -6870,8 +6888,32 @@ async function researchListFromManageModal(listId, options = {}){
     // (real order history, no public-signal research needed) go through
     // /api/research-account individually, same as a single "Research
     // Account" click would for each of them.
-    const enhancedGroup = researchableAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
+    let enhancedGroup = researchableAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
     const historicalGroup = researchableAccounts.filter(a => !enhancedGroup.includes(a));
+
+    // Pre-beta blocker hardening: within-list near-duplicate names (e.g.
+    // "Acme Co" and "Acme Co." both present in the SAME uploaded list) are
+    // filtered out HERE, before any chunk is built, rather than letting
+    // api/research-batch.js's own within-request dedup silently drop the
+    // second one with no trace -- see researchDedupeNameKey()'s own comment.
+    // Only applies to enhancedGroup: historicalGroup's accounts are each
+    // sent in their own, separate /api/research-account request, so no
+    // within-request collision between two DIFFERENT accounts can occur
+    // there in the first place.
+    {
+      const seenKeys = new Set();
+      const deduped = [];
+      for(const account of enhancedGroup){
+        const key = researchDedupeNameKey(account.name);
+        if(seenKeys.has(key)){
+          skippedDuplicates.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
+          continue;
+        }
+        seenKeys.add(key);
+        deduped.push(account);
+      }
+      enhancedGroup = deduped;
+    }
 
     // P0 correctness fix (pre-beta blocker hardening): the whole warm/mixed
     // group used to be sent in ONE unbounded /api/research-batch request,

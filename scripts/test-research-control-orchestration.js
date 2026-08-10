@@ -48,6 +48,7 @@ const REAL_SOURCE = [
   extractFn('clearActiveResearchBreadcrumb'),
   extractFn('getActiveResearchBreadcrumb'),
   extractFn('safeParseResearchResponse'),
+  extractFn('researchDedupeNameKey'),
   extractFn('researchAccountFromManageModal'),
   extractFn('researchListFromManageModal'),
   extractFn('researchAccountByName'),
@@ -449,6 +450,71 @@ async function testEnhancedGroupTransientFailureRetriesSmallerAndRecovers(){
   assert(accounts.every(a => !!a.lastResearchedAt), 'every one of the 8 accounts (including the ones in the initially-failed chunk) eventually received a truthful lastResearchedAt once its retried/continued chunk actually succeeded');
 }
 
+// Founder correctness confirmation (pre-beta blocker hardening follow-up):
+// api/research-batch.js's own within-request account sanitization
+// (`safeAccounts`'s `seenAccountKeys` filter) silently drops every account
+// AFTER the first whose normalized name collides -- with NO trace of this
+// in its response (skippedDuplicateAccountNames only covers a DIFFERENT
+// upload's active run, never a within-request collision; confirmed by
+// reading findActiveDuplicateCompanyCollisions()'s own header comment).
+// Left unhandled, the dropped account would still fall back to an empty
+// signals array and be stamped lastResearchedAt -- a false "researched,
+// nothing found" claim for an account the server never actually searched.
+// This proves the client-side fix: "Acme Co." (normalizes to the same key
+// as "Acme Co." -> "acme" once the corporate suffix is stripped) is
+// filtered out and reported as a duplicate BEFORE any chunk is built, so
+// the server's own silent collapse never has anything to collapse, and the
+// dropped account is honestly reported rather than falsely marked done.
+async function testEnhancedGroupWithinListDuplicateNamesNeverFalselyStamped(){
+  const accounts = [
+    fixtureAccount('Acme Co', { intelligenceMode: 'warm', uploadId: 'list-dup-name' }),
+    // Same normalized key as 'Acme Co' once the corporate suffix ("Co.") and
+    // punctuation are stripped -- a real, plausible upload artifact (two
+    // CSV rows for the same company, spelled slightly differently), not a
+    // contrived string.
+    fixtureAccount('Acme Co.', { intelligenceMode: 'warm', uploadId: 'list-dup-name' }),
+    fixtureAccount('Beta Co', { intelligenceMode: 'warm', uploadId: 'list-dup-name' })
+  ];
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-dup-name', upload_name: 'Duplicate Name List' }, accounts });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-dup-name', attemptId: 'attempt-dup-name-1' });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      // Faithfully replicates api/research-batch.js's own real behavior:
+      // if the client ever sent both near-duplicate names in the same
+      // request, only the FIRST would get a real key in byAccount -- the
+      // second's key would simply never exist. This mock exists to prove
+      // the CLIENT never sends both in the first place; it would fail the
+      // "workCalls[0] never contains Acme Co." assertion below if the fix
+      // regressed.
+      const byAccount = {};
+      call.body.accounts.forEach(a => { byAccount[a.name] = [{ isReal: true, sourceUrl: `https://example.com/${a.name}` }]; });
+      return jsonResponse({ byAccount, signals: [] });
+    }
+    if (call.url === '/api/save-upload') return jsonResponse({ ok: true, uploadId: 'list-dup-name', runStatus: 'completed' });
+    throw new Error(`unexpected fetch in testEnhancedGroupWithinListDuplicateNamesNeverFalselyStamped: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({ fetchImpl });
+  const result = await sandbox.researchListFromManageModal('list-dup-name');
+
+  const workCalls = researchBatchWorkCalls(fetchImpl.calls);
+  assert(workCalls.length === 1, `only one bounded request is needed once the within-list duplicate is filtered out before dispatch (got ${workCalls.length})`);
+  assert(!workCalls[0].body.accounts.some(a => a.name === 'Acme Co.'), 'the near-duplicate ("Acme Co.") is never sent to the server at all -- filtered out before any request is built, so the server\'s own silent within-request collapse never has anything to collapse');
+  assert(workCalls[0].body.accounts.some(a => a.name === 'Acme Co') && workCalls[0].body.accounts.some(a => a.name === 'Beta Co'), 'the two genuinely distinct accounts (the FIRST occurrence of the duplicated name, and the unrelated account) are both still sent normally');
+
+  const acme = accounts.find(a => a.name === 'Acme Co');
+  const acmeDup = accounts.find(a => a.name === 'Acme Co.');
+  const beta = accounts.find(a => a.name === 'Beta Co');
+  assert(!!acme.lastResearchedAt && acme.signals.length === 1, 'the first occurrence ("Acme Co") is genuinely researched');
+  assert(!!beta.lastResearchedAt && beta.signals.length === 1, 'the unrelated account ("Beta Co") is genuinely researched');
+  assert(!acmeDup.lastResearchedAt, 'the near-duplicate ("Acme Co.") is NEVER stamped lastResearchedAt -- it was never actually attempted, so it must never look researched');
+  assert(!acmeDup.signals || !acmeDup.signals.length, 'the near-duplicate never receives fabricated/borrowed signals either');
+
+  assert(Array.isArray(result.skippedDuplicates) && result.skippedDuplicates.some(s => s.accountName === 'Acme Co.'), `the near-duplicate is honestly reported via the existing skippedDuplicates mechanism, not silently dropped from the summary (got ${JSON.stringify(result.skippedDuplicates)})`);
+  assert(result.attempted === 2 && result.unattempted === 0 && result.failures === 0, `exactly the two genuinely distinct accounts are attempted; the duplicate is neither unattempted nor failed -- it's a deliberate, reported skip (got ${JSON.stringify({attempted: result.attempted, unattempted: result.unattempted, failures: result.failures})})`);
+}
+
 // Required behavior: Stop Research between chunks -- no additional queued
 // chunk begins once Stop is clicked, even though earlier chunks already
 // completed successfully.
@@ -489,6 +555,7 @@ await testIndividualResearchMarksAccountResearchingDuringDispatch();
 await testEnhancedGroupChunkedAndBounded();
 await testEnhancedGroupPartialFailureHaltsRemainingChunks();
 await testEnhancedGroupTransientFailureRetriesSmallerAndRecovers();
+await testEnhancedGroupWithinListDuplicateNamesNeverFalselyStamped();
 await testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining();
 
 // ===========================================================================
