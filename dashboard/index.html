@@ -5394,20 +5394,21 @@ function conceptLedApproach(opp){
   const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
   const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
   const lead = account && specific ? `Saw ${account} has ${specific} coming up.` : (specific ? `Saw ${specific} coming up.` : '');
-  // Beta Seller Experience sprint: activationIdeas are meant to be concrete,
-  // specific ideas (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), which
-  // means any individual one may plausibly name a product/merch noun
-  // directly (e.g. "branded hats", "parade giveaways") -- naming that verbatim
-  // in the approach text is exactly the direct-pitch/"product dumping"
-  // pattern mentionsProductOrMerchOffer() already exists to catch on every
-  // other opener path. Filter to only the ideas that pass the same policy
-  // gate the rest of the app applies to every other approach text, so one
-  // product-named idea doesn't sink an otherwise-clean one.
-  const safeIdeas = ideas.filter(idea => !mentionsProductOrMerchOffer(idea));
-  const leadIdeas = safeIdeas.slice(0, 2).join(' and ');
-  const question = leadIdeas
-    ? `We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`
-    : `We had a couple ideas for this. Would it be okay if I sent a few concepts over?`;
+  // Beta Seller Experience sprint, Preview QA round 2 correction: an earlier
+  // pass in this sprint ran the assembled ideas through
+  // mentionsProductOrMerchOffer() and dropped any idea it flagged (e.g.
+  // "parade giveaways") before naming it here. That was solving the wrong
+  // problem -- founder-confirmed policy is that a concrete concept/product
+  // reference INSIDE a permission-based ask is exactly what makes an
+  // approach feel useful rather than generic ("We had a few parade giveaway
+  // ... ideas. Happy to send a couple concepts over." is the founder's own
+  // good example). mentionsProductOrMerchOffer() exists to block a raw,
+  // unprompted pitch/statement shape ("Do you need promotional products?"),
+  // not a grounded reference wrapped in this function's own
+  // permission-ask template -- which isPermissionBasedConceptOffer() already
+  // recognizes as the sanctioned shape. Ideas are named directly, untouched.
+  const leadIdeas = ideas.slice(0, 2).join(' and ');
+  const question = `We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`;
   return lead ? `${lead} ${question}` : question;
 }
 
@@ -5584,14 +5585,82 @@ function getActivationIdeas(opp, limit){
 // about?") -- the confirmed weak pattern this sprint targets. See
 // isPriorityEligibleOpportunity() for where this is actually enforced.
 //
-// A signal that predates the commercial-intelligence feature entirely
-// (isCommercialIntelligenceSignal() false -- none of the three fields were
-// ever computed for it, not because the model declined) is grandfathered
-// in here exactly like hasConfirmedOrLegacyIdentity() already grandfathers
-// legacy identityConfidence: absence-because-untested-legacy-shape is not
-// the same claim as absence-because-genuinely-weak-signal.
+// Mirrors api/signal-intelligence.js's isGenericCommercialPlay() exactly --
+// same predicate, defined once per runtime (server generation, client
+// eligibility), never two independently-drifting copies. Needed here
+// because a legacy signal's fallback narrative (see getCommercialPlayNarrative()
+// above) was NEVER run through this filter server-side -- it predates the
+// filter entirely -- so it has to be evaluated at read time instead.
+const GENERIC_COMMERCIAL_PLAY_HEDGE = /\b(?:could|might|may|can)\s+(?:lead to|create|open up|present|support)\b|\b(?:opportunity|need|demand)\s+for\b|\bmay\s+be\s+useful\b|\bconsider\b/i;
+const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?|needs?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?)\b/i;
+const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
+  'this', 'that', 'such', 'with', 'from', 'into', 'their', 'they', 'them',
+  'consider', 'support', 'supporting', 'could', 'might', 'need', 'needs', 'lead', 'create',
+  'creates', 'creating', 'present', 'presents', 'opportunity', 'opportunities',
+  'useful', 'likely', 'potential', 'potentially', 'various', 'general', 'generic',
+  'promotional', 'products', 'product', 'materials', 'material', 'branded', 'brand',
+  'branding', 'merchandise', 'apparel', 'gear', 'swag', 'gifts', 'gift', 'corporate',
+  'custom', 'items', 'item', 'initiative', 'initiatives', 'outreach', 'events',
+  'event', 'campaign', 'campaigns', 'marketing', 'kits', 'kit', 'related'
+]);
+const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
+  'call', 'calls', 'webcast', 'webcasts', 'conference', 'investor', 'investors',
+  'relations', 'earnings', 'quarterly', 'filing', 'filings', 'presentation',
+  'presentations', 'shareholders', 'shareholder', 'subsequent', 'efforts',
+  'effort', 'results', 'report', 'reports', 'meeting', 'meetings'
+]);
+function isGenericCommercialPlay(narrative){
+  const text = String(narrative || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if(!text) return false;
+  if(!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
+  const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+    .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
+  if(remaining.length === 0) return true;
+  return remaining.every(w => GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS.has(w));
+}
+
+// Preview QA round 2 correction: a signal that predates the
+// commercial-intelligence feature entirely (isCommercialIntelligenceSignal()
+// false -- none of the three fields were ever computed for it) is NOT
+// automatically priority-eligible just because it's old. Compatibility means
+// its research is preserved (still visible in Research Details/history via
+// getCommercialPlayNarrative()'s own fallback), not that it gets a free pass
+// into priority regardless of quality. Its existing legacy narrative is held
+// to the exact same genericness standard a fresh commercialPlay narrative
+// already is -- confirmed real production cases (Gallagher "...to support
+// the call and subsequent marketing efforts.", Kiniksa "...such as branded
+// materials for the webcast or investor relations kits.") are both real,
+// non-empty legacy narratives that read as specific until measured against
+// this standard, at which point they're the same non-answer as any other
+// generic commercialPlay. A legacy narrative that is NOT generic (describes
+// a real, specific activation) still passes -- old object shape alone is
+// never a reason to suppress a genuinely strong legacy signal.
+//
+// This check only ever APPLIES when there is an actual narrative to
+// evaluate. getCommercialPlayNarrative()'s own fallback chain (used for
+// display) is deliberately narrower than what real legacy rows carry --
+// e.g. the real Dispatch Goods "Follow-on Investment from Santa Cruz
+// Ventures" signal, and many older event-style signals, only ever populated
+// signalSummary/signalDetail/whatChanged, never whyThisMatters/
+// whyItMattersForPromo/reasonToReachOut/whyNow -- so eligibility checks a
+// wider set of known narrative-bearing fields than display does. A legacy
+// signal with genuinely NO narrative text anywhere (only a bare signalTitle,
+// e.g. many older event signals that never stored separate reasoning text)
+// has nothing to measure against the genericness standard and is
+// grandfathered exactly as before -- "evaluate the existing narrative"
+// presupposes one exists; it is not license to reject a signal merely for
+// lacking a field that was never part of its original schema either.
+function getLegacyNarrativeForEligibility(opp){
+  if(!opp) return '';
+  return opp.whyThisMatters || opp.whyItMattersForPromo || opp.reasonToReachOut || opp.whyNow
+    || opp.signalSummary || opp.signalDetail || opp.whatChanged || '';
+}
 function hasCredibleActivationPlay(opp){
-  if(!isCommercialIntelligenceSignal(opp)) return true;
+  if(!isCommercialIntelligenceSignal(opp)){
+    const legacyNarrative = getLegacyNarrativeForEligibility(opp);
+    if(!legacyNarrative) return true;
+    return !isGenericCommercialPlay(legacyNarrative);
+  }
   return !!(opp && opp.commercialPlay && String(opp.commercialPlay.narrative || '').trim()) || getActivationIdeas(opp).length > 0;
 }
 

@@ -150,13 +150,13 @@ const STRONG_CASES = [
       accountName: 'Dover Honda',
       sourceUrl: 'https://example.com/dover-honda-parade',
       signalTitle: 'Dover Honda Sponsors 2026 Dover Holiday Parade',
-      concrete_trigger: 'the lead Platinum Sponsor role for the 2026 Dover Holiday Parade',
+      concrete_trigger: 'the 2026 Holiday Parade sponsorship',
       business_context: 'Dover Honda announced it is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.',
       event_date: daysAhead(45),
       publicationDate: daysAgo(2),
       confidence: 90,
       commercialPlay: { concept: 'Holiday Parade Sponsorship', narrative: 'Dover Honda is the lead Platinum Sponsor for the 2026 Dover Holiday Parade.' },
-      activationIdeas: ['Take-home parade giveaways', 'Branded winter hats for the crowd line', 'Staff jackets for the sponsor tent']
+      activationIdeas: ['Take-home parade giveaways', 'Family winter hats', 'Staff sponsor-tent jackets']
     }
   },
   {
@@ -211,7 +211,13 @@ for (const c of STRONG_CASES){
 
 // Dover Honda specifically: an upcoming, concept-led opportunity should get
 // the Route 236-style permission-based approach text, not a generic
-// non-answer -- this is the founder's own worked example.
+// non-answer -- this is the founder's own worked example. Preview QA round
+// 2 policy correction: naming a concrete idea (even one containing a
+// product-ish noun like "giveaways") INSIDE this permission-based template
+// is the desired, sanctioned behavior -- isPermissionBasedConceptOffer() is
+// the gate that actually distinguishes a grounded concept reference from a
+// raw pitch, not mentionsProductOrMerchOffer() (which exists to catch an
+// unprompted, unpermissioned pitch statement, a different shape entirely).
 {
   const dover = STRONG_CASES.find(c => c.label.startsWith('Dover Honda'));
   const built = buildOpportunity(dover.raw, dover.account);
@@ -219,40 +225,13 @@ for (const c of STRONG_CASES){
   assert(opp.actionabilityStatus?.status === 'upcoming', 'Dover Honda fixture: sanity -- the parade sponsorship is upcoming, the branch conceptLedApproach() requires');
   const approach = sandbox.conceptLedApproach(opp);
   assert(!!approach, 'Dover Honda: conceptLedApproach() produces real permission-based text for an upcoming, concept-led opportunity');
-  assert(!sandbox.mentionsProductOrMerchOffer(approach), `Dover Honda: the approach text never pitches a product/merch offer directly (got "${approach}")`);
   assert(/\?/.test(approach), `Dover Honda: the approach ends on a real permission-based question (got "${approach}")`);
   assert(/Dover Honda|parade|Parade/i.test(approach), `Dover Honda: the approach references the real signal, not a generic template (got "${approach}")`);
-  // required fix: this fixture's first activationIdea ("Take-home parade
-  // giveaways") is exactly the concrete-noun phrasing
-  // mentionsProductOrMerchOffer() exists to catch -- proves
-  // conceptLedApproach() filters that SPECIFIC idea out (per-idea, not an
-  // all-or-nothing drop of the whole list) rather than leaking it verbatim.
-  assert(!/giveaways/i.test(approach), `Dover Honda: the approach never leaks this fixture's flagged "giveaways" activation idea verbatim (got "${approach}")`);
-  assert(/couple ideas for this/.test(approach), 'Dover Honda: the approach still reads as concept-led (references that ideas exist) even after filtering the flagged idea');
-}
-
-// Contrast case: activation ideas phrased WITHOUT bare product/merch nouns
-// (concept-level, not SKU-level) should still be named directly -- the
-// fallback is a safety net for the product-noun case above, not a blanket
-// suppression of every idea list.
-{
-  const safe = buildOpportunity({
-    accountName: 'Riverside Fitness',
-    sourceUrl: 'https://example.com/riverside-grand-reopening',
-    signalTitle: 'Riverside Fitness Grand Reopening',
-    concrete_trigger: 'a grand reopening celebration for the renovated location',
-    business_context: 'Riverside Fitness is holding a grand reopening celebration for its newly renovated location.',
-    event_date: daysAhead(20),
-    publicationDate: daysAgo(1),
-    confidence: 84,
-    commercialPlay: { concept: 'Grand Reopening Moment', narrative: 'Use the grand reopening as a reason to mark the renovated space and welcome members back.' },
-    activationIdeas: ['a members-first thank-you moment', 'something for the ribbon-cutting photo']
-  }, { name: 'Riverside Fitness' });
-  const opp = asBusinessOpportunity(safe);
-  const approach = sandbox.conceptLedApproach(opp);
-  assert(!!approach, 'contrast case: conceptLedApproach() still produces text for concept-level (non-product-noun) ideas');
-  assert(!sandbox.mentionsProductOrMerchOffer(approach), `contrast case: sanity -- this fixture's ideas were never flagged in the first place (got "${approach}")`);
-  assert(/members-first thank-you moment/.test(approach), `contrast case: concept-level ideas that do NOT trip the product/merch gate are still named directly, proving the fallback only fires when actually needed (got "${approach}")`);
+  // required policy correction: a concrete activation idea from this
+  // fixture ("Take-home parade giveaways") is named directly, not filtered
+  // out merely because it contains a product-ish word.
+  assert(/giveaways/i.test(approach), `Dover Honda: the approach names the real, concrete activation idea directly rather than sterilizing it (got "${approach}")`);
+  assert(sandbox.isPermissionBasedConceptOffer(approach, opp) === true, `Dover Honda: the assembled approach is recognized as a grounded, permission-based concept offer -- the correct gate for this shape (got "${approach}")`);
 }
 
 // ===========================================================================
@@ -338,6 +317,71 @@ for (const c of WEAK_CASES){
   assert(isGenericCommercialPlay(genericAttempt) === true, 'defense in depth: the existing genericness gate still rejects a generic non-answer narrative if the model produced one');
   const normalized = normalizeCommercialIntelligence({ commercialPlay: { narrative: genericAttempt } });
   assert(normalized.commercialPlay === null, 'defense in depth: a generic narrative normalizes to null, so hasCredibleActivationPlay() would correctly find nothing credible either way');
+}
+
+// ===========================================================================
+// LEGACY GRANDFATHER POLICY (Preview QA round 2) -- a signal that predates
+// commercial-intelligence generation entirely (isCommercialIntelligenceSignal()
+// false: no commercialPlay/activationIdeas/expansionPotential keys at all,
+// only an old narrative field like whyItMattersForPromo) is no longer
+// automatically priority-eligible. These fixtures are hand-built to match
+// the REAL shape a legacy DB row presents once loaded (a resolved
+// actionabilityStatus/eventDate already on the object, no commercialPlay/
+// activationIdeas keys at all) -- deliberately NOT run through makeSignal(),
+// since makeSignal() always attaches those three keys and would misrepresent
+// what a genuinely old, pre-feature row actually looks like.
+// ===========================================================================
+const LEGACY_WEAK_CASES = [
+  {
+    label: 'Gallagher (real confirmed production text, legacy shape)',
+    opp: {
+      account: 'Arthur J. Gallagher & Co.', accountName: 'Arthur J. Gallagher & Co.',
+      isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal',
+      signalTitle: '2Q 2026 Earnings Conference Call',
+      sourceUrl: 'https://example.com/gallagher-2q-earnings',
+      publicationDate: daysAgo(5),
+      actionabilityStatus: { status: 'ongoing', isPriorityEligible: true },
+      whyItMattersForPromo: 'This event may lead to promotional needs for materials to support the call and subsequent marketing efforts.'
+    }
+  },
+  {
+    label: 'Kiniksa (real confirmed production text, legacy shape)',
+    opp: {
+      account: 'Kiniksa Pharmaceuticals', accountName: 'Kiniksa Pharmaceuticals',
+      isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal',
+      signalTitle: 'Q2 2026 Financial Results Call',
+      sourceUrl: 'https://example.com/kiniksa-q2-financial-results',
+      publicationDate: daysAgo(6),
+      actionabilityStatus: { status: 'ongoing', isPriorityEligible: true },
+      whyItMattersForPromo: 'This is an opportunity for promotional products related to the event, such as branded materials for the webcast or investor relations kits.'
+    }
+  }
+];
+for (const c of LEGACY_WEAK_CASES){
+  assert(sandbox.isCommercialIntelligenceSignal(c.opp) === false, `${c.label}: sanity -- this fixture is genuinely legacy-shaped (no commercialPlay/activationIdeas/expansionPotential keys at all)`);
+  const line = sandbox.signalDateAndActionabilityLine(c.opp);
+  assert(line !== 'Date unavailable' && line !== 'No longer current', `${c.label}: sanity -- exclusion is NOT a side effect of a date problem (got "${line}")`);
+  assert(sandbox.hasCredibleActivationPlay(c.opp) === false, `${c.label}: hasCredibleActivationPlay() evaluates the legacy narrative itself rather than blanket-grandfathering it, and finds it generic`);
+  assert(sandbox.isPriorityEligibleOpportunity(c.opp) === false, `required fix: a legacy Business Activity signal whose only narrative is a confirmed generic non-answer does not consume a priority slot ("${c.label}")`);
+}
+
+// Counter-proof: a legacy-shaped signal (same missing-keys shape as above)
+// whose existing narrative describes a genuinely specific activation is NOT
+// suppressed merely for being old -- "does not suppress strong legacy
+// signals unnecessarily" is a real, tested property, not just a claim.
+{
+  const strongLegacy = {
+    account: 'Northern Pool & Spa', accountName: 'Northern Pool & Spa',
+    isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal',
+    signalTitle: 'Northern Pool & Spa 50th Anniversary',
+    sourceUrl: 'https://example.com/northern-pool-50th-legacy',
+    publicationDate: daysAgo(4),
+    actionabilityStatus: { status: 'ongoing', isPriorityEligible: true },
+    whyItMattersForPromo: 'Use the 50th anniversary to build a limited "50 Summers" collection celebrating five decades of backyard memories, from heritage hats to installer team workwear.'
+  };
+  assert(sandbox.isCommercialIntelligenceSignal(strongLegacy) === false, 'strong-legacy fixture: sanity -- also genuinely legacy-shaped');
+  assert(sandbox.hasCredibleActivationPlay(strongLegacy) === true, 'required property: a legacy narrative describing a real, specific activation is recognized as credible, not penalized for its old object shape');
+  assert(sandbox.isPriorityEligibleOpportunity(strongLegacy) === true, 'required property: a strong legacy signal remains priority-eligible -- old schema shape alone never suppresses a genuinely good historical signal');
 }
 
 // ===========================================================================
