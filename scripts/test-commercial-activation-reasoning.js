@@ -524,6 +524,32 @@ console.log('');
   const approach = sandbox.conceptLedApproach(opp);
   assert(!!approach, 'required property: conceptLedApproach() now produces a real approach from real ideas even when commercialPlay is null');
   assert(/Booth follow-up piece/.test(approach), `conceptLedApproach() names the real idea (got "${approach}")`);
+
+  // D3. Founder confirmation round: does EITHER surface fall back to a
+  // generic legacy/promo narrative for this exact ideas-only fresh state?
+  // "The Play" (both the priority card's renderOpportunitySection() and
+  // Prepare for Call's renderThePlaySection()) is gated on
+  // getCommercialPlayNarrative(), which for a signal correctly classified
+  // isCommercialIntelligenceSignal()===true ONLY ever reads
+  // opp.commercialPlay.narrative -- it never falls through to legacy
+  // whyNow/reasonToReachOut fields in that branch. Proven directly: both
+  // sections render nothing (hidden), not a generic substitute.
+  const cardPlayHtml = sandbox.renderOpportunitySection(opp);
+  const prepareCallPlayHtml = sandbox.renderThePlaySection(opp);
+  assert(cardPlayHtml === '', `required property: the priority card's The Play section renders NOTHING (hidden) for an ideas-only signal, never a fallback to generic legacy text (got "${cardPlayHtml}")`);
+  assert(prepareCallPlayHtml === '', `required property: Prepare for Call's The Play section renders NOTHING (hidden) for an ideas-only signal, never a fallback to generic legacy text (got "${prepareCallPlayHtml}")`);
+  // Confirmed real gap (found while answering this question, now fixed):
+  // Research Details' separate "Why it matters" row is NOT gated the same
+  // way -- it reads signal.whyNow/reasonToReachOut directly, which resolve
+  // server-side (research-batch.js's meaningfulWhyThisMatters() ->
+  // salesReadyWhy()) to a generic category-template sentence
+  // ("...usually create needs around...") whenever no real narrative was
+  // ever supplied -- exactly the catalog-dump pattern this sprint targets,
+  // just surfacing under a different label. Fixed to prefer the real,
+  // specific activationIdeas over that generic template.
+  const researchDetailsHtml = sandbox.renderSingleVerifiedSignal(opp);
+  assert(/We have specific ideas for this/.test(researchDetailsHtml), `required fix: Research Details' "Why it matters" line now prefers the real activationIdeas over a generic template for an ideas-only signal (got relevant excerpt: "${(researchDetailsHtml.match(/Why it matters:.*?<\/div>/s) || [''])[0]}")`);
+  assert(!/usually (create|require|need)/i.test(researchDetailsHtml), `required fix: Research Details never surfaces the generic salesReadyWhy()-style catalog template for an ideas-only signal (got "${(researchDetailsHtml.match(/Why it matters:.*?<\/div>/s) || [''])[0]}")`);
 }
 
 console.log('');

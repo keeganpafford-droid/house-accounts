@@ -6363,8 +6363,29 @@ function renderSingleVerifiedSignal(signal){
   // outreach-copy rows entirely for an ineligible signal and replaces them
   // with one honest, generalized historical note -- never a per-account or
   // per-source special case.
+  // Commercial Activation Reasoning sprint, founder confirmation round:
+  // signal.whyNow/reasonToReachOut are computed server-side (research-batch.js's
+  // meaningfulWhyThisMatters()) with their OWN fallback chain, independent
+  // of getCommercialPlayNarrative()'s isCommercialIntelligenceSignal
+  // distinction -- when neither a real commercialPlay nor a raw why-field
+  // exists, that chain's last resort is salesReadyWhy(), a PRE-EXISTING
+  // category-template function ("Facility launches usually create needs
+  // around employee apparel, onboarding materials, safety items..."),
+  // exactly the generic catalog-dump pattern this whole sprint targets.
+  // Confirmed real gap: a fresh, ideas-only signal (activationIdeas real,
+  // commercialPlay absent -- now legitimately priority-eligible per "ideas
+  // alone are sufficient") would surface that generic text right here as
+  // "Why it matters," even though "The Play" section itself correctly stays
+  // hidden and Ideas to Send correctly shows the real ideas. Preferring the
+  // real ideas over the generic template here keeps this row consistent
+  // with the rest of the surface -- never fabricated, always the most
+  // specific real thing available.
+  const whyItMattersText = getCommercialPlayNarrative(signal)
+    || (getActivationIdeas(signal).length ? `We have specific ideas for this: ${getActivationIdeas(signal).slice(0,2).join(' and ')}.` : '')
+    || signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo
+    || 'This creates a timely reason to reach out.';
   const outreachRows = (eligible && !identityUnconfirmed) ? `
-      <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo || 'This creates a timely reason to reach out.')}</div>
+      <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(whyItMattersText)}</div>
       <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
       <div class="verified-signal-row"><strong>Suggested Contact:</strong> ${escapeHtml(signal.suggestedContactDetails?.name || 'No verified individual identified')}${signal.suggestedContactDetails?.title ? ` — ${escapeHtml(signal.suggestedContactDetails.title)}` : ''}</div>
       <div class="verified-signal-row"><strong>Public contact information:</strong> ${signal.suggestedContactDetails?.linkedin ? `<a target="_blank" rel="noopener" href="${escapeHtml(signal.suggestedContactDetails.linkedin)}">LinkedIn Profile</a>` : (signal.suggestedContactDetails?.email ? `<a href="mailto:${escapeHtml(signal.suggestedContactDetails.email)}">${escapeHtml(signal.suggestedContactDetails.email)}</a>` : 'No public contact information found.')}</div>
