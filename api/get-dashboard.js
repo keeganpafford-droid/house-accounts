@@ -296,6 +296,31 @@ function signalToOpportunity(row){
     publicationDate: s.publicationDate || s.publishedDate || '',
     whyNow: s.whyNow || s.whyItMattersForPromo || s.signalDetail,
     reasonToReachOut: s.whyItMattersForPromo || s.whyNow || s.signalDetail,
+    // Commercial Activation Reasoning sprint, live-QA correction: same
+    // defect class as the identityConfidence omission documented above --
+    // commercialPlay/activationIdeas/expansionPotential were never added to
+    // this explicit field list when the Commercial Opportunity Intelligence
+    // feature shipped, even though rowToSignal() (s) already exposes them
+    // correctly via its {...payload} spread. Confirmed production impact:
+    // isCommercialIntelligenceSignal() (dashboard/index.html) checks these
+    // three keys on the TOP-LEVEL opportunity object -- with all three
+    // always undefined here, EVERY signal this endpoint ever served was
+    // misclassified as legacy, regardless of how rich its actual generated
+    // commercialPlay/activationIdeas were. "The Play" was rendering through
+    // the legacy whyNow/reasonToReachOut fallback instead (a shorter,
+    // separately-sourced, NOT fact-vs-inference-governed field), and Ideas
+    // to Send/Why It Could Grow had no path to the dashboard at all.
+    commercialPlay: s.commercialPlay || null,
+    // Deliberately NOT coerced to [] when absent -- isCommercialIntelligenceSignal()
+    // (dashboard/index.html) distinguishes "went through commercial-
+    // intelligence generation and got zero ideas" (a real []) from "predates
+    // the feature entirely" (never had this key) via Array.isArray(). A
+    // truly legacy signal (e.g. Dispatch Goods' pre-feature investment
+    // signal) must stay undefined here, or it gets misclassified as a
+    // fresh, idea-less signal and wrongly held to the stricter fresh-schema
+    // credibility bar instead of its own legacy-narrative bar.
+    activationIdeas: Array.isArray(s.activationIdeas) ? s.activationIdeas : undefined,
+    expansionPotential: s.expansionPotential || null,
     conversationStarter: s.conversationStarter || s.suggestedOpener || `Ask whether ${row.account_name} has anything worth planning around based on this recent business activity.`,
     contactTitle: buyers.slice(0,2).join(' / '),
     contact: buyers.slice(0,2).join(' / '),

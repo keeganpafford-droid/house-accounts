@@ -98,8 +98,16 @@ const DOVER_OPP = {
   assert(conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'unknown-date' } }) === null, 'conceptLedApproach() returns null for an unknown-date signal');
 }
 {
-  // No commercialPlay -> null.
-  assert(conceptLedApproach({ ...DOVER_OPP, commercialPlay: null }) === null, 'conceptLedApproach() returns null with no credible commercialPlay');
+  // Commercial Activation Reasoning sprint, live-QA "NO IDEA, NO PRIORITY"
+  // correction: activationIdeas are what this function actually turns into
+  // text -- commercialPlay's own narrative was only ever a gate, never used
+  // in the output. A real idea list with a null/filtered-out commercialPlay
+  // now still produces a real approach (closes a gap where a genuinely good
+  // idea list was blocked from ever becoming a concept-led ask merely
+  // because the play narrative itself got filtered as generic).
+  const result = conceptLedApproach({ ...DOVER_OPP, commercialPlay: null });
+  assert(typeof result === 'string' && result.length > 0, 'conceptLedApproach() now produces a real approach from real activationIdeas even with no commercialPlay narrative');
+  assert(result.includes('Parade-day team kit'), `conceptLedApproach() still names the real idea when commercialPlay is null (got "${result}")`);
 }
 {
   // No activationIdeas -> null.

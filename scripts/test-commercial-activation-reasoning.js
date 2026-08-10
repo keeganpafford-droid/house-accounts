@@ -35,6 +35,7 @@ import { readFileSync } from 'fs';
 import vm from 'vm';
 import { makeSignal } from '../api/research-batch.js';
 import { normalizeOpportunity, normalizeCommercialIntelligence, isGenericCommercialPlay, COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT } from '../api/signal-intelligence.js';
+import { signalToOpportunity } from '../api/get-dashboard.js';
 import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
@@ -103,6 +104,21 @@ assert(/own the activation/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the
 // covers a genuinely recent-past follow-through moment (the Gallagher
 // acquisition-integration case), not upcoming-only.
 assert(/RECENT PAST event where a real follow-through moment/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the fragment\'s permission-ask guidance now also covers a recent-past follow-through moment (e.g. a just-completed acquisition), not upcoming-only');
+
+// A9. Live-QA round 2 -- "NO IDEA, NO PLAY" coupling instruction, explicit
+// in the generation prompt itself (upstream of the downstream eligibility
+// gate), directly targeting the confirmed Neural Trust/Black Hat failure
+// mode: a real, specific-sounding commercialPlay paragraph with zero real
+// activationIdeas.
+assert(/NO IDEA, NO PLAY/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the fragment explicitly couples commercialPlay to requiring at least one real activationIdea ("NO IDEA, NO PLAY")');
+assert(/leave BOTH commercialPlay and activationIdeas empty/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the fragment instructs leaving both fields empty together rather than submitting a play with nothing concrete behind it');
+
+// A10. Live-QA round 2 -- the discovery-question anti-pattern the founder
+// confirmed in production ("What promotional strategies are you
+// considering...?", "How do you plan to engage...?") is now explicitly
+// named and prohibited, not just implicitly discouraged.
+assert(/outsources the thinking back to the buyer/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the fragment explicitly names and prohibits the "ask the buyer what they are planning" discovery-question anti-pattern');
+assert(/What promotional strategies are you considering/i.test(COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), 'the fragment uses the founder\'s own confirmed Neural Trust production example of the prohibited question shape');
 
 console.log('');
 
@@ -403,6 +419,111 @@ for (const c of NO_PLAY_FIXTURES){
   const opp = asBusinessOpportunity(fundingWithHiringPush);
   assert(sandbox.hasCredibleActivationPlay(opp) === true, 'required property: funding WITH a disclosed concrete initiative (a stated hiring push) can carry a real activation -- the no-play rule is about funding/earnings ALONE, not a blanket ban on the word "funding"');
   assert(sandbox.isPriorityEligibleOpportunity(opp) === true, 'required property: the funding-plus-disclosed-initiative fixture remains priority-eligible');
+}
+
+console.log('');
+
+// ===========================================================================
+// SECTION D -- Live-QA round 2 corrections.
+// ===========================================================================
+
+// D1. HYDRATION REGRESSION (the confirmed root cause of "fresh signals lack
+// activationIdeas in Prepare for Call"): api/get-dashboard.js's
+// signalToOpportunity() previously built its return object from an explicit
+// field list that never included commercialPlay/activationIdeas/
+// expansionPotential, even though rowToSignal() (which it calls) already
+// exposed them correctly via {...payload}. Proven directly against the
+// real, exported signalToOpportunity() -- not a reimplementation.
+{
+  const freshRow = {
+    account_name: 'Neural Trust', upload_id: 'upload-1', source_url: 'https://example.com/neural-trust-blackhat',
+    source_domain: 'example.com', title: 'Neural Trust Participation at Black Hat USA 2026',
+    signal_type: 'Trade Show', confidence: 85, published_at: daysAgo(3), first_seen_at: daysAgo(3), last_seen_at: daysAgo(3),
+    payload: {
+      accountName: 'Neural Trust', signalTitle: 'Neural Trust Participation at Black Hat USA 2026',
+      sourceUrl: 'https://example.com/neural-trust-blackhat', publicationDate: daysAgo(3),
+      actionabilityStatus: { status: 'ongoing' },
+      commercialPlay: { concept: 'Black Hat Follow-Up Moment', narrative: 'Use the Black Hat presence as a reason to build a differentiated follow-up piece for the security researchers and prospects who stop by the booth.' },
+      activationIdeas: ['Booth follow-up piece for attendees', 'Team gear for the booth staff'],
+      expansionPotential: { narrative: 'A strong showing here could become a recurring annual conference-presence program.', tags: ['recurring-program'] }
+    }
+  };
+  const opp = signalToOpportunity(freshRow);
+  assert(opp.commercialPlay && opp.commercialPlay.concept === 'Black Hat Follow-Up Moment', 'required fix: signalToOpportunity() now carries a fresh row\'s real commercialPlay through onto the top-level opportunity object');
+  assert(Array.isArray(opp.activationIdeas) && opp.activationIdeas.length === 2, 'required fix: signalToOpportunity() now carries a fresh row\'s real activationIdeas through (previously always silently dropped)');
+  assert(opp.expansionPotential && opp.expansionPotential.narrative, 'required fix: signalToOpportunity() now carries a fresh row\'s real expansionPotential through');
+  assert(sandbox.isCommercialIntelligenceSignal(opp) === true, 'required fix: a freshly-hydrated signal with real commercial intelligence is correctly classified as a new-schema signal, not misclassified as legacy');
+}
+// Legacy-absence must still be preserved -- a truly pre-feature row (no
+// commercialPlay/activationIdeas/expansionPotential keys at all in its
+// payload) must NOT be coerced into looking like a fresh, idea-less signal
+// (which would wrongly subject it to the stricter fresh-schema bar instead
+// of its own legacy-narrative bar). This is the regression this fix's first
+// attempt actually caused (caught by the full suite) before activationIdeas'
+// mapping was corrected to preserve `undefined`, not coerce to [].
+{
+  const legacyRow = {
+    account_name: 'Dispatch Goods', upload_id: 'upload-1', source_url: 'https://santacruzworks.org/articles/dispatch-goods-follow-on',
+    source_domain: 'santacruzworks.org', title: 'Follow-on Investment from Santa Cruz Ventures',
+    signal_type: 'Funding', confidence: 78, published_at: daysAgo(20), first_seen_at: daysAgo(20), last_seen_at: daysAgo(20),
+    payload: {
+      accountName: 'Dispatch Goods', signalTitle: 'Follow-on Investment from Santa Cruz Ventures',
+      sourceUrl: 'https://santacruzworks.org/articles/dispatch-goods-follow-on',
+      signalSummary: 'Santa Cruz Ventures made a follow-on investment in Dispatch Goods, indicating confidence in their business model.',
+      publicationDate: daysAgo(20), actionabilityStatus: { status: 'ongoing' }
+      // Deliberately no commercialPlay/activationIdeas/expansionPotential --
+      // a genuinely pre-feature row.
+    }
+  };
+  const opp = signalToOpportunity(legacyRow);
+  assert(opp.commercialPlay === null, 'required property: a truly legacy row\'s commercialPlay stays null (never fabricated)');
+  assert(!Array.isArray(opp.activationIdeas), 'required property: a truly legacy row\'s activationIdeas stays non-array (undefined), never coerced to [] -- preserves the legacy/fresh-idea-less distinction isCommercialIntelligenceSignal() depends on');
+  assert(sandbox.isCommercialIntelligenceSignal(opp) === false, 'required property: a truly legacy row is still correctly classified as legacy, not as a fresh signal with zero ideas');
+}
+
+// D2. "NO IDEA, NO PRIORITY" pipeline proof -- the exact Neural Trust/Black
+// Hat live-QA failure mode: a real, specific commercialPlay narrative with
+// ZERO real activationIdeas must now be excluded from priority, never
+// rescued by falling back to a generic "what are you planning" question.
+{
+  const playNoIdeas = buildOpportunity({
+    accountName: 'Neural Trust', sourceUrl: 'https://example.com/neural-trust-blackhat-weak',
+    signalTitle: 'Neural Trust Participation at Black Hat USA 2026',
+    concrete_trigger: 'Neural Trust is participating in Black Hat USA 2026',
+    business_context: 'Neural Trust announced its participation in Black Hat USA 2026.',
+    event_date: daysAgo(3), publicationDate: daysAgo(3), confidence: 85,
+    // Exactly the live-QA failure shape: a plausible-sounding play, but no
+    // real ideas behind it.
+    commercialPlay: { narrative: 'With the presence at Black Hat, Neural Trust may be looking to create a strong brand impression and could consider an event engagement strategy.' },
+    activationIdeas: []
+  }, { name: 'Neural Trust' });
+  assert(playNoIdeas.commercialPlay !== null, 'sanity: this fixture\'s narrative is specific enough to survive normalization (not caught by the generic-phrase gate) -- isolating the NO IDEA property, not re-testing genericness');
+  const opp = asBusinessOpportunity(playNoIdeas);
+  const statusLine = sandbox.signalDateAndActionabilityLine(opp);
+  assert(statusLine !== 'Date unavailable' && statusLine !== 'No longer current', `Black Hat no-ideas fixture: sanity -- exclusion is not a side effect of a date problem (got "${statusLine}")`);
+  assert(sandbox.hasCredibleActivationPlay(opp) === false, 'required property (NO IDEA, NO PRIORITY): a real commercialPlay narrative with zero activationIdeas is NOT credible');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (NO IDEA, NO PRIORITY): this signal does not consume a priority slot despite having a plausible-sounding play');
+  assert(sandbox.conceptLedApproach(opp) === null, 'required property: conceptLedApproach() never fires with zero real ideas, regardless of how specific the play narrative reads');
+}
+// Contrast: real ideas present, but commercialPlay itself is null (e.g.
+// filtered as generic, or simply omitted) -- this must NOW succeed, closing
+// the gap the stricter idea-only rule was designed to close.
+{
+  const ideasNoPlay = buildOpportunity({
+    accountName: 'Neural Trust', sourceUrl: 'https://example.com/neural-trust-blackhat-strong',
+    signalTitle: 'Neural Trust Participation at Black Hat USA 2026',
+    concrete_trigger: 'Neural Trust participation at Black Hat USA 2026',
+    business_context: 'Neural Trust announced its participation in Black Hat USA 2026.',
+    event_date: daysAgo(3), publicationDate: daysAgo(3), confidence: 85,
+    commercialPlay: null,
+    activationIdeas: ['Booth follow-up piece for security researchers who visit', 'Team polos for booth staff']
+  }, { name: 'Neural Trust' });
+  const opp = asBusinessOpportunity(ideasNoPlay);
+  assert(sandbox.hasCredibleActivationPlay(opp) === true, 'required property: real activationIdeas alone are sufficient for credibility, even with a null commercialPlay');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === true, 'required property: this signal is priority-eligible on its real ideas alone');
+  const approach = sandbox.conceptLedApproach(opp);
+  assert(!!approach, 'required property: conceptLedApproach() now produces a real approach from real ideas even when commercialPlay is null');
+  assert(/Booth follow-up piece/.test(approach), `conceptLedApproach() names the real idea (got "${approach}")`);
 }
 
 console.log('');

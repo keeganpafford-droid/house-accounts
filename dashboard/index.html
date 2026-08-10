@@ -5406,8 +5406,16 @@ function repairDanglingOpener(text){
 function conceptLedApproach(opp){
   const status = opp?.actionabilityStatus?.status;
   if(!opp || (status !== 'upcoming' && status !== 'recent-past' && status !== 'ongoing')) return null;
-  if(!opp.commercialPlay || !String(opp.commercialPlay.narrative || '').trim()) return null;
   const ideas = (Array.isArray(opp.activationIdeas) ? opp.activationIdeas : []).map(i => String(i || '').trim()).filter(Boolean);
+  // "NO IDEA, NO PRIORITY" (live-QA correction): the real activationIdeas
+  // are what this function actually turns into text below -- commercialPlay's
+  // OWN narrative was only ever a gate, never used in the output. Requiring
+  // it separately created a real gap: a signal with a genuinely good idea
+  // list but a commercialPlay narrative that got filtered to null (generic,
+  // or simply omitted by the model) could never get a concept-led approach
+  // even though it had exactly what this function needs. hasCredibleActivationPlay()
+  // (the priority-eligibility gate) already enforces the real requirement --
+  // a real idea -- so this function's own gate now matches it exactly.
   if(!ideas.length) return null;
   const account = String(opp.account || opp.accountName || '').trim();
   const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
@@ -5678,13 +5686,32 @@ function getLegacyNarrativeForEligibility(opp){
   return opp.whyThisMatters || opp.whyItMattersForPromo || opp.reasonToReachOut || opp.whyNow
     || opp.signalSummary || opp.signalDetail || opp.whatChanged || '';
 }
+// Commercial Activation Reasoning sprint, live-QA correction round: "NO
+// IDEA, NO PRIORITY." Live QA (Neural Trust's Black Hat USA signal) showed
+// the failure mode this closes: a real, specific-sounding commercialPlay
+// paragraph ("...propose an event engagement strategy that includes
+// promotional materials and giveaways") with ZERO real activationIdeas,
+// which the OLD narrative-OR-ideas rule below still called "credible" --
+// and which then fell through to a discovery question asking the BUYER
+// what THEY were planning ("What promotional strategies are you
+// considering...?"), the exact anti-pattern this whole framework exists to
+// prevent. A commercialPlay narrative alone, no matter how specific it
+// reads, is not proof that a real, concrete activation was found --
+// activationIdeas are: something a rep could actually imagine mocking up
+// and sending. For a FRESHLY generated signal, credibility now requires a
+// real idea, full stop -- a plausible paragraph with nothing concrete to
+// send is exactly a research signal, not a priority opportunity, and is
+// not rescued by falling back to a generic question. This also keeps
+// conceptLedApproach() and priority eligibility in lockstep: nothing can
+// become priority-eligible without also having what conceptLedApproach()
+// needs to produce a real concept-led approach.
 function hasCredibleActivationPlay(opp){
   if(!isCommercialIntelligenceSignal(opp)){
     const legacyNarrative = getLegacyNarrativeForEligibility(opp);
     if(!legacyNarrative) return true;
     return !isGenericCommercialPlay(legacyNarrative);
   }
-  return !!(opp && opp.commercialPlay && String(opp.commercialPlay.narrative || '').trim()) || getActivationIdeas(opp).length > 0;
+  return getActivationIdeas(opp).length > 0;
 }
 
 // WHY IT COULD MATTER. Same absent-is-hidden rule as activation ideas.
