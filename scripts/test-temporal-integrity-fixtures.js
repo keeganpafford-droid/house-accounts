@@ -198,7 +198,18 @@ let followUpOpp;
     concrete_trigger: 'Brightview Senior Living held a grand opening for its new senior living community',
     business_context: 'Brightview Senior Living celebrated the grand opening of its new senior living community.',
     event_date: daysAgo(20),
-    confidence: 85
+    confidence: 85,
+    // Beta Seller Experience sprint: makeSignal() always calls
+    // normalizeCommercialIntelligence(raw) and attaches its (possibly null/
+    // empty) output unconditionally -- a real grand-opening signal like this
+    // one is exactly the kind of event a real research pass would produce a
+    // credible play for, so this fixture supplies one rather than leaving
+    // isPriorityEligibleOpportunity()'s new commercial-play check
+    // (hasCredibleActivationPlay()) with nothing to find. This is additive
+    // realism, not a change to what this fixture is actually testing
+    // (temporal/actionability logic, asserted below, is unaffected).
+    commercialPlay: { concept: 'Grand Opening Welcome Kit', narrative: 'Use the new community\'s grand opening to outfit the resident/staff welcome experience.' },
+    activationIdeas: ['Resident welcome kits', 'Staff polos for the opening event', 'Move-in day signage']
   };
   const signal = makeSignal(raw, account);
   assert(!!signal, 'follow-up fixture: the recent grand-opening signal is retained');
@@ -222,7 +233,15 @@ let futureOpp;
     concrete_trigger: 'Ridgeline Facilities Group will exhibit at the National Facilities Expo',
     business_context: 'Ridgeline Facilities Group announced it will exhibit at the upcoming National Facilities Expo.',
     event_date: daysAhead(30),
-    confidence: 85
+    confidence: 85,
+    // Beta Seller Experience sprint: same rationale as the Brightview fixture
+    // above -- makeSignal() always attaches (possibly null/empty) commercial-
+    // intelligence output, and an upcoming trade-show exhibit is exactly the
+    // kind of event a real research pass would plausibly produce a credible
+    // play for. Additive realism only; the temporal/actionability logic this
+    // fixture actually tests is unaffected.
+    commercialPlay: { concept: 'Expo Booth Kit', narrative: 'Use the upcoming National Facilities Expo appearance as a reason to put together booth and giveaway materials that reflect the Ridgeline brand.' },
+    activationIdeas: ['Branded booth giveaways', 'Staff polos for the show floor', 'Attendee welcome bags']
   };
   const signal = makeSignal(raw, account);
   assert(!!signal, 'future-event fixture: the future conference signal is retained');

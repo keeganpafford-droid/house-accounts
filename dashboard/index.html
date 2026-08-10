@@ -5394,8 +5394,20 @@ function conceptLedApproach(opp){
   const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
   const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
   const lead = account && specific ? `Saw ${account} has ${specific} coming up.` : (specific ? `Saw ${specific} coming up.` : '');
-  const leadIdeas = ideas.slice(0, 2).join(' and ');
-  const question = `We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`;
+  // Beta Seller Experience sprint: activationIdeas are meant to be concrete,
+  // specific ideas (see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT), which
+  // means any individual one may plausibly name a product/merch noun
+  // directly (e.g. "branded hats", "parade giveaways") -- naming that verbatim
+  // in the approach text is exactly the direct-pitch/"product dumping"
+  // pattern mentionsProductOrMerchOffer() already exists to catch on every
+  // other opener path. Filter to only the ideas that pass the same policy
+  // gate the rest of the app applies to every other approach text, so one
+  // product-named idea doesn't sink an otherwise-clean one.
+  const safeIdeas = ideas.filter(idea => !mentionsProductOrMerchOffer(idea));
+  const leadIdeas = safeIdeas.slice(0, 2).join(' and ');
+  const question = leadIdeas
+    ? `We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`
+    : `We had a couple ideas for this. Would it be okay if I sent a few concepts over?`;
   return lead ? `${lead} ${question}` : question;
 }
 
@@ -5554,6 +5566,33 @@ function getCommercialPlayConcept(opp){
 function getActivationIdeas(opp, limit){
   const ideas = Array.isArray(opp && opp.activationIdeas) ? opp.activationIdeas.filter(Boolean) : [];
   return typeof limit === 'number' ? ideas.slice(0, limit) : ideas;
+}
+
+// Beta Seller Experience sprint: "this happened" is not the same as "this
+// creates a credible branded-merch activation." A Business Activity Signal
+// that genuinely went through commercial-intelligence generation
+// (isCommercialIntelligenceSignal() true) but came back with no real
+// commercialPlay narrative and no real activationIdeas is exactly the
+// documented, EXPECTED outcome for a weak/generic signal -- see
+// normalizeCommercialIntelligence()'s own "absence over filler" policy
+// (api/signal-intelligence.js). Until now nothing downstream ever checked
+// for that outcome: a routine, generic signal was exactly as
+// priority-eligible as a real activation like a parade sponsorship or an
+// anniversary campaign, and its only recourse for "How to Approach" was
+// businessSuggestedOpener()'s generic deterministic fallback ("Is that
+// creating any internal or customer-facing needs we should be thinking
+// about?") -- the confirmed weak pattern this sprint targets. See
+// isPriorityEligibleOpportunity() for where this is actually enforced.
+//
+// A signal that predates the commercial-intelligence feature entirely
+// (isCommercialIntelligenceSignal() false -- none of the three fields were
+// ever computed for it, not because the model declined) is grandfathered
+// in here exactly like hasConfirmedOrLegacyIdentity() already grandfathers
+// legacy identityConfidence: absence-because-untested-legacy-shape is not
+// the same claim as absence-because-genuinely-weak-signal.
+function hasCredibleActivationPlay(opp){
+  if(!isCommercialIntelligenceSignal(opp)) return true;
+  return !!(opp && opp.commercialPlay && String(opp.commercialPlay.narrative || '').trim()) || getActivationIdeas(opp).length > 0;
 }
 
 // WHY IT COULD MATTER. Same absent-is-hidden rule as activation ideas.
@@ -10506,6 +10545,14 @@ function isPriorityEligibleOpportunity(opp){
   if(isWebResearchSignal(opp)){
     const label = signalDateAndActionabilityLine(opp);
     if(label === 'Date unavailable' || label === 'No longer current') return false;
+    // Beta Seller Experience sprint: a real, identity-confirmed, dated
+    // Business Activity Signal still should not compete for a priority
+    // slot against a genuine play if the pipeline itself could not produce
+    // one -- see hasCredibleActivationPlay()'s own comment. Scoped to
+    // web-research signals only: Follow-Up and Repeat/Pattern opportunities
+    // are grounded in real purchase history, not commercialPlay/
+    // activationIdeas, and are completely unaffected by this check.
+    if(!hasCredibleActivationPlay(opp)) return false;
   }
   return opp?.actionabilityStatus?.isPriorityEligible !== false;
 }
