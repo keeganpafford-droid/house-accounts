@@ -109,8 +109,8 @@ assert(
   'researchListFromManageModal() reuses the exact same scoped-snapshot and claim primitives as the single-account path -- no second research engine'
 );
 assert(
-  /accounts: batchPayloadForAccounts\(enhancedGroup\)/.test(researchListSrc),
-  'warm/mixed accounts in the list are sent through ONE batched /api/research-batch call, reusing batchPayloadForAccounts() exactly like a single-account request would with one more account in the array'
+  /accounts: batchPayloadForAccounts\(chunk\)/.test(researchListSrc),
+  'warm/mixed accounts in the list are sent through bounded, chunked /api/research-batch calls, reusing batchPayloadForAccounts() per chunk exactly like a single-account request would with more accounts in the array (pre-beta blocker hardening: no longer one unbounded request for the whole group)'
 );
 assert(
   /await fetch\('\/api\/research-account', \{method:'POST', headers, signal: controller\.signal, body: JSON\.stringify\(payload\)\}\);/.test(researchListSrc),

@@ -6842,7 +6842,15 @@ async function researchListFromManageModal(listId, options = {}){
   setActiveResearchBreadcrumb(expectedUploadId, researchRunId, null);
   startResearchTracker(expectedUploadId, researchableAccounts.map(a => a.name), {label: expectedUploadName || ''});
 
-  let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0, stopped = 0;
+  // unattempted: pre-beta blocker hardening -- accounts that were part of
+  // this run's selection but were never even dispatched because an earlier
+  // chunk in the same enhanced (warm/mixed) group hit a genuine hard
+  // failure and the pass halted rather than pressing on past it. Distinct
+  // from `stopped` (a user-initiated Stop) and from `failures` (a request
+  // that was actually attempted and failed) -- without this bucket, these
+  // accounts would silently vanish from the summary instead of the caller
+  // being able to report them as truthfully left unresearched.
+  let attempted = 0, withSignals = 0, totalSignals = 0, failures = 0, stopped = 0, unattempted = 0;
   // FR2 round item 4: tracked per-account so the caller can branch the
   // completion workflow on however many DISTINCT accounts from THIS run
   // actually produced an opportunity (zero / exactly one / multiple),
@@ -6865,32 +6873,78 @@ async function researchListFromManageModal(listId, options = {}){
     const enhancedGroup = researchableAccounts.filter(a => ['warm','mixed'].includes(String(a.intelligenceMode || deriveAccountIntelligenceMode(a)).toLowerCase()));
     const historicalGroup = researchableAccounts.filter(a => !enhancedGroup.includes(a));
 
-    if(enhancedGroup.length){
-      const enhancedNames = enhancedGroup.map(a => a.name);
-      enhancedNames.forEach(name => markResearchAccountStarted(expectedUploadId, name));
-      // ux/research-control-progress: ONE combined request for the whole
-      // warm/mixed group -- same "no per-account boundary to abort
-      // independently" architecture limit as researchAccountsBatch(); Stop
-      // Research aborts this single controller and every name above is
-      // marked stopped together.
-      const enhancedController = new AbortController();
-      registerResearchAbort(expectedUploadId, 'enhanced-group', enhancedController);
-      let enhancedAborted = false;
+    // P0 correctness fix (pre-beta blocker hardening): the whole warm/mixed
+    // group used to be sent in ONE unbounded /api/research-batch request,
+    // then EVERY account in the group was unconditionally marked researched
+    // regardless of whether the server actually processed it -- an account
+    // dropped by the server's own account-count cap (api/research-batch.js's
+    // RESEARCH_BATCH_MAX_ACCOUNTS slice), or lost to this function's 58s
+    // hard timeout (vercel.json), silently got today's date stamped into
+    // lastResearchedAt with zero signals -- indistinguishable from a
+    // genuine "checked, nothing found" result.
+    //
+    // Chunked here into bounded groups instead, reusing the exact same
+    // request shape (mode:'warm-account', one /api/research-batch call)
+    // already used by this same function and by researchAccountsBatch() --
+    // not a new orchestration model, only a bound on how many accounts one
+    // request covers. lastResearchedAt is only ever set for an account
+    // whose OWN chunk actually completed and whose name the server's own
+    // response accounted for; an account in a chunk that times out, errors,
+    // or is never reached because Stop was requested (or an earlier chunk
+    // in this same pass already hit a hard failure) is left completely
+    // untouched -- exactly as if this research pass had never selected it
+    // -- so a subsequent "Research Entire List Again" (optionally with
+    // onlyUnresearched) correctly picks it back up without corrupting the
+    // chunks that did succeed (each chunk's real results are already
+    // written into these SAME account objects, which is what the single
+    // persistScopedResearchResult() call below then saves).
+    //
+    // Chunk size (8) and the shrink-on-slow/failure halving rule are the
+    // provisional, reasoned starting point from
+    // RESEARCH_RUNTIME_BENCHMARK_SPIKE.md SS6/SS8 (2 clean discovery-
+    // concurrency waves at the default worker concurrency of 4; a failure
+    // blast radius well under today's already-shipping 25-account "Research
+    // Top Accounts" batch call) -- not an arbitrary number, and not grown
+    // back up within a single pass (SS8: "grow after fast runs: not yet").
+    const ENHANCED_CHUNK_SIZE = 8;
+    const ENHANCED_CHUNK_FLOOR = 1;
+    const SLOW_CHUNK_MS = 30000;
+    let enhancedRemaining = enhancedGroup.slice();
+    let enhancedChunkSize = ENHANCED_CHUNK_SIZE;
+    let enhancedHalted = false;
+    while(enhancedRemaining.length && !enhancedHalted){
+      // Checked before EVERY chunk dispatch -- guarantees no additional
+      // queued account begins once Stop Research is clicked, even mid-pass
+      // with earlier chunks already done.
+      if(isResearchStopRequested(expectedUploadId)){
+        const notYetStarted = enhancedRemaining.map(a => a.name);
+        markResearchGroupDone(expectedUploadId, notYetStarted, {stopped:true});
+        stopped += notYetStarted.length;
+        break;
+      }
+      const chunk = enhancedRemaining.slice(0, enhancedChunkSize);
+      const chunkNames = chunk.map(a => a.name);
+      const chunkKey = `enhanced-chunk-${chunk.map(a => a.id).join(',')}`;
+      chunkNames.forEach(name => markResearchAccountStarted(expectedUploadId, name));
+      const chunkController = new AbortController();
+      registerResearchAbort(expectedUploadId, chunkKey, chunkController);
       try{
+        const startedAt = Date.now();
         const res = await fetch('/api/research-batch', {
           method:'POST',
           headers,
-          signal: enhancedController.signal,
+          signal: chunkController.signal,
           body: JSON.stringify({
             mode:'warm-account',
             researchRunId,
             attemptId,
             uploadId: expectedUploadId,
-            accounts: batchPayloadForAccounts(enhancedGroup)
+            accounts: batchPayloadForAccounts(chunk)
           })
         });
-        unregisterResearchAbort(expectedUploadId, 'enhanced-group');
-        const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${enhancedGroup.length} accounts`});
+        unregisterResearchAbort(expectedUploadId, chunkKey);
+        const data = await safeParseResearchResponse(res, {endpoint:'/api/research-batch', uploadId: expectedUploadId, accountName: `${chunk.length} accounts`});
+        const chunkElapsedMs = Date.now() - startedAt;
         // Defense-in-depth for the narrow race window between the pre-check
         // above and this request: the server independently re-checks and may
         // have excluded an account from its own dispatch even though it
@@ -6899,8 +6953,8 @@ async function researchListFromManageModal(listId, options = {}){
         // signals": excluded from attempted/withSignals and added to
         // skippedDuplicates instead.
         const serverSkipped = new Set(Array.isArray(data.skippedDuplicateAccountNames) ? data.skippedDuplicateAccountNames : []);
-        let enhancedOpportunities = 0;
-        enhancedGroup.forEach(account => {
+        let chunkOpportunities = 0;
+        chunk.forEach(account => {
           if(serverSkipped.has(account.name)){
             skippedDuplicates.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name});
             return;
@@ -6911,19 +6965,54 @@ async function researchListFromManageModal(listId, options = {}){
           account.lastResearchedAt = new Date().toISOString();
           if(signals.length){ withSignals += 1; totalSignals += signals.length; }
           addSignalDerivedOpportunities(account, account.signals);
-          enhancedOpportunities += (account.futureOpportunities || []).length;
+          chunkOpportunities += (account.futureOpportunities || []).length;
           accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
         });
-        markResearchGroupDone(expectedUploadId, enhancedNames, {opportunities: enhancedOpportunities});
+        markResearchGroupDone(expectedUploadId, chunkNames, {opportunities: chunkOpportunities});
+        enhancedRemaining = enhancedRemaining.slice(chunk.length);
+        // Keeps this list-level run's lease alive across a long chunked
+        // pass -- without this, a large list (many small chunks) could
+        // outlive the claim's lease and be treated as reclaimable by a
+        // concurrent duplicate click mid-pass.
+        await heartbeatCurrentResearchRun(runContext);
+        if(chunkElapsedMs > SLOW_CHUNK_MS && enhancedChunkSize > ENHANCED_CHUNK_FLOOR){
+          enhancedChunkSize = Math.max(ENHANCED_CHUNK_FLOOR, Math.floor(enhancedChunkSize / 2));
+        }
       }catch(err){
-        unregisterResearchAbort(expectedUploadId, 'enhanced-group');
-        enhancedAborted = err && err.name === 'AbortError';
-        if(enhancedAborted){
-          markResearchGroupDone(expectedUploadId, enhancedNames, {stopped:true});
-          stopped += enhancedNames.length;
+        unregisterResearchAbort(expectedUploadId, chunkKey);
+        if(err && err.name === 'AbortError'){
+          markResearchGroupDone(expectedUploadId, chunkNames, {stopped:true});
+          stopped += chunkNames.length;
+          enhancedRemaining = enhancedRemaining.slice(chunk.length);
+        } else if(enhancedChunkSize > ENHANCED_CHUNK_FLOOR){
+          // Split/retry: a failed chunk above the floor size is retried as
+          // smaller chunks (eventually floor 1, today's existing single-
+          // account request shape) rather than being abandoned outright or
+          // dragging the rest of the list down with it. `enhancedRemaining`
+          // is deliberately left unchanged here -- the next iteration
+          // re-slices the SAME leading accounts at the new, smaller size.
+          enhancedChunkSize = Math.max(ENHANCED_CHUNK_FLOOR, Math.floor(enhancedChunkSize / 2));
         } else {
-          failures += enhancedNames.length;
-          markResearchGroupDone(expectedUploadId, enhancedNames, {failed:true});
+          // Already at the floor (a single account) and it still failed --
+          // a genuine failure, not a sizing problem. Mark just this chunk
+          // failed and halt the whole enhanced-group pass: every account in
+          // every remaining chunk is left completely unresearched rather
+          // than pressing on past a proven hard failure (auth loss, quota,
+          // provider outage).
+          markResearchGroupDone(expectedUploadId, chunkNames, {failed:true});
+          failures += chunkNames.length;
+          enhancedHalted = true;
+          // Everything still queued behind this hard failure is explicitly
+          // accounted for as unattempted -- never silently dropped from the
+          // summary, and settled in the tracker (via markResearchGroupDone)
+          // so the progress UI does not show it stuck queued/researching
+          // forever.
+          const neverDispatched = enhancedRemaining.slice(chunk.length);
+          if(neverDispatched.length){
+            const neverDispatchedNames = neverDispatched.map(a => a.name);
+            markResearchGroupDone(expectedUploadId, neverDispatchedNames, {failed:true});
+            unattempted += neverDispatchedNames.length;
+          }
         }
       }
     }
@@ -7002,6 +7091,13 @@ async function researchListFromManageModal(listId, options = {}){
       totalSignals,
       failures,
       stopped,
+      // Pre-beta blocker hardening: accounts left completely unresearched
+      // because a hard failure partway through the enhanced (warm/mixed)
+      // group halted the pass before reaching them -- never folded into
+      // `attempted`/`failures`/`stopped`, so a caller can honestly report
+      // "N were not attempted" instead of the account count silently not
+      // adding up to accountCount.
+      unattempted,
       // "accounts requested" per the required completion summary -- every
       // active account originally considered, including any later excluded
       // as a duplicate. accountsSkippedAsDuplicates is the same information
@@ -11963,7 +12059,13 @@ else wireUploadSuccessStateControls();
      // failure, they were correctly excluded because a matching company was
      // already being actively researched elsewhere in scope.
      const skippedCount = Array.isArray(result.skippedDuplicates) ? result.skippedDuplicates.length : 0;
-     const summary = `Research complete — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}${skippedCount ? `, ${skippedCount} skipped (already being researched from another list)` : ''}.`;
+     const unattemptedCount = Number(result.unattempted) || 0;
+     // Pre-beta blocker hardening: an unattempted count above zero means a
+     // hard failure partway through halted the pass before every selected
+     // account was even dispatched -- the headline must say so honestly
+     // rather than "Research complete", which would misrepresent a
+     // genuinely partial run as a finished one.
+     const summary = `${unattemptedCount ? 'Research incomplete' : 'Research complete'} — ${result.attempted} account${result.attempted===1?'':'s'} attempted, ${result.withSignals} with signal${result.withSignals===1?'':'s'} (${result.totalSignals} signal${result.totalSignals===1?'':'s'} found)${result.failures ? `, ${result.failures} failed` : ''}${skippedCount ? `, ${skippedCount} skipped (already being researched from another list)` : ''}${unattemptedCount ? `, ${unattemptedCount} not attempted after an earlier failure — try again to pick up where this left off` : ''}.`;
      // Individual research and list research must both update aggregate
      // saved-signal totals without a browser refresh -- refresh BEFORE
      // rendering the summary/action below so window.accountRadarAccounts

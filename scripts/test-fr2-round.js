@@ -122,8 +122,8 @@ assert(
   'no blind res.json() call remains in the list-level research path (neither the batched warm/mixed call nor the per-account historical loop)'
 );
 assert(
-  /const data = await safeParseResearchResponse\(res, \{endpoint:'\/api\/research-batch', uploadId: expectedUploadId, accountName: `\$\{enhancedGroup\.length\} accounts`\}\);/.test(researchListModalSrc),
-  'the batched warm/mixed research call uses the safe parser'
+  /const data = await safeParseResearchResponse\(res, \{endpoint:'\/api\/research-batch', uploadId: expectedUploadId, accountName: `\$\{chunk\.length\} accounts`\}\);/.test(researchListModalSrc),
+  'the batched warm/mixed research call (now per-chunk, pre-beta blocker hardening) uses the safe parser'
 );
 assert(
   /const data = await safeParseResearchResponse\(res, \{endpoint:'\/api\/research-account', uploadId: expectedUploadId, accountId: account\.id, accountName: account\.name\}\);/.test(researchListModalSrc),

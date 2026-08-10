@@ -317,10 +317,179 @@ async function testIndividualResearchMarksAccountResearchingDuringDispatch() {
   assert(accountStateDuringRequest === 'researching', `QA correction 3: the row's own per-account tracker state is "researching" (not "queued") while its request is in flight, so it shows Researching/Stop Research rather than the idle Research Account button (got "${accountStateDuringRequest}")`);
 }
 
+// ===========================================================================
+// Pre-beta blocker hardening, item B: researchListFromManageModal()'s
+// warm/mixed ("enhanced") group used to be sent as ONE unbounded
+// /api/research-batch request, then every account in it was unconditionally
+// marked researched regardless of whether the server actually processed it.
+// These tests exercise the real, chunked replacement for real -- request
+// counts, chunk sizes, and which specific accounts actually receive
+// lastResearchedAt -- not a source-text pattern match.
+// ===========================================================================
+function warmAccounts(n, uploadId, prefix = 'Warm'){
+  return Array.from({length: n}, (_, i) => fixtureAccount(`${prefix}-${i}`, { intelligenceMode: 'warm', uploadId }));
+}
+function researchBatchWorkCalls(calls){
+  return calls.filter(c => c.url === '/api/research-batch' && !c.body.researchRunAction);
+}
+
+// Required regression: "add a regression where the selected list exceeds
+// the server's per-request max." 50 accounts is well within
+// api/research-batch.js's real 250/500-account server-side cap, but far
+// above the client's own bounded chunk size -- proving the client-side
+// chunking (not merely the server's own cap) is what now bounds each
+// request. Every account succeeds: this isolates "no account may
+// disappear" from the separate failure-handling tests below.
+async function testEnhancedGroupChunkedAndBounded(){
+  const accounts = warmAccounts(50, 'list-chunk');
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-chunk', upload_name: 'Big List' }, accounts });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-chunk', attemptId: 'attempt-chunk-1' });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      const byAccount = {};
+      call.body.accounts.forEach(a => { byAccount[a.name] = [{ isReal: true, sourceUrl: `https://example.com/${a.name}` }]; });
+      return jsonResponse({ byAccount, signals: [] });
+    }
+    if (call.url === '/api/save-upload') return jsonResponse({ ok: true, uploadId: 'list-chunk', runStatus: 'completed' });
+    throw new Error(`unexpected fetch in testEnhancedGroupChunkedAndBounded: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({ fetchImpl });
+  const result = await sandbox.researchListFromManageModal('list-chunk');
+
+  const workCalls = researchBatchWorkCalls(fetchImpl.calls);
+  assert(workCalls.length === Math.ceil(50 / 8), `50 accounts at a chunk size of 8 dispatch exactly ${Math.ceil(50 / 8)} bounded research requests, not one unbounded request (got ${workCalls.length})`);
+  assert(workCalls.every(c => c.body.accounts.length <= 8), `every single request sends at most 8 accounts (got sizes: ${workCalls.map(c => c.body.accounts.length).join(', ')})`);
+  const totalAccountsAcrossCalls = workCalls.reduce((n, c) => n + c.body.accounts.length, 0);
+  assert(totalAccountsAcrossCalls === 50, `every account is deliberately attempted in exactly one bounded request -- no account disappears and none is double-sent (got ${totalAccountsAcrossCalls} total across all requests)`);
+  assert(result.ok === true && result.attempted === 50 && result.failures === 0 && result.unattempted === 0 && result.stopped === 0, `a fully successful large list reports 50 attempted, 0 failed/unattempted/stopped (got ${JSON.stringify({ok: result.ok, attempted: result.attempted, failures: result.failures, unattempted: result.unattempted, stopped: result.stopped})})`);
+  assert(accounts.every(a => !!a.lastResearchedAt && a.signals.length === 1), 'every one of the 50 accounts genuinely received its own lastResearchedAt/signals from a request that actually included it');
+}
+
+// Required regression: "chunk 1 succeeds, chunk 2 succeeds, chunk 3 fails,
+// chunk 4 never runs." Accounts 0-15 (two chunks of 8) always succeed;
+// accounts 16-29 (14 accounts) always fail, regardless of how small the
+// retry shrinks the chunk -- proving the adaptive halving actually retries
+// (not just gives up on the first failure) before finally halting once it
+// can no longer shrink (chunk size 1) and a single-account request still
+// fails. Accounts downstream of that final floor failure are never
+// dispatched at all and are truthfully reported as unattempted, not
+// silently folded into "failed" or dropped from the summary entirely.
+async function testEnhancedGroupPartialFailureHaltsRemainingChunks(){
+  const accounts = warmAccounts(30, 'list-partial');
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-partial', upload_name: 'Partial Failure List' }, accounts });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-partial', attemptId: 'attempt-partial-1' });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'fail') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      const names = call.body.accounts.map(a => a.name);
+      // Accounts 16-29 are a permanently down provider for this test --
+      // ANY request containing one of them fails, at every retry size.
+      const alwaysFailIndex = names.findIndex(n => Number(n.split('-')[1]) >= 16);
+      if (alwaysFailIndex !== -1) throw new Error(`simulated persistent provider failure for ${names[alwaysFailIndex]}`);
+      const byAccount = {};
+      names.forEach(n => { byAccount[n] = [{ isReal: true, sourceUrl: `https://example.com/${n}` }]; });
+      return jsonResponse({ byAccount, signals: [] });
+    }
+    if (call.url === '/api/save-upload') return jsonResponse({ ok: true, uploadId: 'list-partial', runStatus: 'completed' });
+    throw new Error(`unexpected fetch in testEnhancedGroupPartialFailureHaltsRemainingChunks: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({ fetchImpl });
+  const result = await sandbox.researchListFromManageModal('list-partial');
+
+  assert(result.ok === true, 'a partial hard failure still returns a normal result (the work that DID complete is honestly reported, not thrown away)');
+  assert(result.attempted === 16, `the first two clean chunks (16 accounts) are truthfully attempted (got ${result.attempted})`);
+  assert(result.failures === 1, `exactly one account (the final floor-size-1 request that still failed) is counted as a genuine failure, not the whole downstream group (got ${result.failures})`);
+  assert(result.unattempted === 13, `every account queued behind that hard failure -- the rest of the failing chunk plus the chunk that would have followed it -- is truthfully reported as unattempted, not silently dropped from the summary (got ${result.unattempted})`);
+  assert(result.attempted + result.failures + result.unattempted + result.stopped + (result.skippedDuplicates || []).length === result.accountCount, `every one of the ${result.accountCount} selected accounts is accounted for in exactly one bucket -- none may disappear (attempted=${result.attempted}, failures=${result.failures}, unattempted=${result.unattempted}, stopped=${result.stopped}, skipped=${(result.skippedDuplicates||[]).length}, accountCount=${result.accountCount})`);
+
+  for(let i = 0; i < 16; i++) assert(!!accounts[i].lastResearchedAt, `account ${accounts[i].name} (in one of the two clean chunks) received a truthful lastResearchedAt`);
+  for(let i = 16; i < 30; i++) assert(!accounts[i].lastResearchedAt, `account ${accounts[i].name} (either the one genuinely-failed account or queued behind it) was never falsely stamped researched`);
+
+  const workCalls = researchBatchWorkCalls(fetchImpl.calls);
+  assert(workCalls.every(c => !c.body.accounts.some(a => Number(a.name.split('-')[1]) >= 24)), 'no request ever included any account from the chunk that would have come after the one that hard-failed -- it genuinely never runs');
+}
+
+// Required behavior: "split/retry failed chunks... falls out of shrink and
+// retry for free." A chunk fails exactly ONCE (a one-shot transient blip,
+// not a persistent failure); the retried half-size chunk succeeds, and the
+// pass then continues at that smaller size (SS8: shrink, never grow back
+// within a pass) through the rest of the group -- proving a single
+// failure costs one retry, not the rest of the list.
+async function testEnhancedGroupTransientFailureRetriesSmallerAndRecovers(){
+  const accounts = warmAccounts(8, 'list-retry', 'Retry');
+  let firstAttemptFailed = false;
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-retry', upload_name: 'Retry List' }, accounts });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-retry', attemptId: 'attempt-retry-1' });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      if (!firstAttemptFailed) {
+        firstAttemptFailed = true;
+        throw new Error('simulated one-shot transient failure');
+      }
+      const byAccount = {};
+      call.body.accounts.forEach(a => { byAccount[a.name] = [{ isReal: true, sourceUrl: `https://example.com/${a.name}` }]; });
+      return jsonResponse({ byAccount, signals: [] });
+    }
+    if (call.url === '/api/save-upload') return jsonResponse({ ok: true, uploadId: 'list-retry', runStatus: 'completed' });
+    throw new Error(`unexpected fetch in testEnhancedGroupTransientFailureRetriesSmallerAndRecovers: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  const sandbox = createSandbox({ fetchImpl });
+  const result = await sandbox.researchListFromManageModal('list-retry');
+
+  const workCalls = researchBatchWorkCalls(fetchImpl.calls);
+  assert(workCalls.length === 3, `a one-shot failure retries once at a smaller size, then the pass continues through the rest of the group at that size (failed size-8 attempt + two size-4 chunks) (got ${workCalls.length} research requests)`);
+  assert(workCalls.map(c => c.body.accounts.length).join(',') === '8,4,4', `the failed attempt was size 8; both chunks after the shrink are size 4, not a re-attempt at the original size (got sizes ${workCalls.map(c => c.body.accounts.length).join(', ')})`);
+  assert(result.ok === true && result.attempted === 8 && result.unattempted === 0 && result.failures === 0, `a one-shot transient failure costs one retry, not the rest of the list -- all 8 accounts are eventually genuinely attempted and none is left unattempted or falsely failed (got ${JSON.stringify({attempted: result.attempted, unattempted: result.unattempted, failures: result.failures})})`);
+  assert(accounts.every(a => !!a.lastResearchedAt), 'every one of the 8 accounts (including the ones in the initially-failed chunk) eventually received a truthful lastResearchedAt once its retried/continued chunk actually succeeded');
+}
+
+// Required behavior: Stop Research between chunks -- no additional queued
+// chunk begins once Stop is clicked, even though earlier chunks already
+// completed successfully.
+async function testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining(){
+  const accounts = warmAccounts(16, 'list-stop-chunk', 'Stoppable');
+  let sandbox;
+  const fetchImpl = makeFetch((call) => {
+    if (call.url.startsWith('/api/get-dashboard')) return jsonResponse({ upload: { id: 'list-stop-chunk', upload_name: 'Stoppable List' }, accounts });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'check-duplicates') return jsonResponse({ duplicateAccountNames: [] });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'claim') return jsonResponse({ outcome: 'claimed-new', researchRunId: 'run-stop-chunk', attemptId: 'attempt-stop-chunk-1' });
+    if (call.url === '/api/research-batch' && call.body.researchRunAction === 'heartbeat') return jsonResponse({ ok: true });
+    if (call.url === '/api/research-batch' && !call.body.researchRunAction) {
+      // Stop is requested from inside the first chunk's own response --
+      // simulating a user clicking Stop Research while that chunk is still
+      // in flight. The second chunk (accounts 8-15) must never dispatch.
+      sandbox.requestResearchStop('list-stop-chunk');
+      const byAccount = {};
+      call.body.accounts.forEach(a => { byAccount[a.name] = [{ isReal: true, sourceUrl: `https://example.com/${a.name}` }]; });
+      return jsonResponse({ byAccount, signals: [] });
+    }
+    if (call.url === '/api/save-upload') return jsonResponse({ ok: true, uploadId: 'list-stop-chunk', runStatus: 'completed' });
+    throw new Error(`unexpected fetch in testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining: ${call.url} ${JSON.stringify(call.body)}`);
+  });
+  sandbox = createSandbox({ fetchImpl });
+  const result = await sandbox.researchListFromManageModal('list-stop-chunk');
+
+  const workCalls = researchBatchWorkCalls(fetchImpl.calls);
+  assert(workCalls.length === 1, `Stop Research requested mid-chunk prevents any further chunk from ever dispatching (got ${workCalls.length} research requests)`);
+  assert(result.attempted === 8 && result.stopped === 8 && result.unattempted === 0 && result.failures === 0, `the in-flight chunk's 8 accounts complete normally; the remaining 8 are reported as stopped (a user action), not unattempted or failed (got ${JSON.stringify({attempted: result.attempted, stopped: result.stopped, unattempted: result.unattempted, failures: result.failures})})`);
+  for(let i = 0; i < 8; i++) assert(!!accounts[i].lastResearchedAt, `account ${accounts[i].name} (already in flight when Stop was clicked) still completed normally`);
+  for(let i = 8; i < 16; i++) assert(!accounts[i].lastResearchedAt, `account ${accounts[i].name} (never dispatched once Stop was requested) was left completely unresearched`);
+}
+
 await testListStopPreventsQueuedResearch();
 await testIndividualStopCancellationContract();
 await testTopAccountsFallbackLoopHonoursStop();
 await testIndividualResearchMarksAccountResearchingDuringDispatch();
+await testEnhancedGroupChunkedAndBounded();
+await testEnhancedGroupPartialFailureHaltsRemainingChunks();
+await testEnhancedGroupTransientFailureRetriesSmallerAndRecovers();
+await testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining();
 
 // ===========================================================================
 // Structural proofs: the requirements below are genuinely about ABSENCE of
