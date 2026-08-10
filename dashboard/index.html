@@ -5381,19 +5381,40 @@ function repairDanglingOpener(text){
 // builds a concept-led permission ask directly from the opportunity's own
 // real, already-normalized activationIdeas. Returns null (never a
 // fabricated idea, never a guess) unless ALL THREE qualifying conditions
-// hold: the signal is genuinely upcoming, commercialPlay is credible (has a
-// real narrative -- normalizeCommercialIntelligence()/isGenericCommercialPlay()
-// already guarantee this can't be generic filler), and there is at least
-// one real activationIdea to draw from.
+// hold: the signal is genuinely upcoming OR recent-past, commercialPlay is
+// credible (has a real narrative -- normalizeCommercialIntelligence()/
+// isGenericCommercialPlay() already guarantee this can't be generic filler),
+// and there is at least one real activationIdea to draw from.
+//
+// Commercial Activation Reasoning sprint: originally gated to 'upcoming'
+// only, but the founder's own worked example ("Saw Gallagher acquired
+// Wilson M. Beck. We had a couple ideas for a thoughtful welcome/integration
+// piece for the incoming team...") is an acquisition -- and ACQUISITION is
+// not in EVENT_LIKE_TYPES (api/research-batch.js), so under the frozen
+// classification system it never resolves to 'upcoming' or 'recent-past' at
+// all. It resolves to 'ongoing' -- the ONLY "currently valid" status for any
+// non-event-like category (acquisitions, leadership changes, funding,
+// financial results; see computeActionability()'s two branches). Widened to
+// include 'ongoing' alongside 'upcoming'/'recent-past'. This is safe without
+// reopening the genericness question: by the time conceptLedApproach() is
+// even reached, hasCredibleActivationPlay() has already confirmed the
+// signal's commercialPlay is a real, non-generic activation (Sprint 1's
+// gate) -- an 'ongoing' signal with no credible play never gets this far,
+// same as any other status. Uses the same past-tense-safe em-dash lead as
+// recent-past (not "has ... coming up"), since neither an acquisition nor a
+// leadership change is something "coming up".
 function conceptLedApproach(opp){
-  if(!opp || opp.actionabilityStatus?.status !== 'upcoming') return null;
+  const status = opp?.actionabilityStatus?.status;
+  if(!opp || (status !== 'upcoming' && status !== 'recent-past' && status !== 'ongoing')) return null;
   if(!opp.commercialPlay || !String(opp.commercialPlay.narrative || '').trim()) return null;
   const ideas = (Array.isArray(opp.activationIdeas) ? opp.activationIdeas : []).map(i => String(i || '').trim()).filter(Boolean);
   if(!ideas.length) return null;
   const account = String(opp.account || opp.accountName || '').trim();
   const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
   const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
-  const lead = account && specific ? `Saw ${account} has ${specific} coming up.` : (specific ? `Saw ${specific} coming up.` : '');
+  const lead = status === 'upcoming'
+    ? (account && specific ? `Saw ${account} has ${specific} coming up.` : (specific ? `Saw ${specific} coming up.` : ''))
+    : (account && specific ? `Saw ${account} — ${specific}.` : (specific ? `Saw ${specific}.` : ''));
   // Beta Seller Experience sprint, Preview QA round 2 correction: an earlier
   // pass in this sprint ran the assembled ideas through
   // mentionsProductOrMerchOffer() and dropped any idea it flagged (e.g.
@@ -5591,8 +5612,8 @@ function getActivationIdeas(opp, limit){
 // because a legacy signal's fallback narrative (see getCommercialPlayNarrative()
 // above) was NEVER run through this filter server-side -- it predates the
 // filter entirely -- so it has to be evaluated at read time instead.
-const GENERIC_COMMERCIAL_PLAY_HEDGE = /\b(?:could|might|may|can)\s+(?:lead to|create|open up|present|support)\b|\b(?:opportunity|need|demand)\s+for\b|\bmay\s+be\s+useful\b|\bconsider\b/i;
-const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?|needs?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?)\b/i;
+const GENERIC_COMMERCIAL_PLAY_HEDGE = /\b(?:could|might|may|can)\s+(?:lead to|create|open up|present|support|increase|improve|boost|build|drive|grow)\b|\b(?:opportunity|need|demand)\s+for\b|\bmay\s+be\s+(?:useful|needed|necessary|required)\b|\bconsider\b/i;
+const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?|needs?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?|brand\s+(?:visibility|awareness|recognition|presence))\b/i;
 const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
   'this', 'that', 'such', 'with', 'from', 'into', 'their', 'they', 'them',
   'consider', 'support', 'supporting', 'could', 'might', 'need', 'needs', 'lead', 'create',
@@ -5601,7 +5622,9 @@ const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
   'promotional', 'products', 'product', 'materials', 'material', 'branded', 'brand',
   'branding', 'merchandise', 'apparel', 'gear', 'swag', 'gifts', 'gift', 'corporate',
   'custom', 'items', 'item', 'initiative', 'initiatives', 'outreach', 'events',
-  'event', 'campaign', 'campaigns', 'marketing', 'kits', 'kit', 'related'
+  'event', 'campaign', 'campaigns', 'marketing', 'kits', 'kit', 'related',
+  'increase', 'improve', 'boost', 'build', 'drive', 'grow', 'visibility',
+  'awareness', 'recognition', 'presence', 'necessary', 'required', 'needed'
 ]);
 const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
   'call', 'calls', 'webcast', 'webcasts', 'conference', 'investor', 'investors',

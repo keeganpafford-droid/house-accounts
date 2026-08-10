@@ -73,8 +73,29 @@ const DOVER_OPP = {
   assert(/would it be okay if i sent/i.test(result), 'conceptLedApproach() asks permission to send concepts');
 }
 {
-  // Not upcoming -> null.
-  assert(conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'recent-past' } }) === null, 'conceptLedApproach() returns null for a non-upcoming signal');
+  // Commercial Activation Reasoning sprint: recent-past now ALSO qualifies
+  // (the founder's own Gallagher/Wilson M. Beck acquisition example is a
+  // recent-past event that still deserves a concept-led permission ask) --
+  // uses the past-tense-safe em-dash lead, not "has ... coming up".
+  const result = conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'recent-past' } });
+  assert(typeof result === 'string' && result.length > 0, 'conceptLedApproach() also produces a real approach for a qualifying recent-past opportunity');
+  assert(result.includes('Parade-day team kit'), `conceptLedApproach() names a real activation idea for a recent-past opportunity too (got "${result}")`);
+  assert(/would it be okay if i sent/i.test(result), 'conceptLedApproach() asks permission to send concepts for a recent-past opportunity too');
+  assert(!/coming up/i.test(result), `conceptLedApproach() never uses future-facing "coming up" phrasing for a recent-past event (got "${result}")`);
+}
+{
+  // Commercial Activation Reasoning sprint: 'ongoing' now ALSO qualifies
+  // (an acquisition/leadership-change/funding signal is never classified
+  // 'upcoming'/'recent-past' -- ACQUISITION is not in EVENT_LIKE_TYPES, so
+  // 'ongoing' is the only "currently valid" status it can ever have; see
+  // the Gallagher/Wilson M. Beck fixture in
+  // scripts/test-commercial-activation-reasoning.js). Genuinely
+  // non-qualifying (stale/unknown) statuses still return null.
+  const ongoingResult = conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'ongoing' } });
+  assert(typeof ongoingResult === 'string' && ongoingResult.length > 0, 'conceptLedApproach() also produces a real approach for a qualifying ongoing opportunity (e.g. an acquisition, which never resolves to upcoming/recent-past)');
+  assert(!/coming up/i.test(ongoingResult), `conceptLedApproach() never uses future-facing "coming up" phrasing for an ongoing signal (got "${ongoingResult}")`);
+  assert(conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'ongoing-stale' } }) === null, 'conceptLedApproach() returns null for a stale (no longer current) signal');
+  assert(conceptLedApproach({ ...DOVER_OPP, actionabilityStatus: { status: 'unknown-date' } }) === null, 'conceptLedApproach() returns null for an unknown-date signal');
 }
 {
   // No commercialPlay -> null.

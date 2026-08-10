@@ -955,18 +955,18 @@ User-supplied contact to verify first, if any: ${suppliedContactName || 'None'}
 ${recentPurchases.length ? `Recently uploaded purchases from us (category, project, date) -- use ONLY to judge whether a RECENT PAST public event might be something we already supplied for; a purchase date within roughly 3-4 weeks of the event date is the only thing that counts as evidence, never the event topic alone: ${JSON.stringify(recentPurchases)}` : ''}
 
 Your job is NOT to summarize the company.
-Your job is to think like an elite promotional-products sales rep and answer one question:
+Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, only once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days.
 
-"If I sold promotional products, branded apparel, uniforms, awards, print, onboarding kits, trade-show materials, safety incentives, recognition programs, customer gifts, or corporate merchandise, is there anything happening at this company that creates a legitimate reason to start a conversation in the next 90 days?"
+Do not start from "would this justify a promo/merch conversation?" -- start from "what is actually happening here, and for whom?" A technically real business update with no identifiable audience or activation is a correct, expected result to decline, not a failure to fix. See the commercial-activation reasoning discipline below for exactly how to work through this before writing commercialPlay/activationIdeas.
 
-Use the candidate public sources below. First identify what changed. Then translate only the strongest developments into promo-relevant sales conversations.
+Use the candidate public sources below. First identify what changed, factually. Then reason through who it affects and what they're likely trying to accomplish before considering any commercial translation.
 
 Consider signals such as hiring, expansion, new facilities, trade shows, conferences, awards, product launches, partnerships, acquisitions, funding, leadership changes, community initiatives, safety initiatives, sustainability, employee engagement, rebrands, major customer wins, and government contracts.
 
 Leadership and contact-change rules:
 - Accept executive appointments, promotions, known-contact role changes, and known-contact company changes only when a credible public source supports the person, company, and new role.
 - Preserve the person's name, exact new title, company, and announcement date when available.
-- Do not automatically prioritize a leadership change because the title is senior. Rank it using the same recency, relevance, source quality, timing, relationship, and promotional-product usefulness applied to every other signal.
+- Do not automatically prioritize a leadership change because the title is senior. Rank it using the same recency, relevance, source quality, timing, relationship, and activation strength applied to every other signal -- and never assume a rebrand, reorganization, or other sweeping change from a leadership change alone.
 - Reject stale leadership directories or undated team pages that do not establish a recent change.
 
 Reject generic About pages, Contact pages, homepages, SEO snippets, navigation text, stale news, and anything that does not create a natural reason to reach out.
@@ -978,7 +978,7 @@ Important rules:
 - Only return opportunities with confidence >= 80.
 - If there is no strong opportunity, return {"signals":[]}.
 - Do not invent facts.
-- Do not stop at "they are hiring". Translate why it matters to promo.
+- Do not stop at "they are hiring". Work through who that hiring affects and what a real activation around it would look like -- see the reasoning discipline below.
 - If a user-supplied contact is provided, verify that person first and prefer them only when the sources support their company and role.
 - Surface public contact information only when it appears in the supplied candidates or page content. Never invent emails, phone numbers, LinkedIn URLs, or contact pages.
 - Research confidence describes verification quality, not buying intent.
@@ -999,7 +999,7 @@ Return strict JSON only with this shape:
       "likelyConversations": ["short conversation themes"],
       "suggestedOpener": "the single most useful discovery question to learn next -- ownership, timing, scope, existing program, department, or expansion potential. A genuine question, never a pitch or a meeting request.",
       "suggestedContact": "likely role to contact",
-      "recommendedBuyingTeam": ["likely department/team"],
+      "recommendedBuyingTeam": ["the department/team that would actually own the activation identified in commercialPlay -- not a generic guess from the signal category alone"],
       "suggestedContactDetails": {
         "name": "verified public person name or empty string",
         "title": "verified public title or inferred title",

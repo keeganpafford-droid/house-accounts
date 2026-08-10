@@ -1250,6 +1250,20 @@ function salesReadyOpener(trigger = '', context = '', moment = '', type = '', gr
     if (ground.relatedPurchase?.confidence === 'confident' && ground.relatedPurchase.purchase?.category) {
       return `Saw ${specific} wrapped up. We supplied ${clean(ground.relatedPurchase.purchase.category)} for it -- how did that go, and what's next on the calendar?`;
     }
+    // Commercial Activation Reasoning sprint: a recent-past event with
+    // nothing to follow up on (no confidently-matched prior purchase) but
+    // real, specific activationIdeas is a fresh opportunity, not a
+    // check-in on an old order -- e.g. a just-completed acquisition's
+    // integration/welcome window (the founder's own Gallagher/Wilson M.
+    // Beck example: "Saw Gallagher acquired Wilson M. Beck. We had a
+    // couple ideas for a thoughtful welcome/integration piece..."). A
+    // confident purchase match always wins over this (asking how a known
+    // order went is more specific than a generic concept offer), which is
+    // why this sits strictly after that check, never before it.
+    if (ground.relatedPurchase?.confidence !== 'confident' && Array.isArray(activationIdeas) && activationIdeas.length) {
+      const leadIdeas = activationIdeas.slice(0, 2).map(idea => clean(idea)).join(' and ');
+      return `${lead} We had a couple ideas for this, including ${leadIdeas}. Would it be okay if I sent a few concepts over?`;
+    }
     if (ground.relatedPurchase?.confidence === 'none') {
       return `Saw ${specific} wrapped up -- how did it go? Anything else like it coming up this season?`;
     }
@@ -3208,13 +3222,13 @@ export default async function handler(req, res) {
     if (candidates.length) {
       const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
 
-Act like a senior promotional products account executive doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
+Act like a senior account researcher doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
 
 "Why should I contact this company today?"
 
 Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
 
-A buying moment is a concrete event that may create promotional products demand, such as:
+A buying moment is a concrete event that creates a real, identifiable human moment for a specific audience (employees, customers, recruits, investors, partners, or another concrete group the evidence supports) -- not merely an event that could theoretically justify a merchandise conversation. Examples of the kinds of events worth surfacing:
 - facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
 - trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
 - product launch, rebrand, merger, acquisition, partnership, contract win
@@ -3223,7 +3237,7 @@ A buying moment is a concrete event that may create promotional products demand,
 - safety milestone, company anniversary, major award actively promoted by the company
 
 Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
-Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable promotional-products conversation.
+Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable commercial-activation angle.
 
 Reject:
 - generic company descriptions, mission/history/culture copy
