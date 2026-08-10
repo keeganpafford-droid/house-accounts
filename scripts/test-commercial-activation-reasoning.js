@@ -552,6 +552,53 @@ console.log('');
   assert(!/usually (create|require|need)/i.test(researchDetailsHtml), `required fix: Research Details never surfaces the generic salesReadyWhy()-style catalog template for an ideas-only signal (got "${(researchDetailsHtml.match(/Why it matters:.*?<\/div>/s) || [''])[0]}")`);
 }
 
+// D4. "NO GROUNDED ACTIVATION, NO PRIORITY" -- the founder's live-QA
+// correction to "NO IDEA, NO PRIORITY": the model can satisfy "produce a
+// real activationIdea" by manufacturing one for the funding/financial event
+// ITSELF, confidently phrased (no hedge word), which defeats the original
+// hedge-based genericness check. Confirmed real production case: Neural
+// Trust's $20M seed round still showing a "Brand Visibility Campaign" play
+// with a "funding-announcement launch kit" idea. Run through the REAL
+// pipeline end to end (not just isGenericCommercialPlay() in isolation).
+{
+  const fundingDressedUp = buildOpportunity({
+    accountName: 'Neural Trust', sourceUrl: 'https://example.com/neural-trust-seed-live',
+    signalTitle: 'Neural Trust Secures $20M Seed Round',
+    concrete_trigger: 'Neural Trust secured a $20M seed round',
+    business_context: 'Neural Trust announced it secured a $20M seed round.',
+    event_date: daysAgo(4), publicationDate: daysAgo(4), confidence: 85,
+    commercialPlay: { concept: 'Brand Visibility Campaign', narrative: 'Neural Trust just secured a $20M seed round, which is a great opportunity to run a brand visibility campaign celebrating the milestone.' },
+    activationIdeas: ['Funding announcement launch kit', 'Social media campaign for the seed round']
+  }, { name: 'Neural Trust' });
+  assert(fundingDressedUp.commercialPlay === null, 'required fix: normalizeCommercialIntelligence() now nulls out a confidently-phrased (non-hedged) funding-event-dressed-as-activation commercialPlay narrative, not just hedged non-answers');
+  assert(Array.isArray(fundingDressedUp.activationIdeas) && fundingDressedUp.activationIdeas.length === 0, 'required fix: normalizeCommercialIntelligence() filters out funding-event-dressed activationIdeas ("funding announcement launch kit", "social media campaign for the seed round"), not just bare category words');
+  const opp = asBusinessOpportunity(fundingDressedUp);
+  const statusLine = sandbox.signalDateAndActionabilityLine(opp);
+  assert(statusLine !== 'Date unavailable' && statusLine !== 'No longer current', `Neural Trust funding-dressed fixture: sanity -- exclusion is not a side effect of a date problem (got "${statusLine}")`);
+  assert(sandbox.hasCredibleActivationPlay(opp) === false, 'required property (NO GROUNDED ACTIVATION, NO PRIORITY): a manufactured funding-announcement activation is not credible, even though the model technically populated both commercialPlay and activationIdeas');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (NO GROUNDED ACTIVATION, NO PRIORITY): the exact confirmed Neural Trust production case no longer consumes a priority slot');
+}
+// Contrast: the SAME funding signal, but the evidence discloses a real
+// downstream initiative and the play/ideas reference it (not the funding
+// event itself) -- must still succeed. Proves the fix targets the
+// funding-event-as-moment pattern specifically, not funding-adjacent
+// language in general.
+{
+  const fundingWithRealInitiative = buildOpportunity({
+    accountName: 'Neural Trust', sourceUrl: 'https://example.com/neural-trust-seed-hiring-2',
+    signalTitle: 'Neural Trust Raises $20M to Fund Security Conference Push',
+    concrete_trigger: 'Neural Trust raised $20M earmarked for an expanded security conference presence',
+    business_context: 'Neural Trust announced a $20M raise earmarked for expanding its presence at security conferences this year.',
+    event_date: daysAgo(4), publicationDate: daysAgo(4), confidence: 85,
+    commercialPlay: { concept: 'Conference Push Kickoff', narrative: 'The funding round positions Neural Trust to expand its security conference presence -- worth building a coordinated booth and follow-up experience for the attendees who stop by.' },
+    activationIdeas: ['Booth follow-up piece for conference attendees', 'Team gear for the booth staff']
+  }, { name: 'Neural Trust' });
+  assert(fundingWithRealInitiative.commercialPlay !== null, 'required property: a funding signal whose evidence discloses a real downstream initiative (conference push) and whose play references the real audience (attendees) still survives -- the fix targets funding-as-the-moment-itself, not funding-adjacent language generally');
+  const opp = asBusinessOpportunity(fundingWithRealInitiative);
+  assert(sandbox.hasCredibleActivationPlay(opp) === true, 'required property: this grounded funding-plus-initiative signal remains credible');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === true, 'required property: this grounded funding-plus-initiative signal remains priority-eligible');
+}
+
 console.log('');
 
 // ---------------------------------------------------------------------------

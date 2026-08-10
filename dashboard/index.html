@@ -5640,9 +5640,25 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
   'presentations', 'shareholders', 'shareholder', 'subsequent', 'efforts',
   'effort', 'results', 'report', 'reports', 'meeting', 'meetings'
 ]);
+// Commercial Activation Reasoning sprint, final validation round (mirrors
+// api/signal-intelligence.js's identically-named check): a POSITIVE check
+// (does a real audience/moment word appear anywhere?) rather than "strip
+// stopwords until nothing survives" -- a confidently-written narrative
+// almost always contains the company's own name and ordinary connective
+// prose, so requiring full reduction is too strict once text isn't hedged.
+const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
+function isFinancialEventDressedAsActivation(text){
+  const t = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if(!t) return false;
+  if(!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
+}
 function isGenericCommercialPlay(narrative){
   const text = String(narrative || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if(!text) return false;
+  if(isFinancialEventDressedAsActivation(text)) return true;
   if(!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));

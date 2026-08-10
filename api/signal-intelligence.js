@@ -876,7 +876,7 @@ Before generating commercialPlay/activationIdeas, work through four questions in
 - expansionPotential: a credible repeat or extension path -- one sponsorship leading to a recurring sponsorship program, one location opening leading to a repeatable new-location playbook, one acquisition integration leading to a repeatable future-acquisition welcome program -- not generic optimism ("could expand company-wide", "could lead to more merchandise", "future opportunities may arise"). Give a short narrative explaining the commercial upside (not a restatement of the tags), plus up to 3 tags from this fixed list ONLY when they genuinely apply: one-time, recurring-program, account-expansion, cross-department, employee-program, customer-program, seasonal-repeat, parent-org-route, other. Omit expansionPotential entirely if you have no confident, grounded read on this -- absence beats optimism.
 - recommendedBuyingTeam / likelyBuyers: name the team or role that would actually OWN the activation you identified above (e.g. a community sponsorship activation points to marketing/community/events; an employee integration activation points to people/HR/internal communications) -- not a generic department guess disconnected from the play.
 
-FUNDING AND EARNINGS/FINANCIAL-RESULTS SIGNALS SPECIFICALLY: these are weak by default. Funding alone does not imply hiring, onboarding, office expansion, events, or a customer launch -- "$20M raised" is not itself a reason to write "onboarding kits." A routine earnings call or financial-results announcement normally has no activation at all. Only write a commercialPlay for one of these signal types when the evidence ITSELF discloses a concrete downstream initiative (a stated hiring push, a market launch, an office expansion, a conference strategy) -- reason from that disclosed initiative, never from the funding/earnings event alone. Otherwise, omitting commercialPlay/activationIdeas/expansionPotential entirely is the correct, expected output for these two signal types -- a real signal with no credible activation is a legitimate result, not a gap to fill.
+FUNDING AND EARNINGS/FINANCIAL-RESULTS SIGNALS SPECIFICALLY: these are weak by default. Funding alone does not imply hiring, onboarding, office expansion, events, or a customer launch -- "$20M raised" is not itself a reason to write "onboarding kits." A routine earnings call or financial-results announcement normally has no activation at all. Only write a commercialPlay for one of these signal types when the evidence ITSELF discloses a concrete downstream initiative (a stated hiring push, a market launch, an office expansion, a conference strategy) -- reason from that disclosed initiative, never from the funding/earnings event alone. Otherwise, omitting commercialPlay/activationIdeas/expansionPotential entirely is the correct, expected output for these two signal types -- a real signal with no credible activation is a legitimate result, not a gap to fill. NO GROUNDED ACTIVATION, NO PRIORITY: producing SOME activationIdeas does not by itself prove a real activation exists -- do not satisfy this requirement by manufacturing an idea ABOUT the funding/earnings event itself (e.g. a "brand visibility campaign," "funding announcement launch kit," or "social media campaign" for the raise/results). Announcing money is not a moment the audience experiences, even if you can picture marketing collateral for it -- that is exactly the "merchandise justification wearing a play's clothing" this whole framework exists to prevent, just with confident phrasing instead of hedged phrasing. If the only "activation" you can produce is about the financial event itself, you do not have one -- leave commercialPlay and activationIdeas empty.
 
 A grounded signal with no credible commercial interpretation is a better output than fabricated commercial intelligence. Absence of commercialPlay, an empty activationIdeas list, and absence of expansionPotential are all valid and expected outcomes for weak or generic signals -- never force any of these fields merely because the schema has a place for them.
 
@@ -900,7 +900,15 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
 // check is against the WHOLE cleaned idea string, not a substring search.
 function isGenericActivationIdea(idea = '') {
   const normalized = clean(idea).toLowerCase().replace(/[.!]+$/, '');
-  return !normalized || GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized);
+  if (!normalized) return true;
+  if (GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized)) return true;
+  // Commercial Activation Reasoning sprint, final validation round: an idea
+  // can be a manufactured funding-event activation even when it isn't one of
+  // the fixed bare-category phrases above (e.g. "Funding announcement launch
+  // kit", "Social media campaign for the seed round") -- see
+  // isFinancialEventDressedAsActivation()'s header comment below for the
+  // full rationale; same check, applied per-idea here.
+  return isFinancialEventDressedAsActivation(idea);
 }
 
 // QA correction 4 (Impiricus finding): commercialPlay is free-form prose,
@@ -968,9 +976,45 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
   'presentations', 'shareholders', 'shareholder', 'subsequent', 'efforts',
   'effort', 'results', 'report', 'reports', 'meeting', 'meetings'
 ]);
+// Commercial Activation Reasoning sprint, final validation round (Neural
+// Trust/Black Hat funding finding): "NO IDEA, NO PRIORITY" is gameable --
+// the model can satisfy "produce a real activationIdea" by inventing one
+// for the funding/financial event ITSELF ("a great opportunity to run a
+// brand visibility campaign celebrating the round"), which is confident,
+// well-formed prose with no hedge word at all, so GENERIC_COMMERCIAL_PLAY_HEDGE
+// never fires. The founder's stronger standard: a funding/financial event
+// is NEVER itself a real moment/touchpoint -- an idea or play whose entire
+// content is the financial event plus a generic campaign/visibility noun,
+// with nothing else concrete, is a manufactured activation regardless of
+// how confidently it's phrased. This is a SEPARATE, independent check
+// (financial-event-anchor + generic-campaign-noun, no hedge required) --
+// it only ever fires on this specific combination, so a genuinely grounded
+// funding-adjacent play (e.g. "the round is earmarked for opening three new
+// offices -- a reason to build a new-office welcome program for each") is
+// unaffected: "new-office welcome program" matches neither generic-campaign
+// noun list below.
+const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
+// Deliberately a POSITIVE check (does a real audience/moment word appear
+// anywhere?) rather than the "strip stopwords until nothing survives"
+// pattern the older checks above use -- a natural, fluently-written
+// narrative almost always contains the company's own name and ordinary
+// connective prose ("which", "just", "worth", "great"), so requiring full
+// reduction to nothing is too strict once the model writes confidently
+// instead of in a hedging voice (exactly what this sprint's prompt changes
+// pushed it toward). Presence of a genuine audience/moment word is a much
+// more robust signal of real grounding than absence of connective filler.
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
+function isFinancialEventDressedAsActivation(text = '') {
+  const t = clean(text);
+  if (!t) return false;
+  if (!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
+}
 function isGenericCommercialPlay(narrative = '') {
   const text = clean(narrative);
   if (!text) return false;
+  if (isFinancialEventDressedAsActivation(text)) return true;
   if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
