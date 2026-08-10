@@ -916,7 +916,7 @@ function isGenericActivationIdea(idea = '') {
 // lead to a need for promotional products to support brand initiatives,
 // such as branded materials for outreach and events."
 const GENERIC_COMMERCIAL_PLAY_HEDGE = /\b(?:could|might|may|can)\s+(?:lead to|create|open up|present|support)\b|\b(?:opportunity|need|demand)\s+for\b|\bmay\s+be\s+useful\b|\bconsider\b/i;
-const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?)\b/i;
+const GENERIC_COMMERCIAL_PLAY_NOUN = /\b(?:promotional\s+(?:products?|materials?|items?|needs?)|branded\s+(?:materials?|items?|merchandise|products?|apparel|gear)|custom\s+merchandise|merchandise|swag|corporate\s+gifts?)\b/i;
 const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
   'this', 'that', 'such', 'with', 'from', 'into', 'their', 'they', 'them',
   'consider', 'support', 'supporting', 'could', 'might', 'need', 'needs', 'lead', 'create',
@@ -925,7 +925,27 @@ const GENERIC_COMMERCIAL_PLAY_STOPWORDS = new Set([
   'promotional', 'products', 'product', 'materials', 'material', 'branded', 'brand',
   'branding', 'merchandise', 'apparel', 'gear', 'swag', 'gifts', 'gift', 'corporate',
   'custom', 'items', 'item', 'initiative', 'initiatives', 'outreach', 'events',
-  'event', 'campaign', 'campaigns', 'marketing'
+  'event', 'campaign', 'campaigns', 'marketing', 'kits', 'kit', 'related'
+]);
+// Beta Seller Experience sprint, Preview QA round 2: confirmed real production
+// text (Gallagher "...to support the call and subsequent marketing efforts.",
+// Kiniksa "...such as branded materials for the webcast or investor relations
+// kits.") wraps the exact same hedge+generic-merch-noun non-answer in a little
+// extra filler that only ever references the signal's OWN procedural mechanics
+// (the call/webcast/filing itself) -- not any real external audience or
+// activation moment. The stricter all-stopwords-only check below missed both
+// because "call"/"webcast"/"investor"/"relations"/"subsequent"/"efforts"
+// weren't in the stopword vocabulary. This whitelist is intentionally narrow
+// and additive: it only ever activates once HEDGE+NOUN already matched above,
+// and a genuine external-audience word (parade, community, customers,
+// attendees, families, festival, employees, ...) is never in it, so a real
+// activation described alongside incidental procedural language is never
+// caught by this alone.
+const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
+  'call', 'calls', 'webcast', 'webcasts', 'conference', 'investor', 'investors',
+  'relations', 'earnings', 'quarterly', 'filing', 'filings', 'presentation',
+  'presentations', 'shareholders', 'shareholder', 'subsequent', 'efforts',
+  'effort', 'results', 'report', 'reports', 'meeting', 'meetings'
 ]);
 function isGenericCommercialPlay(narrative = '') {
   const text = clean(narrative);
@@ -933,7 +953,8 @@ function isGenericCommercialPlay(narrative = '') {
   if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
-  return remaining.length === 0;
+  if (remaining.length === 0) return true;
+  return remaining.every(w => GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS.has(w));
 }
 
 const EXPANSION_POTENTIAL_TAGS = new Set([
