@@ -5476,26 +5476,55 @@ function getSuggestedOpener(opp){
     const category = primaryCategoryFromOpportunity(opp).toLowerCase();
     return `Hey ${contact} — we’ve done good work together in one part of the account. Who typically owns ${category} for ${dept}? I’d love to see if we can support that team too.`;
   }
+  // Live-QA correction (category/program copy drift): matched against
+  // opp.commonPromoCategories/suggestedProducts -- AI/rules-SUGGESTED
+  // product ideas (e.g. a Headwear pattern's own suggested products include
+  // "employee hats", matching /hat/; a generic "Employee Recognition
+  // Program" industry template's suggested products literally include the
+  // word "apparel") -- never the account's real, order-derived purchase
+  // category. Since the response text below hardcodes a single word for
+  // whichever branch matched, this fired constantly on unrelated product
+  // IDEAS and always said the same wrong thing regardless of what actually
+  // matched: Ridgeline's real, correctly-detected Headwear pattern was
+  // described as "the recent apparel project" (matched via "hat" inside its
+  // own "employee hats" suggestion), and Brightview's real Onboarding /
+  // Recruiting order -- once an unrelated "Employee Recognition Program"
+  // generic template won primary-opportunity selection -- inherited THAT
+  // template's own product ideas (which include "apparel") instead of its
+  // own real category. realPriorCategories(opp) is the SAME genuine,
+  // order-derived category source (account.categoryTypes, falling back to
+  // opp.historicalPurchaseData -- both populated directly from the
+  // customer's own uploaded order rows, see that function's own header
+  // comment) Account Context/email already correctly use -- reused here so
+  // "How to Approach" can never name a category the account never actually
+  // bought. Computed only for the two account-history layers below (never
+  // for Business Activity/Relationship Expansion), which is also the only
+  // shape realPriorCategories()/findAccountForOpp() are ever validated
+  // against.
+  if(layer === 'Follow-Up Signal' || layer === 'Repeat / Pattern Signal'){
+  const realCategoryText = (realPriorCategories(opp)[0] || '').toLowerCase();
+  const matchText = realCategoryText || categories.join(' ') || oppName;
   if(layer === 'Follow-Up Signal'){
-    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
-      return `Hey ${contact} — quick check-in on the recent apparel project. How did everything turn out?`;
+    if(/apparel|shirt|uniform|hat|headwear/.test(matchText)){
+      return `Hey ${contact} — quick check-in on the recent ${realCategoryText || 'apparel'} project. How did everything turn out?`;
     }
-    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+    if(/event|giveaway|booth|campaign/.test(matchText)){
       return `Hey ${contact} — wanted to check in on the recent event/giveaway project. How did it go?`;
     }
-    if(oppName.includes('welcome') || oppName.includes('onboarding') || categories.some(c=>/welcome|onboarding|employee/.test(c))){
+    if(/welcome|onboarding|recruit|employee/.test(matchText)){
       return `Hey ${contact} — quick check-in on the recent employee-facing order. How was it received?`;
     }
     return `Hey ${contact} — quick check-in on the recent project. How was everything received?`;
   }
   if(layer === 'Repeat / Pattern Signal'){
-    if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
-      return `Hey ${contact} — looks like we helped with apparel around this time before. Are you planning another run this year?`;
+    if(/apparel|shirt|uniform|hat|headwear/.test(matchText)){
+      return `Hey ${contact} — looks like we helped with ${realCategoryText || 'apparel'} around this time before. Are you planning another run this year?`;
     }
-    if(oppName.includes('event') || categories.some(c=>/event|giveaway|booth|campaign/.test(c))){
+    if(/event|giveaway|booth|campaign/.test(matchText)){
       return `Hey ${contact} — are you planning that event or campaign again this year? Happy to help if useful.`;
     }
     return `Hey ${contact} — looks like we helped with something similar around this time before. Is that coming up again?`;
+  }
   }
   return businessSuggestedOpener(opp);
 }
@@ -5519,7 +5548,7 @@ function opportunityHeadline(opp){
   // hiring" even though the event itself was never a hiring signal.
   if(type === 'Relationship Expansion') return 'Warm relationship + expansion opportunity';
   if(type === 'Recent Project Follow-Up') return 'Recent order creates a natural follow-up';
-  if(type === 'Reorder Due' || type === 'Annual Buying Pattern') return 'Repeat buying window detected';
+  if(type === 'Reorder Due' || type === 'Annual Buying Pattern' || type === 'Repeat Buying Pattern') return 'Repeat buying window detected';
   if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
   // QA final round, item 1: rely on kind (businessSignalKind(), which already
   // prefers the server-computed canonical classification and only falls back
@@ -6108,7 +6137,19 @@ function renderVerifiedOpportunitySection(opp){
   // 'confirmed'-only check -- a legacy row now correctly reads "Unconfirmed
   // Research" here, matching the product invariant that ONLY an explicit
   // 'confirmed' grade may be described as verified.
-  const heading = isExplicitlyVerifiedIdentity(opp) ? 'Verified Opportunity' : 'Unconfirmed Research';
+  // Live-QA correction (signal-family PFC label): "Unconfirmed Research"
+  // describes web-research identity uncertainty (isExplicitlyVerifiedIdentity()
+  // is a 'confirmed'-only check against opp.identityConfidence, a field that
+  // only ever exists on a signal that went through verifyCandidateCompanyGrounding()
+  // -- see that function's own header comment). A Follow-Up/Repeat-Pattern
+  // opportunity is grounded in the customer's own uploaded order history --
+  // isWebResearchSignal() is false for it, identityConfidence was never
+  // applicable, and the heading was defaulting to "Unconfirmed Research"
+  // for every one of them regardless, implying a doubt about company
+  // identity that was never the actual question for this signal family.
+  // isWebResearchSignal() gates the SAME family distinction evidenceSourceLabel()
+  // already answers "Account history" for immediately below.
+  const heading = isExplicitlyVerifiedIdentity(opp) ? 'Verified Opportunity' : (isWebResearchSignal(opp) ? 'Unconfirmed Research' : 'Account History');
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">${heading}</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
     <div class="sales-play-detail-item"><strong>Status</strong>${escapeHtml(dateLine)}</div>
@@ -6269,7 +6310,11 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
   if(!items.length) return '';
   return `<div class="sales-play-card" id="additionalOpportunitiesSection" style="margin-bottom:16px"><h3><span class="section-icon">＋</span> Additional Opportunities Found</h3><div class="additional-opportunity-list">${items.map(item=>{
     const source=item.cleanSourceName||sourceDomain(item.sourceUrl||'')||evidenceSourceLabel(item)||'Account history';
-    const date=item.signalDate||item.publishedDate||item.mostRecentDate||'';
+    // Live-QA correction (calendar-day regression): rendered through the
+    // same UTC-safe formatShortDate() every other calendar-day surface
+    // uses, never embedded raw (a raw mostRecentDate/signalDate value here
+    // could otherwise display a shifted calendar day for a date-only order).
+    const date=formatShortDate(item.signalDate||item.publishedDate||item.mostRecentDate||'');
     // R5 follow-up: prefer the real, specific signalTitle over the
     // classification-derived opportunityHeadline() fallback -- the same
     // fallback order renderVerifiedOpportunitySection() already uses for
@@ -7550,7 +7595,18 @@ async function researchAccountByName(accountName, options = {}){
 let researchInProgress = false;
 
 function getAccountsForResearch(options = {}){
-  const accounts = window.accountRadarAccounts || [];
+  // Live-QA correction (list-scoped research/save target mismatch): same
+  // scoping as performSaveCurrentUpload() above, and for the same reason --
+  // window.accountRadarAccounts can already be the full cross-list aggregate
+  // by the time this runs (refreshAggregateDashboard() fires automatically
+  // right after the initial upload save, before the user ever clicks
+  // "Research all N accounts"). Without this filter, researchTopAccounts()
+  // dispatches research against -- and stamps lastResearchedAt/Recently
+  // Researched onto -- every account in every list the user owns, not just
+  // the one list this research pass was launched for (confirmed production
+  // case: "20 of 22 complete" against an 8-account fixture list, with other
+  // lists' accounts showing "Researched moments ago" afterward).
+  const accounts = (window.accountRadarAccounts || []).filter(a => !a.uploadId || a.uploadId === currentUploadId);
   const total = accounts.length;
   const hasOrderHistory = accounts.some(a => Number(a.orderCount || 0) > 0 || Number(a.revenue || 0) > 0);
   const isLeadGenList = !hasOrderHistory;
@@ -8804,7 +8860,11 @@ function buildEvidence(account, categoriesNeeded=[]){
   if(account.orderCount > 1) evidence.push(`${account.orderCount} historical orders`);
   if(account.revenue > 0) evidence.push(`${fmtMoney(account.revenue)} historical spend`);
   if(cats.length) evidence.push(`Purchased categories: ${cats.join(', ')}`);
-  if(account.mostRecentDate && account.mostRecentDate !== 'Unknown') evidence.push(`Recent activity: ${account.mostRecentDate}`);
+  // Live-QA correction (calendar-day regression): account.mostRecentDate is
+  // now a stored ISO date-only string (see processData()'s account-build
+  // loop) -- rendered here through the same UTC-safe formatShortDate() every
+  // other calendar-day surface uses, never embedded raw.
+  if(account.mostRecentDate && account.mostRecentDate !== 'Unknown') evidence.push(`Recent activity: ${formatShortDate(account.mostRecentDate)}`);
   if(categoriesNeeded.length){
     const matching = cats.filter(c => categoriesNeeded.includes(c));
     if(matching.length) evidence.push(`Relevant purchase history: ${matching.join(', ')}`);
@@ -9529,7 +9589,13 @@ window.createSalesPlayPanel = function(opp, opts){
                (identityConfidence missing) to "verified", which is exactly
                the bug this sprint fixes. -->
           <div class="sales-play-group">
-            <div class="sales-play-group-label">${isExplicitlyVerifiedIdentity(opp) ? 'Verified Signal / Evidence' : 'Unconfirmed Research'}</div>
+            <!-- Live-QA correction (signal-family PFC label): same
+                 isWebResearchSignal()-gated distinction as
+                 renderVerifiedOpportunitySection()'s own heading above, for
+                 the same reason -- an account-history opportunity was never
+                 "unconfirmed research" (that describes web-research identity
+                 doubt, not order-history grounding). -->
+            <div class="sales-play-group-label">${isExplicitlyVerifiedIdentity(opp) ? 'Verified Signal / Evidence' : (isWebResearchSignal(opp) ? 'Unconfirmed Research' : 'Account History')}</div>
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
@@ -10282,7 +10348,37 @@ function getRecommendationType(opp){
   const recent = Number(opp?.accountRecencyScore || 0);
   if(layer === 'Business Activity Signal') return 'Business Trigger';
   if(isRelationshipExpansionOpportunity(opp) || /category expansion|wallet|adjacent|never purchased|expansion opportunity|account expansion|multi-department/.test(text)) return 'Relationship Expansion';
-  if(/annual|seasonal|same time|repeat|coming up again|ordered .* times|purchase history spans/.test(text)) return 'Annual Buying Pattern';
+  // Live-QA correction (Repeat/Pattern classification false positives): a
+  // genuinely detected repeat pattern (opportunityType 'REPEAT PATTERN' --
+  // the authoritative marker createRepeatPatternOpportunities() sets ONLY
+  // when findRepeatPatternGroups() actually found one, see its own header
+  // comment) is classified from its OWN real years span, never from generic
+  // boilerplate phrase-matching. The regex this replaces matched
+  // createOpportunity()'s hardcoded generic-template text ("Repeat or
+  // seasonal buying pattern" / "may be coming up again") just as reliably as
+  // a real pattern's text -- so a single-order account with NO detected
+  // cadence at all (a generic industry-fallback opportunity that only
+  // inherited "Repeat / Pattern Signal" via low recency, e.g. Meridian
+  // Office Partners' one order) was labeled "Annual Buying Pattern" with
+  // zero supporting evidence. A real pattern spanning only one calendar
+  // year (createRepeatPatternOpportunities()'s own volume-only, confidence-
+  // 64 case -- e.g. Golden Valley Steel Supply's four same-year quarterly
+  // batches) was ALSO folded into "Annual Buying Pattern" even though
+  // nothing about a single year of data supports an annual claim
+  // specifically. Minimum requirement for the "Annual" label: a real
+  // detected pattern (opportunityType 'REPEAT PATTERN') AND recurrence
+  // across more than one calendar year (opp.years, set verbatim from the
+  // pattern's own years Set) -- exactly the hasMultiYear signal
+  // findRepeatPatternGroups() already computes and factors into its own
+  // confidence score. A real pattern that does not clear that bar is a
+  // legitimate, distinct claim ("we've seen repeat activity, not yet proven
+  // annual") -- not folded into "Reorder Due"/generic fallback, and never
+  // reached by the old free-text regex again (removed, not narrowed: its
+  // only remaining matches after this branch were exactly the false-positive
+  // generic-template case).
+  if(opp?.opportunityType === 'REPEAT PATTERN'){
+    return Array.isArray(opp.years) && opp.years.length > 1 ? 'Annual Buying Pattern' : 'Repeat Buying Pattern';
+  }
   if(/recent order|recent project|delivered|completed|check in/.test(text) || layer === 'Follow-Up Signal') return 'Recent Project Follow-Up';
   // Priority 3 item 5 (paid-beta dashboard integrity fix): accountRecencyScore
   // is always a 0-1 fraction (see line ~6217: Number(account.subscores?.recency
@@ -10311,6 +10407,7 @@ function recommendationBadgeMeta(opp){
   const map = {
     'Reorder Due': {icon:'🔁', label:'Reorder Due'},
     'Annual Buying Pattern': {icon:'📅', label:'Annual Buying Pattern'},
+    'Repeat Buying Pattern': {icon:'🔁', label:'Repeat Buying Pattern'},
     'Business Trigger': {icon:'🌐', label:'Business Trigger'},
     'Relationship Expansion': {icon:'🧩', label:'Relationship Expansion'},
     'Dormant High-Value Account': {icon:'💤', label:'Dormant High-Value'},
@@ -10331,7 +10428,7 @@ function recommendationOneLine(opp){
   if(type === 'Dormant High-Value Account' && historical > 0){
     return `This account has ${fmtMoney(historical)} in historical revenue and has gone quiet enough to deserve a check-in.`;
   }
-  if(type === 'Reorder Due' || type === 'Annual Buying Pattern'){
+  if(type === 'Reorder Due' || type === 'Annual Buying Pattern' || type === 'Repeat Buying Pattern'){
     return why || 'Past buying timing suggests this need may be coming up again.';
   }
   if(type === 'Relationship Expansion'){
@@ -10847,7 +10944,7 @@ function renderDetailedAccountViews(accounts){
           <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
           <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
           <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
-          <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate}</div></div>
+          <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate && a.mostRecentDate !== 'Unknown' ? formatShortDate(a.mostRecentDate) : 'Unknown'}</div></div>
         </div>`}
         <div class="section-title">🎯 Reasons To Reach Out</div>
         <ul class="opps">
@@ -10984,7 +11081,23 @@ function serializeAccountForStorage(account, options = {}){
 // swallowed (logged, but the returned promise always resolved).
 async function performSaveCurrentUpload(stage, attemptContext){
   const lead = currentLead || getSavedLead();
-  const accounts = window.accountRadarAccounts || [];
+  // Live-QA correction (list-scoped research/save target mismatch):
+  // window.accountRadarAccounts is a SHARED global -- refreshAggregateDashboard()
+  // (fired automatically right after every upload/research completion, see
+  // its own header comment) overwrites it with the FULL aggregate across
+  // every uploaded list the user owns, not just currentUploadId's. Every
+  // account returned by that aggregate carries a real a.uploadId (set by
+  // buildAccountsFromRows()); a freshly-parsed account from THIS upload,
+  // before that first aggregate refresh has resolved, has none yet (undefined).
+  // Scoping here to "belongs to currentUploadId, or not yet tagged" is what
+  // stops a tracked-research save from ever submitting an account_name set
+  // spanning multiple uploads -- exactly what api/save-upload.js's HA005
+  // guard (replace_ha_accounts_snapshot(), mode=tracked_research) exists to
+  // reject, confirmed production case: "This research save does not match
+  // the upload it targeted" after Research All ran against a fixture list
+  // while window.accountRadarAccounts had already been repopulated with the
+  // full 22-account workspace aggregate.
+  const accounts = (window.accountRadarAccounts || []).filter(a => !a.uploadId || a.uploadId === currentUploadId);
   if(!lead || !lead.email || !accounts.length) return {ok:false, error:'No account list to save.'};
 
   // Phase 2A implementation-review ROUND 5, item 2 -- stage='uploaded' is
@@ -11064,6 +11177,13 @@ async function performSaveCurrentUpload(stage, attemptContext){
       throw new Error(data.error || 'Save failed');
     }
     currentUploadId = data.uploadId || currentUploadId;
+    // Backfill the real, server-confirmed uploadId onto every account this
+    // save just targeted (the freshly-parsed, not-yet-tagged case the
+    // scoping filter above treats as "current" by default) -- closes the
+    // untagged window as early as possible so later reads of a.uploadId
+    // elsewhere (createOpportunity(), etc.) are correct too, not just this
+    // function's own next call.
+    if(currentUploadId) accounts.forEach(a => { a.uploadId = a.uploadId || currentUploadId; });
     await loadDashboardUsage();
     const notice = document.getElementById('notice');
     if(notice && stage === 'uploaded'){
@@ -11410,7 +11530,27 @@ function processData(records){
       purchases: scoringOrders,
       activePipeline,
       allRecords: allOrders,
-      mostRecentDate: mostRecentDate ? mostRecentDate.toLocaleDateString() : 'Unknown'
+      // Live-QA correction (calendar-day regression): every other calendar-
+      // only date surface in this file (formatShortDate(), the
+      // createRepeatPatternOpportunities() pattern.lastDate.toISOString()
+      // evidence date) is deliberately UTC-anchored so a date-only CSV order
+      // date (e.g. "2025-08-14", parsed by JS as UTC midnight) never shifts
+      // to the previous calendar day in a negative-UTC-offset browser.
+      // toLocaleDateString() with no options here was the ONE exception --
+      // it renders in the browser's LOCAL timezone, so this field (and
+      // everything downstream that inherits it verbatim: opp.mostRecentDate,
+      // opp.signalDate via createOpportunity(), Account Context, evidence
+      // text, PFC/email date lines) silently lost a day while the ONE
+      // surface that computes its own date independently from the same raw
+      // order (createRepeatPatternOpportunities()'s own evidence line) did
+      // not -- confirmed production case: Ridgeline's Account Context read
+      // "Aug 13, 2025" while its own Repeat/Pattern evidence line correctly
+      // read "Aug 14, 2025" for the exact same order. Stored as an ISO
+      // date-only string (unambiguous, always parsed as UTC by any later
+      // `new Date(...)` call) rather than a locale display string, matching
+      // every other stored-date field in this pipeline -- render-time
+      // formatting is formatShortDate()'s job, not this assignment's.
+      mostRecentDate: mostRecentDate ? mostRecentDate.toISOString().slice(0,10) : 'Unknown'
     };
 
     account.relationshipStrength = getRelationshipStrength(account);
