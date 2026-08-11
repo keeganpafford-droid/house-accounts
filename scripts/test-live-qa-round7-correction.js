@@ -79,7 +79,7 @@ const DASHBOARD_SRC = loadDashboardSource();
   // Live QA round 8: fetchAndRenderAggregateDashboard()'s empty-state
   // clearing was factored out into a shared applyEmptyWorkspaceState()
   // helper -- must be extracted alongside it now.
-  const SRC = [extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
+  const SRC = [extractFn(DASHBOARD_SRC, 'renderEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
 
   function makeEl(){ return { style:{display:''}, textContent:'', innerHTML:'', classList:{ _c:new Set(), add(...c){c.forEach(x=>this._c.add(x));}, remove(...c){c.forEach(x=>this._c.delete(x));}, contains(c){return this._c.has(c);} } }; }
 
@@ -152,7 +152,7 @@ const DASHBOARD_SRC = loadDashboardSource();
   assert(els.customerDashboard.style.display === 'none', 'REQUIRED (top account summary): the Your Accounts panel is hidden -- it must not keep showing the deleted upload\'s filename/account count/signal count');
   assert(els.results.style.display === 'none', 'REQUIRED (opportunity feeds): the priorities feed container is hidden, matching a full page reload');
   assert(calls.refreshOpportunityViews === refreshOpportunityViewsCallsBeforeDeletion + 1, 'REQUIRED (opportunity feeds): refreshOpportunityViews() runs on this refresh, clearing the stat bar/priorities feed/Recently Researched derived from window.accountRadarAccounts');
-  assert(els.memberEmptyState.style.display === 'block' && els.exampleOpportunity.style.display === 'block', 'REQUIRED: the existing clean empty-workspace UI is shown, matching what a hard browser reload already produces -- Manage Customer Accounts and the dashboard now agree');
+  assert(els.memberEmptyState.style.display === 'block', 'REQUIRED: the existing clean empty-workspace UI is shown, matching what a hard browser reload already produces -- Manage Customer Accounts and the dashboard now agree');
 }
 
 console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);

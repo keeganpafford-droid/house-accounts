@@ -734,6 +734,13 @@ export default async function handler(req, res){
     teamProspectCount = await prospectCountForUsers(activeOrgUsers.length ? activeOrgUsers : [user]);
 
     if(viewMode === 'my' && ownedUploadIds.length === 0){
+      // Live QA round 9: teamCustomerCount above is already computed from a
+      // genuine org-wide account query (the same one the view switcher's
+      // own numbers rely on) -- surfacing it here as a plain boolean lets
+      // the empty-state UI distinguish "nobody on the team has uploaded
+      // anything" from "you personally haven't, but your team has," without
+      // a second request. For a solo user with no teammates, teamCustomerCount
+      // is just their own (zero) account count, so this is naturally false.
       return json(res, 200, {
         ok:true,
         user,
@@ -750,7 +757,8 @@ export default async function handler(req, res){
         userRole:appRole(user),
         organizationSnapshot:null,
         existingCustomerAccountCount:0,
-        personalEmpty:true
+        personalEmpty:true,
+        teamHasData:teamCustomerCount > 0
       });
     }
 

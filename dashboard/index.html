@@ -623,16 +623,61 @@
     color:var(--radar);
     box-shadow:0 1px 3px rgba(23,55,94,.16);
   }
-  .member-empty-state{
-    max-width:960px;
-    margin:0 auto 18px;
-    padding:18px;
+  /* Live QA round 9: replaces the old text-only .member-empty-state note
+     (always paired with the hardcoded "Sample Analysis / Acme
+     Manufacturing" example card below it) with a single, modern
+     onboarding empty state for a signed-in user with no uploaded
+     customer data -- see applyEmptyWorkspaceState()/renderEmptyWorkspaceState(). */
+  .empty-workspace-state{
+    max-width:640px;
+    margin:32px auto;
+    padding:40px 32px;
     border:1px solid var(--line);
-    border-radius:10px;
+    border-radius:12px;
     background:#fff;
     color:var(--ink);
-    font-weight:800;
+    text-align:center;
   }
+  .empty-workspace-title{
+    font-family:var(--display);
+    font-size:1.6rem;
+    font-weight:800;
+    margin:0 0 12px;
+  }
+  .empty-workspace-body{
+    font-size:0.95rem;
+    color:var(--slate);
+    line-height:1.55;
+    margin:0 auto 24px;
+    max-width:480px;
+  }
+  .empty-workspace-actions{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    align-items:center;
+    gap:12px;
+    margin-bottom:14px;
+  }
+  .empty-workspace-secondary-link{
+    color:var(--slate);
+    font-size:.85rem;
+    text-decoration:underline;
+  }
+  .empty-workspace-secondary-link:hover{color:var(--ink);}
+  .empty-workspace-switch-team{margin-top:2px;}
+  .empty-workspace-link-btn{
+    background:none;
+    border:0;
+    color:var(--radar);
+    font-weight:800;
+    cursor:pointer;
+    text-decoration:underline;
+    font-family:var(--body);
+    font-size:.85rem;
+    padding:4px;
+  }
+  .empty-workspace-link-btn:hover{color:var(--signal);}
 
   #error{
     display:none; margin-top:16px; padding:12px 16px; background:#fdecea; border-left:3px solid var(--signal);
@@ -2365,10 +2410,24 @@
        standalone Team View panel that used to sit here has moved into the
        heading row above (#dashboardViewSwitcher). -->
   <div class="saved-dashboard-banner" id="savedDashboardBanner"></div>
-  <div class="member-empty-state" id="memberEmptyState" style="display:none;">
-    <strong>My View</strong><br>
-    You haven't uploaded any customer accounts yet.<br>
-    <span>Upload your own customer order history to begin receiving your personal recommendations.</span>
+  <!-- Live QA round 9: replaces the old "My View / you haven't uploaded..."
+       text note (always shown alongside the hardcoded Sample Analysis /
+       Acme Manufacturing example card below) with a single, modern,
+       onboarding-oriented empty state for a signed-in user with no
+       uploaded customer data. Content is filled in by
+       renderEmptyWorkspaceState() -- see its own header comment for the
+       My View / Team View / My-empty-but-Team-has-data variants. -->
+  <div class="empty-workspace-state" id="memberEmptyState" style="display:none;">
+    <h2 class="empty-workspace-title" id="emptyWorkspaceTitle">No customer data yet</h2>
+    <p class="empty-workspace-body" id="emptyWorkspaceBody">Upload a customer order history to start getting repeat buying opportunities, follow-up reminders, and business trigger insights.</p>
+    <div class="empty-workspace-actions">
+      <button type="button" class="btn" id="emptyWorkspaceAddDataBtn">Add Customer Data</button>
+      <a class="btn btn-secondary" href="/export-guides/">View Import Guide</a>
+    </div>
+    <a class="empty-workspace-secondary-link" href="/export-guides/sample-customer-order-history.csv" download>Download Sample CSV</a>
+    <div class="empty-workspace-switch-team" id="emptyWorkspaceSwitchTeam" hidden>
+      <button type="button" class="empty-workspace-link-btn" id="emptyWorkspaceSwitchTeamBtn">Switch to Team View</button>
+    </div>
   </div>
 
   <div id="results">
@@ -3747,7 +3806,39 @@ function showDashboardRefreshRetryState(){
 // exampleOpportunity/results visibility. A confirmed "no existing customer
 // dashboard data" 404 is unambiguous regardless of role; excluding
 // team-capable accounts from recognizing it as empty was never correct.
-function applyEmptyWorkspaceState({silent, banner}){
+// Live QA round 9: the signed-in, no-uploaded-data empty state -- fills in
+// #memberEmptyState's headline/body/actions, with copy that varies by
+// context:
+//   - viewMode 'my', team also has no data (or no team): the default "no
+//     customer data yet, upload to start getting X/Y/Z" message.
+//   - viewMode 'my', but teamHasData is true (api/get-dashboard.js's
+//     personalEmpty response now includes this, computed from the SAME
+//     org-wide account query it already runs for the view switcher):
+//     points the user at Team View as an alternative, with a real "Switch
+//     to Team View" action, rather than only ever suggesting an upload.
+//   - viewMode 'team' (the org's last upload/accounts/signals are gone --
+//     see fetchAndRenderAggregateDashboard()'s noData catch branch, which
+//     is reachable only for team view): team-scoped copy.
+function renderEmptyWorkspaceState({viewMode, teamHasData} = {}){
+  const titleEl = document.getElementById('emptyWorkspaceTitle');
+  const bodyEl = document.getElementById('emptyWorkspaceBody');
+  const switchTeamWrap = document.getElementById('emptyWorkspaceSwitchTeam');
+  if(!titleEl || !bodyEl) return;
+  const valueProp = 'Upload a customer order history to start getting repeat buying opportunities, follow-up reminders, and business trigger insights.';
+  titleEl.textContent = 'No customer data yet';
+  if(viewMode === 'team'){
+    bodyEl.textContent = `Your team hasn't uploaded customer data yet. ${valueProp}`;
+    if(switchTeamWrap) switchTeamWrap.hidden = true;
+  } else if(teamHasData){
+    bodyEl.textContent = "You haven't uploaded your own customer accounts yet. Switch to Team View to see shared team opportunities, or upload your own data to get personal recommendations.";
+    if(switchTeamWrap) switchTeamWrap.hidden = false;
+  } else {
+    bodyEl.textContent = valueProp;
+    if(switchTeamWrap) switchTeamWrap.hidden = true;
+  }
+}
+
+function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
   window.accountRadarAccounts = [];
   currentUploadId = null;
   currentUploadName = '';
@@ -3759,23 +3850,40 @@ function applyEmptyWorkspaceState({silent, banner}){
   // functions the populated path uses rather than any new empty-state
   // logic.
   if(typeof refreshOpportunityViews === 'function') refreshOpportunityViews();
+  renderEmptyWorkspaceState({viewMode, teamHasData});
   const memberEmpty = document.getElementById('memberEmptyState');
   const gate = document.getElementById('leadGate');
-  const example = document.getElementById('exampleOpportunity');
   const results = document.getElementById('results');
   if(memberEmpty) memberEmpty.style.display = 'block';
   if(gate) gate.style.display = 'none';
   // No accounts uploaded yet -- the always-visible global "Add Customer
-  // Data" CTA in the header is the single next action; the upload control
-  // itself now only appears inside its modal (opened by that CTA), not
-  // auto-revealed inline on the page. Loading is confirmed complete AND
-  // confirmed empty here, so Sample Analysis is safe to show now (never as
-  // a default/flash state).
-  if(example) example.style.display = 'block';
+  // Data" CTA in the header, and this empty state's own primary CTA, are
+  // the next action. Loading is confirmed complete AND confirmed empty
+  // here. Live QA round 9: the hardcoded "Sample Analysis / Acme
+  // Manufacturing" example card (#exampleOpportunity) is no longer shown
+  // for this signed-in path -- it looked like a fake populated dashboard
+  // rather than an honest empty state. #exampleOpportunity itself is
+  // untouched and still used by setLeadGateState()'s separate pre-auth
+  // marketing preview (the #leadGate capture flow for a visitor who has
+  // never signed in) -- that is a different audience/page state and was
+  // not part of this round's request.
   if(results) results.style.display = 'none';
   if(banner) banner.style.display = 'none';
   if(typeof renderDashboardViewSwitcher === 'function') renderDashboardViewSwitcher();
 }
+
+function wireEmptyWorkspaceStateControls(){
+  const addDataBtn = document.getElementById('emptyWorkspaceAddDataBtn');
+  if(addDataBtn) addDataBtn.addEventListener('click', () => openLightweightCustomerUpload());
+  const switchTeamBtn = document.getElementById('emptyWorkspaceSwitchTeamBtn');
+  if(switchTeamBtn){
+    switchTeamBtn.addEventListener('click', () => {
+      if(typeof setDashboardView === 'function') setDashboardView('team');
+    });
+  }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireEmptyWorkspaceStateControls);
+else wireEmptyWorkspaceStateControls();
 
 async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
   const e = String(email || '').trim().toLowerCase();
@@ -3808,7 +3916,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       // skeleton/banner while fetching," never "leave stale content on
       // screen once the fetch has confirmed the workspace is now genuinely
       // empty." See applyEmptyWorkspaceState()'s own header comment.
-      applyEmptyWorkspaceState({silent, banner});
+      applyEmptyWorkspaceState({silent, banner, viewMode:'my', teamHasData: !!data.teamHasData});
       return {ok:true, empty:true};
     }
 
@@ -3863,7 +3971,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       // fresher upload already rendered client-side, so this late "no
       // data" error must not replace it.
       if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
-      applyEmptyWorkspaceState({silent, banner});
+      applyEmptyWorkspaceState({silent, banner, viewMode: dashboardViewMode || defaultDashboardView()});
       return {ok:true, empty:true};
     }
     if(!silent && banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }

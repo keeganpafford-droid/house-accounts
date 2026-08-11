@@ -30,11 +30,23 @@ assert.doesNotMatch(dashboard,/>Add another list</);
 // the same canonical openAddCustomerDataModal() flow.
 const ctaMatches = header.match(/>Add Customer Data</g) || [];
 assert.equal(ctaMatches.length, 1, 'exactly one "Add Customer Data" CTA in site-header.js');
-// The modal's own <h2> heading legitimately says "Add Customer Data" (it is
-// hidden by default and only opens via the canonical action) -- what must
-// stay singular is a clickable button/anchor duplicating the header CTA.
+// Live QA round 9: the signed-in, no-uploaded-data empty state
+// (#memberEmptyState, filled in by renderEmptyWorkspaceState()) now has
+// its own primary "Add Customer Data" button -- a deliberate exception to
+// the "single clickable entry point" invariant above, scoped to the ONE
+// context where there is nothing else on the page for a brand-new user to
+// click: a true empty workspace. It resolves through the exact same
+// canonical openLightweightCustomerUpload() -> openAddCustomerDataModal()
+// flow as the header CTA, never a second modal/orchestration path, and it
+// is the only OTHER page-level control permitted to carry this label. The
+// modal's own <h2> heading legitimately says "Add Customer Data" too (it
+// is hidden by default and only opens via the canonical action) -- what
+// must stay singular is any FURTHER clickable button/anchor duplicating
+// these two.
 const dashboardAddCustomerDataControls = dashboard.match(/<(button|a)[^>]*>Add Customer Data</g) || [];
-assert.equal(dashboardAddCustomerDataControls.length, 0, 'dashboard/index.html renders no page-level "Add Customer Data" button or link of its own -- the header CTA (site-header.js, rendered on every authenticated page, desktop and mobile alike) is the single clickable entry point');
+assert.equal(dashboardAddCustomerDataControls.length, 1, 'dashboard/index.html renders exactly one page-level "Add Customer Data" control of its own -- the empty-workspace-state primary CTA -- and no other; the header CTA (site-header.js, rendered on every authenticated page, desktop and mobile alike) remains the entry point everywhere else');
+assert.match(dashboard, /id="emptyWorkspaceAddDataBtn">Add Customer Data</, 'the one page-level "Add Customer Data" control is specifically the empty-workspace-state CTA');
+assert.match(dashboard, /addDataBtn\.addEventListener\('click', \(\) => openLightweightCustomerUpload\(\)\);/, 'the empty-workspace-state CTA resolves through the exact same canonical openLightweightCustomerUpload() flow, not a separate modal/orchestration path');
 assert.match(dashboard, /function openAddCustomerDataModal\(\)/, 'the canonical Add Customer Data modal-open function is present');
 assert.match(dashboard, /#add-customer-data['"]?\s*\|\|\s*window\.location\.hash === ['"]#dropzone/, 'the legacy #add-customer-data hash handler still routes through the canonical modal-open path');
 

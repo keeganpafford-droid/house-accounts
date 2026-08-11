@@ -66,12 +66,14 @@ function makeEl(){ return { style:{display:''}, textContent:'', innerHTML:'', cl
 function buildScenario(dashboardSrc){
   const els = {
     savedDashboardBanner: makeEl(), dashboardLoadingSkeleton: makeEl(), memberEmptyState: makeEl(),
-    leadGate: makeEl(), exampleOpportunity: makeEl(), results: makeEl(), customerDashboard: makeEl()
+    leadGate: makeEl(), exampleOpportunity: makeEl(), results: makeEl(), customerDashboard: makeEl(),
+    emptyWorkspaceTitle: makeEl(), emptyWorkspaceBody: makeEl(), emptyWorkspaceSwitchTeam: makeEl()
   };
   els.results.style.display = 'block';
   els.customerDashboard.style.display = 'block';
   els.memberEmptyState.style.display = 'none';
   els.exampleOpportunity.style.display = 'none';
+  els.emptyWorkspaceSwitchTeam.hidden = true;
 
   // The exact founder scenario: an owner/admin account (canCurrentUserViewTeam()
   // === true), whose dashboardViewMode defaults to 'team', clicking Refresh
@@ -132,7 +134,7 @@ function buildScenario(dashboardSrc){
 // asserted only after the async call has fully settled.
 // ===========================================================================
 {
-  const SRC = [extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
+  const SRC = [extractFn(DASHBOARD_SRC, 'renderEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
   const { sandbox, els } = buildScenario(SRC);
 
   const result = await sandbox.__exports.fetchAndRenderAggregateDashboard('owner@example.com', {silent:false});
@@ -144,7 +146,11 @@ function buildScenario(dashboardSrc){
   assert(els.customerDashboard.style.display === 'none', 'REQUIRED (saved account/signal count cannot remain): the Your Accounts panel is hidden');
   assert(els.results.style.display === 'none', 'REQUIRED (old opportunity cards cannot remain): the priorities feed container is hidden');
   assert(els.memberEmptyState.style.display === 'block', 'REQUIRED: the correct empty-workspace UI is visible');
-  assert(els.exampleOpportunity.style.display === 'block', 'REQUIRED: Sample Analysis is shown, matching a hard browser reload');
+  // Live QA round 9: the hardcoded "Sample Analysis / Acme Manufacturing"
+  // example card is no longer shown for this signed-in path -- replaced by
+  // renderEmptyWorkspaceState()'s team-context copy inside #memberEmptyState.
+  assert(els.exampleOpportunity.style.display !== 'block', 'REQUIRED: the old Sample Analysis example card is NOT shown for this confirmed-empty team workspace');
+  assert(/Your team hasn't uploaded customer data yet/.test(els.emptyWorkspaceBody.textContent), `REQUIRED: the empty-state body uses team-context copy for a team-view empty workspace (got "${els.emptyWorkspaceBody.textContent}")`);
   assert(els.leadGate.style.display === 'none', 'sanity: the lead gate stays hidden for an already-authenticated user');
 }
 
@@ -155,7 +161,7 @@ function buildScenario(dashboardSrc){
 // applyEmptyWorkspaceState().
 // ===========================================================================
 {
-  const SRC = [extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
+  const SRC = [extractFn(DASHBOARD_SRC, 'renderEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
   const els = { savedDashboardBanner: makeEl(), dashboardLoadingSkeleton: makeEl(), memberEmptyState: makeEl(), leadGate: makeEl(), exampleOpportunity: makeEl(), results: makeEl(), customerDashboard: makeEl() };
   els.results.style.display = 'block';
   els.customerDashboard.style.display = 'block';

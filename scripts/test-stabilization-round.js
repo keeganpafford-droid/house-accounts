@@ -103,9 +103,18 @@ assert(
 // that helper's call-site ordering, not literal example.style.display text
 // inside each branch.
 const applyEmptyWorkspaceStateSrc = extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState');
+const renderEmptyWorkspaceStateSrc = extractFn(DASHBOARD_SRC, 'renderEmptyWorkspaceState');
+// Live QA round 9: the hardcoded "Sample Analysis / Acme Manufacturing"
+// example card is no longer revealed for this signed-in path -- replaced
+// by renderEmptyWorkspaceState()'s modern empty-state copy, called from
+// applyEmptyWorkspaceState() as part of the same shared transition.
 assert(
-  /example\.style\.display = 'block';/.test(applyEmptyWorkspaceStateSrc),
-  'applyEmptyWorkspaceState() reveals Sample Analysis as part of the shared empty-workspace transition'
+  /renderEmptyWorkspaceState\(\{viewMode, teamHasData\}\);/.test(applyEmptyWorkspaceStateSrc),
+  'applyEmptyWorkspaceState() fills in the modern empty-state copy (renderEmptyWorkspaceState()) as part of the shared empty-workspace transition'
+);
+assert(
+  /No customer data yet/.test(renderEmptyWorkspaceStateSrc),
+  'renderEmptyWorkspaceState() sets the modern "No customer data yet" empty-state headline'
 );
 {
   const personalEmptyBlock = loadSavedDashboardSrc.slice(loadSavedDashboardSrc.indexOf('if(data.personalEmpty === true){'), loadSavedDashboardSrc.indexOf('const accounts = (data.accounts || [])'));
@@ -122,7 +131,7 @@ assert(
   // The actual CALL, not the applyEmptyWorkspaceState() mention inside this
   // branch's own header comment (which would otherwise match earlier in
   // the block and falsely appear to precede the noData check).
-  const applyCallIdx = noDataBlock.indexOf('applyEmptyWorkspaceState({silent, banner});');
+  const applyCallIdx = noDataBlock.indexOf('applyEmptyWorkspaceState({silent, banner, viewMode: dashboardViewMode || defaultDashboardView()});');
   assert(
     noDataIdx !== -1 && applyCallIdx !== -1 && noDataIdx < applyCallIdx,
     'loadSavedDashboard() reveals Sample Analysis in the catch/noData branch only after loading is confirmed complete and empty'

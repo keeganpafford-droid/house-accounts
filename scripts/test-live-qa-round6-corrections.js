@@ -71,7 +71,7 @@ const DASHBOARD_SRC = loadDashboardSource();
   // clearing was factored out into a shared applyEmptyWorkspaceState()
   // helper (also used by the team-view 404 catch branch) -- must be
   // extracted alongside it now.
-  const SRC = [extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
+  const SRC = [extractFn(DASHBOARD_SRC, 'renderEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
 
   function makeEl(){ return { style:{display:''}, textContent:'', innerHTML:'', classList:{ _c:new Set(), add(...c){c.forEach(x=>this._c.add(x));}, remove(...c){c.forEach(x=>this._c.delete(x));}, contains(c){return this._c.has(c);} } }; }
 
@@ -83,12 +83,16 @@ const DASHBOARD_SRC = loadDashboardSource();
       leadGate: makeEl(),
       exampleOpportunity: makeEl(),
       results: makeEl(),
-      customerDashboard: makeEl()
+      customerDashboard: makeEl(),
+      emptyWorkspaceTitle: makeEl(),
+      emptyWorkspaceBody: makeEl(),
+      emptyWorkspaceSwitchTeam: makeEl()
     };
     els.results.style.display = 'block';
     els.customerDashboard.style.display = 'block';
     els.memberEmptyState.style.display = 'none';
     els.exampleOpportunity.style.display = 'none';
+    els.emptyWorkspaceSwitchTeam.hidden = true;
 
     const calls = { refreshOpportunityViews: 0, renderCustomerDashboard: 0 };
     const houseAuth = { authHeadersAsync: async () => ({Authorization:'Bearer test'}) };
@@ -139,7 +143,13 @@ const DASHBOARD_SRC = loadDashboardSource();
     assert(els.customerDashboard.style.display === 'none', 'REQUIRED: the Your Accounts panel (#customerDashboard) is hidden -- it must not keep showing the old filename/account count');
     assert(els.results.style.display === 'none', 'REQUIRED: the priorities feed container (#results) is hidden on a confirmed-empty SILENT refresh, same as a full page reload');
     assert(els.memberEmptyState.style.display === 'block', 'REQUIRED: the existing clean empty-state UI (#memberEmptyState) is shown on a confirmed-empty SILENT refresh -- reusing it, not a new onboarding redesign');
-    assert(els.exampleOpportunity.style.display === 'block', 'REQUIRED: Sample Analysis (#exampleOpportunity) is shown, matching the exact empty state a full reload already produces');
+    // Live QA round 9: the hardcoded "Sample Analysis / Acme Manufacturing"
+    // example card is no longer shown for this signed-in path -- replaced
+    // by renderEmptyWorkspaceState()'s modern empty-state copy inside
+    // #memberEmptyState itself.
+    assert(els.exampleOpportunity.style.display !== 'block', 'REQUIRED: the old Sample Analysis example card is NOT shown for a signed-in confirmed-empty workspace');
+    assert(els.emptyWorkspaceTitle.textContent === 'No customer data yet', `REQUIRED: the empty-state title reads "No customer data yet" (got "${els.emptyWorkspaceTitle.textContent}")`);
+    assert(/Upload a customer order history/.test(els.emptyWorkspaceBody.textContent), `REQUIRED: the empty-state body explains what happens after upload (got "${els.emptyWorkspaceBody.textContent}")`);
     assert(calls.refreshOpportunityViews === 1, 'REQUIRED: refreshOpportunityViews() (which clears the stat bar, priorities feed, detailed account views, and Recently Researched -- all four derived from window.accountRadarAccounts) is called even on a silent refresh, so none of them can keep showing stale content');
   }
 

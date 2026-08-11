@@ -431,7 +431,10 @@ assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.len
 // ---------------------------------------------------------------------------
 // Required test 16 (onboarding sprint): first-time empty states.
 // ---------------------------------------------------------------------------
-assert(/You haven't uploaded any customer accounts yet[\s\S]{0,120}Upload your own customer order history/.test(html), 'required test 16: the no-uploads-yet empty state states what happened and the single best next action (upload)');
+// Live QA round 9: the no-uploads-yet empty state was redesigned (see
+// renderEmptyWorkspaceState()) -- new copy, same guarantee (states what
+// happened, gives a single best next action).
+assert(/No customer data yet/.test(html) && /Add Customer Data/.test(html), 'required test 16: the no-uploads-yet empty state states what happened and offers a single best next action (Add Customer Data)');
 assert(/could not find a company\/account column[\s\S]{0,200}Export Guides/.test(html), 'required test 16: the failed-upload error state points to a concrete next action (Export Guides)');
 
 // ===========================================================================
