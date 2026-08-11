@@ -12021,6 +12021,31 @@ function processData(records){
     if(refreshResult && !refreshResult.ok && !aggregateDashboardEverLoaded){
       showDashboardRefreshRetryState();
     }
+    // Live QA round 7: freshUploadRenderedThisSession exists to protect
+    // THIS upload's own just-rendered client state against a single,
+    // narrow race -- a server response (personalEmpty or "no data yet")
+    // that predates this upload server-side (replication/read lag) landing
+    // after processData() already rendered real accounts. It is a
+    // one-shot flag set true by processData() above, but was never reset
+    // back to false afterward -- so it kept protecting this upload's
+    // stale render FOREVER, for the rest of the page session, including
+    // against later, genuinely authoritative empty responses. Confirmed
+    // production case: upload -> (flag set true) -> later, in the SAME
+    // page session, delete the only uploaded list via Manage Customer
+    // Accounts (server-confirmed empty -- ha_uploads/ha_accounts/ha_signals
+    // rows are actually gone) -> click Refresh Dashboard -> the server
+    // correctly returns personalEmpty:true, but fetchAndRenderAggregateDashboard()'s
+    // guard treated it as still predating the long-gone upload and silently
+    // skipped clearing anything, leaving the old filename/account count/
+    // signal count/priority cards on screen until a full page reload (which
+    // resets this in-memory flag to its initial false). This refreshAggregateDashboard()
+    // call is processData()'s own guaranteed follow-up attempt at syncing
+    // the aggregate with the fresh upload -- once it has resolved, the
+    // upload has had its one real chance to be reflected, so the flag's
+    // protection window is over: any future response (including a later,
+    // unrelated deletion) is new information, not a stale race, and must
+    // be allowed to update the dashboard normally.
+    freshUploadRenderedThisSession = false;
   });
 }
 
