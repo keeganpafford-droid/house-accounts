@@ -132,6 +132,18 @@ assert(
 // attempted/with-signals/signals-found/failures.
 // ---------------------------------------------------------------------------
 const handleListResearchClickSrc = extractFn(DASHBOARD_SRC, 'handleListResearchClick');
+// Live QA round 6: the post-confirm claim/dispatch/completion-reporting
+// body that used to live inside handleListResearchClick() itself was
+// factored out into runListResearch() (listId, {onlyUnresearched}) so the
+// upload-success modal's "Research N accounts" CTA can reuse the exact
+// same trusted flow (see researchListAndFocus()) instead of a second
+// research orchestration route. handleListResearchClick() now only
+// confirms, then calls runListResearch() -- assertions below that check
+// the completion-reporting/refresh/early-load behavior now read from the
+// combined flow (both functions concatenated), since that behavior lives
+// in runListResearch() regardless of which entry point reached it.
+const runListResearchSrc = extractFn(DASHBOARD_SRC, 'runListResearch');
+const handleListResearchFlowSrc = `${handleListResearchClickSrc}\n${runListResearchSrc}`;
 // Scaling round: the active-account count in the confirmation dialog now
 // comes from the server-computed list.activeCount (Prefer: count=exact) --
 // cachedLists no longer carries a full .accounts array to filter
@@ -154,19 +166,19 @@ assert(
   'declining the confirmation dialog aborts before any claim/research call'
 );
 assert(
-  /result\.attempted[\s\S]{0,30}account.*attempted.*result\.withSignals[\s\S]{0,30}with signal/.test(handleListResearchClickSrc.replace(/\n/g, ' ')),
+  /result\.attempted[\s\S]{0,30}account.*attempted.*result\.withSignals[\s\S]{0,30}with signal/.test(handleListResearchFlowSrc.replace(/\n/g, ' ')),
   'required test 6/completion reporting: the summary reports accounts attempted and accounts with signals'
 );
 assert(
-  /\$\{result\.totalSignals\} signal\$\{result\.totalSignals===1\?'':'s'\} found\)\$\{result\.failures/.test(handleListResearchClickSrc),
+  /\$\{result\.totalSignals\} signal\$\{result\.totalSignals===1\?'':'s'\} found\)\$\{result\.failures/.test(handleListResearchFlowSrc),
   'the summary also reports total signals found and any failures'
 );
 assert(
-  /if\(result\.ok\)\{[\s\S]*?if\(typeof refreshAggregateDashboard === 'function'\) await refreshAggregateDashboard\(\);/.test(handleListResearchClickSrc),
+  /if\(result\.ok\)\{[\s\S]*?if\(typeof refreshAggregateDashboard === 'function'\) await refreshAggregateDashboard\(\);/.test(handleListResearchFlowSrc),
   'required test 6: successful list completion refreshes the aggregate dashboard (Your Accounts/totals/Recently Researched/priorities) via the shared refreshAggregateDashboard()'
 );
 assert(
-  /^\s*load\(\);$/m.test(handleListResearchClickSrc.split('if(!confirmed) return;')[1].split('let result;')[0]),
+  /^\s*load\(\);$/m.test(runListResearchSrc),
   'an early, unawaited load() kicks a re-render immediately after confirming, so account rows can pick up the running state via the existing server-truth researchRunState without waiting for the next poll tick'
 );
 

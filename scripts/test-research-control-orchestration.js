@@ -594,13 +594,18 @@ await testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining();
 // the Manage Customer Accounts modal scope) -- see that function's own
 // header comment for why. The underlying explicit-user-action semantics
 // (auto:false) and the zero-call "Not now" guarantee are unchanged.
+// Live QA round 6: Research no longer calls researchTopAccounts() directly
+// -- it hands off to window.HouseAccountManager.researchList(uploadId),
+// the trusted Manage-Customer-Accounts-scoped flow ("Research All
+// Accounts" there runs the exact same runListResearch(uploadId,
+// {onlyUnresearched:false})).
 {
-  const wireStart = DASHBOARD_SRC.indexOf('function showUploadSuccessModal(accountCount, accounts, records){');
+  const wireStart = DASHBOARD_SRC.indexOf('function showUploadSuccessModal(accountCount, accounts, records, uploadId){');
   const wireEnd = DASHBOARD_SRC.indexOf('\n// Live QA round 5, item 3: the truthful counterpart', wireStart);
   const wireSrc = DASHBOARD_SRC.slice(wireStart, wireEnd > -1 ? wireEnd : wireStart + 4000);
-  assert(/researchBtn\.addEventListener\('click', \(\) => \{[\s\S]{0,200}?researchTopAccounts\(\{auto:false\}\);/.test(wireSrc), '2) clicking "Research N accounts" calls researchTopAccounts({auto:false}) -- an explicit, non-automatic start');
+  assert(/researchBtn\.addEventListener\('click', \(\) => \{[\s\S]{0,300}?window\.HouseAccountManager\.researchList\(uploadId\);/.test(wireSrc), '2) clicking "Research N accounts" calls window.HouseAccountManager.researchList(uploadId) -- an explicit, non-automatic start of the trusted list-scoped research flow');
   const notNowBlock = wireSrc.slice(wireSrc.indexOf('notNowBtn.addEventListener'), wireSrc.indexOf('notNowBtn.addEventListener') + 200);
-  assert(!/researchTopAccounts|fetch\(/.test(notNowBlock), '3) "Not now" makes zero research calls -- its click handler contains no research/fetch call at all');
+  assert(!/researchTopAccounts|researchList\(|fetch\(/.test(notNowBlock), '3) "Not now" makes zero research calls -- its click handler contains no research/fetch call at all');
   assert(/notNowBtn\.addEventListener\('click', \(\) => close\(\)\);/.test(wireSrc), '3) "Not now" closes the modal (so the decision cannot be accidentally re-triggered) and does nothing else');
 }
 

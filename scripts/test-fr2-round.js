@@ -189,7 +189,7 @@ assert(
   'required test 11: the old renderUploadSuccessState() panel call no longer exists in processData() -- replaced by the modal pair shown from the save-resolution callback'
 );
 assert(
-  /showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records\);/.test(processDataSrc) &&
+  /showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records, saveResult\.data\.uploadId \|\| currentUploadId\);/.test(processDataSrc) &&
   /showUploadFailureModal\(saveResult\.error \|\| "Your upload didn't save\. Please try again\."\);/.test(processDataSrc),
   'required test 11: processData() shows the truthful upload-success or upload-failure modal from inside saveCurrentUpload(\'uploaded\')\'s own .then() callback, gated on the real save outcome -- regardless of which pre-save branch (aggregate-already-loaded vs true-first-upload) ran above'
 );
@@ -210,8 +210,15 @@ assert(
 
 // ---------------------------------------------------------------------------
 // Item 4: zero/one/multiple-account list-research completion workflow.
+// Live QA round 6: this completion-branching logic was factored out of
+// handleListResearchClick() into runListResearch() (listId,
+// {onlyUnresearched}), reused by both the "Research All Accounts" menu
+// item and the upload-success modal's "Research N accounts" CTA -- see
+// researchListAndFocus(). Assertions below read the combined source of
+// both functions, since the behavior they check now lives in
+// runListResearch() regardless of which entry point reached it.
 // ---------------------------------------------------------------------------
-const handleListResearchClickSrc = extractFn(DASHBOARD_SRC, 'handleListResearchClick');
+const handleListResearchClickSrc = `${extractFn(DASHBOARD_SRC, 'handleListResearchClick')}\n${extractFn(DASHBOARD_SRC, 'runListResearch')}`;
 assert(
   /const opportunityAccounts = Array\.isArray\(result\.accountsWithOpportunities\) \? result\.accountsWithOpportunities : \[\];/.test(handleListResearchClickSrc),
   'handleListResearchClick() branches on the exact set of accounts from this run that produced an opportunity'

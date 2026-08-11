@@ -3748,24 +3748,50 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       // this response predates it server-side (replication/read lag), so it
       // must not hide the dashboard the user is already looking at.
       if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
-      if(!silent){
-        window.accountRadarAccounts = [];
-        const memberEmpty = document.getElementById('memberEmptyState');
-        const gate = document.getElementById('leadGate');
-        const example = document.getElementById('exampleOpportunity');
-        const results = document.getElementById('results');
-        if(memberEmpty) memberEmpty.style.display = 'block';
-        if(gate) gate.style.display = 'none';
-        // No accounts uploaded yet -- the always-visible global "Add Customer
-        // Data" CTA in the header is the single next action; the upload
-        // control itself now only appears inside its modal (opened by that
-        // CTA), not auto-revealed inline on the page. Loading is confirmed
-        // complete AND confirmed empty here, so Sample Analysis is safe to
-        // show now (never as a default/flash state).
-        if(example) example.style.display = 'block';
-        if(results) results.style.display = 'none';
-        if(banner) banner.style.display = 'none';
-      }
+      // Live QA round 6: this whole transition used to be gated on !silent,
+      // so a SILENT refresh (refreshAggregateDashboard() -- what Refresh
+      // Dashboard and every post-upload/post-research call actually uses)
+      // that legitimately confirmed zero accounts left window.
+      // accountRadarAccounts, the priorities feed, the stat bar, the Your
+      // Accounts panel, and Recently Researched all showing the PREVIOUS
+      // upload's stale content -- confirmed production case: deleting the
+      // last uploaded list correctly emptied the server (Manage Customer
+      // Accounts showed "No uploaded customer accounts found"), but the
+      // dashboard underneath kept showing the old filename, account count,
+      // and cards until a full page reload. "silent" means "don't flash the
+      // loading skeleton/banner while fetching" -- it was never meant to
+      // mean "leave stale content on screen once the fetch has confirmed
+      // the workspace is now genuinely empty," so this state transition (and
+      // the harmless memberEmpty/gate/example/results visibility below,
+      // which is the same empty state a fresh page load already shows) now
+      // always runs, matching the required invariant that a confirmed-empty
+      // refresh must never require a browser reload to be reflected.
+      window.accountRadarAccounts = [];
+      currentUploadId = null;
+      currentUploadName = '';
+      const customerDashboardPanel = document.getElementById('customerDashboard');
+      if(customerDashboardPanel) customerDashboardPanel.style.display = 'none';
+      // Clears the priorities feed, stat bar, detailed account views, and
+      // Recently Researched -- all four are derived purely from window.
+      // accountRadarAccounts (now empty), reusing the exact same render
+      // functions the populated path uses rather than any new empty-state
+      // logic.
+      if(typeof refreshOpportunityViews === 'function') refreshOpportunityViews();
+      const memberEmpty = document.getElementById('memberEmptyState');
+      const gate = document.getElementById('leadGate');
+      const example = document.getElementById('exampleOpportunity');
+      const results = document.getElementById('results');
+      if(memberEmpty) memberEmpty.style.display = 'block';
+      if(gate) gate.style.display = 'none';
+      // No accounts uploaded yet -- the always-visible global "Add Customer
+      // Data" CTA in the header is the single next action; the upload
+      // control itself now only appears inside its modal (opened by that
+      // CTA), not auto-revealed inline on the page. Loading is confirmed
+      // complete AND confirmed empty here, so Sample Analysis is safe to
+      // show now (never as a default/flash state).
+      if(example) example.style.display = 'block';
+      if(results) results.style.display = 'none';
+      if(banner) banner.style.display = 'none';
       return {ok:true, empty:true};
     }
 
@@ -5950,6 +5976,32 @@ function reorderWindowStatus(opp){
   return 'approaching';
 }
 
+// Live QA round 6, item 3 (copy only -- no pattern-detection/eligibility/
+// planningWindow/tab-assignment change): the reorder-window evidence
+// clause accountHistoryStatusLine() below builds. opp.years is set verbatim
+// from findRepeatPatternGroups()'s own years Set (see createRepeatPatternOpportunities()) --
+// a length-1 array means every order behind this pattern fell within ONE
+// calendar year (e.g. Golden Valley Steel Supply's four same-year quarterly
+// batches; findRepeatPatternGroups() can still confidently detect a pattern
+// from volume/seasonality alone, without ever needing a second year). The
+// previous `${years[0]}–${years[years.length-1]} pattern` construction
+// treated this the same as a real multi-year span, producing literal
+// "2025–2025 pattern" for that single-year case, and read like a date
+// interval ("2023–2024 pattern") rather than the evidence it actually is --
+// three orders across three years. Confirmed cases:
+//   - 3+ years: "August · observed in 2023, 2024, and 2025"
+//   - 2 years:  "November · observed in 2023 and 2024"
+//   - 1 year:   "January · based on 2025 purchase cadence" (never a range)
+function reorderWindowEvidenceText(monthLabel, years){
+  if(!monthLabel) return '';
+  if(!Array.isArray(years) || !years.length) return monthLabel;
+  if(years.length === 1) return `${monthLabel} · based on ${years[0]} purchase cadence`;
+  const yearList = years.length === 2
+    ? `${years[0]} and ${years[1]}`
+    : `${years.slice(0, -1).join(', ')}, and ${years[years.length - 1]}`;
+  return `${monthLabel} · observed in ${yearList}`;
+}
+
 // Account-history-specific status states, using the actual order date(s)
 // and calculated cadence already present on the opportunity -- never the
 // public-event taxonomy (upcoming/stale/recent-past/unknown-date), which
@@ -5964,9 +6016,7 @@ function accountHistoryStatusLine(opp){
   // Repeat / Pattern Signal.
   if(opp.opportunityType === 'REPEAT PATTERN'){
     const status = reorderWindowStatus(opp);
-    const windowText = opp.purchaseMonthLabel
-      ? (opp.years && opp.years.length ? `${opp.purchaseMonthLabel} (${opp.years[0]}–${opp.years[opp.years.length-1]} pattern)` : opp.purchaseMonthLabel)
-      : '';
+    const windowText = reorderWindowEvidenceText(opp.purchaseMonthLabel, opp.years);
     if(status === 'overdue'){
       return windowText ? `Normal reorder window has passed — Expected reorder window: ${windowText}` : 'Normal reorder window has passed';
     }
@@ -10675,14 +10725,44 @@ function genericRepeatCollapseKey(opp){
 // these mirrors collapseDuplicateFollowUps() above, and for the same
 // reason: they read as identical, generic "is this happening again" text
 // to a rep, regardless of which arbitrary industry template produced them.
+// Live QA round 6, item 4: a genuine REPEAT PATTERN opportunity DOMINATES a
+// generic industry-fallback opportunity that shares its same buying-
+// category bucket (primaryCategoryFromOpportunity() -- the same coarse
+// grouping getRecommendationType()/buildEvidence() etc. already use
+// elsewhere, not a title/account-name comparison) for the SAME account --
+// confirmed production case: Ridgeline's real "Headwear Program may be
+// coming up again" (a detected multi-year cadence) alongside a generic
+// "Past order history creates a reason to check in" fallback under
+// Additional Opportunities Found. The headline-collision fix (round 5)
+// made the two readable as distinct opportunities, but they are still
+// grounded in essentially the same purchase history and lead a rep to the
+// same action -- seller-redundant, not two genuinely different reasons to
+// reach out. A generic fallback in a DIFFERENT category bucket (e.g. an
+// Onboarding template alongside a real Apparel/Headwear pattern) is a
+// genuinely distinct opportunity and is never suppressed by this rule.
 function collapseDuplicateGenericRepeatSignals(opps){
+  const list = opps || [];
+  const realPatternCategoriesByAccount = new Map();
+  list.forEach(opp => {
+    if(opp.opportunityType !== 'REPEAT PATTERN') return;
+    const key = String(opp.account || '').toLowerCase().trim();
+    const categories = realPatternCategoriesByAccount.get(key) || new Set();
+    categories.add(primaryCategoryFromOpportunity(opp));
+    realPatternCategoriesByAccount.set(key, categories);
+  });
+
   const map = new Map();
   const passthrough = [];
-  (opps || []).forEach(opp => {
+  list.forEach(opp => {
     if(signalLayerLabel(opp) !== 'Repeat / Pattern Signal' || opp.opportunityType === 'REPEAT PATTERN'){
       passthrough.push(opp);
       return;
     }
+    const accountKey = String(opp.account || '').toLowerCase().trim();
+    const realCategories = realPatternCategoriesByAccount.get(accountKey);
+    // Dominated by a real pattern in the same category bucket -- suppressed
+    // outright, not merely deduped against other generics.
+    if(realCategories && realCategories.has(primaryCategoryFromOpportunity(opp))) return;
     const key = genericRepeatCollapseKey(opp);
     const existing = map.get(key);
     if(!existing || getDailyReasonScore(opp) > getDailyReasonScore(existing)) map.set(key, opp);
@@ -11544,7 +11624,7 @@ const MISSING_FIELD_LABELS = {
 // rather than a call to one of those, because those three live inside a
 // separate inline <script> IIFE (the Manage Customer Accounts modal scope)
 // and are not reachable from this script.
-function showUploadSuccessModal(accountCount, accounts, records){
+function showUploadSuccessModal(accountCount, accounts, records, uploadId){
   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
     window.HouseAccountsHeader.beginOverlay();
   }
@@ -11604,15 +11684,26 @@ function showUploadSuccessModal(accountCount, accounts, records){
     }
   }
   notNowBtn.addEventListener('click', () => close());
-  // Research launched from here closes the modal immediately and relies on
-  // the existing renderDashboardResearchProgress() mini progress indicator
-  // (already wired via onResearchTrackerChange, visible on the dashboard
-  // underneath) rather than building a second, duplicative in-modal
-  // progress UI -- the simpler and less duplicative of the two options the
-  // founder asked to choose between.
+  // Live QA round 6: founder QA found that closing this modal and relying
+  // on the mini progress indicator left research kickoff ambiguous --
+  // clicking Research appeared to do nothing observable. Now closes this
+  // modal and hands off directly to window.HouseAccountManager.researchList()
+  // (Manage Customer Accounts modal scope, main script below), which opens
+  // that modal, expands straight to THIS upload (the explicit uploadId this
+  // function was called with -- never a possibly-stale currentUploadId read
+  // later at click time), and runs the SAME trusted researchListFromManageModal()
+  // path "Research All Accounts" already uses there -- not a second research
+  // orchestration route (researchTopAccounts()/getAccountsForResearch() are
+  // no longer called from here). The now-visible list card's own status line
+  // reports a truthful failure (e.g. "no active accounts", a claim conflict)
+  // if the run cannot start, so a failure is never silent.
   researchBtn.addEventListener('click', () => {
     close();
-    researchTopAccounts({auto:false});
+    if(window.HouseAccountManager && typeof window.HouseAccountManager.researchList === 'function' && uploadId){
+      window.HouseAccountManager.researchList(uploadId);
+    } else {
+      showUploadFailureModal('Could not start research for this upload. Open Manage Customer Accounts and try Research All Accounts instead.');
+    }
   });
   viewAccountsBtn.addEventListener('click', () => {
     close();
@@ -11915,7 +12006,12 @@ function processData(records){
       if(lastUploadAcceptedAccountCount === 0){
         hideUploadDecisionForZeroAcceptedAccounts();
       } else {
-        showUploadSuccessModal(lastUploadAcceptedAccountCount, accounts, records);
+        // The explicit, server-confirmed uploadId THIS save just targeted --
+        // never the mutable currentUploadId global, which a later aggregate
+        // refresh (or a second upload in the same session) can legitimately
+        // repoint at a different upload before the modal's own CTA is
+        // clicked.
+        showUploadSuccessModal(lastUploadAcceptedAccountCount, accounts, records, saveResult.data.uploadId || currentUploadId);
       }
     } else if(saveResult && !saveResult.ok && !saveResult.staleAttempt){
       showUploadFailureModal(saveResult.error || "Your upload didn't save. Please try again.");
@@ -12422,7 +12518,10 @@ function escapeHtml(text){
  window.HouseAccountManager = {
    close(){ close(); },
    isOpen(){ return isModalOpen(); },
-   showError(opts){ return showInfoDialog(opts); }
+   showError(opts){ return showInfoDialog(opts); },
+   // Live QA round 6: the upload-success modal's "Research N accounts" CTA
+   // entry point -- see researchListAndFocus()'s own comment above.
+   researchList(uploadId){ return researchListAndFocus(uploadId); }
  };
 
  // Overflow menus -- position:fixed (computed from the trigger's own
@@ -12571,29 +12670,17 @@ function escapeHtml(text){
  // rows pick up the running/disabled state on the SAME server-owned
  // researchRunState accountRow() already reads, via the early load() call
  // below and the existing 6s poll -- no separate disabling logic needed.
- async function handleListResearchClick(btn){
-   const listId = btn.dataset.listId;
-   const listName = btn.dataset.listName || 'this list';
-   // ux/research-control-progress: the same handler now backs both "Research
-   // All Accounts" and "Research Unresearched Accounts" -- the button's own
-   // data-list-research-act value decides scope/confirm copy; everything
-   // else (claim, tracker, progress, save) is identical either way.
-   const onlyUnresearched = btn.dataset.listResearchAct === 'research-unresearched';
-   // Scaling round: activeCount comes straight from the upload summary
-   // (server-computed via Prefer: count=exact) -- cachedLists no longer
-   // carries a full .accounts array to derive this from client-side.
-   const listEntry = cachedLists.find(l => l.id === listId);
-   const activeCount = (listEntry && listEntry.activeCount) || 0;
-   const confirmed = await showResearchConfirm(onlyUnresearched ? {
-     title: `Research unresearched accounts in ${esc(listName)}?`,
-     bodyHtml: `This researches only the accounts in <strong>${esc(listName)}</strong> that have never been researched -- already-researched accounts are left as they are. This may take a few minutes -- House Accounts stays usable while it runs.`,
-     confirmLabel: 'Research Unresearched Accounts'
-   } : {
-     title: `Research ${esc(listName)}?`,
-     bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeCount} account${activeCount===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
-     confirmLabel: 'Research All Accounts'
-   });
-   if(!confirmed) return;
+ // Live QA round 6: the post-confirm body of handleListResearchClick()
+ // below (claim/dispatch via researchListFromManageModal(), early re-render,
+ // final summary/status-line reporting) factored out so the upload-success
+ // modal's "Research N accounts" CTA (main script -- see
+ // window.HouseAccountManager.researchList() below) can trigger the EXACT
+ // same trusted list-scoped research path, not a second orchestration
+ // route. The only thing this skips versus the menu-item path is the
+ // confirm dialog itself -- the upload-success modal's own CTA click IS
+ // that explicit confirmation, so asking again would be redundant friction
+ // immediately after a fresh upload.
+ async function runListResearch(listId, {onlyUnresearched} = {}){
    // Kicks an early re-render so the list-level control, and every account
    // row in it, reflects the running state (via researchRunBanner()/
    // accountRow()'s existing server-truth rendering) as soon as possible,
@@ -12689,6 +12776,55 @@ function escapeHtml(text){
    }else{
      if(statusEl){ statusEl.hidden = false; statusEl.classList.remove('is-success'); statusEl.classList.add('is-error'); statusEl.textContent = result.error || 'List research failed.'; }
    }
+ }
+
+ // The menu-item entry point ("Research All Accounts" / "Research
+ // Unresearched Accounts" in a list's ⋯ menu) -- confirms, then hands off
+ // to runListResearch() above for the actual trusted claim/dispatch/report
+ // work.
+ async function handleListResearchClick(btn){
+   const listId = btn.dataset.listId;
+   const listName = btn.dataset.listName || 'this list';
+   // ux/research-control-progress: the same handler now backs both "Research
+   // All Accounts" and "Research Unresearched Accounts" -- the button's own
+   // data-list-research-act value decides scope/confirm copy; everything
+   // else (claim, tracker, progress, save) is identical either way.
+   const onlyUnresearched = btn.dataset.listResearchAct === 'research-unresearched';
+   // Scaling round: activeCount comes straight from the upload summary
+   // (server-computed via Prefer: count=exact) -- cachedLists no longer
+   // carries a full .accounts array to derive this from client-side.
+   const listEntry = cachedLists.find(l => l.id === listId);
+   const activeCount = (listEntry && listEntry.activeCount) || 0;
+   const confirmed = await showResearchConfirm(onlyUnresearched ? {
+     title: `Research unresearched accounts in ${esc(listName)}?`,
+     bodyHtml: `This researches only the accounts in <strong>${esc(listName)}</strong> that have never been researched -- already-researched accounts are left as they are. This may take a few minutes -- House Accounts stays usable while it runs.`,
+     confirmLabel: 'Research Unresearched Accounts'
+   } : {
+     title: `Research ${esc(listName)}?`,
+     bodyHtml: `This researches every active account in <strong>${esc(listName)}</strong> (${activeCount} account${activeCount===1?'':'s'}). This may take a few minutes -- House Accounts stays usable while it runs.`,
+     confirmLabel: 'Research All Accounts'
+   });
+   if(!confirmed) return;
+   await runListResearch(listId, {onlyUnresearched});
+ }
+
+ // Live QA round 6: exposed so the upload-success modal's "Research N
+ // accounts" CTA (main script) can open Manage Customer Accounts, expand
+ // straight to the just-uploaded list, and kick off the SAME trusted
+ // researchListFromManageModal()-backed run the "Research All Accounts"
+ // menu item uses -- no confirm dialog (the CTA click already is the
+ // explicit confirmation), no second research engine. Awaits load() before
+ // expanding so the target list is guaranteed to already be in cachedLists;
+ // if the upload genuinely is not there (e.g. deleted between save and
+ // click), expandUpload() is skipped and runListResearch() below still
+ // surfaces researchListFromManageModal()'s own truthful
+ // "no active accounts"/fetch error onto the (now-empty) modal instead of
+ // silently doing nothing.
+ async function researchListAndFocus(uploadId){
+   open();
+   await load();
+   if(cachedLists.some(l => l.id === uploadId)) await expandUpload(uploadId);
+   await runListResearch(uploadId, {onlyUnresearched:false});
  }
 
  // Branded toast (reversible pause/resume, and -- ROUND 12, UX item 2 -- the

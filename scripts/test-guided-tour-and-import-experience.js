@@ -400,7 +400,13 @@ assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.len
   assert(/Not now/.test(showSuccessSrc), 'required test 13: the modal offers a "Not now" secondary action');
   assert(/View uploaded accounts/.test(showSuccessSrc), 'required test 13: the modal offers a low-emphasis "View uploaded accounts" link, instead of duplicating View Priorities/Manage Customer Accounts/Upload Another List as full actions');
   assert(!/View Priorities/.test(showSuccessSrc) && !/Manage Customer Accounts</.test(showSuccessSrc) && !/Upload Another List/.test(showSuccessSrc), 'required test 13: the modal does not repeat View Priorities/Manage Customer Accounts/Upload Another List -- those already exist elsewhere in the product');
-  assert(/researchTopAccounts\(\{auto:false\}\)/.test(showSuccessSrc), 'required test 13: clicking Research launches the real researchTopAccounts() (explicit user action, not silent auto-research)');
+  // Live QA round 6: clicking Research now hands off to
+  // window.HouseAccountManager.researchList(uploadId) -- the trusted,
+  // Manage-Customer-Accounts-scoped research flow ("Research All
+  // Accounts" uses the exact same runListResearch()) -- instead of the
+  // separate, older researchTopAccounts() orchestration route founder QA
+  // found silently failed to visibly start research.
+  assert(/window\.HouseAccountManager\.researchList\(uploadId\)/.test(showSuccessSrc), 'required test 13: clicking Research launches the trusted list-scoped research flow via window.HouseAccountManager.researchList(uploadId), the same one "Research All Accounts" in Manage Customer Accounts uses (explicit user action, not silent auto-research)');
   assert(/manageCustomerAccountsBtn'\)\?\.click\(\)/.test(showSuccessSrc), 'required test 13: "View uploaded accounts" opens the real Manage Customer Accounts panel rather than a duplicate view');
   assert(/Without order history, House Accounts will monitor these accounts for public business triggers/.test(showSuccessSrc), 'required test 14: a subdued note explains limited intelligence when no order history was recognized, without implying the upload failed');
   assert(/Some optional fields weren't included\. That's okay/.test(showSuccessSrc), 'required test 14: a subdued sentence (not a warning) explains missing optional fields, matching the requested tone');
@@ -408,7 +414,7 @@ assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.len
 
 {
   const processDataSrc = extractFn(DASHBOARD_SRC, 'processData');
-  assert(/showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records\);/.test(processDataSrc), 'required test 12/13: processData() shows the success modal using the SERVER-confirmed accountsSaved count, never the client-parsed accounts.length -- a parsed-but-unsaved upload cannot render as a finished one');
+  assert(/showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records, saveResult\.data\.uploadId \|\| currentUploadId\);/.test(processDataSrc), 'required test 12/13: processData() shows the success modal using the SERVER-confirmed accountsSaved count, never the client-parsed accounts.length -- a parsed-but-unsaved upload cannot render as a finished one');
   assert(/showUploadFailureModal\(saveResult\.error \|\| "Your upload didn't save\. Please try again\."\);/.test(processDataSrc), 'required test 14: a genuine save failure shows the truthful failure modal, never the success one');
   assert(/hideUploadDecisionForZeroAcceptedAccounts\(\);/.test(processDataSrc), 'required test 14: a server-confirmed zero-accepted-accounts save routes through the same truthful failure messaging (entitlement/account-limit rejections included)');
 }
