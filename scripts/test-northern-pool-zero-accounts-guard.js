@@ -34,23 +34,31 @@ const GUARD_SRC = extractRange(loadDashboardSource(), 'function hideUploadDecisi
 // Fresh DOM/state stub + fresh vm context per scenario -- avoids any
 // cross-scenario state bleed, and keeps each run's assertions about
 // exactly what happened (fetch calls, DOM mutations) unambiguous.
+//
+// Live QA round 5: hideUploadDecisionForZeroAcceptedAccounts() no longer
+// manipulates #uploadResearchDecision/#uploadSuccessWarning directly (that
+// embedded panel was replaced by the upload-success/upload-failure MODAL
+// pair) -- it now routes through showUploadFailureModal(). The real
+// showUploadFailureModal() builds real DOM via document.createElement(),
+// which this minimal sandbox does not provide, so it is stubbed here as a
+// spy that records the message it was called with -- the same thing this
+// test always proved (a truthful "nothing was saved" message reaches the
+// user), just via the new call site.
 function runScenario({ researchInProgress, currentUploadId, lastUploadAcceptedAccountCount }) {
-  const domState = {
-    uploadResearchDecision: { hidden: false },
-    uploadSuccessWarning: { hidden: true, innerHTML: '' }
-  };
   const warnings = [];
+  const failureModalCalls = [];
   let researchDispatchReached = false;
   const sandbox = {
-    document: { getElementById: (id) => domState[id] || null },
+    document: { getElementById: () => null },
     console: { warn: (...args) => warnings.push(args.join(' ')), log: () => {} },
+    showUploadFailureModal: (message) => { failureModalCalls.push(message); },
     // Sentinel: if execution ever proceeds past the guard into the real
     // research-dispatch logic, it will need functions/state this stub
     // doesn't provide and throw a ReferenceError -- which IS the proof
     // that the guard did not fire when it should have. Assigning this
     // marker instead only proves reachability if the real body happened to
     // reference it, so the actual proof below is "did NOT throw" plus the
-    // explicit hidden/message assertions, not this flag.
+    // explicit failureModalCalls assertions, not this flag.
     markReached: () => { researchDispatchReached = true; },
     researchInProgress,
     currentUploadId,
@@ -58,7 +66,7 @@ function runScenario({ researchInProgress, currentUploadId, lastUploadAcceptedAc
   };
   vm.createContext(sandbox);
   vm.runInContext(GUARD_SRC, sandbox);
-  return { sandbox, domState, warnings, researchDispatchReached: () => researchDispatchReached };
+  return { sandbox, failureModalCalls, warnings, researchDispatchReached: () => researchDispatchReached };
 }
 
 for (const fn of ['hideUploadDecisionForZeroAcceptedAccounts', 'researchTopAccounts']) {
@@ -71,15 +79,15 @@ for (const fn of ['hideUploadDecisionForZeroAcceptedAccounts', 'researchTopAccou
 // research.
 // ===========================================================================
 {
-  const { sandbox, domState, warnings } = runScenario({ researchInProgress: false, currentUploadId: 'upload-1', lastUploadAcceptedAccountCount: 0 });
+  const { sandbox, failureModalCalls, warnings } = runScenario({ researchInProgress: false, currentUploadId: 'upload-1', lastUploadAcceptedAccountCount: 0 });
   let threw = false;
   let result;
   try { result = sandbox.researchTopAccounts({ auto: false }); }
   catch (e) { threw = true; }
   assert(!threw, 'required test 12: researchTopAccounts() returns cleanly (does not throw trying to reach research-dispatch logic) when the server confirmed 0 accepted accounts');
   assert(result === undefined || typeof result?.then === 'function', 'sanity: researchTopAccounts() returns (a resolved promise, since it is async) rather than hanging');
-  assert(domState.uploadResearchDecision.hidden === true, 'required test 12: the "Research all N accounts" decision UI is hidden when 0 accounts were accepted -- the UI must not imply there are researchable accounts');
-  assert(domState.uploadSuccessWarning.hidden === false && /none of these accounts were saved/i.test(domState.uploadSuccessWarning.innerHTML), `required test 12: an honest, visible message explains that nothing was saved (got "${domState.uploadSuccessWarning.innerHTML}")`);
+  assert(failureModalCalls.length === 1, 'required test 12: the truthful upload-failure modal is shown exactly once when 0 accounts were accepted -- the UI must not imply there are researchable accounts');
+  assert(/none of these accounts were saved/i.test(failureModalCalls[0] || ''), `required test 12: an honest, visible message explains that nothing was saved (got "${failureModalCalls[0]}")`);
   assert(warnings.some(w => /confirmed 0 accounts/i.test(w)), 'required test 12: a console warning documents why research was refused');
 }
 {

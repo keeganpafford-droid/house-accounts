@@ -587,14 +587,21 @@ await testEnhancedGroupStopBetweenChunksNeverDispatchesRemaining();
 // starts research (auto:false, the same explicit-user-action semantics the
 // pre-existing "Research Top Accounts" button already used), Not Now makes
 // zero calls.
+// Live QA round 5: the explicit post-upload decision moved from the old
+// embedded panel's wireUploadSuccessStateControls() wiring into
+// showUploadSuccessModal() itself (each modal wires its own buttons when
+// built, same pattern as showDestructiveConfirm()/showResearchConfirm() in
+// the Manage Customer Accounts modal scope) -- see that function's own
+// header comment for why. The underlying explicit-user-action semantics
+// (auto:false) and the zero-call "Not now" guarantee are unchanged.
 {
-  const wireStart = DASHBOARD_SRC.indexOf('function wireUploadSuccessStateControls(){');
-  const wireEnd = DASHBOARD_SRC.indexOf('\nif(document.readyState', wireStart);
-  const wireSrc = DASHBOARD_SRC.slice(wireStart, wireEnd > -1 ? wireEnd : wireStart + 3000);
-  assert(/researchAllBtn\.addEventListener\('click', \(\) => \{[\s\S]{0,200}?researchTopAccounts\(\{auto:false\}\);/.test(wireSrc), '2) clicking "Research all N accounts" calls researchTopAccounts({auto:false}) -- an explicit, non-automatic start');
-  const notNowBlock = wireSrc.slice(wireSrc.indexOf('uploadResearchNotNowBtn'));
+  const wireStart = DASHBOARD_SRC.indexOf('function showUploadSuccessModal(accountCount, accounts, records){');
+  const wireEnd = DASHBOARD_SRC.indexOf('\n// Live QA round 5, item 3: the truthful counterpart', wireStart);
+  const wireSrc = DASHBOARD_SRC.slice(wireStart, wireEnd > -1 ? wireEnd : wireStart + 4000);
+  assert(/researchBtn\.addEventListener\('click', \(\) => \{[\s\S]{0,200}?researchTopAccounts\(\{auto:false\}\);/.test(wireSrc), '2) clicking "Research N accounts" calls researchTopAccounts({auto:false}) -- an explicit, non-automatic start');
+  const notNowBlock = wireSrc.slice(wireSrc.indexOf('notNowBtn.addEventListener'), wireSrc.indexOf('notNowBtn.addEventListener') + 200);
   assert(!/researchTopAccounts|fetch\(/.test(notNowBlock), '3) "Not now" makes zero research calls -- its click handler contains no research/fetch call at all');
-  assert(/decisionEl\.hidden = true/.test(notNowBlock), '3) "Not now" hides the decision prompt so it cannot be accidentally re-triggered');
+  assert(/notNowBtn\.addEventListener\('click', \(\) => close\(\)\);/.test(wireSrc), '3) "Not now" closes the modal (so the decision cannot be accidentally re-triggered) and does nothing else');
 }
 
 // Required test 4: reopening/re-rendering (renderManager()/load()/open()) in

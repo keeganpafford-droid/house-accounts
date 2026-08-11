@@ -28,9 +28,7 @@ const SRC = [
   extractRange(DASHBOARD_SRC, 'let addCustomerDataModalTriggerEl = null;', 'function handleMvpDashboardRoute(){'),
   extractRange(DASHBOARD_SRC, "const GUIDED_TOUR_STORAGE_PREFIX = 'ha_guided_tour_v1::';", 'function wireGuidedTourControls(){'),
   extractFn(DASHBOARD_SRC, 'showBetaWelcomeModal'),
-  extractRange(DASHBOARD_SRC, 'const MISSING_FIELD_LABELS = {', 'function renderUploadSuccessState(records, accounts){'),
-  extractFn(DASHBOARD_SRC, 'escapeHtml'),
-  extractRange(DASHBOARD_SRC, 'function dismissUploadSuccessState(){', 'function wireUploadSuccessStateControls(){')
+  extractFn(DASHBOARD_SRC, 'escapeHtml')
 ].join('\n\n');
 
 // ---------------------------------------------------------------------------
@@ -158,15 +156,6 @@ function buildDashboardDom(){
   addCustomerDataModal.appendChild(addCustomerDataModalClose);
   addCustomerDataModal.appendChild(addCustomerDataViewGuidesLink);
 
-  const uploadSuccessState = make('section', 'uploadSuccessState', { style: { display: 'none' } });
-  const uploadSuccessTitle = make('div', 'uploadSuccessTitle');
-  const uploadSuccessDetail = make('div', 'uploadSuccessDetail');
-  const uploadSuccessWarning = make('div', 'uploadSuccessWarning', { hidden: true });
-  const uploadSuccessDismiss = make('button', 'uploadSuccessDismiss');
-  const uploadSuccessViewPrioritiesBtn = make('button', 'uploadSuccessViewPrioritiesBtn');
-  const uploadSuccessManageAccountsBtn = make('button', 'uploadSuccessManageAccountsBtn');
-  const uploadSuccessAnotherBtn = make('button', 'uploadSuccessAnotherBtn');
-
   const mvpDashboardNotice = make('div', 'mvpDashboardNotice');
 
   const body_ = { style: {} };
@@ -192,8 +181,6 @@ function buildDashboardDom(){
     overlay, spotlight, card, eyebrow, title, body, dots, skipBtn, backBtn, nextBtn,
     betaWelcomeModal,
     addCustomerDataModal, addCustomerDataModalClose, addCustomerDataModalTitle, addCustomerDataViewGuidesLink,
-    uploadSuccessState, uploadSuccessTitle, uploadSuccessDetail, uploadSuccessWarning,
-    uploadSuccessDismiss, uploadSuccessViewPrioritiesBtn, uploadSuccessManageAccountsBtn, uploadSuccessAnotherBtn,
     mvpDashboardNotice,
     documentBody: body_, documentElementStyle: documentElement_
   };
@@ -255,7 +242,7 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
     requestAnimationFrame: (fn) => fn()
   };
   vm.createContext(sandbox);
-  new vm.Script(`${SRC}\n\nthis.__exports = { launchGuidedTour, closeGuidedTour, nextGuidedTourStep, backGuidedTourStep, skipGuidedTour, finishGuidedTour, guidedTourKeydownHandler, guidedTourResizeHandler, guidedTourScrollHandler, wireGuidedTourControls, guidedTourStatus, markGuidedTourStatus, readGuidedTourState, GUIDED_TOUR_STEPS, GUIDED_TOUR_VIEWPORT_MARGIN, handleMvpDashboardRoute, openLightweightCustomerUpload, openAddCustomerDataModal, closeAddCustomerDataModal, wireAddCustomerDataModalControls, showBetaWelcomeModal, renderUploadSuccessState, dismissUploadSuccessState, wireUploadSuccessStateControls };`, { filename: 'dashboard-extract.js' }).runInContext(sandbox);
+  new vm.Script(`${SRC}\n\nthis.__exports = { launchGuidedTour, closeGuidedTour, nextGuidedTourStep, backGuidedTourStep, skipGuidedTour, finishGuidedTour, guidedTourKeydownHandler, guidedTourResizeHandler, guidedTourScrollHandler, wireGuidedTourControls, guidedTourStatus, markGuidedTourStatus, readGuidedTourState, GUIDED_TOUR_STEPS, GUIDED_TOUR_VIEWPORT_MARGIN, handleMvpDashboardRoute, openLightweightCustomerUpload, openAddCustomerDataModal, closeAddCustomerDataModal, wireAddCustomerDataModalControls, showBetaWelcomeModal };`, { filename: 'dashboard-extract.js' }).runInContext(sandbox);
   return {
     dash: sandbox.__exports, dom, setUser: u => { currentUser = u; }, setHash: h => { fakeWindow.location.hash = h; },
     setSearch: s => { fakeWindow.location.search = s; fakeWindow.location.href = `https://app.example.com/dashboard/${s}`; },
@@ -273,7 +260,7 @@ function numPx(v){ return v == null ? NaN : parseFloat(String(v)); }
 
 {
   const { dash } = makeSandbox();
-  for(const name of ['launchGuidedTour', 'nextGuidedTourStep', 'backGuidedTourStep', 'skipGuidedTour', 'finishGuidedTour', 'wireGuidedTourControls', 'handleMvpDashboardRoute', 'openLightweightCustomerUpload', 'renderUploadSuccessState', 'openAddCustomerDataModal', 'closeAddCustomerDataModal', 'showBetaWelcomeModal']){
+  for(const name of ['launchGuidedTour', 'nextGuidedTourStep', 'backGuidedTourStep', 'skipGuidedTour', 'finishGuidedTour', 'wireGuidedTourControls', 'handleMvpDashboardRoute', 'openLightweightCustomerUpload', 'openAddCustomerDataModal', 'closeAddCustomerDataModal', 'showBetaWelcomeModal']){
     assert(typeof dash[name] === 'function', `dashboard/index.html export "${name}" extracted successfully as a real function`);
   }
 }
@@ -393,32 +380,37 @@ assert(/client_name:\s*\[/.test(html) && /'customer_name'/.test(html), 'required
 // ---------------------------------------------------------------------------
 
 assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.length;/.test(html), 'required test 12: processData() synchronously updates the account count in the DOM from the real, just-uploaded accounts array');
-assert(/renderUploadSuccessState\(records, accounts\);/.test(html), 'required test 12: processData() calls the real renderUploadSuccessState() with the real parsed accounts, in the same synchronous flow (no manual refresh needed)');
-
+// Live QA round 5: the old embedded upload-success PANEL (rendered
+// synchronously inside processData(), before the save even resolved, off
+// the client-parsed count) was replaced with a focused upload-success/
+// upload-failure MODAL pair -- see showUploadSuccessModal()/
+// showUploadFailureModal() -- shown only from saveCurrentUpload('uploaded')'s
+// own .then() callback, gated on the server-confirmed accountsSaved count.
+// Tested the same way the codebase's other document.createElement()-built
+// dialogs (showDestructiveConfirm/showResearchConfirm/showInfoDialog) are
+// tested elsewhere (see scripts/test-followup-round.js's overlay-caller
+// checks) -- source-pattern assertions against the real dashboard/index.html
+// text, not a full DOM behavioral simulation.
 {
-  const { dash, dom } = makeSandbox();
-  const accounts = [
-    { orderCount: 3, contactName: 'Jamie Ellis', contacts: [] },
-    { orderCount: 0, contacts: [] }
-  ];
-  dash.renderUploadSuccessState({ missingCols: [] }, accounts);
-  assert(dom.uploadSuccessState.style.display === 'block', 'required test 13: the branded success panel becomes visible after a real upload');
-  assert(dom.uploadSuccessDetail.innerHTML.includes('2'), 'required test 13: the panel states the real accepted account count (2)');
-  dash.wireUploadSuccessStateControls();
-  assert(typeof dom.uploadSuccessViewPrioritiesBtn._listeners.click?.[0] === 'function', 'required test 13: "View Priorities" is wired to a real click handler');
-  assert(typeof dom.uploadSuccessManageAccountsBtn._listeners.click?.[0] === 'function', 'required test 13: "Manage Customer Accounts" is wired to a real click handler');
-  assert(typeof dom.uploadSuccessAnotherBtn._listeners.click?.[0] === 'function', 'required test 13: "Upload Another List" is wired to a real click handler');
-  dom.uploadSuccessManageAccountsBtn.click();
-  assert(dom.uploadSuccessState.style.display === 'none', 'required test 13: clicking Manage Customer Accounts dismisses the success panel');
+  const showSuccessSrc = extractFn(DASHBOARD_SRC, 'showUploadSuccessModal');
+  assert(/Upload complete/.test(showSuccessSrc), 'required test 12: the upload-success modal\'s title is "Upload complete"');
+  assert(/customer account\$\{accountCount === 1 \? '' : 's'\} added/.test(showSuccessSrc), 'required test 12: the modal states the real, server-confirmed accepted account count as its subtitle');
+  assert(/Order history found/.test(showSuccessSrc) && /Contacts found/.test(showSuccessSrc), 'required test 12: the modal includes compact order-history/contacts confirmation lines');
+  assert(/Research \$\{escapeHtml\(accountCount\)\} account/.test(showSuccessSrc), 'required test 13: the modal\'s primary action is "Research N accounts"');
+  assert(/Not now/.test(showSuccessSrc), 'required test 13: the modal offers a "Not now" secondary action');
+  assert(/View uploaded accounts/.test(showSuccessSrc), 'required test 13: the modal offers a low-emphasis "View uploaded accounts" link, instead of duplicating View Priorities/Manage Customer Accounts/Upload Another List as full actions');
+  assert(!/View Priorities/.test(showSuccessSrc) && !/Manage Customer Accounts</.test(showSuccessSrc) && !/Upload Another List/.test(showSuccessSrc), 'required test 13: the modal does not repeat View Priorities/Manage Customer Accounts/Upload Another List -- those already exist elsewhere in the product');
+  assert(/researchTopAccounts\(\{auto:false\}\)/.test(showSuccessSrc), 'required test 13: clicking Research launches the real researchTopAccounts() (explicit user action, not silent auto-research)');
+  assert(/manageCustomerAccountsBtn'\)\?\.click\(\)/.test(showSuccessSrc), 'required test 13: "View uploaded accounts" opens the real Manage Customer Accounts panel rather than a duplicate view');
+  assert(/Without order history, House Accounts will monitor these accounts for public business triggers/.test(showSuccessSrc), 'required test 14: a subdued note explains limited intelligence when no order history was recognized, without implying the upload failed');
+  assert(/Some optional fields weren't included\. That's okay/.test(showSuccessSrc), 'required test 14: a subdued sentence (not a warning) explains missing optional fields, matching the requested tone');
 }
 
 {
-  const { dash, dom } = makeSandbox();
-  const noHistoryAccounts = [{ orderCount: 0, contacts: [] }];
-  dash.renderUploadSuccessState({ missingCols: [] }, noHistoryAccounts);
-  assert(dom.uploadSuccessWarning.hidden === false, 'required test 14: a warning is shown when no order history was recognized');
-  assert(/not a failed upload/i.test(dom.uploadSuccessWarning.innerHTML), 'required test 14: the warning explicitly says this is not a failed upload');
-  assert(/public business triggers/i.test(dom.uploadSuccessWarning.innerHTML), 'required test 14: the warning explains House Accounts can still monitor public business triggers');
+  const processDataSrc = extractFn(DASHBOARD_SRC, 'processData');
+  assert(/showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records\);/.test(processDataSrc), 'required test 12/13: processData() shows the success modal using the SERVER-confirmed accountsSaved count, never the client-parsed accounts.length -- a parsed-but-unsaved upload cannot render as a finished one');
+  assert(/showUploadFailureModal\(saveResult\.error \|\| "Your upload didn't save\. Please try again\."\);/.test(processDataSrc), 'required test 14: a genuine save failure shows the truthful failure modal, never the success one');
+  assert(/hideUploadDecisionForZeroAcceptedAccounts\(\);/.test(processDataSrc), 'required test 14: a server-confirmed zero-accepted-accounts save routes through the same truthful failure messaging (entitlement/account-limit rejections included)');
 }
 
 // ---------------------------------------------------------------------------

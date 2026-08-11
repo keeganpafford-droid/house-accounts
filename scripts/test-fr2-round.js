@@ -175,9 +175,23 @@ assert(
   !/showCustomerDashboardPanel\(\{\s*subtitleText: `\$\{currentUploadName/.test(processDataSrc),
   'the old unconditional showCustomerDashboardPanel() call with single-upload-only numbers (accountCount: accounts.length of just this upload, signalCount: 0) has been removed from processData()'
 );
+// Live QA round 5: the old embedded upload-success PANEL (rendered
+// unconditionally, before the save even resolved, off the client-parsed
+// count) was replaced by a focused upload-success/upload-failure MODAL
+// pair, shown only once saveCurrentUpload('uploaded') resolves and only
+// using the server-confirmed accountsSaved count -- see
+// showUploadSuccessModal()/showUploadFailureModal() (main script). This
+// assertion now checks the CURRENT behavior it was protecting the intent
+// of: some truthful post-save UI still always fires, regardless of which
+// pre-save branch above ran (aggregate-already-loaded vs true-first-upload).
 assert(
-  /renderUploadSuccessState\(records, accounts\);/.test(processDataSrc),
-  'required test 11: the upload-success panel is still rendered and stays visible regardless of which branch above ran'
+  /renderUploadSuccessState/.test(processDataSrc) === false,
+  'required test 11: the old renderUploadSuccessState() panel call no longer exists in processData() -- replaced by the modal pair shown from the save-resolution callback'
+);
+assert(
+  /showUploadSuccessModal\(lastUploadAcceptedAccountCount, accounts, records\);/.test(processDataSrc) &&
+  /showUploadFailureModal\(saveResult\.error \|\| "Your upload didn't save\. Please try again\."\);/.test(processDataSrc),
+  'required test 11: processData() shows the truthful upload-success or upload-failure modal from inside saveCurrentUpload(\'uploaded\')\'s own .then() callback, gated on the real save outcome -- regardless of which pre-save branch (aggregate-already-loaded vs true-first-upload) ran above'
 );
 assert(
   /saveCurrentUpload\('uploaded'\)\.then\(async \(saveResult\) => \{[\s\S]*?let refreshResult = null;\s*if\(typeof refreshAggregateDashboard === 'function'\) refreshResult = await refreshAggregateDashboard\(\);/.test(processDataSrc),

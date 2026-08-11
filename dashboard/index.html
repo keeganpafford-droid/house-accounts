@@ -1927,53 +1927,19 @@
   .ha-tour-actions-right{justify-content:flex-end;}
 }
 
-/* Onboarding sprint: branded first-upload success state -- replaces the
-   old bare "Saved account list for weekly monitoring." text notice, which
-   never explained what was accepted or what to do next. */
-.upload-success-state{
-  position:relative;
-  background:#fff;
-  border:2px solid #17375E;
-  border-left:6px solid #1FB7AE;
-  border-radius:10px;
-  padding:22px 26px;
-  margin-bottom:20px;
-}
-.upload-success-dismiss{
-  position:absolute;
-  top:12px;
-  right:14px;
-  border:0;
-  background:none;
-  color:#6B7280;
-  font-size:1.3rem;
-  line-height:1;
-  cursor:pointer;
-  padding:4px;
-}
-.upload-success-dismiss:hover{color:#17375E;}
-.upload-success-title{
-  font-family:var(--display, Georgia, serif);
-  font-size:1.4rem;
-  color:#17375E;
-  margin-bottom:8px;
-  padding-right:24px;
-}
-.upload-success-detail{color:#17375E;line-height:1.5;font-size:.94rem;margin-bottom:10px;}
-.upload-success-warning{
-  background:#fff8e8;
-  border-left:3px solid #F5A623;
-  border-radius:6px;
-  padding:10px 14px;
-  color:#7a4a00;
-  font-size:.88rem;
-  line-height:1.45;
-  margin-bottom:14px;
-}
-.upload-success-actions{display:flex;gap:10px;flex-wrap:wrap;}
-.upload-research-decision{background:#EAF6F4;border:1px solid var(--radar);border-radius:10px;padding:12px 14px;margin-bottom:14px;}
-.upload-research-decision-copy{color:var(--ink);font-size:.9rem;line-height:1.45;margin-bottom:10px;}
-.upload-research-decision-actions{display:flex;gap:10px;flex-wrap:wrap;}
+/* Live QA round 5: the old embedded "upload-success-state" panel (title +
+   detail + warning + research decision + View Priorities/Manage Customer
+   Accounts/Upload Another List actions, all shown at once) was replaced by
+   a focused modal -- see showUploadSuccessModal()/showUploadFailureModal()
+   (main script). It reuses the existing .ha-confirm-backdrop/.ha-confirm-
+   dialog dialog shell (defined above); these are its few extra styles. */
+.upload-modal-confirm-lines{display:block;color:#0f766e;margin:8px 0;}
+.upload-modal-subdued{display:block;color:#6B7280;font-size:.88rem;margin-top:8px;}
+.upload-modal-actions{justify-content:flex-start;margin-top:16px;}
+.upload-modal-view-link-row{margin-top:14px;text-align:center;}
+.upload-modal-view-link{background:none;border:0;color:#6B7280;font-size:.82rem;text-decoration:underline;cursor:pointer;font-family:var(--body);padding:4px;}
+.upload-modal-view-link:hover{color:var(--ink);}
+.upload-modal-view-link:focus-visible{outline:2px solid var(--radar);outline-offset:2px;}
 .locked-card{position:relative;opacity:.78}.locked-sensitive-card{filter:none}.locked-card::after{content:"";position:absolute;inset:0;background:rgba(247,248,250,.80);backdrop-filter:blur(3px);border-radius:inherit;pointer-events:none}.locked-sensitive-card::after{display:none}.lock-message{position:relative;z-index:2;margin-top:14px;background:#fff8e8;border:1px solid #f7dca8;color:#7a4a00;border-radius:12px;padding:12px;font-weight:800}.upgrade-link{color:#17375E;text-decoration:underline;font-weight:900}
 
 .monitoring-workspace{display:none;max-width:960px;margin:20px auto}.monitoring-workspace.active{display:block}.workspace-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.workspace-card,.monitor-list-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}.workspace-card strong{display:block;font-size:1.35rem;color:var(--ink)}.workspace-card span{font-size:.68rem;color:#6B7280;font-weight:800;text-transform:uppercase}.monitor-list-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.monitor-list-head{display:flex;justify-content:space-between;gap:10px}.monitor-list-card h3{margin:0;color:var(--ink)}.monitor-badge{border-radius:999px;padding:5px 8px;font-size:.72rem;font-weight:900}.monitor-badge.active{background:#e9fbf8;color:#0f766e}.monitor-badge.paused{background:#eef1f5;color:#667085}.monitor-meta{color:#6B7280;font-size:.85rem;margin:8px 0 12px}.monitor-actions{display:flex;flex-wrap:wrap;gap:8px}.monitor-actions button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-weight:800;cursor:pointer}.monitor-actions .danger{color:#9f1239}.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.workspace-toolbar h2{margin:0}.upload-hidden{display:none!important}@media(max-width:900px){.workspace-summary{grid-template-columns:repeat(2,1fr)}.monitor-list-grid{grid-template-columns:1fr}}
@@ -2406,25 +2372,6 @@
   </div>
 
   <div id="results">
-
-    <section class="upload-success-state" id="uploadSuccessState" style="display:none;" role="status" aria-live="polite">
-      <button class="upload-success-dismiss" id="uploadSuccessDismiss" type="button" aria-label="Dismiss">&times;</button>
-      <div class="upload-success-title" id="uploadSuccessTitle"></div>
-      <div class="upload-success-detail" id="uploadSuccessDetail"></div>
-      <div class="upload-success-warning" id="uploadSuccessWarning" hidden></div>
-      <div class="upload-research-decision" id="uploadResearchDecision">
-        <div class="upload-research-decision-copy">House Accounts can now research these companies for current opportunities.</div>
-        <div class="upload-research-decision-actions">
-          <button class="btn" type="button" id="uploadResearchAllBtn">Research all <span id="uploadResearchAllCount">0</span> accounts</button>
-          <button class="btn btn-secondary" type="button" id="uploadResearchNotNowBtn">Not now</button>
-        </div>
-      </div>
-      <div class="upload-success-actions">
-        <button class="btn" type="button" id="uploadSuccessViewPrioritiesBtn">View Priorities</button>
-        <button class="btn btn-secondary" type="button" id="uploadSuccessManageAccountsBtn">Manage Customer Accounts</button>
-        <button class="btn btn-secondary" type="button" id="uploadSuccessAnotherBtn">Upload Another List</button>
-      </div>
-    </section>
 
     <section class="customer-dashboard-panel" id="customerDashboard" style="display:none;">
       <div class="customer-dashboard-top">
@@ -5554,7 +5501,25 @@ function opportunityHeadline(opp){
   // hiring" even though the event itself was never a hiring signal.
   if(type === 'Relationship Expansion') return 'Warm relationship + expansion opportunity';
   if(type === 'Recent Project Follow-Up') return 'Recent order creates a natural follow-up';
-  if(type === 'Reorder Due' || type === 'Annual Buying Pattern' || type === 'Repeat Buying Pattern') return 'Repeat buying window detected';
+  // Live-QA correction (primary/additional duplicate, round 5 -- true root
+  // cause): 'Reorder Due' is a GENERIC industry-fallback opportunity with
+  // no detected cadence (getRecommendationType()'s final catch-all,
+  // opportunityType never 'REPEAT PATTERN') -- a structurally different
+  // claim from 'Annual Buying Pattern'/'Repeat Buying Pattern', which only
+  // ever apply to a genuinely detected pattern (see that function's own
+  // header comment). Sharing this exact headline text meant a real
+  // detected pattern (the primary Prepare for Call opportunity) and an
+  // unrelated generic fallback for the SAME account (a legitimately
+  // DIFFERENT opportunity, correctly NOT deduped by sameOpportunity() --
+  // confirmed production case: Ridgeline's real "Headwear Program" as
+  // primary alongside a generic "Service Department Apparel Program"
+  // fallback under Additional Opportunities) rendered IDENTICAL headline
+  // text, reading to the rep as the same opportunity shown twice even
+  // though they are two distinct cards. 'Reorder Due' now gets its own,
+  // honest, cadence-neutral headline that never claims a "window" was
+  // actually detected.
+  if(type === 'Annual Buying Pattern' || type === 'Repeat Buying Pattern') return 'Repeat buying window detected';
+  if(type === 'Reorder Due') return 'Past order history creates a reason to check in';
   if(type === 'Dormant High-Value Account') return 'Past value suggests a timely check-in';
   // QA final round, item 1: rely on kind (businessSignalKind(), which already
   // prefers the server-computed canonical classification and only falls back
@@ -7903,18 +7868,18 @@ function dedupeSignalsClient(signals){
 }
 
 // QA correction 4 (Northern Pool 0-vs-25 finding): the one user-visible
-// consequence of a confirmed-zero-accounts upload -- hides the "Research
-// all N accounts" decision (there is nothing to research) and repurposes
-// the existing upload-success warning slot (see renderUploadSuccessState())
-// to say so honestly, instead of leaving the success panel implying there
-// are researchable accounts when the server accepted none.
+// consequence of a confirmed-zero-accounts upload. Live QA round 5: now
+// routes through showUploadFailureModal() (main script, below) -- the old
+// embedded upload-success-warning slot it used to repurpose no longer
+// exists, since that whole panel was replaced by the upload-success/
+// upload-failure modal pair. Called both right after a zero-accepted
+// upload (processData()'s saveCurrentUpload().then()) and defensively
+// inside researchTopAccounts() below, so a later "Research Top Accounts"
+// click against a confirmed-zero upload says so honestly instead of
+// silently doing nothing.
 function hideUploadDecisionForZeroAcceptedAccounts(){
-  const decisionEl = document.getElementById('uploadResearchDecision');
-  if(decisionEl) decisionEl.hidden = true;
-  const warningEl = document.getElementById('uploadSuccessWarning');
-  if(warningEl){
-    warningEl.hidden = false;
-    warningEl.innerHTML = 'None of these accounts were saved, so there is nothing to research yet. Check the file (account names may be missing or unrecognized) and try uploading again.';
+  if(typeof showUploadFailureModal === 'function'){
+    showUploadFailureModal('None of these accounts were saved, so there is nothing to research yet. Check the file (account names may be missing or unrecognized) and try uploading again.');
   }
 }
 async function researchTopAccounts(options = {}){
@@ -10910,6 +10875,30 @@ function isPriorityEligibleOpportunity(opp){
     // activationIdeas, and are completely unaffected by this check.
     if(!hasCredibleActivationPlay(opp)) return false;
   }
+  // Live-QA correction (Meridian stale Follow-Up, round 5): a Follow-Up
+  // Signal opportunity had NO age ceiling at all -- signalLayerType
+  // 'Follow-Up Signal' alone was sufficient to pass this gate forever,
+  // and getOpportunityPlanningWindow()'s own Follow-Up branch has no
+  // "too old" case either (>90 days simply keeps landing in 'quarter',
+  // never excluded). A purchase from 9+ months ago is not a "recent
+  // project" any account-history opportunity can credibly claim needs a
+  // check-in -- confirmed production case: Meridian Office Partners'
+  // single Nov 2025 purchase still rendering "RECENT PROJECT FOLLOW-UP" /
+  // "Customer follow-up due" in Aug 2026. 90 days is not a new, invented
+  // threshold -- it is the SAME month/quarter boundary
+  // getOpportunityPlanningWindow() already encodes for this exact family
+  // (<=30 week, <=90 month); past it, "recent" is no longer a credible
+  // claim, so the opportunity stops being ACTIVE (it never disappears from
+  // the account's own real purchase history in Account Context -- only
+  // from the priorities feed/Additional Opportunities/PFC-eligible list).
+  // Real Repeat/Pattern opportunities are unaffected: they are judged by
+  // detected cadence, not by how recently the last order happened (an
+  // overdue REAL pattern is still a legitimate reason to reach out, per
+  // reorderWindowStatus()'s own 'overdue' state).
+  if(signalLayerLabel(opp) === 'Follow-Up Signal'){
+    const daysSinceOrder = daysSinceDate(opp.lastOrderDate || opp.mostRecentDate || opp.signalDate);
+    if(daysSinceOrder !== null && daysSinceOrder > 90) return false;
+  }
   return opp?.actionabilityStatus?.isPriorityEligible !== false;
 }
 
@@ -11523,13 +11512,6 @@ function isWarmAccount(account){
   return String(account?.intelligenceMode || deriveAccountIntelligenceMode(account)).toLowerCase() === 'warm';
 }
 
-// Onboarding sprint, item 3: a branded, informative success state after a
-// file is saved -- replaces relying on the old bare "Saved account list for
-// weekly monitoring." text notice as the only feedback a first-time user
-// got. Explains exactly what was accepted (never presents missing optional
-// fields as a failure -- the upload still succeeded), and gives three
-// direct next actions so the user is never stranded on a generic
-// completion screen.
 const MISSING_FIELD_LABELS = {
   project_name: 'project/order name',
   order_date: 'order date',
@@ -11538,53 +11520,148 @@ const MISSING_FIELD_LABELS = {
   contact_name: 'contact name',
   contact_email: 'contact email'
 };
-function renderUploadSuccessState(records, accounts){
-  const panel = document.getElementById('uploadSuccessState');
-  if(!panel) return;
-  const titleEl = document.getElementById('uploadSuccessTitle');
-  const detailEl = document.getElementById('uploadSuccessDetail');
-  const warningEl = document.getElementById('uploadSuccessWarning');
-  const accountCount = accounts.length;
+
+// Live QA round 5, item 3: a focused upload-success MODAL, replacing the old
+// embedded upload-success-state panel (title + detail + warning + research
+// decision + View Priorities/Manage Customer Accounts/Upload Another List,
+// all shown at once -- "Upload -> control panel" per founder feedback).
+// Hierarchy: title, server-confirmed account count, compact confirmation
+// lines, a single subdued sentence for anything non-ideal (never presented
+// as a failure), one primary action (Research), one secondary (Not now),
+// and a low-emphasis link to the account list that already exists
+// elsewhere (Manage Customer Accounts) rather than duplicating it here.
+//
+// Deliberately called ONLY from processData()'s saveCurrentUpload().then()
+// callback (never before it resolves) -- accountCount here is always
+// saveResult.data.accountsSaved, the server's own confirmed persisted
+// count, not the client-parsed accounts.length. A parsed-but-not-yet-saved
+// upload must never look like a finished one; see showUploadFailureModal()
+// for the truthful counterpart when persistence didn't happen.
+//
+// Reuses the same .ha-confirm-backdrop/.ha-confirm-dialog CSS and
+// focus-trap/Escape/backdrop-click pattern as showDestructiveConfirm()/
+// showResearchConfirm()/showInfoDialog() below -- but is its own function
+// rather than a call to one of those, because those three live inside a
+// separate inline <script> IIFE (the Manage Customer Accounts modal scope)
+// and are not reachable from this script.
+function showUploadSuccessModal(accountCount, accounts, records){
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
+  }
   const hasOrderHistory = accounts.some(a => Number(a.orderCount || 0) > 0);
   const hasContacts = accounts.some(a => a.contactName || a.contactEmail || (Array.isArray(a.contacts) && a.contacts.length));
+  const missingOptional = Array.isArray(records.missingCols) ? records.missingCols.filter(k => MISSING_FIELD_LABELS[k]) : [];
 
-  if(titleEl) titleEl.textContent = `${currentUploadName || 'Your customer list'} is saved.`;
-  if(detailEl){
-    const parts = [];
-    parts.push(`<strong>${escapeHtml(accountCount)}</strong> customer account${accountCount===1?'':'s'} accepted.`);
-    parts.push(hasOrderHistory
-      ? 'Order history was recognized, so repeat buying patterns and follow-up timing can be identified.'
-      : 'No order history was recognized in this file.');
-    parts.push(hasContacts
-      ? 'Contact information was recognized for at least one account.'
-      : 'No contact information was recognized in this file.');
-    detailEl.innerHTML = parts.join(' ');
+  const confirmLines = [
+    hasOrderHistory ? 'Order history found' : 'No order history found',
+    hasContacts ? 'Contacts found' : 'No contact info found'
+  ];
+
+  let subdued = '';
+  if(!hasOrderHistory){
+    subdued = "Without order history, House Accounts will monitor these accounts for public business triggers instead of reorder timing. That's okay.";
+  } else if(missingOptional.length){
+    subdued = "Some optional fields weren't included. That's okay — House Accounts will use the data available.";
   }
-  if(warningEl){
-    const missing = Array.isArray(records.missingCols) ? records.missingCols.filter(k => MISSING_FIELD_LABELS[k]) : [];
-    if(!hasOrderHistory){
-      warningEl.hidden = false;
-      warningEl.innerHTML = 'This list has no recognizable order history, so House Accounts will monitor these accounts for public business triggers (hiring, expansions, leadership changes, and similar activity). Reorder and follow-up intelligence will be limited until order history is included. This is not a failed upload.';
-    } else if(missing.length){
-      warningEl.hidden = false;
-      const labels = missing.map(k => MISSING_FIELD_LABELS[k]).join(', ');
-      warningEl.innerHTML = `A few optional fields were not found in this file (${escapeHtml(labels)}). House Accounts will still analyze whatever was included -- this is not a failed upload.`;
-    } else {
-      warningEl.hidden = true;
-      warningEl.innerHTML = '';
+
+  const triggerEl = document.activeElement;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'ha-confirm-backdrop';
+  backdrop.innerHTML = `
+    <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haUploadSuccessTitle" aria-describedby="haUploadSuccessBody">
+      <h3 class="ha-confirm-title" id="haUploadSuccessTitle">Upload complete</h3>
+      <p class="ha-confirm-body" id="haUploadSuccessBody">
+        <strong>${escapeHtml(accountCount)}</strong> customer account${accountCount === 1 ? '' : 's'} added.
+        <span class="upload-modal-confirm-lines">${confirmLines.map(line => escapeHtml(line)).join('<br>')}</span>
+        ${subdued ? `<span class="upload-modal-subdued">${escapeHtml(subdued)}</span>` : ''}
+      </p>
+      <div class="ha-confirm-actions upload-modal-actions">
+        <button type="button" class="ha-confirm-cancel" id="haUploadNotNowBtn">Not now</button>
+        <button type="button" class="ha-confirm-primary-btn" id="haUploadResearchBtn">Research ${escapeHtml(accountCount)} account${accountCount === 1 ? '' : 's'}</button>
+      </div>
+      <div class="upload-modal-view-link-row">
+        <button type="button" class="upload-modal-view-link" id="haUploadViewAccountsBtn">View uploaded accounts</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const notNowBtn = backdrop.querySelector('#haUploadNotNowBtn');
+  const researchBtn = backdrop.querySelector('#haUploadResearchBtn');
+  const viewAccountsBtn = backdrop.querySelector('#haUploadViewAccountsBtn');
+  const focusable = [notNowBtn, researchBtn, viewAccountsBtn];
+
+  function close(){
+    document.removeEventListener('keydown', onKeydown, true);
+    backdrop.remove();
+    if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+    if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+  }
+  function onKeydown(e){
+    if(e.key === 'Escape'){ e.preventDefault(); close(); return; }
+    if(e.key === 'Tab'){
+      const idx = focusable.indexOf(document.activeElement);
+      if(e.shiftKey && idx <= 0){ e.preventDefault(); focusable[focusable.length - 1].focus(); }
+      else if(!e.shiftKey && idx === focusable.length - 1){ e.preventDefault(); focusable[0].focus(); }
     }
   }
-  // ux/research-control-progress: upload no longer auto-starts research
-  // (see processData() below -- it used to chain straight into
-  // autoResearchTopAccountsOnce() the instant the save resolved). This is
-  // the explicit decision point instead: shown fresh on every successful
-  // upload, reset to visible here so a second upload in the same session
-  // gets its own prompt even if a prior one was dismissed via "Not now".
-  const decisionEl = document.getElementById('uploadResearchDecision');
-  const decisionCountEl = document.getElementById('uploadResearchAllCount');
-  if(decisionCountEl) decisionCountEl.textContent = String(accountCount);
-  if(decisionEl) decisionEl.hidden = false;
-  panel.style.display = 'block';
+  notNowBtn.addEventListener('click', () => close());
+  // Research launched from here closes the modal immediately and relies on
+  // the existing renderDashboardResearchProgress() mini progress indicator
+  // (already wired via onResearchTrackerChange, visible on the dashboard
+  // underneath) rather than building a second, duplicative in-modal
+  // progress UI -- the simpler and less duplicative of the two options the
+  // founder asked to choose between.
+  researchBtn.addEventListener('click', () => {
+    close();
+    researchTopAccounts({auto:false});
+  });
+  viewAccountsBtn.addEventListener('click', () => {
+    close();
+    document.getElementById('manageCustomerAccountsBtn')?.click();
+  });
+  backdrop.addEventListener('click', e => { if(e.target === backdrop) close(); });
+  document.addEventListener('keydown', onKeydown, true);
+  researchBtn.focus();
+}
+
+// Live QA round 5, item 3: the truthful counterpart to
+// showUploadSuccessModal() above -- shown instead of it whenever
+// persistence genuinely did not happen (a save error, or the server
+// confirming 0 accounts were actually accepted), so a parsing success can
+// never be presented as an upload success. Same .ha-confirm-* shell, single
+// acknowledgement button (nothing to choose between -- there is no research
+// to launch against accounts that were never saved).
+function showUploadFailureModal(message){
+  if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
+    window.HouseAccountsHeader.beginOverlay();
+  }
+  const triggerEl = document.activeElement;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'ha-confirm-backdrop';
+  backdrop.innerHTML = `
+    <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haUploadFailTitle" aria-describedby="haUploadFailBody">
+      <h3 class="ha-confirm-title" id="haUploadFailTitle">Upload didn't save</h3>
+      <p class="ha-confirm-body" id="haUploadFailBody">${escapeHtml(message)}</p>
+      <div class="ha-confirm-actions">
+        <button type="button" class="ha-confirm-cancel" id="haUploadFailOkBtn">Got it</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const okBtn = backdrop.querySelector('#haUploadFailOkBtn');
+
+  function close(){
+    document.removeEventListener('keydown', onKeydown, true);
+    backdrop.remove();
+    if(triggerEl && typeof triggerEl.focus === 'function') triggerEl.focus();
+    if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
+  }
+  function onKeydown(e){
+    if(e.key === 'Escape'){ e.preventDefault(); close(); return; }
+    if(e.key === 'Tab'){ e.preventDefault(); okBtn.focus(); }
+  }
+  okBtn.addEventListener('click', () => close());
+  backdrop.addEventListener('click', e => { if(e.target === backdrop) close(); });
+  document.addEventListener('keydown', onKeydown, true);
+  okBtn.focus();
 }
 
 function processData(records){
@@ -11779,11 +11856,13 @@ function processData(records){
   // future "no data yet" response from the unrelated initial auto-load
   // must never hide/replace it (see loadSavedDashboard()'s guards).
   freshUploadRenderedThisSession = true;
-  // The upload succeeded -- close the Add Customer Data modal so the
-  // branded success panel and refreshed dashboard underneath are visible
-  // immediately, instead of leaving the user looking at the modal.
+  // The file parsed successfully -- close the Add Customer Data modal so
+  // the refreshed dashboard underneath is visible immediately, instead of
+  // leaving the user looking at the modal. Live QA round 5: the upload-
+  // success modal itself is NOT shown here -- parsing is not the same as
+  // saving (see the saveCurrentUpload().then() callback below, which shows
+  // it only once the server confirms accounts were actually persisted).
   if(typeof closeAddCustomerDataModal === 'function') closeAddCustomerDataModal();
-  renderUploadSuccessState(records, accounts);
 
   lastAnalysisSummary = {
     accountCount: accounts.length,
@@ -11797,11 +11876,9 @@ function processData(records){
   // autoResearchTopAccountsOnce() (a 500ms-delayed call into
   // researchTopAccounts({auto:true})) -- uploading a list silently
   // committed the user to research with no explicit decision point. The
-  // explicit choice now lives in renderUploadSuccessState()'s
-  // #uploadResearchDecision block (Research all N accounts / Not now,
-  // wired in wireUploadSuccessStateControls()) -- accounts are simply
-  // saved and left in their "Not researched yet" state until the user
-  // decides.
+  // explicit choice now lives in showUploadSuccessModal()'s Research/Not
+  // now actions (below) -- accounts are simply saved and left in their
+  // "Not researched yet" state until the user decides.
   //
   // Follow-up round / FR2 round: whatever this upload left on screen above
   // (the untouched prior aggregate, or the neutral "Building your
@@ -11811,10 +11888,10 @@ function processData(records){
   // /api/get-dashboard source loadSavedDashboard() uses and redraws Your
   // Accounts/totals/combined-list context/Recently Researched/priorities
   // from the FULL aggregate (every uploaded list, including this new one) --
-  // silently, without touching the upload-success panel still on screen or
-  // showing the loading skeleton/Sample Analysis over it. A failed refresh
-  // must not leave a first-time user stuck on "Building your dashboard…"
-  // forever, and must never discard an existing aggregate that was already
+  // silently, without touching the upload-success modal or showing the
+  // loading skeleton/Sample Analysis over it. A failed refresh must not
+  // leave a first-time user stuck on "Building your dashboard…" forever,
+  // and must never discard an existing aggregate that was already
   // correctly on screen -- only the no-prior-aggregate placeholder case
   // gets a visible, retryable failure state.
   lastUploadAcceptedAccountCount = null;
@@ -11825,9 +11902,23 @@ function processData(records){
     // parsed count used above for the summary object), which free-plan
     // locking or account-name validation can silently reduce server-side.
     // A later explicit user action against this list is gated on this value.
+    //
+    // Live QA round 5, item 3: this is also the ONE place the upload-
+    // success/upload-failure modal is shown, and it is gated on this same
+    // server-confirmed outcome -- "successful upload" means accounts were
+    // actually persisted, not merely parsed, and a real save failure (a
+    // thrown error, an entitlement/account-limit rejection, or a confirmed
+    // zero accepted) always surfaces the truthful failure modal, never the
+    // success one.
     if(saveResult && saveResult.ok && saveResult.data && Number.isFinite(Number(saveResult.data.accountsSaved))){
       lastUploadAcceptedAccountCount = Number(saveResult.data.accountsSaved);
-      if(lastUploadAcceptedAccountCount === 0) hideUploadDecisionForZeroAcceptedAccounts();
+      if(lastUploadAcceptedAccountCount === 0){
+        hideUploadDecisionForZeroAcceptedAccounts();
+      } else {
+        showUploadSuccessModal(lastUploadAcceptedAccountCount, accounts, records);
+      }
+    } else if(saveResult && !saveResult.ok && !saveResult.staleAttempt){
+      showUploadFailureModal(saveResult.error || "Your upload didn't save. Please try again.");
     }
     let refreshResult = null;
     if(typeof refreshAggregateDashboard === 'function') refreshResult = await refreshAggregateDashboard();
@@ -11842,63 +11933,13 @@ function escapeHtml(text){
   return String(text || '').replace(/[&<>"']/g, m => map[m]);
 }
 
-function dismissUploadSuccessState(){
-  const panel = document.getElementById('uploadSuccessState');
-  if(panel) panel.style.display = 'none';
-}
-function wireUploadSuccessStateControls(){
-  const dismissBtn = document.getElementById('uploadSuccessDismiss');
-  if(dismissBtn) dismissBtn.addEventListener('click', dismissUploadSuccessState);
-  const viewPrioritiesBtn = document.getElementById('uploadSuccessViewPrioritiesBtn');
-  if(viewPrioritiesBtn){
-    viewPrioritiesBtn.addEventListener('click', () => {
-      dismissUploadSuccessState();
-      const header = document.getElementById('timeboxSectionHeader');
-      if(header) header.scrollIntoView({behavior:'smooth', block:'start'});
-    });
-  }
-  const manageAccountsBtn = document.getElementById('uploadSuccessManageAccountsBtn');
-  if(manageAccountsBtn){
-    manageAccountsBtn.addEventListener('click', () => {
-      dismissUploadSuccessState();
-      document.getElementById('manageCustomerAccountsBtn')?.click();
-    });
-  }
-  const anotherBtn = document.getElementById('uploadSuccessAnotherBtn');
-  if(anotherBtn){
-    anotherBtn.addEventListener('click', () => {
-      dismissUploadSuccessState();
-      openLightweightCustomerUpload();
-    });
-  }
-  // ux/research-control-progress: the explicit upload/research decision.
-  // "Research all" reads window.accountRadarAccounts/currentUploadId at
-  // CLICK time (never captured at render time), so it always reflects
-  // whatever this upload actually saved as -- it calls the exact same
-  // researchTopAccounts() the pre-existing "Research Top Accounts" button
-  // uses, just with auto:false (an explicit user action, not the removed
-  // silent auto-trigger). "Not now" makes zero research calls -- it only
-  // hides this decision block, leaving the account list itself untouched
-  // and researchable later from either that button or Manage Customer
-  // Accounts.
-  const researchAllBtn = document.getElementById('uploadResearchAllBtn');
-  if(researchAllBtn){
-    researchAllBtn.addEventListener('click', () => {
-      const decisionEl = document.getElementById('uploadResearchDecision');
-      if(decisionEl) decisionEl.hidden = true;
-      researchTopAccounts({auto:false});
-    });
-  }
-  const notNowBtn = document.getElementById('uploadResearchNotNowBtn');
-  if(notNowBtn){
-    notNowBtn.addEventListener('click', () => {
-      const decisionEl = document.getElementById('uploadResearchDecision');
-      if(decisionEl) decisionEl.hidden = true;
-    });
-  }
-}
-if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireUploadSuccessStateControls);
-else wireUploadSuccessStateControls();
+// Live QA round 5: the old embedded panel's dismiss/View Priorities/Manage
+// Customer Accounts/Upload Another List/Research-decision wiring
+// (dismissUploadSuccessState()/wireUploadSuccessStateControls()) is gone --
+// showUploadSuccessModal()/showUploadFailureModal() above wire their own
+// buttons directly when each modal is built, exactly like
+// showDestructiveConfirm()/showResearchConfirm()/showInfoDialog() do in the
+// Manage Customer Accounts modal scope.
 </script>
 
 <script>

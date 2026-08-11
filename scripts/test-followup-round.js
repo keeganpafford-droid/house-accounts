@@ -245,7 +245,12 @@ assert(
   'required test 12: fetchAndRenderAggregateDashboard() never references #uploadSuccessState at all, in silent or non-silent mode -- the upload-success panel is left completely untouched by this refresh'
 );
 {
-  const processDataSaveChain = dashboardHtml.slice(dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {"), dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {") + 1200);
+  // Live QA round 5: this window was widened from 1200 to 2200 chars --
+  // the upload-success/upload-failure modal gating logic (see
+  // showUploadSuccessModal()/showUploadFailureModal()) now lives inside
+  // this same .then() callback, before the refreshAggregateDashboard()
+  // call this test looks for, pushing it further from the callback's start.
+  const processDataSaveChain = dashboardHtml.slice(dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {"), dashboardHtml.indexOf("saveCurrentUpload('uploaded').then(async (saveResult) => {") + 2200);
   assert(
     /if\(typeof refreshAggregateDashboard === 'function'\) refreshResult = await refreshAggregateDashboard\(\);/.test(processDataSaveChain),
     'required test 11: processData() calls the shared refreshAggregateDashboard() immediately after the fresh upload\'s save resolves, so the aggregate (every uploaded list) replaces the transient single-upload snapshot without a manual refresh (FR2 round: the result is now also captured to drive the retryable-failure state)'

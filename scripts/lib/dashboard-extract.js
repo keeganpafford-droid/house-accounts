@@ -52,6 +52,22 @@
 //     not a limitation: it keeps the boundary of "what's included"
 //     unambiguous and machine-checked, rather than a second flavor of magic
 //     numbers wearing a string costume.
+//
+// QA process note (founder Preview QA, round 5): a regression suite built
+// on this module proves a fix against real, current dashboard/index.html
+// logic -- it says nothing about what a PREVIOUSLY PERSISTED opportunity
+// still looks like. raw_data snapshots written under older code keep
+// whatever shape/semantics that older code produced; nothing here
+// retroactively migrates them, and no such migration is in scope just
+// because a live-QA regression exists to catch. Concretely: changes that
+// affect opportunity creation, classification, serialization, or
+// persistence (createOpportunity(), createRepeatPatternOpportunities(),
+// getRecommendationType(), signalLayerType/opportunityType assignment,
+// serializeAccountForStorage(), etc.) should be live-QA'd against a FRESH
+// fixture upload, not against opportunities left over from an earlier QA
+// round -- a fresh upload runs today's code end-to-end; a stale saved
+// upload only ever reflects whatever code wrote it. Seeing old behavior on
+// old data after a real fix has landed is expected, not a regression.
 
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';

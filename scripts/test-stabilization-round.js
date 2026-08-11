@@ -174,22 +174,21 @@ assert(
 );
 
 // ---------------------------------------------------------------------------
-// Required tests 9, 10, 11 & 12: post-upload actions (View Priorities,
-// Manage Customer Accounts, Upload Another List) never hide/replace the
+// Required tests 9, 10, 11 & 12: post-upload actions never hide/replace the
 // dashboard, and closing either modal restores it unchanged.
+//
+// Live QA round 5: View Priorities/Manage Customer Accounts/Upload Another
+// List were removed from the upload-success surface entirely (per the
+// founder's explicit request -- "those already exist elsewhere in the
+// product") in favor of a focused modal (showUploadSuccessModal()) with
+// Research/Not now actions and a low-emphasis "View uploaded accounts"
+// link, which does the one remaining equivalent thing: open the real
+// Manage Customer Accounts modal, never a dashboard reset.
 // ---------------------------------------------------------------------------
-const uploadSuccessWiringSrc = extractFn(DASHBOARD_SRC, 'wireUploadSuccessStateControls');
+const uploadSuccessWiringSrc = extractFn(DASHBOARD_SRC, 'showUploadSuccessModal');
 assert(
-  /viewPrioritiesBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*const header = document\.getElementById\('timeboxSectionHeader'\);\s*if\(header\) header\.scrollIntoView/.test(uploadSuccessWiringSrc),
-  'View Priorities only dismisses the upload-success panel and scrolls to This Week\'s Priorities -- it never touches dashboard/account-card state'
-);
-assert(
-  /manageAccountsBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*document\.getElementById\('manageCustomerAccountsBtn'\)\?\.click\(\);/.test(uploadSuccessWiringSrc),
-  'Manage Customer Accounts (from the upload-success panel) only dismisses that panel and opens the real Manage Customer Accounts modal -- no dashboard reset call'
-);
-assert(
-  /anotherBtn\.addEventListener\('click', \(\) => \{\s*dismissUploadSuccessState\(\);\s*openLightweightCustomerUpload\(\);/.test(uploadSuccessWiringSrc),
-  'Upload Another List only dismisses the upload-success panel and opens the stable Add Customer Data modal -- no dashboard/account-card clearing call'
+  /viewAccountsBtn\.addEventListener\('click', \(\) => \{\s*close\(\);\s*document\.getElementById\('manageCustomerAccountsBtn'\)\?\.click\(\);/.test(uploadSuccessWiringSrc),
+  '"View uploaded accounts" only closes the upload-success modal and opens the real Manage Customer Accounts modal -- no dashboard reset call'
 );
 const accountManagerOpenCloseSrc = extractRange(DASHBOARD_SRC, 'let accountManagerTriggerEl = null;', 'function close(){');
 assert(
