@@ -5836,7 +5836,25 @@ function evidenceSourceLabel(opp){
 function findAccountForOpp(opp){
   const name = String(opp?.account || opp?.accountName || '').trim().toLowerCase();
   if(!name) return null;
-  return (window.accountRadarAccounts||[]).find(a => String(a?.name||'').trim().toLowerCase() === name) || null;
+  const accounts = window.accountRadarAccounts || [];
+  // Live-QA correction (calendar-day regression, round 3): account names
+  // are only unique WITHIN one upload, never globally (see the ROUND 13
+  // comment on createOpportunity()'s own opp.uploadId field, and
+  // normalizeSavedAccount()'s composite (uploadId, name) identity) -- a
+  // name-only match here can silently resolve to a DIFFERENT upload's
+  // same-named account when the same company has been uploaded more than
+  // once (exactly what repeated fixture QA uploads produce). Confirmed
+  // production case: Account Context showing a stale, pre-fix calendar day
+  // for an account that had since been re-uploaded correctly, because this
+  // lookup picked an older duplicate's stored data. Prefer the exact
+  // (uploadId, name) match whenever the opportunity carries one; only fall
+  // back to name-only when it doesn't (a legacy/untagged opportunity).
+  const uploadId = String(opp?.uploadId || '').trim();
+  if(uploadId){
+    const scoped = accounts.find(a => String(a?.name||'').trim().toLowerCase() === name && String(a?.uploadId||'').trim() === uploadId);
+    if(scoped) return scoped;
+  }
+  return accounts.find(a => String(a?.name||'').trim().toLowerCase() === name) || null;
 }
 
 // Priority 3 item 6/7: "Prior categories" must use ONLY genuine order-derived
@@ -6063,8 +6081,17 @@ function renderSuggestedContactMeta(opp){
 }
 
 function accountOpportunityCluster(opp){
+  // Live-QA correction (primary/additional duplicate, round 3): same
+  // (uploadId, name) composite-identity preference as findAccountForOpp()'s
+  // own fix, and for the same reason -- resolving to a DIFFERENT upload's
+  // same-named account here means Additional Opportunities is built from
+  // that OTHER account's futureOpportunities, not the one the primary opp
+  // (and its own dedupe pass) actually came from.
   const accountName=String(opp?.account||opp?.accountName||'').trim().toLowerCase();
-  const account=(window.accountRadarAccounts||[]).find(a=>String(a?.name||'').trim().toLowerCase()===accountName);
+  const accountUploadId=String(opp?.uploadId||'').trim();
+  const accounts=window.accountRadarAccounts||[];
+  const account=(accountUploadId && accounts.find(a=>String(a?.name||'').trim().toLowerCase()===accountName && String(a?.uploadId||'').trim()===accountUploadId))
+    || accounts.find(a=>String(a?.name||'').trim().toLowerCase()===accountName);
   const opportunities=account&&Array.isArray(account.futureOpportunities)?account.futureOpportunities:[];
   // Commercial-readiness correction round, item 5: exact/near-exact
   // account-history duplicates (the same underlying recent order rendered
@@ -6107,6 +6134,27 @@ function sameOpportunity(a,b){
   // not apply (non-business opportunities, or business opportunities that
   // are genuinely unrelated events) does the buying-conversation key decide.
   if(isWebResearchSignal(a) && isWebResearchSignal(b) && opportunitiesLikelySameInitiative(a, b)) return true;
+  // Live-QA correction (primary/additional duplicate, round 3): the SAME
+  // "use a stronger identity than the buying-conversation key when one
+  // exists" principle as the business-opportunity check just above, applied
+  // to a genuinely detected Repeat/Pattern opportunity. opportunityType
+  // 'REPEAT PATTERN' is set ONLY by createRepeatPatternOpportunities() (never
+  // AI-inferred), and opp.opportunity is that SAME function's deterministic
+  // categoryProgramLabel(pattern.category) program name -- together a
+  // fingerprint at least as authoritative as buyingOpportunityIdentity()'s
+  // AI/rules-inferred department/category/buyer/topic-token slice below,
+  // which can legitimately differ by a token between two independently
+  // re-fetched/re-deduped representations of the EXACT same real pattern
+  // (confirmed production case: the same Ridgeline Headwear pattern
+  // appearing as both the primary Prepare for Call opportunity and its own
+  // Additional Opportunities entry, with clean, non-corrupted persisted
+  // data).
+  if(a?.opportunityType === 'REPEAT PATTERN' && b?.opportunityType === 'REPEAT PATTERN'){
+    const sameAccount = String(a?.account||a?.accountName||'').trim().toLowerCase() === String(b?.account||b?.accountName||'').trim().toLowerCase();
+    const nameA = String(a?.opportunity||a?.opportunityName||'').trim().toLowerCase();
+    const nameB = String(b?.opportunity||b?.opportunityName||'').trim().toLowerCase();
+    if(sameAccount && nameA && nameA === nameB) return true;
+  }
   return opportunityDedupeKey(a||{})===opportunityDedupeKey(b||{});
 }
 
@@ -8272,7 +8320,6 @@ function getWhyNowText(opp){
 
 function getReasonToReachOutTitle(opp){
   const type = String(opp.signalType || opp.opportunityCategory || opp.opportunityType || '').toLowerCase();
-  const category = String(opp.opportunityCategory || opp.opportunity || 'account activity');
   if(opp.isVerifiedSignalOpportunity || opp.sourceUrl){
     if(type.includes('hiring')) return 'Hiring creates a timely reason to check in';
     if(type.includes('event') || type.includes('conference') || type.includes('trade show')) return 'Event activity creates a timely reason to check in';
@@ -8282,6 +8329,19 @@ function getReasonToReachOutTitle(opp){
     if(type.includes('launch')) return 'Launch activity creates a timely reason to check in';
     return 'Business signal creates a reason to reach out';
   }
+  // Live-QA correction (category/program copy drift, round 2): this is the
+  // PFC subtitle's own source ("Past buying suggests a ___ conversation") --
+  // the SAME shared-fallback defect class as getSuggestedOpener() (already
+  // fixed), reached through a completely separate code path. category used
+  // to be opp.opportunityCategory/opp.opportunity -- the generic
+  // opportunity/template NAME (e.g. "Employee Recognition Program"), which
+  // names whichever industry-fallback template happened to win primary-
+  // opportunity selection, not what the account actually bought. Grounded
+  // in realPriorCategories() -- the same real, order-derived source Account
+  // Context/email already use -- so the subtitle can never claim a program
+  // the account never purchased.
+  const realCategory = realPriorCategories(opp)[0];
+  const category = String(realCategory || opp.opportunityCategory || opp.opportunity || 'account activity');
   return `Past buying suggests a ${category.toLowerCase()} conversation`;
 }
 
@@ -10899,7 +10959,20 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
 function feedSummary(opps){
   const items = opps || [];
   const follow = items.filter(o => signalLayerLabel(o) === 'Follow-Up Signal').length;
-  const repeat = items.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal').length;
+  // Live-QA correction (Meridian classification, round 3): "N reorder
+  // opportunities" is a specific, provable cadence claim -- it must count
+  // only opportunities createRepeatPatternOpportunities() actually produced
+  // from a real detected pattern (opportunityType 'REPEAT PATTERN'), never
+  // a generic industry-fallback template that merely INHERITED the
+  // "Repeat / Pattern Signal" layer via the account's low recency score
+  // (see createOpportunity()) -- Meridian Office Partners has exactly one
+  // order and zero detected cadence, but its generic template's
+  // signalLayerType alone was enough to count it, inflating a genuine
+  // 5-account result to a reported 6. A single real order justifies "a
+  // follow-up opportunity" (the follow count above is unaffected -- that
+  // claim needs no cadence, just one recent order), but never "a reorder
+  // opportunity," which specifically claims a repeat cadence exists.
+  const repeat = items.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal' && o.opportunityType === 'REPEAT PATTERN').length;
   const business = items.filter(o => signalLayerLabel(o) === 'Business Activity Signal').length;
   return `${pluralize(business, 'business trigger')} · ${pluralize(repeat, 'reorder opportunity', 'reorder opportunities')} · ${pluralize(follow, 'follow-up')}`;
 }
