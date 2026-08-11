@@ -450,6 +450,30 @@ function isWebResearchSignal(o){
 // ordinary text).
 function reconcileStoredOpportunity(opp){
   if(!opp || typeof opp !== 'object') return opp;
+  // Live-QA correction (repeat/follow-up priority-eligibility loss): an
+  // opportunity that already explicitly declares itself Follow-Up Signal or
+  // Repeat / Pattern Signal is order-history-derived and was never a
+  // business/web-research event in the first place -- it must never reach
+  // classifyLegacySignalActionability() at all. That function is a
+  // business-EVENT date/actionability engine (resolveCanonicalEventType()/
+  // computeActionability() against evidence text); run against a genuine
+  // reorder/follow-up opportunity's generic order-history text (e.g. "Ask
+  // whether a similar program, order, or event is happening again"), it
+  // fabricates an opportunityType of canonicalEventType (e.g.
+  // "BUSINESS_ACTIVITY_UNKNOWN" instead of the real "REPEAT PATTERN") and an
+  // actionabilityStatus with no real event date behind it. Confirmed
+  // production defect: isPriorityEligibleOpportunity() (dashboard/index.html)
+  // reads opp.actionabilityStatus.isPriorityEligible UNCONDITIONALLY, for
+  // every opportunity kind, not only web-research ones -- so a fabricated
+  // actionabilityStatus here silently drops an otherwise real, correctly
+  // detected reorder/follow-up opportunity out of the priorities feed on
+  // every reload, with the account's own true REPEAT PATTERN opportunityType
+  // (its raw_data.repeatPatterns duplicate, never reconciled) not always
+  // surviving the client's own by-score dedupe either. An explicit
+  // signalLayerType here is the same authoritative, highest-priority signal
+  // isWebResearchSignal() itself trusts above all other evidence -- this is
+  // not new information the classifier below needs to add.
+  if(opp.signalLayerType === 'Follow-Up Signal' || opp.signalLayerType === 'Repeat / Pattern Signal') return opp;
   const legacyFields = classifyLegacySignalActionability(opp);
   const isLegacyBusinessEntryMissedByTheGeneralContract = Boolean(opp.sourceName) || Boolean(opp.cleanSourceName);
   return {
