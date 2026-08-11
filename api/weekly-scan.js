@@ -290,7 +290,16 @@ function accountPayload(row){
     historicalProjects: raw.historicalProjects || [],
     recentOrderDates: raw.recentOrderDates || [],
     existingSignals: raw.existingSignals || [],
-    repeatPatterns: raw.repeatPatterns || []
+    repeatPatterns: raw.repeatPatterns || [],
+    // Core defect fix (same root cause as api/research-batch.js's
+    // safeAccounts): raw_data.purchases is already persisted on every save
+    // (dashboard/index.html's serializeAccountForStorage()) but this
+    // function never read it back out, so the weekly automated scan sent
+    // no purchase history at all -- api/research-batch.js's own
+    // pairedPurchases() normalizes this raw record shape into the paired
+    // {category, project, dateStr} shape findLikelyRelatedPurchase() and
+    // the live model's prompt context both need.
+    purchases: raw.purchases || []
   };
 }
 

@@ -934,7 +934,7 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
   };
 }
 
-async function aiQualifyBusinessSignals(accountName, industry, candidates = [], suppliedContactName = '', recentPurchases = []) {
+async function aiQualifyBusinessSignals(accountName, industry, candidates = [], suppliedContactName = '', recentPurchases = [], knownContacts = [], purchaseCategories = [], accountNotes = '') {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !candidates.length) {
     return { enabled: Boolean(apiKey), signals: [], rawCount: 0, error: apiKey ? '' : 'OPENAI_API_KEY not configured' };
@@ -953,6 +953,11 @@ Account: ${accountName}
 Industry: ${industry || 'Unknown'}
 User-supplied contact to verify first, if any: ${suppliedContactName || 'None'}
 ${recentPurchases.length ? `Recently uploaded purchases from us (category, project, date) -- use ONLY to judge whether a RECENT PAST public event might be something we already supplied for; a purchase date within roughly 3-4 weeks of the event date is the only thing that counts as evidence, never the event topic alone: ${JSON.stringify(recentPurchases)}` : ''}
+${knownContacts.length ? `Known contacts already on file for this account -- when a signal names or affects one of these people, or their role/department is the natural fit for an activation, prefer them; never invent a person or role the public evidence does not itself support: ${JSON.stringify(knownContacts)}` : ''}
+${purchaseCategories.length ? `Product categories this account has bought from us before -- use ONLY to judge whether an activation idea for an already-established signal is a natural, familiar fit for them (e.g. they buy apparel, so an apparel-based idea is a safe fit); never use this list as a reason to create a signal or activation on its own: ${JSON.stringify(purchaseCategories)}` : ''}
+${accountNotes ? `Internal notes on file for this account (context only, never a source of a signal): ${accountNotes.slice(0, 300)}` : ''}
+
+Everything above this line about the account -- recent purchases, known contacts, purchase categories, internal notes -- exists to make an ALREADY-ESTABLISHED public signal sharper and more specific (better contact fit, a more relevant activation idea, or catching a need we may have already fulfilled). None of it is itself a reason to contact this account. If the public candidate sources below do not establish a real moment worth mentioning, return {"signals":[]} regardless of how much account context is available.
 
 Your job is NOT to summarize the company.
 Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, only once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days.
@@ -1072,6 +1077,23 @@ function domainFromEmailDomain(emailDomain = '') {
   return d;
 }
 
+// product/commercial-activation-reasoning, Core defect fix: the client
+// already sends the account's own known website (dashboard/index.html's
+// research-account.js payload builders all include `website`), but this
+// endpoint never read it -- domain resolution only ever ran off an
+// uploaded contact's email domain, so an existing customer with a known
+// website and no usable contact email got no domain-scoped search/probe
+// coverage at all. Reuses domainFromEmailDomain's own
+// personal-email-provider guard since a raw website value can arrive in
+// the same shapes (bare domain, URL, or accidentally an email address).
+function domainFromWebsite(website = '') {
+  const raw = String(website || '').trim();
+  if (!raw) return '';
+  let host = raw;
+  try { host = raw.includes('://') ? new URL(raw).hostname : raw.split('/')[0]; } catch { host = raw.split('/')[0]; }
+  return domainFromEmailDomain(host.split('@').pop());
+}
+
 async function domainProbeCandidates(domain, accountName, industry) {
   if (!domain) return [];
   const paths = [
@@ -1178,12 +1200,16 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
   try {
-    const { accountName, industry, cityState, emailDomain, notes, employees, contactName, purchases } = req.body || {};
+    const { accountName, industry, cityState, emailDomain, notes, employees, contactName, purchases, website, contacts, categories } = req.body || {};
     if (!accountName) return res.status(400).json({ error: 'Missing accountName' });
 
     const location = cityState ? ` ${cityState}` : '';
     const context = [industry, cityState, notes, employees ? `${employees} employees` : ''].filter(Boolean).join(' ');
-    const domain = domainFromEmailDomain(emailDomain);
+    // Core defect fix: an existing customer's own known website is a
+    // stronger, already-verified identity signal than one derived from an
+    // uploaded contact's email domain -- fall back to it when no usable
+    // email domain is present, rather than dropping it on the floor.
+    const domain = domainFromEmailDomain(emailDomain) || domainFromWebsite(website);
 
     const sourceQueries = [
       { bucket: 'careers', q: `"${accountName}" ${location} hiring jobs careers open positions ${context}` },
@@ -1268,7 +1294,19 @@ export default async function handler(req, res) {
     const recentPurchases = Array.isArray(purchases)
       ? purchases.map(p => ({ category: p?.category || '', project: p?.project || '', dateStr: p?.dateStr || p?.date || p?.orderDate || p?.order_date || '' })).filter(p => p.dateStr).slice(0, 8)
       : [];
-    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''), recentPurchases);
+    // Core defect fix: contacts/categories/notes were already sent by every
+    // client payload builder (dashboard/index.html) but never read here --
+    // silently dropped before they could sharpen contact fit or
+    // purchase-aware activation ideas. Scoped the same way recentPurchases
+    // already is: sharpens an already-established signal, never a reason to
+    // create one on its own (enforced in the prompt itself, not here).
+    const knownContacts = Array.isArray(contacts)
+      ? contacts.filter(c => c && (c.name || c.email)).slice(0, 6).map(c => ({ name: clean(c.name || ''), title: clean(c.title || ''), department: clean(c.department || ''), email: clean(c.email || '') }))
+      : [];
+    const purchaseCategories = Array.isArray(categories)
+      ? [...new Set(categories.map(c => clean(c || '')).filter(Boolean))].slice(0, 10)
+      : [];
+    const aiQualification = await aiQualifyBusinessSignals(accountName, industry, allCandidates, clean(contactName || ''), recentPurchases, knownContacts, purchaseCategories, clean(notes || ''));
 
     // Signal-to-account evidence grounding (Sprint 1 extension -- see the
     // header comment above the equivalent block in api/research-batch.js for
@@ -1374,4 +1412,9 @@ export default async function handler(req, res) {
 // own export { makeSignal, ... } for the same reason) -- makeAISignal() has
 // no side effects and no dependency on request/response objects, so it can
 // be exercised directly rather than through vm/line-range extraction.
-export { makeAISignal };
+// aiQualifyBusinessSignals/domainFromWebsite added for the Core defect-fix
+// regression suite (product/commercial-activation-reasoning): both are pure
+// with respect to their inputs aside from the single OpenAI fetch call,
+// which tests intercept directly rather than mocking the full search
+// pipeline.
+export { makeAISignal, aiQualifyBusinessSignals, domainFromWebsite };

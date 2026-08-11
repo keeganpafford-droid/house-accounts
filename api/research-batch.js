@@ -803,6 +803,26 @@ async function mapLimit(items, limit, mapper) {
   return results;
 }
 
+// product/commercial-activation-reasoning, Core defect fix: safeAccounts
+// (below) never carried a paired {category, project, dateStr} purchase
+// shape through at all -- accountPromptContext()'s own `recentPurchases`
+// field (used only for recent-past fulfillment judgment in the live
+// model's own prompt, see COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT) and
+// findLikelyRelatedPurchase()'s deterministic fallback (called below with
+// `account.purchases`) both silently read undefined forever, so an
+// uploaded purchase could never be matched to a recent-past signal on this
+// path. The dashboard's own batchPayloadForAccounts() already computes and
+// sends this exact paired shape as `recentPurchases`; this accepts either
+// that pre-paired shape or a raw uploaded purchases array (other callers,
+// e.g. api/weekly-scan.js's accountPayload()) and normalizes either into
+// the one shape both consumers need.
+function pairedPurchases(a = {}) {
+  const source = (Array.isArray(a.recentPurchases) && a.recentPurchases.length) ? a.recentPurchases : a.purchases;
+  return Array.isArray(source)
+    ? source.map(p => ({ category: p?.category || '', project: p?.project || '', dateStr: p?.dateStr || p?.date || p?.orderDate || p?.order_date || '' })).filter(p => p.dateStr).slice(0, 8)
+    : [];
+}
+
 function accountPromptContext(accounts) {
   return accounts.map((a, idx) => ({
     id: String(idx),
@@ -2944,6 +2964,13 @@ export default async function handler(req, res) {
         websiteProvenance: clean(a.website || '') ? 'uploaded' : ((Array.isArray(a.contacts) && a.contacts.some(c => domainFromContactEmail(c?.email))) ? 'contact-derived' : ''),
         categories: Array.isArray(a.categories) ? a.categories.slice(0, 10) : [],
         contacts: Array.isArray(a.contacts) ? a.contacts.slice(0, 12) : [],
+        // Core defect fix: see pairedPurchases()'s header comment -- both
+        // fields hold the identical paired shape; recentPurchases feeds the
+        // live model's own prompt context (accountPromptContext() below),
+        // purchases feeds findLikelyRelatedPurchase()'s deterministic
+        // recent-past fulfillment check.
+        recentPurchases: pairedPurchases(a),
+        purchases: pairedPurchases(a),
         oneOffResearch: a.oneOffResearch === true,
         contactName: clean(a.contactName || (Array.isArray(a.contacts) ? a.contacts[0]?.name : '') || ''),
         recentOrderDates: Array.isArray(a.recentOrderDates) ? a.recentOrderDates.slice(0, 5) : [],
@@ -3713,5 +3740,6 @@ export {
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,
   sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
   queryTemplates, domainFromContactEmail, priorityOwnedPages,
-  buildDerivedIdentity, prioritizeIdentityBootstrapCandidates
+  buildDerivedIdentity, prioritizeIdentityBootstrapCandidates,
+  pairedPurchases, accountPromptContext
 };
