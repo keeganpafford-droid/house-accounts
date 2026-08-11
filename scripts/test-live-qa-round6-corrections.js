@@ -67,7 +67,11 @@ const DASHBOARD_SRC = loadDashboardSource();
 // control flow and its OWN direct global/DOM mutations.
 // ===========================================================================
 {
-  const SRC = extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard');
+  // Live QA round 8: fetchAndRenderAggregateDashboard()'s empty-state
+  // clearing was factored out into a shared applyEmptyWorkspaceState()
+  // helper (also used by the team-view 404 catch branch) -- must be
+  // extracted alongside it now.
+  const SRC = [extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState'), extractFn(DASHBOARD_SRC, 'fetchAndRenderAggregateDashboard')].join('\n\n');
 
   function makeEl(){ return { style:{display:''}, textContent:'', innerHTML:'', classList:{ _c:new Set(), add(...c){c.forEach(x=>this._c.add(x));}, remove(...c){c.forEach(x=>this._c.delete(x));}, contains(c){return this._c.has(c);} } }; }
 

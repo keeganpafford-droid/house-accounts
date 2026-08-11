@@ -95,21 +95,36 @@ assert(
   (loadSavedDashboardSrc.match(/if\(skeleton\) skeleton\.classList\.remove\('active'\);/g) || []).length >= 3,
   'fetchAndRenderAggregateDashboard() hides the skeleton in every resolution branch (personalEmpty, success, and the catch/noData path)'
 );
+// Live QA round 8: the personalEmpty/noData branches' actual DOM-clearing
+// (including revealing Sample Analysis) was factored out into one shared
+// applyEmptyWorkspaceState() helper, called by both branches -- see its own
+// header comment. The ordering guarantee these tests check (skeleton
+// removed / branch confirmed BEFORE Sample Analysis can show) now lives in
+// that helper's call-site ordering, not literal example.style.display text
+// inside each branch.
+const applyEmptyWorkspaceStateSrc = extractFn(DASHBOARD_SRC, 'applyEmptyWorkspaceState');
+assert(
+  /example\.style\.display = 'block';/.test(applyEmptyWorkspaceStateSrc),
+  'applyEmptyWorkspaceState() reveals Sample Analysis as part of the shared empty-workspace transition'
+);
 {
   const personalEmptyBlock = loadSavedDashboardSrc.slice(loadSavedDashboardSrc.indexOf('if(data.personalEmpty === true){'), loadSavedDashboardSrc.indexOf('const accounts = (data.accounts || [])'));
   const skeletonRemoveIdx = personalEmptyBlock.indexOf("skeleton.classList.remove('active')");
-  const exampleShowIdx = personalEmptyBlock.indexOf("example.style.display = 'block'");
+  const applyCallIdx = personalEmptyBlock.indexOf('applyEmptyWorkspaceState(');
   assert(
-    skeletonRemoveIdx !== -1 && exampleShowIdx !== -1 && skeletonRemoveIdx < exampleShowIdx,
+    skeletonRemoveIdx !== -1 && applyCallIdx !== -1 && skeletonRemoveIdx < applyCallIdx,
     'loadSavedDashboard() reveals Sample Analysis in the personalEmpty branch only after skeleton removal (confirmed loading complete + confirmed empty)'
   );
 }
 {
   const noDataBlock = loadSavedDashboardSrc.slice(loadSavedDashboardSrc.indexOf('}catch(err){'));
-  const noDataIdx = noDataBlock.indexOf('if(isMember && noData){');
-  const exampleShowIdx = noDataBlock.indexOf("example.style.display = 'block'");
+  const noDataIdx = noDataBlock.indexOf('if(noData){');
+  // The actual CALL, not the applyEmptyWorkspaceState() mention inside this
+  // branch's own header comment (which would otherwise match earlier in
+  // the block and falsely appear to precede the noData check).
+  const applyCallIdx = noDataBlock.indexOf('applyEmptyWorkspaceState({silent, banner});');
   assert(
-    noDataIdx !== -1 && exampleShowIdx !== -1 && noDataIdx < exampleShowIdx,
+    noDataIdx !== -1 && applyCallIdx !== -1 && noDataIdx < applyCallIdx,
     'loadSavedDashboard() reveals Sample Analysis in the catch/noData branch only after loading is confirmed complete and empty'
   );
 }

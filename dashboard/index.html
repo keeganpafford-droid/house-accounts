@@ -3723,6 +3723,60 @@ function showDashboardRefreshRetryState(){
 // already have their own success UI on screen (the upload-success panel,
 // a research-completion toast) and must not flash a loading state or
 // example-opportunity/empty-state over it.
+// Live QA round 8: a confirmed-empty workspace can reach
+// fetchAndRenderAggregateDashboard() through TWO genuinely different
+// server response shapes, and both must produce the identical, fully
+// cleared client state -- this is the ONE place either does that.
+//   1. A 200 with personalEmpty:true -- api/get-dashboard.js's own,
+//      explicit "viewMode==='my' and this user owns zero uploads" contract.
+//   2. A 404 "No existing customer dashboard data found yet." -- what the
+//      SAME endpoint returns for viewMode==='team' (an owner/admin account,
+//      or anyone whose dashboardViewMode is 'team') once the org's last
+//      upload/account/signal rows are gone; there is no team-scoped
+//      personalEmpty response, this 404 IS team view's empty contract.
+// Root cause of the founder's repeated "Refresh Dashboard leaves stale
+// state" report surviving two prior rounds: those rounds only fixed shape
+// 1. defaultDashboardView() defaults an owner/admin account (exactly the
+// kind of account a founder testing their own product uses) to 'team',
+// so the founder's real Refresh Dashboard click was hitting shape 2's
+// catch block the whole time -- which had its own, much thinner guard
+// (`isMember && noData`, excluding any team-capable account entirely) and,
+// even when it did fire for a plain member, never cleared window.
+// accountRadarAccounts/currentUploadId/currentUploadName/the Your Accounts
+// panel/refreshOpportunityViews() at all -- only memberEmptyState/leadGate/
+// exampleOpportunity/results visibility. A confirmed "no existing customer
+// dashboard data" 404 is unambiguous regardless of role; excluding
+// team-capable accounts from recognizing it as empty was never correct.
+function applyEmptyWorkspaceState({silent, banner}){
+  window.accountRadarAccounts = [];
+  currentUploadId = null;
+  currentUploadName = '';
+  const customerDashboardPanel = document.getElementById('customerDashboard');
+  if(customerDashboardPanel) customerDashboardPanel.style.display = 'none';
+  // Clears the priorities feed, stat bar, detailed account views, and
+  // Recently Researched -- all four are derived purely from window.
+  // accountRadarAccounts (now empty), reusing the exact same render
+  // functions the populated path uses rather than any new empty-state
+  // logic.
+  if(typeof refreshOpportunityViews === 'function') refreshOpportunityViews();
+  const memberEmpty = document.getElementById('memberEmptyState');
+  const gate = document.getElementById('leadGate');
+  const example = document.getElementById('exampleOpportunity');
+  const results = document.getElementById('results');
+  if(memberEmpty) memberEmpty.style.display = 'block';
+  if(gate) gate.style.display = 'none';
+  // No accounts uploaded yet -- the always-visible global "Add Customer
+  // Data" CTA in the header is the single next action; the upload control
+  // itself now only appears inside its modal (opened by that CTA), not
+  // auto-revealed inline on the page. Loading is confirmed complete AND
+  // confirmed empty here, so Sample Analysis is safe to show now (never as
+  // a default/flash state).
+  if(example) example.style.display = 'block';
+  if(results) results.style.display = 'none';
+  if(banner) banner.style.display = 'none';
+  if(typeof renderDashboardViewSwitcher === 'function') renderDashboardViewSwitcher();
+}
+
 async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
   const e = String(email || '').trim().toLowerCase();
   if(!e) return {ok:false, error:'Missing email'};
@@ -3748,50 +3802,13 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       // this response predates it server-side (replication/read lag), so it
       // must not hide the dashboard the user is already looking at.
       if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
-      // Live QA round 6: this whole transition used to be gated on !silent,
-      // so a SILENT refresh (refreshAggregateDashboard() -- what Refresh
-      // Dashboard and every post-upload/post-research call actually uses)
-      // that legitimately confirmed zero accounts left window.
-      // accountRadarAccounts, the priorities feed, the stat bar, the Your
-      // Accounts panel, and Recently Researched all showing the PREVIOUS
-      // upload's stale content -- confirmed production case: deleting the
-      // last uploaded list correctly emptied the server (Manage Customer
-      // Accounts showed "No uploaded customer accounts found"), but the
-      // dashboard underneath kept showing the old filename, account count,
-      // and cards until a full page reload. "silent" means "don't flash the
-      // loading skeleton/banner while fetching" -- it was never meant to
-      // mean "leave stale content on screen once the fetch has confirmed
-      // the workspace is now genuinely empty," so this state transition (and
-      // the harmless memberEmpty/gate/example/results visibility below,
-      // which is the same empty state a fresh page load already shows) now
-      // always runs, matching the required invariant that a confirmed-empty
-      // refresh must never require a browser reload to be reflected.
-      window.accountRadarAccounts = [];
-      currentUploadId = null;
-      currentUploadName = '';
-      const customerDashboardPanel = document.getElementById('customerDashboard');
-      if(customerDashboardPanel) customerDashboardPanel.style.display = 'none';
-      // Clears the priorities feed, stat bar, detailed account views, and
-      // Recently Researched -- all four are derived purely from window.
-      // accountRadarAccounts (now empty), reusing the exact same render
-      // functions the populated path uses rather than any new empty-state
-      // logic.
-      if(typeof refreshOpportunityViews === 'function') refreshOpportunityViews();
-      const memberEmpty = document.getElementById('memberEmptyState');
-      const gate = document.getElementById('leadGate');
-      const example = document.getElementById('exampleOpportunity');
-      const results = document.getElementById('results');
-      if(memberEmpty) memberEmpty.style.display = 'block';
-      if(gate) gate.style.display = 'none';
-      // No accounts uploaded yet -- the always-visible global "Add Customer
-      // Data" CTA in the header is the single next action; the upload
-      // control itself now only appears inside its modal (opened by that
-      // CTA), not auto-revealed inline on the page. Loading is confirmed
-      // complete AND confirmed empty here, so Sample Analysis is safe to
-      // show now (never as a default/flash state).
-      if(example) example.style.display = 'block';
-      if(results) results.style.display = 'none';
-      if(banner) banner.style.display = 'none';
+      // Live QA round 6/8: this transition must run regardless of `silent`
+      // (Refresh Dashboard and every post-upload/post-research call use the
+      // silent variant) -- "silent" only means "don't flash the loading
+      // skeleton/banner while fetching," never "leave stale content on
+      // screen once the fetch has confirmed the workspace is now genuinely
+      // empty." See applyEmptyWorkspaceState()'s own header comment.
+      applyEmptyWorkspaceState({silent, banner});
       return {ok:true, empty:true};
     }
 
@@ -3830,25 +3847,23 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     return {ok:true, data, accounts};
   }catch(err){
     if(skeleton) skeleton.classList.remove('active');
-    const isMember = !canCurrentUserViewTeam();
+    // Live QA round 8: a confirmed "no existing customer dashboard data"
+    // 404 is unambiguous regardless of role -- this used to be gated on
+    // `!canCurrentUserViewTeam()` (a plain member), which meant a team-
+    // capable account (owner/admin -- exactly the kind of account a
+    // founder testing their own product uses, since defaultDashboardView()
+    // defaults such accounts to 'team' view) never recognized this shape
+    // as empty at all, and instead showed a raw "No dashboard loaded: ..."
+    // error banner while leaving every stale global/DOM element from the
+    // previous upload completely untouched. See applyEmptyWorkspaceState()'s
+    // own header comment for the full lifecycle this closes.
     const noData = /No existing customer dashboard data found yet|No saved dashboard found/i.test(String(err.message || ''));
-    if(isMember && noData){
+    if(noData){
       // Same stale-response guard as the personalEmpty branch above -- a
       // fresher upload already rendered client-side, so this late "no
       // data" error must not replace it.
       if(freshUploadRenderedThisSession) return {ok:true, empty:true, skipped:true};
-      if(!silent){
-        const memberEmpty = document.getElementById('memberEmptyState');
-        const example = document.getElementById('exampleOpportunity');
-        if(memberEmpty) memberEmpty.style.display = 'block';
-        const gate = document.getElementById('leadGate');
-        const results = document.getElementById('results');
-        if(gate) gate.style.display = 'none';
-        if(results) results.style.display = 'none';
-        if(example) example.style.display = 'block';
-        if(banner) banner.style.display = 'none';
-        renderDashboardViewSwitcher();
-      }
+      applyEmptyWorkspaceState({silent, banner});
       return {ok:true, empty:true};
     }
     if(!silent && banner){ banner.style.display = 'block'; banner.innerHTML = `<strong>No dashboard loaded:</strong> ${escapeHtml(err.message)}`; }
