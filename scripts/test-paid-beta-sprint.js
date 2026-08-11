@@ -764,7 +764,7 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   assert(evidenceHtml.includes('Operations') && evidenceHtml.includes('Launch Kits'), 'required test 13: buying team and suggested categories are still rendered, in Prepare for Call\'s Research Details, not deleted');
 
   const accountContextHtml = sandbox.renderAccountContextSection(opp);
-  assert(accountContextHtml.includes('Apparel') && accountContextHtml.includes('4 orders') && accountContextHtml.includes('Jordan Lee'), `required test 13: real order history (categories, order count, uploaded contact) is preserved and shown in Account Context (got: "${accountContextHtml}")`);
+  assert(accountContextHtml.includes('Apparel') && accountContextHtml.includes('4 purchase records') && accountContextHtml.includes('Jordan Lee'), `required test 13: real order history (categories, order count, uploaded contact) is preserved and shown in Account Context (got: "${accountContextHtml}")`);
 
   const verifiedHtml = sandbox.renderVerifiedOpportunitySection(opp);
   assert(verifiedHtml.includes('Acme Corp opens new Richmond distribution center'), 'required test 13: the exact signal is preserved and shown in Verified Opportunity');
@@ -1072,14 +1072,14 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   sandbox.window.accountRadarAccounts = [{ name: 'History No Contact Co', categoryTypes: new Set(['Apparel']), orderCount: 3, contacts: [] }];
   const opp3 = { account: 'History No Contact Co' };
   const html3 = sandbox.renderAccountContextSection(opp3);
-  assert(/3 orders on file/.test(html3), `state (history/no contact): real order history is shown (got: "${html3}")`);
+  assert(/3 purchase records on file/.test(html3), `state (history/no contact): real order history is shown (got: "${html3}")`);
   assert(!/Uploaded contacts/.test(html3), 'state (history/no contact): no contact row is fabricated when none exists');
 
   // State: both real order history and a real usable uploaded contact.
   sandbox.window.accountRadarAccounts = [{ name: 'Full History Co', categoryTypes: new Set(['Apparel']), orderCount: 5, contacts: [{ name: 'Sam Patel', email: 'sam@example.com' }] }];
   const opp4 = { account: 'Full History Co' };
   const html4 = sandbox.renderAccountContextSection(opp4);
-  assert(/5 orders on file/.test(html4) && html4.includes('Sam Patel'), `state (history and contact): both real order history and the real contact are shown (got: "${html4}")`);
+  assert(/5 purchase records on file/.test(html4) && html4.includes('Sam Patel'), `state (history and contact): both real order history and the real contact are shown (got: "${html4}")`);
 }
 
 // ---------------------------------------------------------------------------

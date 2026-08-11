@@ -5512,7 +5512,13 @@ function getSuggestedOpener(opp){
       return `Hey ${contact} — wanted to check in on the recent event/giveaway project. How did it go?`;
     }
     if(/welcome|onboarding|recruit|employee/.test(matchText)){
-      return `Hey ${contact} — quick check-in on the recent employee-facing order. How was it received?`;
+      // Live-QA correction (Brightview approach copy, round 4): same
+      // grounding as the apparel/event branches above -- prefer the
+      // account's real purchased category over the generic
+      // "employee-facing order" phrasing when one is actually known,
+      // rather than discarding known customer history for an inferred
+      // label.
+      return `Hey ${contact} — quick check-in on the recent ${realCategoryText || 'employee-facing'} order. How was it received?`;
     }
     return `Hey ${contact} — quick check-in on the recent project. How was everything received?`;
   }
@@ -5814,8 +5820,11 @@ function firstEvidenceMatch(evidence, pattern){
 function extractHistoricalOrderCount(opp){
   const direct = Number(opp.accountOrderCount || opp.historicalOrders || opp.orderCount || opp.totalOrders || 0);
   if(direct > 0) return String(direct);
-  const matchText = firstEvidenceMatch(opp.evidence, /historical orders?\s*:?\s*\d+/i) || '';
-  const match = String(matchText).match(/historical orders?\s*:?\s*(\d+)/i);
+  // Matches both the current ("N purchase records") and legacy ("N
+  // historical orders", already-persisted before the purchase-record
+  // terminology correction, round 4) evidence phrasing.
+  const matchText = firstEvidenceMatch(opp.evidence, /(?:historical orders?|purchase records?)\s*:?\s*\d+/i) || '';
+  const match = String(matchText).match(/(?:historical orders?|purchase records?)\s*:?\s*(\d+)/i);
   return match ? match[1] : '';
 }
 
@@ -6274,7 +6283,16 @@ function renderAccountContextSection(opp){
   const contacts = Array.isArray(account.contacts) ? account.contacts.filter(c => c && (c.name || c.email)) : [];
   const notes = String(account.notes || '').trim();
   const rows = [];
-  if(orderCount) rows.push(`<div class="sales-play-detail-item"><strong>Previous orders</strong>${orderCount} order${orderCount===1?'':'s'} on file${revenue ? ` · ${escapeHtml(fmtMoney(revenue))} historical revenue` : ''}</div>`);
+  // Live-QA correction (purchase-record vs order terminology, round 4): a
+  // CSV row is a purchase RECORD, not a proven distinct order -- the
+  // imported fixture format carries no order/invoice/PO identifier, so two
+  // rows sharing a date could be two orders, two line items on one order,
+  // or two projects on one invoice. "N orders on file" claims a fact
+  // (distinct order count) the data cannot support; "purchase record(s)"
+  // claims only what was actually imported. Purely a display-wording fix --
+  // orderCount itself, and every pattern-detection/confidence calculation
+  // that reads it, is unchanged.
+  if(orderCount) rows.push(`<div class="sales-play-detail-item"><strong>Previous purchases</strong>${orderCount} purchase record${orderCount===1?'':'s'} on file${revenue ? ` · ${escapeHtml(fmtMoney(revenue))} historical revenue` : ''}</div>`);
   if(categories.length) rows.push(`<div class="sales-play-detail-item"><strong>Previously purchased categories</strong>${escapeHtml(categories.join(', '))} <span class="opp-purchased-note">(from your uploaded order history)</span></div>`);
   if(mostRecent) rows.push(`<div class="sales-play-detail-item"><strong>Cadence</strong>Most recent order ${escapeHtml(mostRecent)}</div>`);
   if(contacts.length) rows.push(`<div class="sales-play-detail-item"><strong>Uploaded contacts</strong>${escapeHtml(contacts.slice(0,3).map(c=>c.name||c.email).join(', '))}</div>`);
@@ -8917,7 +8935,11 @@ function buildEvidence(account, categoriesNeeded=[]){
   const evidence = [];
   const cats = [...account.categoryTypes];
 
-  if(account.orderCount > 1) evidence.push(`${account.orderCount} historical orders`);
+  // Live-QA correction (purchase-record vs order terminology, round 4):
+  // "purchase records," not "orders" -- see renderAccountContextSection()'s
+  // own comment for why (no order/invoice/PO identifier in imported CSV
+  // rows to prove distinctness).
+  if(account.orderCount > 1) evidence.push(`${account.orderCount} purchase records`);
   if(account.revenue > 0) evidence.push(`${fmtMoney(account.revenue)} historical spend`);
   if(cats.length) evidence.push(`Purchased categories: ${cats.join(', ')}`);
   // Live-QA correction (calendar-day regression): account.mostRecentDate is
@@ -9072,7 +9094,28 @@ function createOpportunity(account, name, contactTitle, products, evidenceCats=[
   const quickWinScore = getQuickWinScore(account, baseConfidence, signalBased);
   const opportunityType = getOpportunityType(account, signalBased);
   const relationshipMode = getRelationshipMode(account);
-  const signalLayerType = signalBased ? 'Business Activity Signal' : (Number(account.subscores?.recency || 0) >= 0.55 ? 'Follow-Up Signal' : 'Repeat / Pattern Signal');
+  // Live-QA correction (Meridian false-positive, round 4 -- generation
+  // root cause, not just the label/count): this is the ONLY place a
+  // GENERIC industry-fallback template (this function, called with
+  // signalBased=false for every generateFutureOpportunities() industry
+  // branch) is assigned the "Repeat / Pattern Signal" family -- purely by
+  // the account's overall recency score, with no check at all on whether
+  // the account has enough purchase history to even POSSIBLY exhibit a
+  // repeat cadence. findRepeatPatternGroups() itself requires at least 2
+  // same-category purchase records before it will ever detect a real
+  // pattern (see its own header comment) -- an account with only 1 (like
+  // Meridian Office Partners) mathematically cannot have one, yet a
+  // low-recency single-purchase account still inherited the full "Repeat /
+  // Pattern Signal" family: REORDER DUE badge, "Repeat buying window
+  // detected" headline, "Repeat or seasonal buying pattern" reasonToReachOut
+  // -- a specific, false cadence claim no evidence supports. A single
+  // purchase record, however old, only ever supports "worth a check-in,"
+  // never "here's a proven pattern" -- so it is now always Follow-Up
+  // family, regardless of recency, once orderCount is below
+  // findRepeatPatternGroups()'s own 2-record minimum. Accounts with 2+
+  // purchase records are completely unaffected -- unchanged recency-gated
+  // split, same as before.
+  const signalLayerType = signalBased ? 'Business Activity Signal' : ((Number(account.subscores?.recency || 0) >= 0.55 || Number(account.orderCount || 0) < 2) ? 'Follow-Up Signal' : 'Repeat / Pattern Signal');
   const reasonToReachOut = signalLayerType === 'Follow-Up Signal'
     ? 'Recent order delivered or completed'
     : 'Repeat or seasonal buying pattern';
@@ -11254,9 +11297,27 @@ async function performSaveCurrentUpload(stage, attemptContext){
     // save just targeted (the freshly-parsed, not-yet-tagged case the
     // scoping filter above treats as "current" by default) -- closes the
     // untagged window as early as possible so later reads of a.uploadId
-    // elsewhere (createOpportunity(), etc.) are correct too, not just this
-    // function's own next call.
-    if(currentUploadId) accounts.forEach(a => { a.uploadId = a.uploadId || currentUploadId; });
+    // elsewhere are correct too, not just this function's own next call.
+    //
+    // Live-QA correction (calendar-day regression, round 4): the original
+    // version of this backfill touched only the account object itself, not
+    // its OWN opportunities. createOpportunity() bakes opp.uploadId in
+    // PERMANENTLY at creation time (account.uploadId is still unset then --
+    // this is the very first save, still in flight) -- fixing account.uploadId
+    // afterward does not retroactively update an already-constructed
+    // opportunity object's own uploadId field, so every opportunity
+    // generated by THIS upload kept uploadId:'' baked in indefinitely,
+    // through this save and into whatever raw_data.repeatPatterns/
+    // existingSignals persists. findAccountForOpp()/accountOpportunityCluster()'s
+    // (uploadId, name) scoped match (see their own header comments) can
+    // only activate when opp.uploadId is truthy -- with it permanently
+    // empty, those fixes silently never engaged, and a same-named account
+    // from an older upload could still be resolved instead of this one,
+    // explaining a stale calendar day surviving the prior round's fix.
+    if(currentUploadId) accounts.forEach(a => {
+      a.uploadId = a.uploadId || currentUploadId;
+      (a.futureOpportunities || []).forEach(opp => { opp.uploadId = opp.uploadId || currentUploadId; });
+    });
     await loadDashboardUsage();
     const notice = document.getElementById('notice');
     if(notice && stage === 'uploaded'){
