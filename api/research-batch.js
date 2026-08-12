@@ -156,7 +156,13 @@ function clean(text = '') {
 // a parent-domain source still has to name the specific account by name to
 // benefit at all -- but this does not fully close that gap. Flagged for the
 // founder rather than solved with an entity-specific exclusion list.
-const FREE_EMAIL_DOMAINS_RE = /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/;
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened to also exclude IANA-reserved documentation/placeholder domains
+// (RFC 2606: example.com/.net/.org/.edu) -- see api/research-account.js's
+// domainFromEmailDomain() for the full rationale (mirrored here, not
+// shared; scripts/test-global-business-trigger-intelligence.js proves both
+// endpoints and dashboard/index.html's extractEmailDomain() agree).
+const FREE_EMAIL_DOMAINS_RE = /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/;
 function domainFromContactEmail(email = '') {
   const match = String(email || '').trim().toLowerCase().match(/@([^\s>]+)$/);
   if (!match) return '';
@@ -1510,12 +1516,19 @@ function isWeakOldAward(raw = {}, text = '') {
   return fresh < 35 && !/actively promoting|celebrat|anniversary|milestone|event|campaign|press release/.test(t);
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round
+// (silent signal-loss diagnostics): now returns the specific rule name that
+// fired (a truthy string) or '' (falsy, unchanged call-site behavior) --
+// existing `if (... && prospectKillRule(...))` callers are unaffected since
+// both a boolean `true` and a non-empty string are truthy. This is what lets
+// makeSignal() below stamp a concrete, loggable reason instead of a bare
+// null, without adding a return-shape/schema change to makeSignal() itself.
 function prospectKillRule(raw = {}, type = '', summary = '', businessContext = '') {
   const text = `${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''} ${raw.sourceName || ''} ${raw.sourceUrl || ''}`;
-  if (hasNegativeOrIrrelevantContext(text)) return true;
-  if (isGenericSustainabilityOnly(text)) return true;
-  if (isWeakOldAward(raw, text)) return true;
-  return false;
+  if (hasNegativeOrIrrelevantContext(text)) return 'negative-or-irrelevant-context';
+  if (isGenericSustainabilityOnly(text)) return 'generic-sustainability-only';
+  if (isWeakOldAward(raw, text)) return 'weak-old-award';
+  return '';
 }
 
 function abdScores(raw = {}, type = '', summary = '', businessContext = '') {
@@ -2012,9 +2025,21 @@ function oneHistoricalOrderFact(account = {}) {
   return '';
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round
+// (silent signal-loss diagnostics): every `return null` below now first
+// stamps `raw.__rejectionReason` with a concise, machine-readable class
+// before discarding -- `raw` is the SAME object reference the caller
+// (madeSignalsRaw's map(), api/research-batch.js) already holds, so the
+// caller can log a real reason instead of a bare null. Reproduced
+// production case this closes: IDEXX Laboratories and Stonyfield Organic
+// each had a real raw model signal (rawSignals: 1) that silently became
+// mappedSignals: 0 with zero trace in the logs of which of this function's
+// three discard points fired, or why -- undiagnosable without a full
+// Vercel log archaeology exercise. This is diagnostic hardening only: no
+// discard CONDITION below changed, only that it is now explained.
 function makeSignal(raw = {}, account = {}, options = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || raw.company_name || raw.companyName || '');
-  if (!accountName) return null;
+  if (!accountName) { raw.__rejectionReason = 'missing-account-name'; return null; }
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
   // Phase 2A / B3: the canonical classification is computed once, here, from
@@ -2028,12 +2053,15 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 240);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
-  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
+  if (options.enableProspectQuality) {
+    const killReason = prospectKillRule(raw, type, summary, businessContext);
+    if (killReason) { raw.__rejectionReason = `prospect-kill-rule:${killReason}`; return null; }
+  }
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
   const leadershipAdjustment = leadershipVerificationAdjustment(raw, type, summary, businessContext, sourceUrl);
   const confidencePct = Math.max(0, Math.min(100, abd.score + leadershipAdjustment));
-  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
+  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) { raw.__rejectionReason = `low-confidence:${confidencePct}`; return null; } // discard only junk, duplicates, or truly low-confidence signals.
 
   // Paid-beta signal-date truth (Priority 1). eventDate is resolved ONLY from
   // parseable evidence text (via extractEventDate()) -- it never falls back
@@ -3265,6 +3293,7 @@ A buying moment is a concrete event that creates a real, identifiable human mome
 
 Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
 Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable commercial-activation angle.
+Whether to RETURN a buying moment at all (governed by the criteria on this line and "Reject" below) and whether you have a credible commercial ACTIVATION for it (commercial_play/activation_ideas/expansion_potential, see below) are separate judgments -- a real, current, sourced, material event about the account (an acquisition, leadership change, facility opening, funding event, product launch, sponsorship, etc.) should still be returned even when you conclude no credible activation exists yet. In that case return the factual fields and leave commercial_play/activation_ideas/expansion_potential empty or omitted -- never drop the whole buying moment merely because you couldn't responsibly infer a program around it.
 
 Reject:
 - generic company descriptions, mission/history/culture copy
@@ -3442,10 +3471,27 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
 
     const madeSignalsRaw = fixedSignals.map(s => {
-      const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
+      const rawSignalAccountName = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
+      const account = safeAccounts.find(a => a.name.toLowerCase() === rawSignalAccountName.toLowerCase()) || {};
+      // Global Business Trigger Intelligence sprint, founder correction round
+      // (silent signal-loss diagnostics): fixedSignals' own fuzzy substring
+      // correction above only fires when one name is a substring of the
+      // other -- a raw AI accountName that is neither (a paraphrase, an
+      // abbreviation the model invented) falls through both that pass AND
+      // this exact-match lookup, leaving `account` the empty-object fallback
+      // for the rest of this signal's pipeline. Logged here, at the exact
+      // point of failure, rather than only surfacing later as an unexplained
+      // gap between rawSignals and mappedSignals counts.
+      if (!account.name) {
+        console.warn('[Signal Intelligence] raw signal discarded: accountName did not resolve to any requested account', { rawAccountName: rawSignalAccountName, title: s.signalTitle || s.title || s.concrete_trigger || '' });
+        return null;
+      }
       const accountMode = clean(account.intelligenceMode).toLowerCase();
       const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
-      if (!mapped) return null;
+      if (!mapped) {
+        console.warn('[Signal Intelligence] raw signal discarded by makeSignal()', { company: account.name, reason: s.__rejectionReason || 'unknown', title: s.signalTitle || s.title || s.concrete_trigger || '' });
+        return null;
+      }
       const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
       let normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
       const validation = validateOpportunity(normalized);
@@ -3498,6 +3544,16 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
+    // Global Business Trigger Intelligence sprint, founder correction round
+    // (silent signal-loss diagnostics): defense-in-depth logging -- the
+    // account-resolution check added above (madeSignalsRaw's map()) should
+    // make this filter a no-op in practice, but it is the last point a
+    // mapped signal could still be silently dropped before persistence, so
+    // it gets the same treatment rather than staying a bare count.
+    if (validMappedSignals.length !== mappedSignals.length) {
+      const droppedForInvalidAccountName = mappedSignals.filter(s => !validAccountNames.has(String(s.accountName || '').toLowerCase()));
+      console.warn('[Signal Intelligence] mapped signal(s) discarded: accountName not among requested accounts at final filter', droppedForInvalidAccountName.map(s => ({ accountName: s.accountName, title: s.signalTitle || '' })));
+    }
     // Temporal-integrity round: dedupeSignals()/dedupeOpportunities() above
     // are cheap first-pass collapses (same-account+type+topic-keywords, then
     // a legacy per-title fingerprint) that reduce the candidate count, but

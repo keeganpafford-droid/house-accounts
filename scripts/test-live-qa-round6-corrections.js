@@ -184,7 +184,10 @@ const DASHBOARD_SRC = loadDashboardSource();
   assert(/window\.HouseAccountManager\.researchList\(uploadId\)/.test(showSuccessSrc), 'REQUIRED: the modal\'s Research CTA calls window.HouseAccountManager.researchList(uploadId), the same-process entry point into the trusted Manage Customer Accounts research flow');
   assert(/showUploadFailureModal\('Could not start research for this upload/.test(showSuccessSrc), 'REQUIRED: if window.HouseAccountManager.researchList is unexpectedly unavailable, a truthful failure modal is shown -- clicking Research never just silently closes with nothing happening');
 
-  const managerExposeSrc = DASHBOARD_SRC.slice(DASHBOARD_SRC.indexOf('window.HouseAccountManager = {'), DASHBOARD_SRC.indexOf('window.HouseAccountManager = {') + 400);
+  // View Research fix (Global Business Trigger Intelligence sprint) added a
+  // showResearchResults(opts) method to this object literal, ahead of
+  // researchList -- widened window to still capture it.
+  const managerExposeSrc = DASHBOARD_SRC.slice(DASHBOARD_SRC.indexOf('window.HouseAccountManager = {'), DASHBOARD_SRC.indexOf('window.HouseAccountManager = {') + 800);
   assert(/researchList\(uploadId\)\{ return researchListAndFocus\(uploadId\); \}/.test(managerExposeSrc), 'REQUIRED: window.HouseAccountManager.researchList is wired directly to researchListAndFocus(), no intermediate re-implementation');
 
   const focusSrc = extractFn(DASHBOARD_SRC, 'researchListAndFocus');

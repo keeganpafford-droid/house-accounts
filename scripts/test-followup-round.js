@@ -215,9 +215,20 @@ assert(
   /Additional Opportunities Found/.test(dashboardHtml) && /additionalOpportunitiesFor\(opp\)/.test(dashboardHtml),
   'required test 9: createSalesPlayPanel() already renders every OTHER opportunity for the same account under "Additional Opportunities Found" via the existing additionalOpportunitiesFor()/accountOpportunityCluster() pipeline, reading the exact window.accountRadarAccounts this handoff just refreshed -- no separate list is threaded through'
 );
+// View Research fix (Global Business Trigger Intelligence sprint): a
+// genuinely empty (zero Priority-eligible) opportunity list now branches two
+// ways instead of always showing the error dialog -- if research actually
+// found real signals (dedupeFoundSignals(account.signals)), it opens the
+// real research-results view (showResearchResults) instead of a dead-end;
+// only a truly empty result (no signals at all either) still shows the
+// honest "nothing generated" error message.
 assert(
-  /if\(!opportunities\.length\)\{[\s\S]{0,400}?window\.HouseAccountManager\.showError/.test(openResearchedSrc),
-  'required test 10 (honest error path): a genuinely empty opportunity list shows a clear message rather than opening a blank Prepare for Call panel'
+  /if\(!opportunities\.length\)\{[\s\S]{0,1800}?window\.HouseAccountManager\.showResearchResults/.test(openResearchedSrc),
+  'required test 10a (View Research fix): when research found real signals but none are Priority-eligible, the real signals are shown via showResearchResults(), not a blank/dead-end panel'
+);
+assert(
+  /if\(!opportunities\.length\)\{[\s\S]{0,2200}?window\.HouseAccountManager\.showError/.test(openResearchedSrc),
+  'required test 10b: when research found genuinely nothing at all, a clear "no research results" message still shows rather than opening a blank Prepare for Call panel'
 );
 assert(
   /if\(!refresh\.ok && !refresh\.empty\)\{[\s\S]{0,200}?showUnresolvable\(\);/.test(openResearchedSrc) &&
@@ -294,7 +305,8 @@ assert(
     ['Manage Customer Accounts open()', /function open\(\)\{[\s\S]{0,400}?beginOverlay\(\);/],
     ['showDestructiveConfirm', /function showDestructiveConfirm\(\{title, bodyHtml, confirmLabel\}\)\{[\s\S]{0,900}?beginOverlay\(\);/],
     ['showResearchConfirm (Research Entire List confirm)', /function showResearchConfirm\(\{title, bodyHtml, confirmLabel\}\)\{[\s\S]{0,200}?beginOverlay\(\);/],
-    ['showInfoDialog', /function showInfoDialog\(\{title, bodyHtml, okLabel\}\)\{[\s\S]{0,400}?beginOverlay\(\);/]
+    // View Research fix: showInfoDialog() gained an optional `wide` param.
+    ['showInfoDialog', /function showInfoDialog\(\{title, bodyHtml, okLabel, wide\}\)\{[\s\S]{0,400}?beginOverlay\(\);/]
   ];
   for(const [name, re] of overlayCallers){
     assert(re.test(dashboardHtml), `required test 14: ${name} calls window.HouseAccountsHeader.beginOverlay() before presenting itself, joining the shared overlay-open state`);

@@ -108,9 +108,16 @@ assert(
 );
 
 // ---------------------------------------------------------------------------
-// 11) an unconfirmed opportunity can never displace a confirmed opportunity,
-// regardless of freshness/raw confidence -- give the UNCONFIRMED item a much
-// higher confidence and a fresher date than the confirmed one.
+// 11) Founder correction round (Global Business Trigger Intelligence sprint):
+// 'unconfirmed' ("grounded/probable" -- name-matched, not contradicted, just
+// missing a second independent corroborator most order-history CSV uploads
+// never had a website/location field to supply in the first place) is no
+// longer excluded from priority eligibility outright. It is a real,
+// good-faith signal and must be allowed to compete on its own merits
+// (confidence, freshness, activation credibility) like any other eligible
+// opportunity -- 'confirmed' remains a strictly higher trust grade (see 12
+// below, the "Verified Opportunity" label stays 'confirmed'-only), but is no
+// longer a secret mandatory prerequisite just to be CONSIDERED.
 // ---------------------------------------------------------------------------
 const confirmedParade = businessOpp({
   signalTitle: 'Dover Holiday Parade Platinum Sponsorship',
@@ -130,13 +137,13 @@ const unconfirmedRebrand = businessOpp({
 });
 const mixedEligible = sandbox.priorityEligibleOpportunities([confirmedParade, unconfirmedRebrand]);
 assert(
-  mixedEligible.length === 1 && mixedEligible[0].identityConfidence === 'confirmed',
-  '11a) the unconfirmed (higher-confidence, fresher) signal is excluded entirely -- only the confirmed one survives priority eligibility'
+  mixedEligible.length === 2,
+  '11a) a grounded/probable (unconfirmed) signal is no longer excluded from priority eligibility outright -- both the confirmed and the unconfirmed signal survive the gate'
 );
 const rankedMixed = sandbox.sortDailyReasons(mixedEligible);
 assert(
-  rankedMixed[0]?.identityConfidence === 'confirmed',
-  '11b) after eligibility + ranking, the confirmed signal is first (the unconfirmed one never even reaches ranking)'
+  rankedMixed.length === 2 && rankedMixed.some(o => o.identityConfidence === 'confirmed') && rankedMixed.some(o => o.identityConfidence === 'unconfirmed'),
+  '11b) both the confirmed and unconfirmed signals reach ranking -- identity grade no longer decides who is even considered'
 );
 
 // Legacy compatibility: a signal with NO identityConfidence field at all

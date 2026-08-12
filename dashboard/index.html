@@ -2122,8 +2122,10 @@
 .ha-toast-undo:focus-visible{outline:2px solid #5eead4;outline-offset:2px;}
 .ha-confirm-backdrop{position:fixed;inset:0;background:rgba(10,25,45,.55);z-index:10090;display:flex;align-items:center;justify-content:center;padding:20px;}
 .ha-confirm-dialog{background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.3);}
+.ha-confirm-dialog--wide{max-width:640px;}
 .ha-confirm-title{margin:0 0 10px;font-family:var(--display);font-size:1.2rem;color:var(--ink);}
-.ha-confirm-body{margin:0;color:var(--ink);font-size:.92rem;line-height:1.5;}
+.ha-confirm-body{margin:0;color:var(--ink);font-size:.92rem;line-height:1.5;max-height:65vh;overflow-y:auto;}
+.research-results-intro{margin-bottom:14px;}
 .ha-confirm-warning{margin:14px 0 20px;font-size:.8rem;color:var(--danger);font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
 .ha-confirm-actions{display:flex;justify-content:flex-end;gap:10px;}
 .ha-confirm-cancel{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:9px 16px;font-size:.85rem;cursor:pointer;font-family:var(--body);}
@@ -4840,12 +4842,18 @@ function accountSignalsPanel(accountName, uploadId){
   return card ? card.querySelector('.signal-research-panel') : null;
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened to also exclude IANA-reserved documentation/placeholder domains
+// (RFC 2606: example.com/.net/.org/.edu) -- mirrors api/research-account.js's
+// domainFromEmailDomain() and api/research-batch.js's FREE_EMAIL_DOMAINS_RE
+// (see either's comment for the full rationale); parity proven by
+// scripts/test-global-business-trigger-intelligence.js.
 function extractEmailDomain(email){
   const value = String(email || '').trim().toLowerCase();
   const match = value.match(/@([^\s>]+)$/);
   if(!match) return '';
   const domain = match[1].replace(/^www\./,'');
-  if(/gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(domain)) return '';
+  if(/gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/.test(domain)) return '';
   return domain;
 }
 
@@ -8855,24 +8863,34 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   const dedupedCluster = sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(rawOpportunities)));
   const opportunities = priorityEligibleOpportunities(dedupedCluster);
   if(!opportunities.length){
+    // Founder correction round (Global Business Trigger Intelligence sprint,
+    // "signal vs. priority" product decision): the primary Recently
+    // Researched click-through must never be a dead end when research found
+    // real, legitimate signals -- it only used to check priorityEligibleOpportunities()
+    // (a stricter, activation-gated question) and show a generic error
+    // dialog whenever that came back empty, even though a rep who saw "3
+    // signals found" on the card just clicked expecting to see them.
+    // "No credible activation to recommend" and "nothing worth showing" are
+    // different facts; this branch now tells them apart using the SAME raw-
+    // signal source and dedupe (dedupeFoundSignals()) Recently Researched's
+    // own "N signals found" count already uses (getRecentlyResearchedAccounts()),
+    // so the count in the dialog can never disagree with the count on the
+    // card that was just clicked.
+    const foundSignals = dedupeFoundSignals(account.signals || []);
+    if(foundSignals.length){
+      if(window.HouseAccountManager && typeof window.HouseAccountManager.showResearchResults === 'function'){
+        await window.HouseAccountManager.showResearchResults({
+          accountName,
+          introHtml: `House Accounts found ${foundSignals.length} signal${foundSignals.length === 1 ? '' : 's'} for ${escapeHtml(accountName)}. None currently meets the bar for a recommended play -- here's what was found:`,
+          signalsHtml: renderVerifiedSignals(foundSignals)
+        });
+      }
+      return;
+    }
     if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
-      // Preview QA item 5 / verified-terminology sprint: keep "signal(s)
-      // found" and "active opportunity" honestly distinct -- researchedSignalCount
-      // reflects everything actually discovered/persisted for this account
-      // (dedupedCluster, before the eligibility filter above removes the
-      // non-current ones), never conflated with the zero that remain
-      // eligible as a live play. Dropped "verified" from the wording
-      // entirely here (not just softened) -- dedupedCluster mixes
-      // confirmed, unconfirmed, and legacy signals alike, and this message
-      // is fundamentally about ACTIVENESS eligibility, not identity
-      // confirmation.
-      const researchedSignalCount = dedupedCluster.length;
-      const bodyHtml = researchedSignalCount
-        ? `Research found ${researchedSignalCount} signal${researchedSignalCount === 1 ? '' : 's'} for ${escapeHtml(accountName)}, but none ${researchedSignalCount === 1 ? 'is' : 'are'} currently active enough to recommend as a live opportunity. The research has been saved and will continue to be monitored.`
-        : `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`;
       await window.HouseAccountManager.showError({
-        title: 'No active opportunity to show',
-        bodyHtml,
+        title: 'No research results to show',
+        bodyHtml: `Research completed for ${escapeHtml(accountName)}, but no specific signal was generated from the result. The account's saved data has been refreshed.`,
         okLabel: 'Got it'
       });
     }
@@ -11034,21 +11052,39 @@ function setActiveTimebox(timebox){
 // date, and signalDateAndActionabilityLine()'s own default ("Date
 // unavailable" when there's no publication date either) must not exclude
 // them.
-// Trust correction (entity-disambiguation): identityConfidence only exists on
-// a signal that has been through the tri-state grounding verifier (see
-// api/signal-intelligence.js's verifyCandidateCompanyGrounding()). A signal
-// with NO identityConfidence field at all is a LEGACY row, persisted before
-// this field existed -- it must keep its prior (unchanged) eligibility
-// behavior. Silently treating a legacy row as 'confirmed' would let an
-// already-persisted contamination slip through undetected; silently treating
-// it as 'unconfirmed' would empty the priority feed of every pre-existing
-// signal overnight, for accounts that have not been re-researched yet. Only
-// a NEW signal explicitly graded 'unconfirmed' or 'rejected' is excluded
-// here -- 'confirmed' and legacy (field absent) are both eligible, subject
-// to the existing rules below.
+// Global Business Trigger Intelligence sprint, founder correction round:
+// identityConfidence only exists on a signal that has been through the
+// tri-state grounding verifier (see api/signal-intelligence.js's
+// verifyCandidateCompanyGrounding()), and that verifier's tri-state was
+// never actually three usable outcomes in practice -- 'rejected' is a hard
+// discard already applied BEFORE persistence (api/research-account.js and
+// api/research-batch.js both drop a rejected candidate and never write it
+// to ha_signals at all), so identityConfidence on any row that actually
+// reaches this function can only ever be 'confirmed', 'unconfirmed', or
+// absent (legacy). Treating 'unconfirmed' as ineligible here therefore did
+// not mean "identity is suspect" -- it meant "no SECOND, independent
+// corroborator (a known company domain, a matching location, a known
+// social profile) happened to exist," which most ordinary customer-order
+// CSV uploads (no website/location column at all) can never supply
+// regardless of how strong the underlying evidence is. Confirmed production
+// case: a BerryDunn press release hosted on berrydunn.com itself, naming
+// BerryDunn by name, still graded 'unconfirmed' purely because the uploaded
+// account had no website field to compare that domain against -- and was
+// then excluded from every priority surface for it.
+//
+// Founder decision: 'confirmed' remains a real, stronger trust grade (still
+// the sole basis for isExplicitlyVerifiedIdentity()'s "Verified Opportunity"
+// labeling below -- that is intentionally unchanged), but it must not be a
+// secret mandatory prerequisite for a signal to even be CONSIDERED for
+// commercial/priority evaluation. A signal whose company name was actually
+// matched in the evidence (verifyCandidateCompanyGrounding()'s nameMatched
+// floor) and was not rejected for contradicted/ambiguous identity is
+// "grounded/probable" and must be allowed to proceed -- only an EXPLICIT
+// 'rejected' grade (kept here as defense-in-depth even though it should
+// never reach this function given the pre-persistence filter above) is
+// excluded, alongside the pre-existing legacy grandfather policy.
 function hasConfirmedOrLegacyIdentity(opp){
-  const identity = opp?.identityConfidence;
-  return identity === undefined || identity === null || identity === 'confirmed';
+  return opp?.identityConfidence !== 'rejected';
 }
 
 // Trust correction (verified-terminology sprint): a SEPARATE, stricter
@@ -12699,6 +12735,9 @@ function escapeHtml(text){
    close(){ close(); },
    isOpen(){ return isModalOpen(); },
    showError(opts){ return showInfoDialog(opts); },
+   // View Research fix (Global Business Trigger Intelligence sprint): see
+   // showResearchResultsDialog()'s own comment below.
+   showResearchResults(opts){ return showResearchResultsDialog(opts); },
    // Live QA round 6: the upload-success modal's "Research N accounts" CTA
    // entry point -- see researchListAndFocus()'s own comment above.
    researchList(uploadId){ return researchListAndFocus(uploadId); }
@@ -13161,7 +13200,7 @@ function escapeHtml(text){
  // component system) but with a single acknowledgement button and no
  // "cannot be undone" warning line, since nothing destructive happened.
  // Used to replace window.alert() for the HA004 server rejection.
- function showInfoDialog({title, bodyHtml, okLabel}){
+ function showInfoDialog({title, bodyHtml, okLabel, wide}){
    // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
    // call -- see showDestructiveConfirm()'s comment above.
    if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
@@ -13171,10 +13210,18 @@ function escapeHtml(text){
      const triggerEl = document.activeElement;
      const backdrop = document.createElement('div');
      backdrop.className = 'ha-confirm-backdrop';
+     // View Research fix (Global Business Trigger Intelligence sprint):
+     // `wide` is opt-in, used only by showResearchResultsDialog() below --
+     // every existing plain-text error/confirmation call site is unaffected
+     // (no `wide` passed, same 420px dialog as before). bodyHtml's wrapper
+     // changed from <p> to <div> so nested block content (renderVerifiedSignals()'s
+     // real signal-card markup) is valid HTML, not just tolerated by
+     // browser error-recovery -- harmless for the existing plain-text
+     // callers, which render identically either way.
      backdrop.innerHTML = `
-       <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haInfoTitle" aria-describedby="haInfoBody">
+       <div class="ha-confirm-dialog${wide ? ' ha-confirm-dialog--wide' : ''}" role="alertdialog" aria-modal="true" aria-labelledby="haInfoTitle" aria-describedby="haInfoBody">
          <h3 class="ha-confirm-title" id="haInfoTitle">${esc(title)}</h3>
-         <p class="ha-confirm-body" id="haInfoBody">${bodyHtml}</p>
+         <div class="ha-confirm-body" id="haInfoBody">${bodyHtml}</div>
          <div class="ha-confirm-actions">
            <button type="button" class="ha-confirm-cancel ha-info-ok">${esc(okLabel || 'Got it')}</button>
          </div>
@@ -13199,6 +13246,24 @@ function escapeHtml(text){
      backdrop.addEventListener('click', e => { if(e.target === backdrop) close(); });
      document.addEventListener('keydown', onKeydown, true);
      okBtn.focus();
+   });
+ }
+
+ // View Research fix (Global Business Trigger Intelligence sprint): the
+ // "signal vs. priority" product decision means openResearchedAccountOpportunities()
+ // (main script, above) must be able to show a rep the real signals research
+ // found for an account even when NONE of them cleared the stricter
+ // Priority bar -- reusing showInfoDialog()'s existing modal chrome (wide
+ // variant) rather than building a second, parallel research-detail view.
+ // signalsHtml is expected to already be renderVerifiedSignals()'s own
+ // output -- this function adds no rendering logic of its own, only the
+ // dialog shell and the intro line explaining why there's no Priority card.
+ function showResearchResultsDialog({accountName, introHtml, signalsHtml}){
+   return showInfoDialog({
+     title: `Research Results — ${accountName}`,
+     bodyHtml: `<div class="research-results-intro">${introHtml}</div>${signalsHtml}`,
+     okLabel: 'Close',
+     wide: true
    });
  }
 

@@ -369,19 +369,27 @@ function realBusinessOpp(overrides = {}){
   // merely because it has zero active opportunities.
   assert(entries.some(e => e.name === 'Weatherby Healthcare'), 'additional test 4: Weatherby Healthcare remains visible in Recently Researched -- historical research is never hidden merely because no opportunity is currently active');
 
-  // required item 23 (regression): the empty-state modal wording uses
-  // correct singular/plural grammar and distinguishes found-signal count
-  // from active-opportunity count honestly. Verified-terminology sprint:
-  // "verified" dropped from this wording entirely -- dedupedCluster mixes
-  // confirmed, unconfirmed, and legacy signals, and this message is
-  // fundamentally about ACTIVENESS eligibility, not identity confirmation.
+  // required item 23 (regression), UPDATED for the View Research fix (Global
+  // Business Trigger Intelligence sprint, founder correction round): Weatherby
+  // has real found signals (3) and zero active opportunities -- this case no
+  // longer shows the old "No active opportunity to show" dead-end dialog at
+  // all. It now opens the real research-results view (showResearchResults()),
+  // whose intro line carries the same honest singular/plural found-signal
+  // count this test always required, just in the new surface.
   assert(
-    /Research found \$\{researchedSignalCount\} signal\$\{researchedSignalCount === 1 \? '' : 's'\}/.test(OPEN_RESEARCHED_BLOCK),
-    'additional test 5: the "No active opportunity to show" empty-state body uses the real researched-signal count with correct singular/plural grammar, honestly distinct from the zero eligible opportunities'
+    /introHtml: `House Accounts found \$\{foundSignals\.length\} signal\$\{foundSignals\.length === 1 \? '' : 's'\}/.test(OPEN_RESEARCHED_BLOCK),
+    'additional test 5: the View Research intro uses the real found-signal count with correct singular/plural grammar, honestly distinct from the zero eligible opportunities'
   );
   assert(
-    /none \$\{researchedSignalCount === 1 \? 'is' : 'are'\} currently active/.test(OPEN_RESEARCHED_BLOCK),
-    'additional test 5: the empty-state sentence uses correct is/are agreement for the found-signal count'
+    /None currently meets the bar for a recommended play/.test(OPEN_RESEARCHED_BLOCK),
+    'additional test 5: the View Research intro honestly explains why there is no Priority card, without claiming nothing was found'
+  );
+  // The old dead-end error dialog remains, but now ONLY for the genuinely-
+  // zero-signals case -- confirmed still present and still honest about that
+  // narrower case.
+  assert(
+    /Research completed for \$\{escapeHtml\(accountName\)\}, but no specific signal was generated/.test(OPEN_RESEARCHED_BLOCK),
+    'additional test 5: the narrower "genuinely nothing found" error message still exists for the true zero-signal case'
   );
 }
 

@@ -960,9 +960,9 @@ ${accountNotes ? `Internal notes on file for this account (context only, never a
 Everything above this line about the account -- recent purchases, known contacts, purchase categories, internal notes -- exists to make an ALREADY-ESTABLISHED public signal sharper and more specific (better contact fit, a more relevant activation idea, or catching a need we may have already fulfilled). None of it is itself a reason to contact this account. If the public candidate sources below do not establish a real moment worth mentioning, return {"signals":[]} regardless of how much account context is available.
 
 Your job is NOT to summarize the company.
-Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, only once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days.
+Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days, WHEN the evidence credibly supports one.
 
-Do not start from "would this justify a promo/merch conversation?" -- start from "what is actually happening here, and for whom?" A technically real business update with no identifiable audience or activation is a correct, expected result to decline, not a failure to fix. See the commercial-activation reasoning discipline below for exactly how to work through this before writing commercialPlay/activationIdeas.
+Do not start from "would this justify a promo/merch conversation?" -- start from "what is actually happening here, and for whom?" These are two separate judgments. A technically real, current, sourced business update about this specific company should still be RETURNED as a signal even when you cannot identify a credible commercial activation for it -- in that case, report the event (concrete_trigger/business_context/source/etc.) and leave commercialPlay/activationIdeas/expansionPotential empty or omitted; that is a correct, expected result, not a failure to fix. Declining to return a signal at all is reserved for evidence that fails the underlying material/current/sourced bar (see "Reject" below and confidence >= 80 requirement) -- never merely because no activation was found for an otherwise real event. See the commercial-activation reasoning discipline below for exactly how to work through the activation question separately, once the event itself is established.
 
 Use the candidate public sources below. First identify what changed, factually. Then reason through who it affects and what they're likely trying to accomplish before considering any commercial translation.
 
@@ -1071,9 +1071,23 @@ ${JSON.stringify(safeCandidates, null, 2)}`;
   }
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened from personal-webmail providers only to also exclude IANA-reserved
+// documentation/placeholder domains (RFC 2606: example.com/.net/.org/.edu) --
+// confirmed production case: a QA fixture's rep@example.com contact email
+// was inferred as the account's own company website, which then generated a
+// dead site:example.com search query and fed a domain into identity
+// grounding that could never correspond to any real evidence. This is a
+// GLOBAL domain-safety rule, not a QA-fixture-specific carve-out -- any
+// upload whose contact email happens to use a reserved/example domain (a
+// placeholder row, a template left unedited, a demo account) hits the exact
+// same failure mode. Mirrored, not shared, in api/research-batch.js's
+// FREE_EMAIL_DOMAINS_RE and dashboard/index.html's extractEmailDomain() --
+// scripts/test-global-business-trigger-intelligence.js proves all three
+// agree.
 function domainFromEmailDomain(emailDomain = '') {
   const d = String(emailDomain || '').trim().toLowerCase().replace(/^www\./,'');
-  if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(d)) return '';
+  if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/.test(d)) return '';
   return d;
 }
 
