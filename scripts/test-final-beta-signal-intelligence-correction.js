@@ -57,10 +57,22 @@
 //   L-D. Possible Match with no date -> still Possible Match, no "Use This
 //        Signal".
 //
+// Follow-up correction round (self-domain corroborator) adds:
+//   M1. One-token account + exact first-party domain SLD (fictional
+//       Unitil-shaped) -> confirmed Business Signal identity, no uploaded
+//       website required.
+//   M2. One-token account + a DIFFERENT company whose domain merely
+//       CONTAINS the token -> Possible Match, not corroborated.
+//   M3. One-token account + an unrelated third-party/common-word source
+//       (not the account's own domain) -> Possible Match.
+//   (K1/K2 above already cover required regressions 4/5 -- Wyman's/
+//   Timberland collisions remain protected; K4 already covers required
+//   regression 6 -- multi-word company behavior unaffected.)
+//
 // Usage: node scripts/test-final-beta-signal-intelligence-correction.js
 import vm from 'vm';
 import { makeSignal } from '../api/research-batch.js';
-import { normalizeOpportunity, verifyCandidateCompanyGrounding, isSingleTokenCompanyIdentity } from '../api/signal-intelligence.js';
+import { normalizeOpportunity, verifyCandidateCompanyGrounding, isSingleTokenCompanyIdentity, isExactSelfDomainMatch } from '../api/signal-intelligence.js';
 import { classifyLegacySignalActionability } from '../api/research-batch.js';
 import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
@@ -512,6 +524,72 @@ function escapeIfDefined(s){ return s; }
 // confirms once the candidate's domain is the account's own ajg.com) --
 // untouched by this round's fix, unaffected by isSingleTokenCompanyIdentity()
 // since it never reaches the hasBareNameMatch branch this fix modifies.
+
+// ===========================================================================
+// Follow-up correction round: SELF-DOMAIN CORROBORATOR.
+//
+// The founder's follow-up audit proved the K1-K4 single-token rule above was
+// itself too broad: a genuinely legitimate one-token company (the confirmed
+// production shape -- an account like "Unitil" with no uploaded website,
+// evidence hosted on its own obvious domain) had NO way to ever clear
+// 'possible', because every existing corroborator (verified company domain,
+// location, known social profile) required the founder to have uploaded
+// that metadata. Fix: an EXACT registrable-domain-SLD-equals-normalized-
+// company-name check, independent of any upload. Deliberately exact-match
+// only (never substring/contains/fuzzy) so it cannot rescue a DIFFERENT
+// company whose domain merely contains the account's token -- the fresh
+// fictional archetype below ("Brindlewood") is never the real production
+// account name.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// M1 -- one-token account + exact first-party domain SLD, no uploaded
+// website. REQUIRED regression 1 + 7 (no uploaded website needed).
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Brindlewood' }; // no website, no location
+  assert(isSingleTokenCompanyIdentity(account.name) === true, 'M1: sanity -- "Brindlewood" is a single-token identity');
+  const ownDomainCandidate = {
+    title: 'Brindlewood Opens New Distribution Center',
+    snippet: 'Brindlewood announced the opening of a new distribution center this quarter.',
+    url: 'https://brindlewood.com/news/new-distribution-center'
+  };
+  assert(isExactSelfDomainMatch(account.name, ownDomainCandidate.url) === true, 'M1: sanity -- isExactSelfDomainMatch() recognizes the exact registrable-domain-SLD match');
+  const grounding = verifyCandidateCompanyGrounding(ownDomainCandidate, account);
+  assert(grounding.identityConfidence === 'confirmed', `M1: REQUIRED -- a one-token account with evidence on its own exact-match domain confirms as a legitimate Business Signal identity, WITHOUT an uploaded website (got '${grounding.identityConfidence}')`);
+}
+
+// ---------------------------------------------------------------------------
+// M2 -- one-token account + a DIFFERENT company whose domain merely
+// CONTAINS the account's token. REQUIRED regression 2.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Brindlewood' };
+  const differentCompanyCandidate = {
+    title: 'Careers at Brindlewood Partners',
+    snippet: 'Brindlewood Partners is hiring across several departments.',
+    url: 'https://brindlewoodpartners.com/careers'
+  };
+  assert(isExactSelfDomainMatch(account.name, differentCompanyCandidate.url) === false, 'M2: sanity -- isExactSelfDomainMatch() correctly rejects a domain that merely CONTAINS the token ("brindlewoodpartners" !== "brindlewood")');
+  const grounding = verifyCandidateCompanyGrounding(differentCompanyCandidate, account);
+  assert(grounding.identityConfidence === 'possible', `M2: REQUIRED -- a different company's domain that merely contains the account's token never corroborates (got '${grounding.identityConfidence}')`);
+}
+
+// ---------------------------------------------------------------------------
+// M3 -- one-token account + an unrelated third-party/common-word source
+// (not the account's own domain). REQUIRED regression 3.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Brindlewood' };
+  const thirdPartyCandidate = {
+    title: 'Regional Real Estate Roundup',
+    snippet: 'A stroll through the brindlewood near downtown reveals several new developments.',
+    url: 'https://localnews.example/regional-real-estate-roundup'
+  };
+  assert(isExactSelfDomainMatch(account.name, thirdPartyCandidate.url) === false, 'M3: sanity -- an unrelated third-party domain never matches');
+  const grounding = verifyCandidateCompanyGrounding(thirdPartyCandidate, account);
+  assert(grounding.identityConfidence === 'possible', `M3: REQUIRED -- an unrelated third-party/common-word source stays 'possible' (got '${grounding.identityConfidence}')`);
+}
 
 // ===========================================================================
 // Bounded correction round: UNDATED BUSINESS SIGNAL ACTIONABILITY.

@@ -312,6 +312,47 @@ function socialProfileMatchesCompany(companyName = '', url = '') {
   return handle.includes(company) || company.includes(handle);
 }
 
+// Identity-collision-hardening follow-up: the single-token downgrade in
+// verifyCandidateCompanyGrounding() below sends a collision-prone account
+// (e.g. "Unitil") to 'possible' unless independently corroborated -- but
+// every corroborator that existed at the time (verified company domain,
+// location match, known social profile) required the founder to have
+// UPLOADED that metadata. A single-token company legitimately sourced from
+// its own obvious first-party domain (confirmed production shape: "Unitil"
+// with no uploaded website, evidence hosted on unitil.com) had no way to
+// ever clear 'possible', even though the domain itself already IS the
+// identity evidence. This adds a SECOND, independent way to reach domain
+// corroboration -- comparing the candidate's own registrable-domain SLD
+// against the account's name directly, never requiring an uploaded
+// website. Deliberately EXACT SLD-equals-normalized-token only -- no
+// substring/contains/fuzzy matching, and only for single-token identities
+// (a multi-word company already reaches 'unconfirmed', not 'possible', on
+// a bare match alone, so it needs no domain rescue here). "unitil.com" ->
+// SLD "unitil" === normalizeCompany("Unitil") -> corroborated.
+// "timberlandpartners.com" -> SLD "timberlandpartners" !== "timberland" ->
+// never corroborated -- a different real company whose domain merely
+// CONTAINS the account's token must not be rescued by this check, or the
+// exact Timberland collision this whole correction targets would reopen.
+// Purely additive: a legitimate signal from a credible THIRD-PARTY source
+// (regulator, wire service, trade press) that isn't the company's own
+// domain is completely unaffected by this function -- it simply doesn't
+// gain this particular corroborator, and can still reach 'possible'
+// (visible, flagged) or 'confirmed'/'unconfirmed' via any other existing
+// path exactly as before.
+function registrableDomainSld(url = '') {
+  const host = sourceDomain(url);
+  if (!host) return '';
+  const labels = host.split('.').filter(Boolean);
+  if (labels.length < 2) return '';
+  return labels[labels.length - 2].toLowerCase();
+}
+function isExactSelfDomainMatch(companyName = '', url = '') {
+  if (!isSingleTokenCompanyIdentity(companyName)) return false;
+  const company = normalizeCompany(companyName).replace(/\s+/g, '');
+  const sld = registrableDomainSld(url);
+  return Boolean(company) && company === sld;
+}
+
 // Finds every explicit "City, ST" mention in text. A fresh RegExp is built
 // per call (see CITY_STATE_PATTERN comment) so repeated calls never share
 // exec()/matchAll() lastIndex state.
@@ -629,6 +670,12 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   }
 
   const domainCorroborated = entity.reasons.includes('verified company domain');
+  // Identity-collision-hardening follow-up: independent of domainCorroborated
+  // above (which requires an UPLOADED account.website) -- see
+  // isExactSelfDomainMatch()'s own header comment for the full rationale and
+  // the exact Unitil/Timberland contrast this exists to preserve.
+  const selfDomainCorroborated = isExactSelfDomainMatch(companyName, scopedCandidate.url);
+  if (selfDomainCorroborated) reasons.push('candidate domain exactly matches the account\'s own single-token company name');
   const locationCorroborated = entity.reasons.includes('location match');
   // Founder QA follow-up (Dover Holiday Parade): a THIRD-PARTY publisher
   // whose own domain is geographically tied to the account (city+state, not
@@ -650,11 +697,16 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   else if (socialUrl) reasons.push('social source has no verifiable profile corroboration');
 
   const contradicted = hasLocationContradiction(scopedCandidate, account);
-  if (contradicted && !domainCorroborated && !knownSocialProfileMatch) {
+  // selfDomainCorroborated joins domainCorroborated/knownSocialProfileMatch
+  // in overriding a location contradiction -- the account's own namesake
+  // domain (verified by exact SLD match, same as an uploaded website) is
+  // the company speaking for itself, exactly the same reasoning that
+  // already applies to domainCorroborated above.
+  if (contradicted && !domainCorroborated && !knownSocialProfileMatch && !selfDomainCorroborated) {
     return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
   }
 
-  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated;
+  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated || selfDomainCorroborated;
   if (corroborated) return { grounded: true, identityConfidence: 'confirmed', reasons };
   // Final Beta Signal Intelligence Correction sprint: a name match that is
   // ONLY the distinctive-token fallback (never the strong bare full-phrase/
@@ -2404,7 +2456,7 @@ function dedupeByEventFingerprint(items = [], options = {}) {
 }
 
 export {
-  SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, normalizeUrl, normalizeTitle, sourceDomain,
+  SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, isExactSelfDomainMatch, registrableDomainSld, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
