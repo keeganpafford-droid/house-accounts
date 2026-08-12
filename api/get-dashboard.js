@@ -595,8 +595,19 @@ function buildAccountsFromRows(accountRows, signalRows){
       byAccount.set(row.account_name, {name: row.account_name, uploadId: row.upload_id, monitoringStatus:'active', lastResearchedAt:'', industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
     }
     const acct = byAccount.get(row.account_name);
-    acct.signals.push(rowToSignal(row));
-    acct.futureOpportunities.push(signalToOpportunity(row));
+    const signal = rowToSignal(row);
+    acct.signals.push(signal);
+    // Final Beta Signal Intelligence Correction sprint: a Possible Match
+    // (identityConfidence 'possible' -- see api/signal-intelligence.js's
+    // verifyCandidateCompanyGrounding()) never becomes an opportunity object
+    // on reload, mirroring addSignalDerivedOpportunities()'s identical
+    // exclusion on the live-research path (dashboard/index.html) -- it stays
+    // visible only in acct.signals (rendered transparently in Research
+    // Details), never in futureOpportunities, so it can never reach the
+    // Priority feed or Additional Opportunities after a page reload either.
+    if(signal.identityConfidence !== 'possible'){
+      acct.futureOpportunities.push(signalToOpportunity(row));
+    }
   }
   return {
     accountList: Array.from(byAccount.values()).map(a => {
@@ -781,6 +792,11 @@ export default async function handler(req, res){
     const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
       if(!Number.isFinite(t) || t < sevenDaysAgo) return false;
+      // Final Beta Signal Intelligence Correction sprint: a Possible Match
+      // (identityConfidence 'possible') must not inflate "Newly Detected"
+      // either -- same principle as futureOpportunities' exclusion above,
+      // applied to this separate discovery-recency badge.
+      if((s.payload || {}).identityConfidence === 'possible') return false;
       const { actionabilityStatus } = classifyLegacySignalActionability(s.payload || {});
       return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);

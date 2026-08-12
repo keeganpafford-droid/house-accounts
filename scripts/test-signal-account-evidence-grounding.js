@@ -412,14 +412,24 @@ assert(
 
 // 29) distinctive-token fallback still works ONLY under its existing
 // intended rules (bounded generic-word exclusion, ANY-token match) -- the
-// gate rewrite must not have disturbed this separate mechanism.
+// gate rewrite must not have disturbed this separate mechanism. Final Beta
+// Signal Intelligence Correction sprint: the RESULT grade for a token-only,
+// uncorroborated fallback match is now 'possible' (Possible Match), not
+// 'unconfirmed' -- this is the exact confirmed-collision shape (an uploaded
+// "Wyman's" matching "Careers at Oliver Wyman | A Marsh business", a
+// different company that merely shares a surname/token) the sprint's
+// identity-separation fix targets. The account is named "Arthur J.
+// Gallagher" here; the candidate text contains only the bare, ambiguous
+// token "Gallagher," never the account's actual (normalized) full name --
+// exactly as consistent with a different Gallagher-named entity as with
+// this one, so it must not be shown as a legitimate Business Signal.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Insurance brokerage completes acquisition',
     snippet: 'Gallagher acquired Wilson M. Beck Insurance Services in a deal announced this week.',
     url: 'https://example-blog.com/gallagher-shortname',
-  }, GALLAGHER).identityConfidence === 'unconfirmed',
-  '29) distinctive-token fallback ("Gallagher") still grounds (unconfirmed, no corroborator here) exactly as before -- the fallback mechanism itself is untouched by the gate rewrite'
+  }, GALLAGHER).identityConfidence === 'possible',
+  '29) distinctive-token fallback ("Gallagher") still grounds enough to return a visible result, but grades as \'possible\' (Possible Match, identity uncertain), not a legitimate Business Signal -- the fallback mechanism\'s own matching rules are untouched, only the resulting confidence label'
 );
 assert(
   verifyCandidateCompanyGrounding({

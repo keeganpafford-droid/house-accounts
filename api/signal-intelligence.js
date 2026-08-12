@@ -624,7 +624,31 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   }
 
   const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated;
-  return { grounded: true, identityConfidence: corroborated ? 'confirmed' : 'unconfirmed', reasons };
+  if (corroborated) return { grounded: true, identityConfidence: 'confirmed', reasons };
+  // Final Beta Signal Intelligence Correction sprint: a name match that is
+  // ONLY the distinctive-token fallback (never the strong bare full-phrase/
+  // normalized-form match), with no independent corroborator either, is not
+  // the same claim as a genuine Business Signal -- it's the exact shape of
+  // the confirmed QA collisions (an uploaded "Wyman's" matching "Careers at
+  // Oliver Wyman | A Marsh business" -- a real, different company that
+  // happens to share the surname; an uploaded "Timberland" matching
+  // "Nusenda Credit Union on Instagram" -- the word "timberland" used in its
+  // ordinary-English sense, not the brand). hasBareNameMatch means the
+  // account's own (normalized) name genuinely appears in the source text --
+  // real evidence, even without a second corroborator, and stays
+  // 'unconfirmed' (a legitimate Business Signal). distinctiveFallbackMatched
+  // alone means only a shortened/surname-style TOKEN of the name was found,
+  // which is exactly as consistent with a different, same-surname/same-word
+  // entity as it is with the real account -- HA cannot tell those apart from
+  // this evidence alone, so the rep should not be asked to either. This is a
+  // strictly SMALLER-grant change: nameMatched (the reject/no-reject floor
+  // just above) still allows either kind of match through to a returned,
+  // visible result -- only the identityConfidence LABEL is downgraded to
+  // 'possible' when the match is token-only and uncorroborated, so it can be
+  // shown in Research Results for transparency without being treated as a
+  // Business Signal (see isPossibleMatchIdentity() at every consumer).
+  if (hasBareNameMatch) return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+  return { grounded: true, identityConfidence: 'possible', reasons };
 }
 
 // GUARDRAIL (product/commercial-opportunity-intelligence): this identity key
@@ -915,6 +939,21 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
 // ontology. A specific, qualified phrase ("Premium pool/beach towels") is
 // never caught by this even though it contains a generic word, because the
 // check is against the WHOLE cleaned idea string, not a substring search.
+// Final Beta Signal Intelligence Correction sprint: the SAME family-agnostic
+// gap isGenericCommercialPlay() closed for narrative text, applied per-idea.
+// isWeakEventDressedAsActivation() only fires when WEAK_EVENT_ANCHOR matches
+// (funding/acquisition/leadership/facility, deliberately never rebrand/
+// conference/product-launch), so a short idea phrase like "Rebrand launch
+// apparel" or "New-brand promotional giveaways" -- naming only a bare merch
+// category word with no real audience/moment, for an event family the
+// anchor never covers -- previously survived unfiltered. Deliberately a
+// SMALL, bare-category-word list (not the fuller GENERIC_COMMERCIAL_PLAY_NOUN
+// phrase set, which requires a qualifying word like "branded"/"custom" a
+// short idea title often omits) plus the SAME GROUNDED_AUDIENCE_OR_MOMENT_WORDS
+// positive check -- a real, grounded idea always names who it's for or what
+// moment it serves ("Volunteer polos for the staff working check-in",
+// "Welcome kit for new drivers"), so this never fires on genuine specificity.
+const GENERIC_MERCH_CATEGORY_WORD = /\b(?:apparel|gear|swag|merch|giveaways?|promo items?|promotional items?|kits?)\b/i;
 function isGenericActivationIdea(idea = '') {
   const normalized = clean(idea).toLowerCase().replace(/[.!]+$/, '');
   if (!normalized) return true;
@@ -926,7 +965,9 @@ function isGenericActivationIdea(idea = '') {
   // celebration launch kit", "Comprehensive rebrand campaign") -- see
   // isWeakEventDressedAsActivation()'s header comment below for the full
   // rationale; same check, applied per-idea here.
-  return isWeakEventDressedAsActivation(idea);
+  if (isWeakEventDressedAsActivation(idea)) return true;
+  if (GENERIC_MERCH_CATEGORY_WORD.test(idea) && !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(idea)) return true;
+  return false;
 }
 
 // QA correction 4 (original finding): commercialPlay is free-form prose,
@@ -1073,6 +1114,14 @@ function isGenericCommercialPlay(narrative = '') {
   if (!text) return false;
   if (isWeakEventDressedAsActivation(text)) return true;
   if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
+  // Final Beta Signal Intelligence Correction sprint (mirrors
+  // dashboard/index.html's identically-widened check -- see that copy's
+  // header comment for the full rationale): a hedged "[event] may create an
+  // opportunity for [merch]" narrative with no genuine audience/moment named
+  // is the same manufactured pattern regardless of event family, independent
+  // of WEAK_EVENT_ANCHOR -- this generalizes protection against manufactured
+  // activation reasoning without adding more families to any anchor list.
+  if (!GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(text)) return true;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
   if (remaining.length === 0) return true;

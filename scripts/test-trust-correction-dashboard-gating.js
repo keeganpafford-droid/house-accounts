@@ -176,8 +176,8 @@ assert(
   '12a) a confirmed opportunity still renders the "Verified Opportunity" heading'
 );
 assert(
-  !unconfirmedHtml.includes('Verified Opportunity') && unconfirmedHtml.includes('Unconfirmed Research'),
-  '12b) an unconfirmed opportunity never renders "Verified Opportunity" -- it renders an explicit "Unconfirmed Research" label instead'
+  !unconfirmedHtml.includes('Verified Opportunity') && unconfirmedHtml.includes('Credible Business Signal'),
+  '12b) an unconfirmed opportunity never renders "Verified Opportunity" -- it renders an explicit "Credible Business Signal" label instead'
 );
 // Verified-terminology sprint: this assertion is DELIBERATELY inverted from
 // its prior form. The old heading logic defaulted to "Verified Opportunity"
@@ -189,10 +189,16 @@ assert(
 // slot. Whether it may be LABELED "verified" is this different question,
 // and per the product invariant only an explicit 'confirmed' grade
 // qualifies -- isExplicitlyVerifiedIdentity() is a positive, 'confirmed'-
-// only check, so a legacy row now correctly reads "Unconfirmed Research."
+// only check, so a legacy row now correctly reads "Credible Business Signal."
+// Final Beta Signal Intelligence Correction sprint: this label was renamed
+// again, from "Unconfirmed Research" to "Credible Business Signal" -- the
+// old text prominently read like a warning banner for what is actually just
+// a credible company match without secondary corroboration, contradicting
+// the founder's confidence-language correction. The underlying property
+// (never "Verified Opportunity" for a non-'confirmed' grade) is unchanged.
 assert(
-  !legacyHtml.includes('Verified Opportunity') && legacyHtml.includes('Unconfirmed Research'),
-  '12c) a legacy opportunity (no identityConfidence field) never renders "Verified Opportunity" -- it renders "Unconfirmed Research," since it was never actually run through the tri-state grounding verifier'
+  !legacyHtml.includes('Verified Opportunity') && legacyHtml.includes('Credible Business Signal'),
+  '12c) a legacy opportunity (no identityConfidence field) never renders "Verified Opportunity" -- it renders "Credible Business Signal," since it was never actually run through the tri-state grounding verifier'
 );
 
 // ---------------------------------------------------------------------------
