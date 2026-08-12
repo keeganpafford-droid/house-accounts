@@ -51,7 +51,7 @@
   // signed-in user had no way back to /pricing.html from inside the app.
   const appLinks=[
     {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Export Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
+    {label:'Upload Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
     {label:'Pricing',href:'/pricing.html',group:'workflow',match:['/pricing','/pricing.html']}
   ];
 
@@ -71,7 +71,7 @@
   // per-page static footers used to.
   const footerLinks=[
     {label:'Pricing',href:'/pricing.html'},
-    {label:'Export Guides',href:'/export-guides/'},
+    {label:'Upload Guides',href:'/export-guides/'},
     {label:'Upload Troubleshooting',href:'/export-guides/#troubleshooting'},
     {label:'Data Security',href:'/security.html'},
     {label:'Privacy',href:'/privacy.html'},

@@ -2149,7 +2149,7 @@
     <a href="/dashboard/" class="brand-link"><h1>House Accounts</h1></a>
     <span class="tag">Promo Distributor Tool</span>
   </div>
-  <nav class="site-nav" aria-label="Main navigation"><a href="/dashboard/">Dashboard</a><a href="/export-guides/">Export Guides</a><a href="/contact.html">Feedback</a></nav>
+  <nav class="site-nav" aria-label="Main navigation"><a href="/dashboard/">Dashboard</a><a href="/export-guides/">Upload Guides</a><a href="/contact.html">Feedback</a></nav>
   <div class="header-copy"><strong>Turn dormant house accounts into active revenue.</strong><span>We find the signals. You close the deals.</span></div>
 </header>
 
@@ -2354,7 +2354,7 @@
       <p class="add-customer-data-modal-fields">Most useful: company name, order date, and revenue. Contact name, contact email, and margin help too.</p>
 
       <div class="add-customer-data-modal-links">
-        <a href="/export-guides/" id="addCustomerDataViewGuidesLink">View Export Guides</a>
+        <a href="/export-guides/" id="addCustomerDataViewGuidesLink">View Upload Guides</a>
         <a href="/export-guides/sample-customer-order-history.csv" download>Download Template</a>
       </div>
     </div>
@@ -2422,7 +2422,7 @@
     <p class="empty-workspace-body" id="emptyWorkspaceBody">Upload a customer order history to start getting repeat buying opportunities, follow-up reminders, and business trigger insights.</p>
     <div class="empty-workspace-actions">
       <button type="button" class="btn" id="emptyWorkspaceAddDataBtn">Add Customer Data</button>
-      <a class="btn btn-secondary" href="/export-guides/">View Import Guide</a>
+      <a class="btn btn-secondary" href="/export-guides/">View Upload Guide</a>
     </div>
     <a class="empty-workspace-secondary-link" href="/export-guides/sample-customer-order-history.csv" download>Download Sample CSV</a>
     <div class="empty-workspace-switch-team" id="emptyWorkspaceSwitchTeam" hidden>
@@ -3838,6 +3838,34 @@ function renderEmptyWorkspaceState({viewMode, teamHasData} = {}){
   }
 }
 
+// Live QA round 10: the counterpart to applyEmptyWorkspaceState() below --
+// the "we have confirmed real accounts, retire the empty-workspace state"
+// transition. Previously inlined and gated behind `!silent`, so a SILENT
+// refresh (refreshAggregateDashboard() -- what processData()'s own
+// post-upload sync chain always uses) that confirmed real accounts left
+// #memberEmptyState (the "No customer data yet" card) visible ABOVE the
+// freshly-rendered #results panel. Confirmed production case: a user with
+// no data sees the empty-workspace card, uploads a list successfully, the
+// real Your Accounts panel with the uploaded accounts appears underneath
+// it, but the empty-state card itself stayed on screen until a manual
+// Refresh Dashboard click. Same principle as applyEmptyWorkspaceState():
+// "silent" means "don't flash the loading skeleton/banner while fetching,"
+// never "leave a stale, now-incorrect state marker on screen once the
+// fetch has confirmed real data exists." Every assignment here is
+// idempotent (re-applying an already-correct value is a harmless no-op),
+// so this is safe to run unconditionally on every successful response, not
+// only ones transitioning out of the empty state.
+function applyPopulatedWorkspaceState(){
+  const gate = document.getElementById('leadGate');
+  const example = document.getElementById('exampleOpportunity');
+  const results = document.getElementById('results');
+  const memberEmpty = document.getElementById('memberEmptyState');
+  if(gate) gate.style.display = 'none';
+  if(example) example.style.display = 'none';
+  if(results) results.style.display = 'block';
+  if(memberEmpty) memberEmpty.style.display = 'none';
+}
+
 function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
   window.accountRadarAccounts = [];
   currentUploadId = null;
@@ -3933,15 +3961,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       crmErp: data.user?.crm_erp || ''
     };
     localStorage.setItem('houseAccountsLead', JSON.stringify(currentLead));
-    if(!silent){
-      const gate = document.getElementById('leadGate');
-      const example = document.getElementById('exampleOpportunity');
-      const results = document.getElementById('results');
-      if(gate) gate.style.display = 'none';
-      if(example) example.style.display = 'none';
-      if(results) results.style.display = 'block';
-      const memberEmpty = document.getElementById('memberEmptyState'); if(memberEmpty) memberEmpty.style.display='none';
-    }
+    applyPopulatedWorkspaceState();
     if(skeleton) skeleton.classList.remove('active');
     // Correction round: the "You're all set. Watching N accounts..." summary
     // that used to render here was removed -- it repeated the exact same
@@ -4078,8 +4098,8 @@ const GUIDED_TOUR_STEPS = [
     id: 'export-guides',
     target: 'a[href="/export-guides/"]',
     eyebrow: 'Step 2 of 5',
-    title: 'Export Guides',
-    body: "Not sure how to get a customer export out of your CRM, order system, or spreadsheet? Export Guides has simple, step-by-step instructions for the system you already use."
+    title: 'Upload Guides',
+    body: "Not sure how to get a customer export out of your CRM, order system, or spreadsheet? Upload Guides has simple, step-by-step instructions for the system you already use."
   },
   {
     id: 'manage-accounts',
@@ -4575,12 +4595,12 @@ async function handleFile(file){
           hideUploadProgress();
         }catch(err){
           hideUploadProgress();
-          showError(`We could not find a company/account column in that file, so nothing was saved. House Accounts needs at least one column identifying the customer -- ${err && err.message ? err.message : 'please check the file and try again.'} See Export Guides for the exact columns House Accounts accepts.`);
+          showError(`We could not find a company/account column in that file, so nothing was saved. House Accounts needs at least one column identifying the customer -- ${err && err.message ? err.message : 'please check the file and try again.'} See Upload Guides for the exact columns House Accounts accepts.`);
         }
       }, 250);
     }catch(err){
       hideUploadProgress();
-      showError('We could not read that file, so nothing was saved. Confirm it is a plain CSV export and try again, or see Export Guides for help preparing your file.');
+      showError('We could not read that file, so nothing was saved. Confirm it is a plain CSV export and try again, or see Upload Guides for help preparing your file.');
     }
   };
   reader.onerror = () => { hideUploadProgress(); showError('Could not read file.'); };

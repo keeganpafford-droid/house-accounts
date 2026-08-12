@@ -269,7 +269,7 @@ function numPx(v){ return v == null ? NaN : parseFloat(String(v)); }
   const { dash } = makeSandbox();
   const steps = dash.GUIDED_TOUR_STEPS;
   assert(Array.isArray(steps) && steps.length === 5, `required test 2: the guided tour has exactly 5 steps (got ${steps && steps.length})`);
-  const expectedTitles = ['Add Customer Data', 'Export Guides', 'Your Accounts', "This Week's Priorities", 'Prepare for Call'];
+  const expectedTitles = ['Add Customer Data', 'Upload Guides', 'Your Accounts', "This Week's Priorities", 'Prepare for Call'];
   assert(steps.map(s => s.title).join('|') === expectedTitles.join('|'), `required test 2: the 5 steps are in the required order (got: ${steps.map(s => s.title).join(', ')})`);
   assert(steps[0].target === '#haAddCustomerDataCta', 'required test 2: step 1 now spotlights the global header CTA (#haAddCustomerDataCta), not the modal-only #dropzone');
   assert(/existing customer/i.test(steps[0].body) && /not a cold prospect list/i.test(steps[0].body), 'required test 2: step 1 explains uploading EXISTING customer/order history, not a cold prospect list');
@@ -288,11 +288,11 @@ function numPx(v){ return v == null ? NaN : parseFloat(String(v)); }
   const { dash, dom } = makeSandbox();
   dash.launchGuidedTour();
   dash.nextGuidedTourStep();
-  assert(dom.title.textContent === 'Export Guides', 'required test 3: Next advances from step 1 to step 2');
+  assert(dom.title.textContent === 'Upload Guides', 'required test 3: Next advances from step 1 to step 2');
   dash.nextGuidedTourStep();
   assert(dom.title.textContent === 'Your Accounts', 'required test 3: Next advances from step 2 to step 3');
   dash.backGuidedTourStep();
-  assert(dom.title.textContent === 'Export Guides', 'required test 3: Back returns from step 3 to step 2');
+  assert(dom.title.textContent === 'Upload Guides', 'required test 3: Back returns from step 3 to step 2');
   dash.backGuidedTourStep();
   assert(dom.title.textContent === 'Add Customer Data', 'required test 3: Back returns from step 2 to step 1');
   assert(dom.backBtn.disabled === true, 'required test 3: Back is disabled on the first step');
@@ -358,15 +358,15 @@ function numPx(v){ return v == null ? NaN : parseFloat(String(v)); }
 }
 
 // ---------------------------------------------------------------------------
-// Required tests 9-11 (onboarding sprint): Export Guides content.
+// Required tests 9-11 (onboarding sprint): Upload Guides content.
 // ---------------------------------------------------------------------------
 const hubHtml = readFileSync(new URL('../export-guides/index.html', import.meta.url), 'utf8');
 
-assert(/Minimum useful columns/i.test(hubHtml) && /Ideal columns/i.test(hubHtml), 'required test 9: Export Guides clearly distinguishes minimum useful columns from ideal columns');
+assert(/Minimum useful columns/i.test(hubHtml) && /Ideal columns/i.test(hubHtml), 'required test 9: Upload Guides clearly distinguishes minimum useful columns from ideal columns');
 assert(/Customer \/ Company Name/.test(hubHtml), 'required test 9: minimum columns names the required company/customer field');
 assert(/Order Date/.test(hubHtml) && /Revenue/.test(hubHtml), 'required test 9: ideal columns include order date and revenue');
 
-assert(/do not upload cold prospect lists/i.test(hubHtml), 'required test 10: Export Guides explicitly states that cold prospect lists are not supported in the current beta');
+assert(/do not upload cold prospect lists/i.test(hubHtml), 'required test 10: Upload Guides explicitly states that cold prospect lists are not supported in the current beta');
 
 const sampleCsv = readFileSync(new URL('../export-guides/sample-customer-order-history.csv', import.meta.url), 'utf8');
 const csvHeader = sampleCsv.split('\n')[0].trim();
@@ -425,7 +425,7 @@ assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.len
 // ---------------------------------------------------------------------------
 {
   assert(!/customer or prospect lists/i.test(html), 'required test 15: the My View empty state no longer promotes uploading prospect lists');
-  assert(!hubHtml.includes('Prospect Intelligence'), 'required test 15: the Export Guides hub no longer promotes a "Prospect Intelligence" upload destination');
+  assert(!hubHtml.includes('Prospect Intelligence'), 'required test 15: the Upload Guides hub no longer promotes a "Prospect Intelligence" upload destination');
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +435,7 @@ assert(/document\.getElementById\('totalAccounts'\)\.textContent = accounts\.len
 // renderEmptyWorkspaceState()) -- new copy, same guarantee (states what
 // happened, gives a single best next action).
 assert(/No customer data yet/.test(html) && /Add Customer Data/.test(html), 'required test 16: the no-uploads-yet empty state states what happened and offers a single best next action (Add Customer Data)');
-assert(/could not find a company\/account column[\s\S]{0,200}Export Guides/.test(html), 'required test 16: the failed-upload error state points to a concrete next action (Export Guides)');
+assert(/could not find a company\/account column[\s\S]{0,200}Upload Guides/.test(html), 'required test 16: the failed-upload error state points to a concrete next action (Upload Guides)');
 
 // ===========================================================================
 // CORRECTION ROUND -- required automated verification 1-18. (19-20 are the
@@ -614,7 +614,7 @@ assert(/could not find a company\/account column[\s\S]{0,200}Export Guides/.test
   assert(dom.addCustomerDataModal.hidden === true, 'correction test 10: a fresh page load with no action param never opens the modal automatically');
 }
 
-// 11. View Export Guides closes the upload modal and navigates without
+// 11. View Upload Guides closes the upload modal and navigates without
 // opening another modal or leaving a conflicting handler.
 {
   const { dash, dom } = makeSandbox();
@@ -622,9 +622,9 @@ assert(/could not find a company\/account column[\s\S]{0,200}Export Guides/.test
   assert(dom.addCustomerDataModal.hidden === false, 'sanity: modal is open');
   dash.wireAddCustomerDataModalControls();
   dom.addCustomerDataViewGuidesLink.click();
-  assert(dom.addCustomerDataModal.hidden === true, 'correction test 11: clicking View Export Guides closes the Add Customer Data modal');
+  assert(dom.addCustomerDataModal.hidden === true, 'correction test 11: clicking View Upload Guides closes the Add Customer Data modal');
   const modalSrc = html.slice(html.indexOf('function wireAddCustomerDataModalControls'), html.indexOf('function wireAddCustomerDataModalControls') + 1400);
-  assert(!/viewGuidesLink\.addEventListener\('click',[^)]*preventDefault/.test(modalSrc), 'correction test 11: the View Export Guides click handler never calls preventDefault(), so the real, single navigation is never blocked or duplicated');
+  assert(!/viewGuidesLink\.addEventListener\('click',[^)]*preventDefault/.test(modalSrc), 'correction test 11: the View Upload Guides click handler never calls preventDefault(), so the real, single navigation is never blocked or duplicated');
 }
 
 // 12. No visible "Import Guides" wording remains on any reachable page.
@@ -671,7 +671,7 @@ assert(!/<strong>You're all set\./.test(html), 'correction test 13: the redundan
 // 16. Shared header navigation is consistent across product pages.
 {
   const headerSrc = readFileSync(new URL('../site-header.js', import.meta.url), 'utf8');
-  assert(/label:'Dashboard'/.test(headerSrc) && /label:'Export Guides'/.test(headerSrc), 'correction test 16: the shared nav has the required Dashboard and Export Guides labels');
+  assert(/label:'Dashboard'/.test(headerSrc) && /label:'Upload Guides'/.test(headerSrc), 'correction test 16: the shared nav has the required Dashboard and Upload Guides labels');
   const productPages = ['export-guides/index.html', 'export-guides/salesforce/index.html', 'settings.html', 'dashboard/index.html'];
   for(const page of productPages){
     const src = readFileSync(new URL(`../${page}`, import.meta.url), 'utf8');
@@ -690,7 +690,7 @@ assert(!/<strong>You're all set\./.test(html), 'correction test 13: the redundan
 // 18. Shared footer links and labels are consistent across product pages.
 {
   const headerSrc = readFileSync(new URL('../site-header.js', import.meta.url), 'utf8');
-  const required = ['Export Guides', 'Upload Troubleshooting', 'Contact / Feedback', 'Privacy', 'Terms'];
+  const required = ['Upload Guides', 'Upload Troubleshooting', 'Contact / Feedback', 'Privacy', 'Terms'];
   for(const label of required){
     assert(headerSrc.includes(`label:'${label}'`), `correction test 18: the shared footer includes "${label}"`);
   }

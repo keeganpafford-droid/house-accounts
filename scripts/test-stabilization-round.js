@@ -137,9 +137,21 @@ assert(
     'loadSavedDashboard() reveals Sample Analysis in the catch/noData branch only after loading is confirmed complete and empty'
   );
 }
+// Live QA round 10: the success (has-data) path's #leadGate/#exampleOpportunity/
+// #results/#memberEmptyState reveal logic was factored out of
+// fetchAndRenderAggregateDashboard() into its own applyPopulatedWorkspaceState()
+// helper -- the populated-state counterpart to applyEmptyWorkspaceState() --
+// and is now called unconditionally (previously gated behind `if(!silent)`,
+// which left the empty-workspace card on screen after a silent post-upload
+// refresh). See applyPopulatedWorkspaceState()'s own header comment.
+const applyPopulatedWorkspaceStateSrc = extractFn(DASHBOARD_SRC, 'applyPopulatedWorkspaceState');
 assert(
-  /if\(example\) example\.style\.display = 'none';/.test(loadSavedDashboardSrc),
-  'loadSavedDashboard() explicitly hides Sample Analysis on the success (has-data) path, so an existing user never sees it'
+  /if\(example\) example\.style\.display = 'none';/.test(applyPopulatedWorkspaceStateSrc),
+  'applyPopulatedWorkspaceState() explicitly hides Sample Analysis on the success (has-data) path, so an existing user never sees it'
+);
+assert(
+  /applyPopulatedWorkspaceState\(\);/.test(loadSavedDashboardSrc),
+  'fetchAndRenderAggregateDashboard() calls applyPopulatedWorkspaceState() unconditionally on the success (has-data) path, regardless of silent'
 );
 
 // ---------------------------------------------------------------------------
@@ -315,7 +327,7 @@ assert(
 
 // ---------------------------------------------------------------------------
 // Required test 16: Pricing appears exactly once in the authenticated
-// header nav, alongside Dashboard and Export Guides, with Add Customer Data
+// header nav, alongside Dashboard and Upload Guides, with Add Customer Data
 // remaining the separate teal CTA (not a plain nav link).
 // ---------------------------------------------------------------------------
 {
@@ -324,7 +336,7 @@ assert(
   const appLinksBlock = appLinksMatch ? appLinksMatch[1] : '';
   const pricingOccurrences = (appLinksBlock.match(/label:'Pricing'/g) || []).length;
   assert(pricingOccurrences === 1, `Pricing appears exactly once in appLinks (found ${pricingOccurrences})`);
-  assert(/label:'Dashboard'/.test(appLinksBlock) && /label:'Export Guides'/.test(appLinksBlock), 'Dashboard and Export Guides remain in the authenticated nav alongside Pricing');
+  assert(/label:'Dashboard'/.test(appLinksBlock) && /label:'Upload Guides'/.test(appLinksBlock), 'Dashboard and Upload Guides remain in the authenticated nav alongside Pricing');
   assert(
     /id="haAddCustomerDataCta"/.test(siteHeaderJs) && !/appLinksBlock.*Add Customer Data/.test(appLinksBlock),
     'Add Customer Data remains the dedicated teal CTA, rendered separately from the plain nav links array'
@@ -333,14 +345,14 @@ assert(
 
 // ---------------------------------------------------------------------------
 // Required test 17: the shared authenticated footer includes Pricing,
-// Export Guides, Upload Troubleshooting, Data Security, Privacy, Terms, and
+// Upload Guides, Upload Troubleshooting, Data Security, Privacy, Terms, and
 // a Contact/Feedback route.
 // ---------------------------------------------------------------------------
 {
   const footerLinksMatch = siteHeaderJs.match(/const footerLinks=\[([\s\S]*?)\];/);
   assert(Boolean(footerLinksMatch), 'site-header.js defines a footerLinks array for the shared authenticated footer');
   const footerBlock = footerLinksMatch ? footerLinksMatch[1] : '';
-  for(const required of ["label:'Pricing'", "label:'Export Guides'", "label:'Upload Troubleshooting'", "label:'Data Security'", "label:'Privacy'", "label:'Terms'", "label:'Contact / Feedback'"]){
+  for(const required of ["label:'Pricing'", "label:'Upload Guides'", "label:'Upload Troubleshooting'", "label:'Data Security'", "label:'Privacy'", "label:'Terms'", "label:'Contact / Feedback'"]){
     assert(footerBlock.includes(required), `footerLinks includes ${required}`);
   }
   for(const href of ['/pricing.html', '/export-guides/', '/export-guides/#troubleshooting', '/security.html', '/privacy.html', '/terms.html', '/contact.html']){
