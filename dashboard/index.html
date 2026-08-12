@@ -8777,14 +8777,26 @@ function getWhyNowText(opp){
 
 
 function getReasonToReachOutTitle(opp){
-  const type = String(opp.signalType || opp.opportunityCategory || opp.opportunityType || '').toLowerCase();
   if(opp.isVerifiedSignalOpportunity || opp.sourceUrl){
-    if(type.includes('hiring')) return 'Hiring creates a timely reason to check in';
-    if(type.includes('event') || type.includes('conference') || type.includes('trade show')) return 'Event activity creates a timely reason to check in';
-    if(type.includes('expansion') || type.includes('location') || type.includes('facility')) return 'Growth activity creates a timely reason to check in';
-    if(type.includes('award') || type.includes('recognition')) return 'Recognition creates a timely reason to check in';
-    if(type.includes('leadership')) return 'Leadership change creates a timely reason to check in';
-    if(type.includes('launch')) return 'Launch activity creates a timely reason to check in';
+    // Final bounded Beta trust correction: reads the SAME canonical
+    // classification canonicalSignalKind() already provides to the card
+    // headline/Opportunity Summary/recommended department (see that
+    // function's own header comment: "so the card headline, Opportunity
+    // Summary, recommended department, and outreach can never disagree
+    // about what kind of business event this is") -- never opp.signalType
+    // substring matching, which is frozen at discovery time and can
+    // disagree with the live opp.canonicalEventType/opportunityType
+    // classifyLegacySignalActionability() recomputes fresh on every read
+    // (confirmed production case: a canonical EVENT_AWARD rendering this
+    // Prepare-for-Call header as "Hiring" because a stale signalType string
+    // happened to contain "hiring").
+    const kind = canonicalSignalKind(opp);
+    if(kind === 'hiring') return 'Hiring creates a timely reason to check in';
+    if(kind === 'event') return 'Event activity creates a timely reason to check in';
+    if(kind === 'expansion') return 'Growth activity creates a timely reason to check in';
+    if(kind === 'recognition') return 'Recognition creates a timely reason to check in';
+    if(kind === 'leadership') return 'Leadership change creates a timely reason to check in';
+    if(kind === 'launch') return 'Launch activity creates a timely reason to check in';
     return 'Business signal creates a reason to reach out';
   }
   // Live-QA correction (category/program copy drift, round 2): this is the

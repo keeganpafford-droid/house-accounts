@@ -191,6 +191,18 @@ function rowToSignal(row){
   const payload = { ...rawPayload, ...legacyFields };
   const sourceUrl = clean(row.source_url || payload.sourceUrl || '');
   const confidence = Number(row.confidence || payload.confidenceScore || payload.confidence || 0) || 0;
+  // Final bounded Beta trust correction: row.why_reach_out is a separate,
+  // flat DB column written at persist time -- for a row whose raw payload
+  // never carried a canonicalEventType at all, that column reflects
+  // whatever independent (now-fixed) classifier produced it, not the
+  // freshly-regenerated, canonically-gated payload.whyNow
+  // classifyLegacySignalActionability() just computed above. Preferring the
+  // stored column unconditionally would silently mask that self-heal. A row
+  // that DID carry a real canonicalEventType was persisted by an
+  // already-canonical-aware endpoint, so the stored column and the payload
+  // already agree -- kept as the preferred source there, unchanged.
+  const canonicalEventTypeWasMissing = !rawPayload.canonicalEventType;
+  const legacyWhyReachOut = canonicalEventTypeWasMissing ? '' : row.why_reach_out;
   return {
     ...payload,
     isReal: true,
@@ -200,8 +212,8 @@ function rowToSignal(row){
     title: row.title || payload.title || payload.signalTitle || 'Verified business signal',
     signalTitle: row.title || payload.signalTitle || payload.title || 'Verified business signal',
     signalDetail: row.title || payload.signalDetail || payload.whatChanged || 'Verified business signal',
-    whyNow: row.why_reach_out || payload.whyNow || payload.whyItMattersForPromo || payload.reasonToReachOut || '',
-    whyItMattersForPromo: row.why_reach_out || payload.whyItMattersForPromo || payload.whyNow || '',
+    whyNow: legacyWhyReachOut || payload.whyNow || payload.whyItMattersForPromo || payload.reasonToReachOut || '',
+    whyItMattersForPromo: legacyWhyReachOut || payload.whyItMattersForPromo || payload.whyNow || '',
     confidence,
     confidenceScore: confidence,
     confidenceLevel: confidenceWord(confidence),

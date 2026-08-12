@@ -14,6 +14,8 @@ import {
   dedupeOpportunities,
   resolveEventType,
   displayLabelForEventType,
+  canonicalTemplateFamily,
+  sellerCopyForTemplateFamily,
   extractEventDate,
   findPublicationContextDate,
   calendarDaysBetween,
@@ -1192,35 +1194,15 @@ function buildConcreteTrigger(raw = {}, type = '', accountName = '') {
 // hiring, award, launch, etc.) a template selects is gated out here.
 // salesReadyWhy()/salesReadyOpener()/contextToOpener()/
 // promoCategoriesForMoment()/inferRecommendedBuyingTeam() below select
-// their SPECIFIC bucket ONLY from this mapping of the already-computed
-// canonical eventType/signal-family label (makeSignal()'s `type` param --
-// itself resolveCanonicalEventType()'s output, the single source of truth
-// this module's own "Phase 2A/B3" correction already established in
-// signal-intelligence.js for eventType/signalType). Reproduced production
-// case: a BerryDunn thought-leadership piece ("Trailblazers in Veterinary
-// Accounting and Consulting") used the word "expanding" to describe a
-// PRACTICE AREA, never a physical facility. The canonical classifier
-// correctly declined to call this a facility/location event (it falls to
-// the generic 'Business Activity' label) -- but every function below used
-// to independently re-scan the raw trigger/context text with its OWN
-// separate, looser keyword regex (e.g. `/facility|location|plant|warehouse|
-// ribbon|expansion/`), which still matched the bare word "expanding" and
-// rendered "Facility launches usually create needs around... opening-day
-// gifts" -- a specific claim the evidence never supported. Free text may
-// still feed a topic-neutral generic fallback (contextToPromoWhy(),
-// honestLimitedOpener()) -- it must never manufacture a SPECIFIC claim the
-// canonical classification does not itself support.
-function canonicalTemplateFamily(type = '') {
-  const t = String(type || '').toLowerCase();
-  if (/community/.test(t)) return 'community';
-  if (/facility|location|renovation|growth\s*\/\s*expansion/.test(t)) return 'facility';
-  if (/trade show|conference|events\s*\/\s*marketing/.test(t)) return 'events';
-  if (/hiring/.test(t)) return 'hiring';
-  if (/product launch|product\s*\/\s*service/.test(t)) return 'launch';
-  if (/award|recognition/.test(t)) return 'award';
-  if (/partnership|contract/.test(t)) return 'partnership';
-  return null;
-}
+// their SPECIFIC bucket ONLY via canonicalTemplateFamily() (now shared,
+// imported from signal-intelligence.js -- api/research-account.js's own
+// opportunityForSignal()/detectDepartment()/contactForSignal() consume the
+// exact same function, so neither endpoint maintains an independent
+// event-family classifier; see that function's own header comment for the
+// full production root-cause writeup). Free text may still feed a
+// topic-neutral generic fallback (contextToPromoWhy(), honestLimitedOpener())
+// -- it must never manufacture a SPECIFIC claim the canonical
+// classification does not itself support.
 
 function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
   const explicit = compact(raw.buying_moment || raw.buyingMoment || raw.opportunityCategory || '', 90);
@@ -2023,7 +2005,7 @@ function classifyLegacySignalActionability(payload = {}) {
     }
   }
   const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
-  return {
+  const result = {
     eventCategory,
     actionabilityStatus,
     eventDate: eventDate || '',
@@ -2039,6 +2021,40 @@ function classifyLegacySignalActionability(payload = {}) {
     canonicalEventType,
     opportunityType: canonicalEventType
   };
+  // Final bounded Beta trust correction: a row with NO canonicalEventType
+  // at all on the raw stored payload never went through canonical
+  // classification at persist time (confirmed production case: rows
+  // persisted by api/research-account.js before this round, whose
+  // opportunityForSignal()/detectDepartment()/contactForSignal() computed
+  // their own independent seller copy with no canonicalEventType field at
+  // all). Its accompanying seller-facing fields (reasonToReachOut/whyNow/
+  // opportunityExplanation/opportunityCategory/affectedDepartment/
+  // suggestedContact/suggestedProducts/conversationStarter) cannot be
+  // trusted to agree with the freshly-resolved canonicalEventType just
+  // computed above, so they are regenerated here -- via the SAME shared,
+  // canonicalTemplateFamily()-gated table api/research-account.js's fixed
+  // helpers now use -- rather than left stale. Deliberately narrow: a row
+  // that already carries a real canonicalEventType was persisted by an
+  // already-fixed endpoint, so its own richer, grounded copy (real
+  // department/historical-fact suffixes, a model's own credible
+  // commercialPlay, etc.) is trusted as-is and never flattened to this
+  // generic per-family fallback. No schema migration/backfill -- this is a
+  // pure, bounded, read-time-only correction, applied once per hydration,
+  // exactly like the canonicalEventType re-derivation above.
+  if (!payload.canonicalEventType) {
+    const family = canonicalTemplateFamily(displayLabelForEventType(canonicalEventType));
+    const sellerCopy = sellerCopyForTemplateFamily(family);
+    result.reasonToReachOut = sellerCopy.reasonToReachOut;
+    result.whyNow = sellerCopy.whyNow;
+    result.opportunityExplanation = sellerCopy.whyNow;
+    result.opportunityCategory = sellerCopy.category;
+    result.promoOpportunity = sellerCopy.name;
+    result.affectedDepartment = sellerCopy.department;
+    result.suggestedContact = sellerCopy.contact;
+    result.conversationStarter = sellerCopy.conversationStarter;
+    result.suggestedProducts = sellerCopy.products;
+  }
+  return result;
 }
 
 // product/commercial-opportunity-intelligence: commercialPlayNarrative is

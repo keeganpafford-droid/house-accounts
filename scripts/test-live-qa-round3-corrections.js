@@ -87,6 +87,11 @@ const DASHBOARD_SRC = loadDashboardSource();
   const SRC = [
     extractFn(DASHBOARD_SRC, 'findAccountForOpp'),
     extractFn(DASHBOARD_SRC, 'realPriorCategories'),
+    // Final bounded Beta trust correction: getReasonToReachOutTitle() now
+    // reads canonicalSignalKind() (and its two backing tables) instead of
+    // opp.signalType substring matching -- extracted alongside it so this
+    // isolated sandbox has the real dependency in scope, not a stub.
+    extractRange(DASHBOARD_SRC, 'const CANONICAL_KIND_BY_EVENT_TYPE = {', 'function canonicalSignalKind(opp){'),
     extractFn(DASHBOARD_SRC, 'getReasonToReachOutTitle')
   ].join('\n\n');
   const sandbox = { window: {}, console };
@@ -102,9 +107,16 @@ const DASHBOARD_SRC = loadDashboardSource();
   assert(/onboarding \/ recruiting/i.test(brightviewTitle), `REQUIRED (Brightview PFC subtitle): "Past buying suggests..." names the account's REAL purchased category, not the unrelated generic template it came from (got "${brightviewTitle}")`);
   assert(!/recognition/i.test(brightviewTitle), `REQUIRED: the PFC subtitle never claims a "recognition" program for an account with no recognition/awards purchase history (got "${brightviewTitle}")`);
 
-  // A real business signal (sourceUrl set) is completely untouched by this fix.
-  const businessTitle = getReasonToReachOutTitle({ signalType: 'Hiring Signal', sourceUrl: 'https://example.com/article', isVerifiedSignalOpportunity: true });
-  assert(businessTitle === 'Hiring creates a timely reason to check in', `sanity: a genuine business signal's title is unaffected by this fix (got "${businessTitle}")`);
+  // A real business signal (sourceUrl set) with a genuine canonical
+  // classification still renders correctly. Final bounded Beta trust
+  // correction: getReasonToReachOutTitle() now reads canonicalSignalKind()
+  // (opp.canonicalEventType/opportunityType), not opp.signalType substring
+  // matching -- a real hydrated opportunity always carries a canonical
+  // classification (set at persist time by both research endpoints, or
+  // self-healed at read time for a legacy row missing one), so this fixture
+  // supplies the canonical enum a genuine hiring signal would actually have.
+  const businessTitle = getReasonToReachOutTitle({ signalType: 'Hiring Signal', canonicalEventType: 'HIRING_ACTIVITY', sourceUrl: 'https://example.com/article', isVerifiedSignalOpportunity: true });
+  assert(businessTitle === 'Hiring creates a timely reason to check in', `sanity: a genuine canonical hiring signal's title is correct (got "${businessTitle}")`);
 }
 
 // ===========================================================================

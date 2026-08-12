@@ -353,6 +353,36 @@ function isExactSelfDomainMatch(companyName = '', url = '') {
   return Boolean(company) && company === sld;
 }
 
+// Final bounded Beta trust correction: analogous to isExactSelfDomainMatch()
+// above, but for a social profile's own handle instead of a domain's
+// registrable SLD. Legitimate third-party/social evidence (e.g. an
+// Instagram post explicitly tagging @llbean) should not require a
+// pre-populated account.knownSocialProfiles list (see
+// accountKnownSocialProfileMatch()'s own comment -- no current caller
+// populates it) when the account's own name, compacted, exactly equals the
+// profile's own handle: the profile is speaking for itself, the same
+// reasoning isExactSelfDomainMatch() already applies to a namesake domain.
+// Deliberately NOT restricted to single-token company names (unlike the
+// domain check): a social handle is near-universally the compacted form of
+// a brand's FULL name regardless of word count ("L.L.Bean" -> "@llbean"),
+// unlike a domain SLD, which is far less commonly an exact compacted match
+// for a multi-word name -- that asymmetry is why isExactSelfDomainMatch()
+// itself stays single-token-only while this one does not. Deliberately
+// EXACT compacted-string equality only -- no substring/contains/fuzzy/
+// prefix/suffix matching, mirroring isExactSelfDomainMatch()'s own
+// discipline exactly. Purely additive: this is one MORE way to reach
+// corroboration, never a requirement -- every existing legitimate
+// non-social signal source (news, trade press, government, partner sites,
+// etc.) is completely unaffected, and social evidence with no exact handle
+// match still reaches whatever grade it would have reached before this
+// function existed.
+function isExactSelfSocialHandleMatch(companyName = '', url = '') {
+  if (!isSocialUrl(url)) return false;
+  const handle = normalizeCompany(socialHandleFromUrl(url)).replace(/\s+/g, '');
+  const company = normalizeCompany(companyName).replace(/\s+/g, '');
+  return Boolean(company) && Boolean(handle) && company === handle;
+}
+
 // ---------------------------------------------------------------------------
 // Identity-grounding correction (round: embedded-entity precision + one-word
 // third-party recall). ONE bounded, deterministic, contextual-adjacency
@@ -406,12 +436,39 @@ function eachCompanyMatchNeighbors(companyName, text) {
   while ((m = re.exec(t))) {
     results.push({
       matchedText: m[0],
+      index: m.index,
       before: wordImmediatelyBefore(t, m.index),
       after: wordImmediatelyAfter(t, m.index + m[0].length)
     });
     if (m.index === re.lastIndex) re.lastIndex += 1; // defensive: \b...\b matches are never zero-length here, but never loop forever if that ever changes
   }
   return results;
+}
+
+// Identity-grounding correction (round: same-sentence/local-clause
+// tightening). The smallest unit of "local context" around a match --
+// bounded by the nearest sentence-ending punctuation (.!?) OR a structural
+// list/breadcrumb/table delimiter (newline, ">", "|", a bullet, ";") on
+// either side, whichever is closer. Deliberately includes the structural
+// delimiters, not just sentence punctuation: a roster/schedule/breadcrumb
+// page ("ABC Convention > Past Events > 2026 > Schedule" followed by a
+// dash- or newline-separated list of past exhibitor names) rarely uses
+// periods at all, so bounding on sentence punctuation alone would let the
+// "local clause" balloon out to the whole page -- exactly the false-
+// positive shape this correction exists to close.
+const LOCAL_CLAUSE_BOUNDARY = /[.!?\n>|•·]/;
+function localClauseAroundMatch(text, index, matchLength) {
+  const before = text.slice(0, index);
+  const after = text.slice(index + matchLength);
+  let start = 0;
+  for (let i = before.length - 1; i >= 0; i--) {
+    if (LOCAL_CLAUSE_BOUNDARY.test(before[i])) { start = i + 1; break; }
+  }
+  let end = text.length;
+  for (let i = 0; i < after.length; i++) {
+    if (LOCAL_CLAUSE_BOUNDARY.test(after[i])) { end = index + matchLength + i; break; }
+  }
+  return text.slice(start, end).trim();
 }
 
 function isCapitalizedWord(word = '') {
@@ -450,20 +507,31 @@ function isEntityEmbeddedInLargerName(companyName, snippet = '') {
 // Recall fix (Cianbro shape): a single-token bare match with no independent
 // corroborator may still be trusted as a legitimate (uncorroborated,
 // 'unconfirmed') reference when the evidence contains a genuine STANDALONE
-// capitalized mention of the token AND the snippet independently classifies
-// into a recognized business-activity family.
+// capitalized mention of the token, GRAMMATICALLY ATTACHED to a real local
+// clause, AND that same local clause independently classifies into a
+// recognized business-activity family.
 //
-// Capitalization + isolation ALONE is not sufficient -- a sentence-initial
-// common-noun coincidence ("Timberland covers thousands of acres.") passes
-// an isolation-only check identically to a genuine standalone company
-// mention ("Cianbro received the Safety Award."), since neither has an
-// adjacent capitalized neighbor. The second, independent requirement below
-// (classifySignalFamily(snippet) !== 'unknown') is the tightening founder QA
-// required: it reuses the SAME general, already-existing business-event
-// taxonomy this module classifies signal families with everywhere else
-// (never a new company-specific dictionary, publisher allowlist, or model
-// call) as contextual evidence the sentence actually describes a business
-// event, not scenery/geography/an ordinary dictionary usage of the word.
+// Capitalization + isolation ALONE is not sufficient -- two failure shapes
+// both pass an isolation-only check identically to a genuine standalone
+// company mention ("Cianbro received the Safety Award."):
+//   1. a sentence-initial common-noun coincidence ("Timberland covers
+//      thousands of acres.") -- neither has an adjacent capitalized
+//      neighbor. Excluded by the classifySignalFamily() requirement below,
+//      scoped to the LOCAL clause (see localClauseAroundMatch()'s own
+//      comment) -- "covers thousands of acres" names no business-activity
+//      family.
+//   2. bare roster/directory/breadcrumb membership ("ABC Convention > Past
+//      Events > 2026 > Schedule" followed by the company appearing only as
+//      one dash- or comma-separated entry in a list of many) -- the page
+//      can be saturated with genuine event vocabulary ELSEWHERE while the
+//      company's own occurrence has no claim attached to it at all.
+//      Excluded by the grammatical-neighbor requirement below: a real
+//      sentence always joins the company mention to an adjacent lowercase
+//      word (a verb, preposition, or article) by plain whitespace, exactly
+//      like wordImmediatelyBefore()/After() already capture; a roster
+//      entry's neighbors are structural delimiters (dashes, pipes, commas,
+//      ">"), which those two helpers already treat as a hard boundary and
+//      report as no word at all.
 //
 // Deliberately STRICTER than isEntityEmbeddedInLargerName() above: NO
 // generic-suffix exemption here. "Timberland Partners announced..." must
@@ -475,13 +543,13 @@ function isStandaloneSingleTokenMention(companyName, snippet = '') {
   if (!isSingleTokenCompanyIdentity(companyName)) return false;
   const text = String(snippet || '');
   const occurrences = eachCompanyMatchNeighbors(companyName, text);
-  const hasStandaloneCapitalizedOccurrence = occurrences.some(({ matchedText, before, after }) => {
+  return occurrences.some(({ matchedText, before, after, index }) => {
     if (!isCapitalizedWord(matchedText)) return false;
     if (isCapitalizedWord(before) || isCapitalizedWord(after)) return false;
-    return true;
+    if (!before && !after) return false;
+    const localClause = localClauseAroundMatch(text, index, matchedText.length);
+    return classifySignalFamily(localClause) !== 'unknown';
   });
-  if (!hasStandaloneCapitalizedOccurrence) return false;
-  return classifySignalFamily(text) !== 'unknown';
 }
 
 // Finds every explicit "City, ST" mention in text. A fresh RegExp is built
@@ -822,22 +890,33 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const publisherGeoCorroborated = entity.reasons.includes('publisher domain matches account city+state geography');
   const socialUrl = isSocialUrl(scopedCandidate.url);
   const knownSocialProfileMatch = socialUrl && accountKnownSocialProfileMatch(account, scopedCandidate.url);
-  const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && socialProfileMatchesCompany(companyName, scopedCandidate.url);
+  // Final bounded Beta trust correction: an EXACT compacted handle match
+  // (e.g. "@llbean" for account "L.L.Bean") is checked independently of
+  // knownSocialProfileMatch -- it requires no pre-populated
+  // account.knownSocialProfiles entry at all. See
+  // isExactSelfSocialHandleMatch()'s own header comment for the full
+  // rationale and its deliberate contrast with the weaker, non-corroborating
+  // inferredSocialHandleMatch below (a "resembles" check, never sufficient
+  // alone).
+  const exactSocialHandleCorroborated = socialUrl && !knownSocialProfileMatch && isExactSelfSocialHandleMatch(companyName, scopedCandidate.url);
+  const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && !exactSocialHandleCorroborated && socialProfileMatchesCompany(companyName, scopedCandidate.url);
   if (knownSocialProfileMatch) reasons.push('matches account\'s known official social profile');
+  else if (exactSocialHandleCorroborated) reasons.push('social handle exactly matches the account\'s own compacted company name');
   else if (inferredSocialHandleMatch) reasons.push('social handle text resembles account name (not independently verified -- does not count as corroboration alone)');
   else if (socialUrl) reasons.push('social source has no verifiable profile corroboration');
 
   const contradicted = hasLocationContradiction(scopedCandidate, account);
-  // selfDomainCorroborated joins domainCorroborated/knownSocialProfileMatch
-  // in overriding a location contradiction -- the account's own namesake
-  // domain (verified by exact SLD match, same as an uploaded website) is
-  // the company speaking for itself, exactly the same reasoning that
-  // already applies to domainCorroborated above.
-  if (contradicted && !domainCorroborated && !knownSocialProfileMatch && !selfDomainCorroborated) {
+  // selfDomainCorroborated/exactSocialHandleCorroborated join
+  // domainCorroborated/knownSocialProfileMatch in overriding a location
+  // contradiction -- the account's own namesake domain or exactly-matched
+  // social handle (verified by exact match, same as an uploaded website or
+  // a known profile) is the company speaking for itself, exactly the same
+  // reasoning that already applies to domainCorroborated above.
+  if (contradicted && !domainCorroborated && !knownSocialProfileMatch && !selfDomainCorroborated && !exactSocialHandleCorroborated) {
     return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
   }
 
-  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated || selfDomainCorroborated;
+  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated || selfDomainCorroborated || exactSocialHandleCorroborated;
   if (corroborated) return { grounded: true, identityConfidence: 'confirmed', reasons };
   // Final Beta Signal Intelligence Correction sprint: a name match that is
   // ONLY the distinctive-token fallback (never the strong bare full-phrase/
@@ -1668,6 +1747,150 @@ function displayLabelForEventType(eventType = '') {
     return SIGNAL_FAMILIES[family]?.label || 'Business Activity';
   }
   return 'Business Activity';
+}
+
+// ---------------------------------------------------------------------------
+// Final bounded Beta trust correction: ONE canonical event classification
+// controls every specific seller-facing interpretation of what happened.
+// Both api/research-batch.js and api/research-account.js consume this SAME
+// function -- neither maintains its own independent event-family
+// classifier. Confirmed production root cause (live QA, Supabase trace):
+// api/research-account.js had its own parallel copy of this exact mapping
+// job, re-derived from loose free-text regex over signalType+department+
+// industry, completely disconnected from the canonical eventType either
+// endpoint had already computed -- producing e.g. a canonical
+// EVENT_CONFERENCE (Cianbro's Maine CTE Business Summit) rendering Hiring
+// seller copy, and a canonical BUSINESS_ACTIVITY_UNKNOWN (BerryDunn's
+// veterinary-accounting thought-leadership piece) rendering "Expansion or
+// location activity" Facility Launch copy -- neither of which the
+// canonical classification itself ever supported.
+//
+// A generic/unknown canonical label (Acquisition, Rebrand, Business
+// Activity, etc.) always maps to null, so every caller falls to its own
+// topic-neutral generic fallback rather than asserting a specific claim
+// the canonical classification does not support.
+function canonicalTemplateFamily(type = '') {
+  const t = String(type || '').toLowerCase();
+  if (/community/.test(t)) return 'community';
+  if (/facility|location|renovation|growth\s*\/\s*expansion/.test(t)) return 'facility';
+  if (/trade show|conference|events\s*\/\s*marketing/.test(t)) return 'events';
+  if (/hiring/.test(t)) return 'hiring';
+  if (/product launch|product\s*\/\s*service/.test(t)) return 'launch';
+  if (/award|recognition/.test(t)) return 'award';
+  if (/partnership|contract/.test(t)) return 'partnership';
+  if (/leadership/.test(t)) return 'leadership';
+  return null;
+}
+
+// Shared per-family seller-copy metadata, keyed by canonicalTemplateFamily()'s
+// own family keys -- the ONE table api/research-account.js's opportunityForSignal()/
+// detectDepartment()/contactForSignal() now read from (replacing their own
+// independent regex tables), and the same table api/research-batch.js's
+// classifyLegacySignalActionability() reads from for its bounded, missing-
+// canonicalEventType-only read-time self-heal (see that function's own
+// comment). Deliberately generic/topic-neutral for the `null` (unknown/
+// generic canonical type) entry -- never a specific claim, matching the
+// "generic fallback is fine when classification is uncertain" contract.
+const SELLER_COPY_BY_TEMPLATE_FAMILY = {
+  events: {
+    category: 'Trade Show / Event Support',
+    name: 'Trade Show / Event Merchandise Program',
+    department: 'Marketing / Events',
+    contact: 'Marketing Manager / Events Lead',
+    products: ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'],
+    whyNow: 'A public event creates a timely reason to ask about booth traffic, staff presentation, attendee giveaways, and customer follow-up.',
+    reasonToReachOut: 'Event activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the upcoming event or campaign needs staff apparel, attendee gifts, or customer-facing merch.'
+  },
+  facility: {
+    category: 'Facility / Location Launch',
+    name: 'New Location Launch Kit',
+    department: 'Operations / Production',
+    contact: 'Operations Manager / Safety Manager / HR Manager',
+    products: ['grand opening gifts', 'location-branded apparel', 'employee welcome kits', 'customer gifts'],
+    whyNow: 'Expansion or location activity creates a timely reason to ask about launch merchandise, employee gear, and customer-facing gifts.',
+    reasonToReachOut: 'Growth activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the growth activity creates any need for launch merch, employee gear, or customer gifts.'
+  },
+  award: {
+    category: 'Recognition / Celebration',
+    name: 'Recognition & Celebration Program',
+    department: 'Marketing / HR',
+    contact: 'Marketing Manager / HR Manager',
+    products: ['employee gifts', 'award apparel', 'thank-you kits', 'announcement mailers'],
+    whyNow: 'Recognition creates a natural opening to ask about employee celebration, customer announcements, and internal culture moments.',
+    reasonToReachOut: 'Recognition creates a timely reason to check in',
+    conversationStarter: 'Ask whether there are any employee, customer, or team appreciation moments coming up.'
+  },
+  leadership: {
+    category: 'Leadership Transition',
+    name: 'New Leader Welcome / Team Culture Kit',
+    department: 'Marketing / HR',
+    contact: 'Marketing Manager / HR Manager',
+    products: ['welcome gifts', 'team apparel', 'executive gifts', 'internal announcement kits'],
+    whyNow: 'Leadership changes create a light-touch reason to ask about internal communication, team culture, or executive gifting.',
+    reasonToReachOut: 'Leadership change creates a timely reason to check in',
+    conversationStarter: 'Ask whether the leadership change connects to any team engagement, recognition, or internal brand moments.'
+  },
+  launch: {
+    category: 'Product / Service Launch',
+    name: 'Product Launch Merchandise Kit',
+    department: 'Marketing / Sales',
+    contact: 'Marketing Manager / Sales Manager',
+    products: ['launch giveaways', 'sales team apparel', 'customer gifts', 'sample kits'],
+    whyNow: 'Launch activity creates a timely reason to ask about campaign merchandise, sales enablement, and customer-facing giveaways.',
+    reasonToReachOut: 'Launch activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the product or service launch needs any sales, customer, or campaign support.'
+  },
+  community: {
+    category: 'Community / Sponsorship',
+    name: 'Community Sponsorship Program',
+    department: 'Marketing / Community Relations',
+    contact: 'Marketing Manager / Community Relations Lead',
+    products: ['event giveaways', 'volunteer apparel', 'banners', 'community gifts'],
+    whyNow: 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.',
+    reasonToReachOut: 'Community activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the community program needs volunteer apparel, banners, or sponsor gifts.'
+  },
+  partnership: {
+    category: 'Customer / Partnership Win',
+    name: 'Customer Appreciation & Partnership Program',
+    department: 'Marketing / Sales',
+    contact: 'Marketing Manager / Sales Manager',
+    products: ['customer appreciation gifts', 'sales kits', 'executive gifts', 'event giveaways'],
+    whyNow: 'Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.',
+    reasonToReachOut: 'Partnership activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the new partnership or contract creates any customer-facing or internal recognition needs.'
+  },
+  hiring: {
+    category: 'Employee Onboarding',
+    name: 'New Hire Onboarding Program',
+    department: 'HR / People',
+    contact: 'HR Manager / Department Lead',
+    products: ['new hire welcome kits', 'employee apparel', 'drinkware', 'recruiting giveaways'],
+    whyNow: 'Hiring creates a timely reason to ask about onboarding, recruiting, and employee welcome programs.',
+    reasonToReachOut: 'Hiring creates a timely reason to check in',
+    conversationStarter: 'Ask how they are handling onboarding, apparel, or employee experience for new hires.'
+  }
+};
+// Deliberately generic/topic-neutral -- used whenever canonicalTemplateFamily()
+// returns null (a generic/unknown canonical type). Mirrors the existing
+// generic fallback phrasing already used elsewhere (dashboard/index.html's
+// getReasonToReachOutTitle() own final default, "Business signal creates a
+// reason to reach out") so a generic classification reads consistently
+// across every surface, never a manufactured specific claim.
+const GENERIC_SELLER_COPY = {
+  category: 'General Business Activity',
+  name: 'General Outreach',
+  department: 'Relevant department',
+  contact: 'Relevant department lead',
+  products: ['employee apparel', 'event kits', 'customer appreciation', 'recognition gifts'],
+  whyNow: 'This is a real, public business update, though the specific initiative behind it is not yet clear from the evidence. Worth a quick check-in to see what is changing.',
+  reasonToReachOut: 'Business signal creates a reason to reach out',
+  conversationStarter: 'Ask what is changing internally and whether there is a role for branded merchandise or employee/customer recognition.'
+};
+function sellerCopyForTemplateFamily(family) {
+  return SELLER_COPY_BY_TEMPLATE_FAMILY[family] || GENERIC_SELLER_COPY;
 }
 
 function normalizeForMatch(value = '') {
@@ -2613,7 +2836,7 @@ export {
   SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, isExactSelfDomainMatch, registrableDomainSld, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
-  isEntityEmbeddedInLargerName, isStandaloneSingleTokenMention,
+  isEntityEmbeddedInLargerName, isStandaloneSingleTokenMention, isExactSelfSocialHandleMatch,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
   deriveAccountLocationFromContent, diagnoseAccountLocationExtraction,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
@@ -2624,7 +2847,7 @@ export {
   resolveOpportunityEvents, dedupeByEventFingerprint,
   fallbackEventDiscriminator, stableHash, normalizeForMatch,
   calendarDaysBetween,
-  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
+  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType, canonicalTemplateFamily, sellerCopyForTemplateFamily,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
   isCommercialIntelligenceSignal, findLikelyRelatedPurchase, isGenericCommercialPlay

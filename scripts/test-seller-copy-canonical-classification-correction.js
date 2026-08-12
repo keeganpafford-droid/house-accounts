@@ -124,8 +124,19 @@ function assert(condition, message) {
     ['Award / Milestone', 'award'],
     ['Partnership / Contract', 'partnership'],
     ['Acquisition', null],
-    ['Leadership Change', null],
-    ['Leadership / Relationship', null],
+    // Final bounded Beta trust correction: 'leadership' is now a recognized
+    // family -- api/research-account.js's opportunityForSignal() legitimately
+    // needs a Leadership Transition bucket (its pre-correction table already
+    // had one), and per the founder's own required control ("BerryDunn
+    // award: award/recognition guidance; NOT Hiring or Leadership UNLESS
+    // canonical type actually says so"), Leadership guidance is correct
+    // exactly when the canonical type genuinely is a leadership change.
+    // research-batch.js's own salesReadyWhy()/salesReadyOpener() still have
+    // no leadership-specific prose branch (unchanged, untouched by this
+    // addition) -- they simply never reach this family, falling to their
+    // existing generic fallback exactly as before.
+    ['Leadership Change', 'leadership'],
+    ['Leadership / Relationship', 'leadership'],
     ['Rebrand', null],
     ['Acquisition / Financial', null],
     ['Business Activity', null]
