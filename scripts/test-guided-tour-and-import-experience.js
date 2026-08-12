@@ -186,7 +186,7 @@ function buildDashboardDom(){
   };
 }
 
-function makeSandbox({ userEmail = 'rep@example.com' } = {}){
+function makeSandbox({ userEmail = 'rep@example.com', hasUploadedData = true } = {}){
   const dom = buildDashboardDom();
   const localStorageStore = {};
   const fakeLocalStorage = {
@@ -222,7 +222,15 @@ function makeSandbox({ userEmail = 'rep@example.com' } = {}){
       closeMenus: () => { closeMenusCalls.push(true); },
       beginOverlay: () => { beginOverlayCalls.push(true); },
       endOverlay: () => { endOverlayCalls.push(true); }
-    }
+    },
+    // Empty-workspace guided-tour correction: this file's own required
+    // tests 1-8 (below) exercise the FULL 5-step tour end to end (Back/
+    // Next through all five, Finish, spotlight geometry for step 3+), which
+    // needs a populated workspace -- see
+    // test-guided-tour-empty-workspace-correction.js for the dedicated,
+    // separate coverage of the zero-data truncation/deferred-resume
+    // behavior itself.
+    accountRadarAccounts: hasUploadedData ? [{ name: 'Sample Co', uploadId: 'sample-upload' }] : []
   };
   const houseAuth = { getUser: () => currentUser, authHeadersAsync: () => Promise.resolve({ Authorization: 'Bearer test' }) };
   fakeWindow.HouseAuth = houseAuth;
@@ -315,9 +323,25 @@ function numPx(v){ return v == null ? NaN : parseFloat(String(v)); }
 
 {
   const src = html;
-  const callSites = [...src.matchAll(/launchGuidedTour\(\)/g)].length;
-  assert(callSites === 2, `required test 5: launchGuidedTour() is called from exactly 2 explicit user-action sites, not auto-replayed anywhere else (got ${callSites} call sites)`);
-  assert(!/DOMContentLoaded[\s\S]{0,200}launchGuidedTour\(\)/.test(src.replace(/wireGuidedTourControls/g, '')), 'required test 5: the tour is never launched directly inside a DOMContentLoaded handler (only explicit user actions launch it)');
+  // Empty-workspace correction: a THIRD, intentional call site now exists
+  // alongside the original two explicit user-action sites (Get Started,
+  // Help > Restart Product Tour) -- the bounded automatic resume from
+  // maybeResumeGuidedTourAfterPopulation(), gated by the pending-resume
+  // marker so it can only ever fire once per deferred run (see
+  // test-guided-tour-empty-workspace-correction.js for dedicated coverage
+  // proving it never repeatedly relaunches). Each site is matched by its
+  // own distinct, real invocation shape -- never the function's own
+  // `function launchGuidedTour(options = {}){` declaration, and never a
+  // prose comment merely mentioning the name.
+  const getStartedSite = /betaWelcomeStartBtn\.addEventListener\('click', \(\) => \{\s*dismissBetaWelcomeModal\(\);\s*launchGuidedTour\(\);/.test(src);
+  const restartTourSite = /window\.setTimeout\(launchGuidedTour, 0\);/.test(src);
+  const resumeSite = /launchGuidedTour\(\{ resuming: true, startIndex: resumeStep \}\);/.test(src);
+  assert(getStartedSite, 'required test 5: the Get Started button site calls launchGuidedTour()');
+  assert(restartTourSite, 'required test 5: the Help > Restart Product Tour site calls launchGuidedTour');
+  assert(resumeSite, 'required test 5: the bounded automatic resume-after-upload site calls launchGuidedTour() with { resuming: true }');
+  const totalRealCallSites = [...src.matchAll(/\blaunchGuidedTour\(\)|launchGuidedTour\(\{ resuming|window\.setTimeout\(launchGuidedTour,/g)].length;
+  assert(totalRealCallSites === 3, `required test 5: launchGuidedTour() is called from exactly these 3 explicit/bounded sites, not auto-replayed anywhere else (got ${totalRealCallSites} call sites)`);
+  assert(!/DOMContentLoaded[\s\S]{0,200}launchGuidedTour\(\)/.test(src.replace(/wireGuidedTourControls/g, '')), 'required test 5: the tour is never launched directly inside a DOMContentLoaded handler (only explicit user actions or the bounded resume launch it)');
 }
 
 {

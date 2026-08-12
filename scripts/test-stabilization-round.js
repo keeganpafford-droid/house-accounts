@@ -37,7 +37,10 @@ const pricingHtml = readFileSync(new URL('../pricing.html', import.meta.url), 'u
 // ---------------------------------------------------------------------------
 const overlayOpeners = [
   { name: 'openAddCustomerDataModal (Add Customer Data modal)', re: /function openAddCustomerDataModal\(\)\{[\s\S]{0,600}?closeMenus\(\)/ },
-  { name: 'launchGuidedTour (guided tour)', re: /function launchGuidedTour\(\)\{[\s\S]{0,400}?closeMenus\(\)/ },
+  // Empty-workspace correction: launchGuidedTour() gained an `options`
+  // param (default {}) to support the bounded automatic resume-after-
+  // upload call site (see test-guided-tour-empty-workspace-correction.js).
+  { name: 'launchGuidedTour (guided tour)', re: /function launchGuidedTour\(options = \{\}\)\{[\s\S]{0,400}?closeMenus\(\)/ },
   { name: 'showBetaWelcomeModal (Welcome modal)', re: /function showBetaWelcomeModal\(\)\{[\s\S]{0,600}?closeMenus\(\)/ },
   { name: 'createSalesPlayPanel (Prepare for Call panel)', re: /window\.createSalesPlayPanel = function\(opp, opts\)\{[\s\S]{0,400}?closeMenus\(\)/ },
   { name: 'Manage Customer Accounts modal open()', re: /function open\(\)\{[\s\S]{0,400}?closeMenus\(\)/ },

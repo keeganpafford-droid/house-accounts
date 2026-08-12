@@ -353,6 +353,137 @@ function isExactSelfDomainMatch(companyName = '', url = '') {
   return Boolean(company) && company === sld;
 }
 
+// ---------------------------------------------------------------------------
+// Identity-grounding correction (round: embedded-entity precision + one-word
+// third-party recall). ONE bounded, deterministic, contextual-adjacency
+// primitive drives both directions below. Deliberately scoped to
+// candidate.snippet ONLY -- never title (commonly Title-Case for every word,
+// which would make "is the next word capitalized" meaningless) and never
+// rawContent/pageContent (full-page noise, already excluded from identity
+// checks elsewhere in this module for the same reason -- see
+// verifyCandidateCompanyGrounding()'s own header comment on scoping).
+//
+// Reproduced production case (precision): an "Albany International" account
+// bare-matched evidence about "Albany International Airport" -- the account's
+// full multi-word phrase is a literal substring of a DIFFERENT, larger named
+// entity. entityMatch()'s plain substring check has no way to see that; the
+// existing single-token downgrade (isSingleTokenCompanyIdentity) never
+// applies here since "Albany International" is two tokens.
+//
+// Reproduced production case (recall): a "Cianbro" account (single-token)
+// with explicit, unambiguous third-party evidence ("Mark Brooks represented
+// Cianbro at the Maine CTE Business Summit") graded 'possible' purely because
+// no independent domain/location/social corroborator existed -- too
+// conservative once the evidence itself already makes clear which company is
+// meant.
+function companyNameMatchRegex(companyName = '') {
+  const tokens = normalizeCompany(companyName).split(' ').filter(Boolean);
+  if (!tokens.length) return null;
+  const escaped = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`\\b${escaped.join('[^a-zA-Z0-9]+')}\\b`, 'gi');
+}
+
+// The word immediately adjacent to a match, ONLY when separated by plain
+// whitespace -- a comma/period/other punctuation between the match and a
+// neighboring word is a genuine phrase/sentence boundary and must never be
+// treated as an extension (e.g. "...Group. Officials said..." -- "Officials"
+// is the start of a new sentence, not a continuation of "Group").
+function wordImmediatelyBefore(text, index) {
+  const m = text.slice(0, index).match(/([A-Za-z0-9][A-Za-z0-9'-]*)\s+$/);
+  return m ? m[1] : '';
+}
+function wordImmediatelyAfter(text, index) {
+  const m = text.slice(index).match(/^\s+([A-Za-z0-9][A-Za-z0-9'-]*)/);
+  return m ? m[1] : '';
+}
+
+function eachCompanyMatchNeighbors(companyName, text) {
+  const re = companyNameMatchRegex(companyName);
+  const t = String(text || '');
+  if (!re || !t) return [];
+  const results = [];
+  let m;
+  while ((m = re.exec(t))) {
+    results.push({
+      matchedText: m[0],
+      before: wordImmediatelyBefore(t, m.index),
+      after: wordImmediatelyAfter(t, m.index + m[0].length)
+    });
+    if (m.index === re.lastIndex) re.lastIndex += 1; // defensive: \b...\b matches are never zero-length here, but never loop forever if that ever changes
+  }
+  return results;
+}
+
+function isCapitalizedWord(word = '') {
+  return /^[A-Z]/.test(word || '');
+}
+
+// A neighboring word that is one of the company's OWN generic legal-suffix
+// continuations (reuses GENERIC_COMPANY_WORDS and normalizeCompany()'s own
+// suffix-stripping vocabulary -- no new list) is never treated as evidence
+// of a DIFFERENT, larger entity -- "Cianbro Corporation" is still just
+// Cianbro speaking about itself, not a Cianbro-Corporation-shaped collision.
+const COMPANY_SUFFIX_WORDS = new Set(['incorporated', 'inc', 'llc', 'ltd', 'limited', 'corp', 'corporation', 'co', 'company', 'holding', 'holdings']);
+function isGenericContinuationWord(word = '') {
+  const normalized = String(word || '').toLowerCase().replace(/\.$/, '');
+  return GENERIC_COMPANY_WORDS.has(normalized) || COMPANY_SUFFIX_WORDS.has(normalized);
+}
+
+// Precision fix (Albany International / Airport shape): a MULTI-WORD bare
+// match is "embedded" when EVERY occurrence of the company's phrase in the
+// snippet is immediately adjacent (before or after) to another capitalized,
+// non-generic-suffix word -- i.e. no occurrence stands on its own. Requiring
+// EVERY occurrence (not just one) means a snippet that mentions the company
+// BOTH embedded ("...near Albany International Airport...") AND standalone
+// ("Albany International announced...") is correctly left alone -- a real
+// standalone self-mention exists, so this is not treated as a collision.
+function isEntityEmbeddedInLargerName(companyName, snippet = '') {
+  const occurrences = eachCompanyMatchNeighbors(companyName, snippet);
+  if (!occurrences.length) return false;
+  return occurrences.every(({ before, after }) => {
+    const extendedAfter = isCapitalizedWord(after) && !isGenericContinuationWord(after);
+    const extendedBefore = isCapitalizedWord(before) && !isGenericContinuationWord(before);
+    return extendedAfter || extendedBefore;
+  });
+}
+
+// Recall fix (Cianbro shape): a single-token bare match with no independent
+// corroborator may still be trusted as a legitimate (uncorroborated,
+// 'unconfirmed') reference when the evidence contains a genuine STANDALONE
+// capitalized mention of the token AND the snippet independently classifies
+// into a recognized business-activity family.
+//
+// Capitalization + isolation ALONE is not sufficient -- a sentence-initial
+// common-noun coincidence ("Timberland covers thousands of acres.") passes
+// an isolation-only check identically to a genuine standalone company
+// mention ("Cianbro received the Safety Award."), since neither has an
+// adjacent capitalized neighbor. The second, independent requirement below
+// (classifySignalFamily(snippet) !== 'unknown') is the tightening founder QA
+// required: it reuses the SAME general, already-existing business-event
+// taxonomy this module classifies signal families with everywhere else
+// (never a new company-specific dictionary, publisher allowlist, or model
+// call) as contextual evidence the sentence actually describes a business
+// event, not scenery/geography/an ordinary dictionary usage of the word.
+//
+// Deliberately STRICTER than isEntityEmbeddedInLargerName() above: NO
+// generic-suffix exemption here. "Timberland Partners announced..." must
+// stay a Possible Match for a "Timberland"-named account -- "Partners" is a
+// real, distinguishing word in a DIFFERENT company's actual name, not
+// necessarily Timberland's own suffix, and this promotion path must never
+// risk manufacturing a false Business Signal out of that ambiguity.
+function isStandaloneSingleTokenMention(companyName, snippet = '') {
+  if (!isSingleTokenCompanyIdentity(companyName)) return false;
+  const text = String(snippet || '');
+  const occurrences = eachCompanyMatchNeighbors(companyName, text);
+  const hasStandaloneCapitalizedOccurrence = occurrences.some(({ matchedText, before, after }) => {
+    if (!isCapitalizedWord(matchedText)) return false;
+    if (isCapitalizedWord(before) || isCapitalizedWord(after)) return false;
+    return true;
+  });
+  if (!hasStandaloneCapitalizedOccurrence) return false;
+  return classifySignalFamily(text) !== 'unknown';
+}
+
 // Finds every explicit "City, ST" mention in text. A fresh RegExp is built
 // per call (see CITY_STATE_PATTERN comment) so repeated calls never share
 // exec()/matchAll() lastIndex state.
@@ -747,11 +878,34 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   // account's own name being a full, multi-word phrase (e.g. "Northfield
   // Instruments") is what made the ORIGINAL bare-match branch trustworthy;
   // a full name that is itself only one token never earned that trust. A
-  // multi-word bare match keeps its full 'unconfirmed' grade unchanged.
+  // multi-word bare match keeps its full 'unconfirmed' grade unchanged --
+  // UNLESS the bare match is itself embedded inside a larger, different
+  // proper-name entity (the Albany International / Airport shape): a
+  // multi-word phrase escapes the single-token protection above entirely,
+  // so without this check a company phrase that is merely a literal prefix
+  // of an unrelated larger entity would sail straight to 'unconfirmed' with
+  // no protection at all. See isEntityEmbeddedInLargerName()'s own header
+  // comment for the exact rule (every occurrence embedded, snippet-scoped,
+  // generic-suffix-exempt).
   if (hasBareNameMatch && !isSingleTokenCompanyIdentity(companyName)) {
-    return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+    if (!isEntityEmbeddedInLargerName(companyName, scopedCandidate.snippet)) {
+      return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+    }
+    reasons.push('bare match is embedded inside a larger, different proper-name entity in the source text -- treated as a possible match, not a confirmed reference');
+    return { grounded: true, identityConfidence: 'possible', reasons };
   }
   if (hasBareNameMatch) {
+    // Recall fix (Cianbro shape): before falling to the unconditional
+    // 'possible' default, check whether the evidence itself already
+    // contains a genuine standalone, contextual reference to the account --
+    // see isStandaloneSingleTokenMention()'s own header comment for the
+    // exact rule (capitalized + non-adjacent + a recognized business-event
+    // family in the snippet; deliberately excludes the sentence-initial
+    // common-noun coincidence this same round's QA required be preserved).
+    if (isStandaloneSingleTokenMention(companyName, scopedCandidate.snippet)) {
+      reasons.push('single-token company identity appears as a standalone, capitalized mention in an explicit business-activity context -- treated as a legitimate (uncorroborated) reference');
+      return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+    }
     reasons.push('single-token company identity matched with no independent corroboration -- treated as a possible match, not a confirmed reference');
   }
   return { grounded: true, identityConfidence: 'possible', reasons };
@@ -2459,6 +2613,7 @@ export {
   SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, isExactSelfDomainMatch, registrableDomainSld, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
+  isEntityEmbeddedInLargerName, isStandaloneSingleTokenMention,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
   deriveAccountLocationFromContent, diagnoseAccountLocationExtraction,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,

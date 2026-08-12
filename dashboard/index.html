@@ -3890,6 +3890,10 @@ function applyPopulatedWorkspaceState(){
   if(example) example.style.display = 'none';
   if(results) results.style.display = 'block';
   if(memberEmpty) memberEmpty.style.display = 'none';
+  // Empty-workspace guided-tour correction: the one authoritative place
+  // this workspace transitions from empty to populated -- see
+  // maybeResumeGuidedTourAfterPopulation()'s own header comment.
+  if(typeof maybeResumeGuidedTourAfterPopulation === 'function') maybeResumeGuidedTourAfterPopulation();
 }
 
 function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
@@ -4101,12 +4105,26 @@ function guidedTourStatus(){
 
 // Five required steps, in the required order. `target` is a CSS selector
 // for the REAL interface element this step explains -- when that element
-// exists AND is actually visible (not hidden behind an empty #results
-// panel for a brand-new user with no data yet), the tour spotlights it in
-// place. When it exists but is not currently visible, the step still shows
-// its explanation as a centered card rather than skipping the step or
-// spotlighting nothing -- every new user completes all five steps even
-// before their first upload, which is exactly when this tour matters most.
+// exists AND is actually visible, the tour spotlights it in place. When it
+// exists but is not currently visible, the step still shows its
+// explanation as a centered card rather than skipping the step or
+// spotlighting nothing (a graceful fallback for the rare case a target is
+// transiently hidden for an OTHERWISE-populated workspace).
+//
+// Empty-workspace correction: steps 3-5 (Manage Customer Accounts, This
+// Week's Priorities, Prepare for Call) spotlight elements that live inside
+// #customerDashboard/#results -- applyEmptyWorkspaceState() keeps both
+// display:none for a brand-new account with zero uploaded data, and
+// .btn-generate-play (step 5) does not exist in the DOM at all until a real
+// opportunity card renders. Running all 5 steps against a brand-new,
+// zero-data workspace left three steps describing features the user could
+// not see or try -- the centered-card fallback above prevents a crash/stuck
+// state, but does not make the DESCRIBED feature real. The tour launcher
+// now runs only steps 1-2 (Add Customer Data / Upload Guides -- both live
+// in the global header, unaffected by upload state) for a zero-data
+// workspace, and resumes steps 3-5 automatically the first time real data
+// exists -- see guidedTourActiveSteps/guidedTourDeferredRemainder below and
+// maybeResumeGuidedTourAfterPopulation().
 const GUIDED_TOUR_STEPS = [
   {
     id: 'add-customer-data',
@@ -4155,6 +4173,14 @@ let guidedTourActive = false;
 let guidedTourTriggerEl = null;
 let guidedTourResizeHandlerBound = false;
 let guidedTourScrollLock = null;
+// Empty-workspace correction: the step list actually being shown THIS run
+// -- either the full GUIDED_TOUR_STEPS (returning user, populated
+// workspace, or a resumed run) or GUIDED_TOUR_STEPS.slice(0, 2) (a
+// brand-new, zero-data workspace). guidedTourDeferredRemainder is true only
+// for that truncated case, so finishGuidedTour() knows to mark steps 3-5
+// pending instead of the whole tour 'completed'.
+let guidedTourActiveSteps = GUIDED_TOUR_STEPS;
+let guidedTourDeferredRemainder = false;
 
 function guidedTourElements(){
   return {
@@ -4277,17 +4303,17 @@ function settleThenRunGuidedTourStep(cb){
 }
 
 function renderGuidedTourStep(){
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   if(!step) return;
   const { eyebrow, title, body, dots, backBtn, nextBtn, card } = guidedTourElements();
   if(eyebrow) eyebrow.textContent = step.eyebrow;
   if(title) title.textContent = step.title;
   if(body) body.textContent = step.body;
   if(dots){
-    dots.innerHTML = GUIDED_TOUR_STEPS.map((_, i) => `<span class="ha-tour-dot${i === guidedTourStepIndex ? ' active' : ''}"></span>`).join('');
+    dots.innerHTML = guidedTourActiveSteps.map((_, i) => `<span class="ha-tour-dot${i === guidedTourStepIndex ? ' active' : ''}"></span>`).join('');
   }
   if(backBtn) backBtn.disabled = guidedTourStepIndex === 0;
-  if(nextBtn) nextBtn.textContent = guidedTourStepIndex === GUIDED_TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+  if(nextBtn) nextBtn.textContent = guidedTourStepIndex === guidedTourActiveSteps.length - 1 ? 'Finish' : 'Next';
 
   // Required behavior: resolve the live target, scroll it into view when
   // needed, wait for scroll/layout to finish, calculate the target's
@@ -4302,7 +4328,7 @@ function renderGuidedTourStep(){
   }
   settleThenRunGuidedTourStep(() => {
     // Bail if the tour moved on or closed while this frame was pending.
-    if(!guidedTourActive || GUIDED_TOUR_STEPS[guidedTourStepIndex] !== step) return;
+    if(!guidedTourActive || guidedTourActiveSteps[guidedTourStepIndex] !== step) return;
     positionGuidedTourCard(target);
     lockGuidedTourScroll();
     if(card) card.focus({preventScroll:true});
@@ -4328,7 +4354,7 @@ function guidedTourKeydownHandler(e){
 
 function guidedTourResizeHandler(){
   if(!guidedTourActive) return;
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   const target = step && step.target ? document.querySelector(step.target) : null;
   positionGuidedTourCard(target);
 }
@@ -4340,7 +4366,7 @@ function guidedTourResizeHandler(){
 // rather than leaving the spotlight pointing at stale coordinates.
 function guidedTourScrollHandler(){
   if(!guidedTourActive) return;
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   const target = step && step.target ? document.querySelector(step.target) : null;
   positionGuidedTourCard(target);
 }
@@ -4350,7 +4376,14 @@ function isHelpRelatedGuidedTourTrigger(el){
   return el.id === 'haHelpToggle' || Boolean(el.closest('#haHelpDropdown, .ha-help-dropdown'));
 }
 
-function launchGuidedTour(){
+// Empty-workspace correction: `options.resuming` is set ONLY by
+// maybeResumeGuidedTourAfterPopulation() below, resuming a previously
+// deferred run at step 3 (index 2) with the FULL step list -- everything
+// else (a first-time launch from the welcome modal's "Get Started", or
+// Help > Restart Product Tour) goes through the normal, non-resuming path,
+// which truncates to steps 1-2 for a still-empty workspace exactly as
+// before.
+function launchGuidedTour(options = {}){
   const { overlay } = guidedTourElements();
   if(!overlay) return;
   // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
@@ -4371,9 +4404,19 @@ function launchGuidedTour(){
     url.hash = '';
     window.history.replaceState(null, '', url.pathname + url.search);
   }
-  guidedTourTriggerEl = document.activeElement;
   guidedTourActive = true;
-  guidedTourStepIndex = 0;
+  if(options.resuming){
+    guidedTourTriggerEl = null;
+    guidedTourActiveSteps = GUIDED_TOUR_STEPS;
+    guidedTourDeferredRemainder = false;
+    guidedTourStepIndex = Math.min(Math.max(options.startIndex || 0, 0), GUIDED_TOUR_STEPS.length - 1);
+  } else {
+    guidedTourTriggerEl = document.activeElement;
+    const hasUploadedData = Array.isArray(window.accountRadarAccounts) && window.accountRadarAccounts.length > 0;
+    guidedTourActiveSteps = hasUploadedData ? GUIDED_TOUR_STEPS : GUIDED_TOUR_STEPS.slice(0, 2);
+    guidedTourDeferredRemainder = !hasUploadedData;
+    guidedTourStepIndex = 0;
+  }
   overlay.classList.add('active');
   overlay.setAttribute('aria-hidden', 'false');
   document.addEventListener('keydown', guidedTourKeydownHandler, true);
@@ -4432,7 +4475,7 @@ function closeGuidedTour(){
 }
 
 function nextGuidedTourStep(){
-  if(guidedTourStepIndex >= GUIDED_TOUR_STEPS.length - 1){
+  if(guidedTourStepIndex >= guidedTourActiveSteps.length - 1){
     finishGuidedTour();
     return;
   }
@@ -4449,8 +4492,39 @@ function skipGuidedTour(){
   closeGuidedTour();
 }
 function finishGuidedTour(){
+  if(guidedTourDeferredRemainder){
+    // Empty-workspace correction: only steps 1-2 ran because there was no
+    // uploaded data yet for steps 3-5 to spotlight -- mark the remainder
+    // pending (reusing the SAME per-user localStorage state primitive
+    // read/writeGuidedTourState() already provide) instead of 'completed',
+    // so maybeResumeGuidedTourAfterPopulation() picks the tour back up at
+    // step 3 automatically the first time real data exists, rather than
+    // either losing steps 3-5 forever or forcing steps 1-2 on the user a
+    // second time via a full relaunch.
+    writeGuidedTourState({ status: 'pending-resume', pendingResumeStep: 2, updatedAt: new Date().toISOString() });
+    closeGuidedTour();
+    return;
+  }
   markGuidedTourStatus('completed');
   closeGuidedTour();
+}
+
+// Empty-workspace correction: the ONE authoritative place #results/
+// #customerDashboard flip back to visible after a real upload
+// (applyPopulatedWorkspaceState() below) -- exactly the moment steps 3-5's
+// targets become real and visible again. Fires at most once per deferred
+// run: the pending marker is cleared (overwritten) BEFORE the tour is
+// relaunched, so a later silent refresh/re-render of the same already-
+// populated workspace can never relaunch it a second time. Never interrupts
+// an in-progress step (e.g. a user manually restarted the tour from Help
+// right as their upload finished).
+function maybeResumeGuidedTourAfterPopulation(){
+  if(guidedTourActive) return;
+  const state = readGuidedTourState();
+  if(state.status !== 'pending-resume' || typeof state.pendingResumeStep !== 'number') return;
+  const resumeStep = state.pendingResumeStep;
+  writeGuidedTourState({ status: 'resumed-in-progress', updatedAt: new Date().toISOString() });
+  launchGuidedTour({ resuming: true, startIndex: resumeStep });
 }
 
 function wireGuidedTourControls(){

@@ -1160,13 +1160,22 @@ function contextToOpener(context = '', type = '', ground = {}) {
   const c = clean(context);
   const accountName = clean(ground.accountName || '');
   const who = accountName ? `${accountName} is` : "you're";
-  if (/specific growth driver is not yet clear/i.test(c) || /hiring/i.test(type)) {
+  // Seller-copy classification-drift correction: same rule as
+  // canonicalTemplateFamily()'s own header comment -- this is the LAST-
+  // resort fallback (only reached once salesReadyOpener() has already found
+  // no canonical family support), so a specific claim here is gated the
+  // same way, never re-derived from free text alone. The prior funding/
+  // capital/investment/growth branch had no canonical-family counterpart
+  // anywhere in this template family and is dropped rather than gated --
+  // it falls to the honest, topic-neutral honestLimitedOpener() below
+  // instead of asserting an ungated "recent growth news" claim.
+  const family = canonicalTemplateFamily(type);
+  if (family === 'hiring' || /specific growth driver is not yet clear/i.test(c)) {
     return `I noticed ${who} growing the team recently. Is anything changing internally that your team is planning around?`;
   }
   if (!c) return honestLimitedOpener(accountName);
-  if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return `Saw ${accountName || 'the'} event activity and had a quick question — who handles branded materials or attendee follow-up?`;
-  if (/funding|capital|investment|growth/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?`;
-  if (/facility|location|distribution center|production capacity/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?`;
+  if (family === 'events') return `Saw ${accountName || 'the'} event activity and had a quick question — who handles branded materials or attendee follow-up?`;
+  if (family === 'facility') return `Saw ${accountName ? `${accountName}'s` : 'the'} expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?`;
   return honestLimitedOpener(accountName);
 }
 
@@ -1176,6 +1185,41 @@ function buildConcreteTrigger(raw = {}, type = '', accountName = '') {
   const text = clean(`${raw.signalTitle || ''} ${raw.whatChanged || ''} ${raw.summary || ''} ${raw.signalDetail || ''} ${raw.sourceName || ''}`).trim();
   if (text) return compact(text, 120);
   return `${accountName || 'Company'} ${type || 'Business Activity'}`;
+}
+
+// Seller-copy classification-drift correction: the ONE place free text may
+// still influence WHICH specific seller-facing claim (facility expansion,
+// hiring, award, launch, etc.) a template selects is gated out here.
+// salesReadyWhy()/salesReadyOpener()/contextToOpener()/
+// promoCategoriesForMoment()/inferRecommendedBuyingTeam() below select
+// their SPECIFIC bucket ONLY from this mapping of the already-computed
+// canonical eventType/signal-family label (makeSignal()'s `type` param --
+// itself resolveCanonicalEventType()'s output, the single source of truth
+// this module's own "Phase 2A/B3" correction already established in
+// signal-intelligence.js for eventType/signalType). Reproduced production
+// case: a BerryDunn thought-leadership piece ("Trailblazers in Veterinary
+// Accounting and Consulting") used the word "expanding" to describe a
+// PRACTICE AREA, never a physical facility. The canonical classifier
+// correctly declined to call this a facility/location event (it falls to
+// the generic 'Business Activity' label) -- but every function below used
+// to independently re-scan the raw trigger/context text with its OWN
+// separate, looser keyword regex (e.g. `/facility|location|plant|warehouse|
+// ribbon|expansion/`), which still matched the bare word "expanding" and
+// rendered "Facility launches usually create needs around... opening-day
+// gifts" -- a specific claim the evidence never supported. Free text may
+// still feed a topic-neutral generic fallback (contextToPromoWhy(),
+// honestLimitedOpener()) -- it must never manufacture a SPECIFIC claim the
+// canonical classification does not itself support.
+function canonicalTemplateFamily(type = '') {
+  const t = String(type || '').toLowerCase();
+  if (/community/.test(t)) return 'community';
+  if (/facility|location|renovation|growth\s*\/\s*expansion/.test(t)) return 'facility';
+  if (/trade show|conference|events\s*\/\s*marketing/.test(t)) return 'events';
+  if (/hiring/.test(t)) return 'hiring';
+  if (/product launch|product\s*\/\s*service/.test(t)) return 'launch';
+  if (/award|recognition/.test(t)) return 'award';
+  if (/partnership|contract/.test(t)) return 'partnership';
+  return null;
 }
 
 function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
@@ -1194,14 +1238,14 @@ function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
 }
 
 function promoCategoriesForMoment(moment = '', type = '', context = '') {
-  const t = clean(`${moment} ${type} ${context}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer/.test(t)) return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
-  if (/facility|location|plant|warehouse|operations|expansion|ribbon/.test(t)) return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
-  if (/trade show|event|conference|expo|booth|summit|webinar|open house/.test(t)) return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
-  if (/hiring|recruit|talent|onboarding|employee/.test(t)) return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
-  if (/product launch|launch|rebrand/.test(t)) return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
-  if (/contract|partnership|customer win|sales/.test(t)) return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
+  if (family === 'facility') return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
+  if (family === 'events') return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
+  if (family === 'hiring') return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
+  if (family === 'launch') return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
+  if (family === 'award') return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
+  if (family === 'partnership') return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
   return ['Employee Apparel','Event Kits','Customer Appreciation','Recognition Gifts'];
 }
 
@@ -1226,15 +1270,15 @@ function salesReadyWhy(trigger = '', context = '', moment = '', type = '', groun
   if (ground.relatedPurchase?.confidence === 'confident' && ground.relatedPurchase.purchase?.category) {
     return `We supplied ${clean(ground.relatedPurchase.purchase.category)} for this -- worth asking how it went and finding out what's next.`;
   }
-  const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
   const suffix = groundedWhySuffix(ground);
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.${suffix}`;
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.${suffix}`;
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.${suffix}`;
-  if (/product launch|launch|rollout|unveil/.test(t)) return `Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.${suffix}`;
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.${suffix}`;
-  if (/contract|partnership|customer win/.test(t)) return `Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.${suffix}`;
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
+  if (family === 'facility') return `Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.${suffix}`;
+  if (family === 'events') return `Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.${suffix}`;
+  if (family === 'hiring') return `Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.${suffix}`;
+  if (family === 'launch') return `Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.${suffix}`;
+  if (family === 'award') return `Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.${suffix}`;
+  if (family === 'partnership') return `Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.${suffix}`;
   return contextToPromoWhy(context, type, ground);
 }
 
@@ -1301,35 +1345,33 @@ function salesReadyOpener(trigger = '', context = '', moment = '', type = '', gr
   const dept = clean((ground.recommendedBuyingTeam || [])[0] || '');
   const deptAsk = dept ? ` Is ${dept} the right team to ask about that?` : '';
   const historicalNote = ground.historicalFact ? ` Since ${ground.historicalFact}, this seems worth a quick note.` : '';
-  const t = clean(`${specific} ${context} ${moment} ${type}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `${lead} Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts.${historicalNote} Want me to send over a few ideas that could fit?${deptAsk}`;
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `${lead} For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts.${historicalNote} I had a few practical ideas around apparel and launch kits — worth sending over?${deptAsk}`;
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `${lead} Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items.${historicalNote} Want me to send over a few ideas?${deptAsk}`;
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `${lead} When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely.${historicalNote}${deptAsk || ' Is there someone I should ask about that?'}`;
-  if (/product launch|launch|rollout|unveil/.test(t)) return `${lead} Launches usually need internal hype, sales support, and customer-facing branded items.${historicalNote} I had a few simple launch-kit ideas — worth sending over?${deptAsk}`;
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `${lead} Moments like that are a good chance to recognize employees or thank customers.${historicalNote} Would a few branded celebration or recognition ideas be useful?${deptAsk}`;
-  if (/contract|partnership|customer win/.test(t)) return `${lead} Wins like that often create internal and customer-facing communication needs.${historicalNote} I had a few ideas around team apparel and thank-you kits — worth sending over?${deptAsk}`;
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return `${lead} Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts.${historicalNote} Want me to send over a few ideas that could fit?${deptAsk}`;
+  if (family === 'facility') return `${lead} For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts.${historicalNote} I had a few practical ideas around apparel and launch kits — worth sending over?${deptAsk}`;
+  if (family === 'events') return `${lead} Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items.${historicalNote} Want me to send over a few ideas?${deptAsk}`;
+  if (family === 'hiring') return `${lead} When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely.${historicalNote}${deptAsk || ' Is there someone I should ask about that?'}`;
+  if (family === 'launch') return `${lead} Launches usually need internal hype, sales support, and customer-facing branded items.${historicalNote} I had a few simple launch-kit ideas — worth sending over?${deptAsk}`;
+  if (family === 'award') return `${lead} Moments like that are a good chance to recognize employees or thank customers.${historicalNote} Would a few branded celebration or recognition ideas be useful?${deptAsk}`;
+  if (family === 'partnership') return `${lead} Wins like that often create internal and customer-facing communication needs.${historicalNote} I had a few ideas around team apparel and thank-you kits — worth sending over?${deptAsk}`;
   return contextToOpener(context, type, ground);
 }
 
 
 function inferRecommendedBuyingTeam(type = '', context = '', summary = '', raw = {}) {
   const explicit = safeArray(raw.recommendedBuyingTeam || raw.buyingTeam || raw.likelyBuyingTeam || raw.likelyBuyers, 4);
-  const text = clean(`${type} ${context} ${summary} ${explicit.join(' ')}`).toLowerCase();
+  const family = canonicalTemplateFamily(type);
   let team = [];
-  if (/hiring|recruit|talent|onboarding|employee|people|best places|workforce|headcount/.test(text)) {
+  if (family === 'hiring') {
     team = ['HR / People', 'Talent Acquisition'];
-  } else if (/trade show|conference|expo|event|summit|booth|sponsor|launch|rebrand|brand awareness|community|csr|charity|fundraiser/.test(text)) {
-    team = ['Marketing', /community|csr|charity|fundraiser|sponsor/.test(text) ? 'Community Relations' : 'Events'];
-  } else if (/product launch|new product|rollout|new service|unveil/.test(text)) {
+  } else if (family === 'events' || family === 'community') {
+    team = ['Marketing', family === 'community' ? 'Community Relations' : 'Events'];
+  } else if (family === 'launch') {
     team = ['Marketing', 'Product Marketing'];
-  } else if (/facility|warehouse|plant|manufacturing|production|capacity|second shift|safety|distribution center|operations/.test(text)) {
+  } else if (family === 'facility') {
     team = ['Operations', 'HR / People'];
-  } else if (/funding|investment|capital|acquisition|merger|integration|leadership|new ceo|president|vp/.test(text)) {
+  } else if (family === 'award') {
     team = ['Marketing', 'HR / People'];
-  } else if (/award|recognition|milestone|anniversary/.test(text)) {
-    team = ['Marketing', 'HR / People'];
-  } else if (/contract|customer win|partnership|major deal/.test(text)) {
+  } else if (family === 'partnership') {
     team = ['Marketing', 'Sales'];
   }
   for (const item of explicit) {
@@ -3799,6 +3841,7 @@ export {
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES, compact,
+  canonicalTemplateFamily, contextToOpener, contextToPromoWhy, promoCategoriesForMoment, inferRecommendedBuyingTeam, buildBusinessContext,
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,

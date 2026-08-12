@@ -299,7 +299,10 @@ assert(
 {
   const overlayCallers = [
     ['openAddCustomerDataModal (Add Customer Data)', /function openAddCustomerDataModal\(\)\{[\s\S]{0,700}?beginOverlay\(\);/],
-    ['launchGuidedTour (guided tour)', /function launchGuidedTour\(\)\{[\s\S]{0,600}?beginOverlay\(\);/],
+    // Empty-workspace correction: launchGuidedTour() gained an `options`
+    // param (default {}) to support the bounded automatic resume-after-
+    // upload call site (see test-guided-tour-empty-workspace-correction.js).
+    ['launchGuidedTour (guided tour)', /function launchGuidedTour\(options = \{\}\)\{[\s\S]{0,700}?beginOverlay\(\);/],
     ['showBetaWelcomeModal (Welcome)', /function showBetaWelcomeModal\(\)\{[\s\S]{0,700}?beginOverlay\(\);/],
     ['createSalesPlayPanel (Prepare for Call)', /window\.createSalesPlayPanel = function\(opp, opts\)\{[\s\S]{0,800}?beginOverlay\(\);/],
     ['Manage Customer Accounts open()', /function open\(\)\{[\s\S]{0,400}?beginOverlay\(\);/],

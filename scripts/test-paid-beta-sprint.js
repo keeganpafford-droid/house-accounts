@@ -397,7 +397,14 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(historicalFact === "you've ordered Apparel for them before (3 orders on file)", `oneHistoricalOrderFact() produces a real, specific fact from real order data (got: "${historicalFact}")`);
   assert(oneHistoricalOrderFact({}) === '', 'oneHistoricalOrderFact() returns nothing invented when the account has no real order history');
 
-  const opener = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a product webinar.', '', 'Webinar', {
+  // Seller-copy classification-drift correction: `type` here is now the
+  // CANONICAL label the real pipeline actually assigns for webinar text
+  // (resolveEventType()'s own \bwebinars?\b branch resolves to
+  // EVENT_CONFERENCE -> displayLabelForEventType() -> 'Conference / Summit'
+  // -- salesReadyOpener() no longer independently re-derives its bucket
+  // from free text, so a literal 'Webinar' type string here would no
+  // longer match anything real).
+  const opener = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a product webinar.', '', 'Conference / Summit', {
     accountName: 'HPGR', actionability: { status: 'unknown-date', tense: 'unknown' }, recommendedBuyingTeam: ['Marketing'], historicalFact
   });
   assert(opener.includes('HPGR') && opener.includes('HRCe product webinar'), `the fallback opener references the exact company and exact signal trigger, not a generic category phrase (got: "${opener}")`);
@@ -408,7 +415,7 @@ const NOW = new Date('2026-08-04T00:00:00Z');
 {
   // Two different companies, two different real signals, in the SAME
   // category, must not receive the same generic outreach text.
-  const openerA = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a webinar.', '', 'Webinar', { accountName: 'HPGR', actionability: { status: 'unknown-date' } });
+  const openerA = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a webinar.', '', 'Conference / Summit', { accountName: 'HPGR', actionability: { status: 'unknown-date' } });
   const openerB = salesReadyOpener('annual distributor summit', 'Acme Distributors is hosting its annual summit.', '', 'Conference / Summit', { accountName: 'Acme Distributors', actionability: { status: 'unknown-date' } });
   assert(openerA !== openerB, 'two different companies with two different signals in the same category (events) receive genuinely different outreach text');
   assert(openerA.includes('HPGR') && !openerA.includes('Acme Distributors'), 'company A\'s opener names company A, not company B');
