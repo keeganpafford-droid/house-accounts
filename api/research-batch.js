@@ -1836,11 +1836,19 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
         }
       }
     }
-    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unavailable' };
+    // Undated Business Signal actionability correction: "Timing unclear" --
+    // no date could be resolved at all -- is a different, less alarming
+    // claim than "No longer current" (a real date IS known and it's simply
+    // past the recency window, the 'stale' branch just above). Renamed so
+    // this label never reads as a stale/historical claim it isn't; Priority
+    // eligibility itself (isPriorityEligible: false) is unchanged -- a
+    // freshly-discovered undated signal still never wins a Priority slot on
+    // its own.
+    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Timing unclear' };
   }
   const parsedPub = parseTrustworthyPublicationDate(publicationDate);
   if (!parsedPub) {
-    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Date unavailable' };
+    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Timing unclear' };
   }
   const ageDays = calendarDaysBetween(now, parsedPub);
   if (ageDays <= ONGOING_RECENCY_CEILING_DAYS) {

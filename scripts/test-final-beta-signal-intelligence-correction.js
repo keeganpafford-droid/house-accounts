@@ -34,10 +34,34 @@
 //      identity caution, no "Use This Signal", no Prepare for Call, no
 //      Priority.
 //
+// Bounded correction round (identity collision hardening + undated Business
+// Signal actionability) adds:
+//   K1. Possessive-name collision (fictional Wyman's/Oliver-Wyman shape,
+//       using a BARE single-token possessive account name, not padded with
+//       an extra business-type suffix) -> Possible Match, not Business
+//       Signal.
+//   K2. Common-word one-token collision (fictional Timberland shape, bare
+//       single-token account name) -> Possible Match, not Business Signal.
+//   K3. Legitimate one-token company + independent domain corroboration ->
+//       Business Signal (confirmed) -- a single-token identity is never
+//       broadly downgraded once genuinely corroborated.
+//   K4. Exact multi-word company phrase, no uploaded website -> Business
+//       Signal (unconfirmed), unaffected by the single-token downgrade.
+//   L-A. Legitimate current/ongoing undated Business Signal -> visible,
+//        "Timing unclear" (not "stale"), non-Priority, "Use This Signal"
+//        available.
+//   L-B. Genuinely stale/expired evidence -> remains historical, no "Use
+//        This Signal".
+//   L-C. Newly discovered evergreen evidence -> first_seen_at alone never
+//        grants Priority; still surfaces as a weak, usable Business Signal.
+//   L-D. Possible Match with no date -> still Possible Match, no "Use This
+//        Signal".
+//
 // Usage: node scripts/test-final-beta-signal-intelligence-correction.js
 import vm from 'vm';
 import { makeSignal } from '../api/research-batch.js';
-import { normalizeOpportunity, verifyCandidateCompanyGrounding } from '../api/signal-intelligence.js';
+import { normalizeOpportunity, verifyCandidateCompanyGrounding, isSingleTokenCompanyIdentity } from '../api/signal-intelligence.js';
+import { classifyLegacySignalActionability } from '../api/research-batch.js';
 import { extractFn, extractRange, loadDashboardSource } from './lib/dashboard-extract.js';
 
 let failures = 0;
@@ -390,6 +414,229 @@ const CASE_H_RAW = {
   assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'Case J: REQUIRED -- a Possible Match never becomes Priority');
 }
 function escapeIfDefined(s){ return s; }
+
+// ===========================================================================
+// Bounded correction round: IDENTITY COLLISION HARDENING.
+//
+// The founder's audit of the fresh production run proved the Wyman's/
+// Timberland wrong-entity collisions were graded 'unconfirmed' (a
+// legitimate Business Signal), never 'possible', because BOTH matched via
+// entityMatch()'s STRONG bare-name-match path ("company named in source" --
+// hasBareNameMatch=true), never the weaker distinctiveFallbackMatched path
+// the OLD 'possible' branch alone was reachable from. Root cause: the
+// account's own full name, once normalized, was itself just a single
+// token/word ("wyman", "timberland") -- exactly as consistent with a
+// different same-word entity, or the word's ordinary English sense, as
+// with the real account. Fresh fictional archetypes below (never the real
+// production names) prove the fix at the actual module boundary
+// (verifyCandidateCompanyGrounding()), not through the rendering layer.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// K1 -- possessive-name collision. Account's full name is itself a single
+// token once normalized ("Halloway's" -> "halloway"). Evidence never
+// mentions the account at all -- it's a DIFFERENT company ("Preston
+// Halloway") whose own possessive grammar ("...Preston Halloway's growing
+// presence...") normalizes to contain the same bare "halloway" token. Must
+// grade 'possible', not 'unconfirmed'.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: "Halloway's" };
+  assert(isSingleTokenCompanyIdentity(account.name) === true, "K1: sanity -- \"Halloway's\" normalizes to a single token (\"halloway\"), the exact risk class this fix targets");
+  const wrongEntityCandidate = {
+    title: 'Careers at Preston Halloway | A Larkspur Group Business',
+    snippet: 'Alumni gathered to celebrate a milestone anniversary for Preston Halloway\'s growing presence in the region.',
+    url: 'https://careers.larkspurgroup.example/preston-halloway'
+  };
+  const grounding = verifyCandidateCompanyGrounding(wrongEntityCandidate, account);
+  assert(grounding.identityConfidence === 'possible', `K1: REQUIRED -- a different company's own possessive grammar ("Preston Halloway's...") that happens to normalize into the account's single-token name grades as 'possible', never 'unconfirmed' (got '${grounding.identityConfidence}')`);
+  assert(grounding.grounded === true, "K1: still a visible, returned result (not outright rejected) -- transparency, not silence");
+}
+
+// ---------------------------------------------------------------------------
+// K2 -- common-word one-token collision. Account's full name is an ordinary
+// English word/place-name-style term used in its everyday sense by an
+// unrelated entity, never referring to the brand.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Fernbrook' };
+  assert(isSingleTokenCompanyIdentity(account.name) === true, 'K2: sanity -- "Fernbrook" is a single-token identity');
+  const commonWordCandidate = {
+    title: 'Cascadia Ridge Credit Union on Instagram',
+    snippet: 'A peaceful trail through the fernbrook near our newest branch location -- tag us in your favorite photos!',
+    url: 'https://instagram.com/cascadiaridgecu/98765'
+  };
+  const grounding = verifyCandidateCompanyGrounding(commonWordCandidate, account);
+  assert(grounding.identityConfidence === 'possible', `K2: REQUIRED -- an ordinary-English usage of the account's single-token name grades as 'possible', never 'unconfirmed' (got '${grounding.identityConfidence}')`);
+}
+
+// ---------------------------------------------------------------------------
+// K3 -- legitimate one-token company + independent corroboration. The SAME
+// single-token identity as K2, but this time the evidence is hosted on the
+// account's own uploaded website -- domain corroboration must still confirm
+// it. A single-token identity is never broadly downgraded once genuinely
+// corroborated.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Fernbrook', website: 'fernbrook.com' };
+  const ownDomainCandidate = {
+    title: 'Fernbrook Opens New Downtown Office',
+    snippet: 'Fernbrook is opening a new office in the downtown core next quarter.',
+    url: 'https://fernbrook.com/news/downtown-office'
+  };
+  const grounding = verifyCandidateCompanyGrounding(ownDomainCandidate, account);
+  assert(grounding.identityConfidence === 'confirmed', `K3: REQUIRED -- a single-token identity corroborated by the account's own uploaded domain still confirms (got '${grounding.identityConfidence}')`);
+}
+
+// ---------------------------------------------------------------------------
+// K4 -- exact multi-word company phrase, no uploaded website. Unaffected by
+// the single-token downgrade -- a genuine multi-word bare-phrase match keeps
+// its full 'unconfirmed' (legitimate Business Signal) grade.
+// ---------------------------------------------------------------------------
+{
+  const account = { name: 'Bramwell Logistics' };
+  assert(isSingleTokenCompanyIdentity(account.name) === false, 'K4: sanity -- "Bramwell Logistics" is a genuine multi-word phrase, not a single-token identity');
+  const candidate = {
+    title: 'Bramwell Logistics Announces Downtown Warehouse Expansion',
+    snippet: 'Bramwell Logistics is expanding its downtown warehouse to meet growing demand.',
+    url: 'https://industrynews.example/bramwell-logistics-expansion'
+  };
+  const grounding = verifyCandidateCompanyGrounding(candidate, account);
+  assert(grounding.identityConfidence === 'unconfirmed', `K4: REQUIRED -- an exact multi-word company phrase with no uploaded website remains a legitimate Business Signal, 'unconfirmed' (got '${grounding.identityConfidence}')`);
+}
+// K5 (required regression 5): shortened-name-fallback + genuine
+// corroboration already has direct, passing coverage in
+// scripts/test-signal-account-evidence-grounding.js (GALLAGHER_WITH_DOMAIN:
+// "Gallagher acquired..." matches only via the distinctive-token fallback,
+// never the bare full "Arthur J. Gallagher & Co." phrase, and still
+// confirms once the candidate's domain is the account's own ajg.com) --
+// untouched by this round's fix, unaffected by isSingleTokenCompanyIdentity()
+// since it never reaches the hasBareNameMatch branch this fix modifies.
+
+// ===========================================================================
+// Bounded correction round: UNDATED BUSINESS SIGNAL ACTIONABILITY.
+//
+// The founder's audit proved "Use This Signal" was unreachable for the BEST
+// available non-Priority Business Signal candidates (Velcro/Unitil-shaped:
+// legitimate identity, no commercialPlay) because computeActionability()'s
+// "no date resolvable" branches (isPriorityEligible:false, label "Date
+// unavailable") were rendered identically to genuinely stale/expired
+// evidence -- collapsing Research Details into "Shown for account history
+// only" and hiding the Use This Signal button entirely. Fix: "Timing
+// unclear" (not stale) for undated-but-fresh signals, visible with normal
+// outreach copy and "Use This Signal" still available; Priority eligibility
+// itself is completely unchanged.
+// ===========================================================================
+const ACCOUNT_UNDATED = { name: 'Millrace Outfitters' };
+
+// ---------------------------------------------------------------------------
+// L-A -- legitimate current/ongoing undated Business Signal (the confirmed
+// production shape: an evergreen "Careers at X" page, no publication date
+// anywhere in the source). Visible, "Timing unclear", non-Priority, "Use
+// This Signal" available.
+// ---------------------------------------------------------------------------
+{
+  const raw = {
+    accountName: 'Millrace Outfitters', sourceUrl: 'https://millraceoutfitters.example/careers',
+    signalTitle: 'Careers at Millrace Outfitters',
+    concrete_trigger: 'Millrace Outfitters has an open careers page with current listings',
+    business_context: 'Millrace Outfitters is hiring for several roles, no specific date disclosed.',
+    confidence: 82
+    // Deliberately no event_date/publicationDate -- the exact undated
+    // evergreen shape the fresh production run exposed.
+  };
+  const built = buildOpportunity(raw, ACCOUNT_UNDATED);
+  assert(!!built, 'L-A: makeSignal()/normalizeOpportunity() still produce a real opportunity with no resolvable date');
+  const legacyFields = classifyLegacySignalActionability(built);
+  const signal = { ...built, ...legacyFields, isReal: true, identityConfidence: 'unconfirmed' };
+  assert(['unknown-date', 'ongoing-undated'].includes(signal.actionabilityStatus.status), `L-A: sanity -- classifies as an undated (not stale) status (got '${signal.actionabilityStatus.status}')`);
+  assert(sandbox.isUndatedNotStale(signal) === true, 'L-A: REQUIRED -- recognized as undated-not-stale');
+  assert(sandbox.signalDateAndActionabilityLine(signal) === 'Timing unclear', `L-A: REQUIRED -- seller-facing timing reads "Timing unclear", not "stale"/"historical" (got '${sandbox.signalDateAndActionabilityLine(signal)}')`);
+  const opp = asBusinessOpportunity(built, 'unconfirmed');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'L-A: REQUIRED -- an undated signal is not Priority-eligible absent other Route A/B evidence');
+  const html = sandbox.renderVerifiedSignals([signal]);
+  assert(!html.includes('No external signals found'), 'L-A: the signal renders as a real, visible Business Signal');
+  assert(!html.includes('Shown for account history only'), 'L-A: REQUIRED -- never collapses into the historical-note treatment reserved for genuinely stale evidence');
+  assert(/Timing unclear/.test(html), 'L-A: the rendered card shows the honest "Timing unclear" timing note');
+  assert(html.includes('use-signal-btn'), 'L-A: REQUIRED -- "Use This Signal" is available for this legitimate undated Business Signal');
+}
+
+// ---------------------------------------------------------------------------
+// L-B -- genuinely stale/expired evidence (a real, resolvable event date
+// well outside the follow-up window). Remains historical/non-actionable, no
+// "Use This Signal" -- unaffected by this correction.
+// ---------------------------------------------------------------------------
+{
+  const raw = {
+    accountName: 'Millrace Outfitters', sourceUrl: 'https://millraceoutfitters.example/spring-expo-2025',
+    signalTitle: 'Millrace Outfitters Exhibits at Spring Outdoor Expo',
+    concrete_trigger: 'Millrace Outfitters exhibited at the Spring Outdoor Expo',
+    business_context: 'Millrace Outfitters had a booth at the Spring Outdoor Expo.',
+    // event_date and publicationDate deliberately DIFFER (a few days apart,
+    // as a real article-vs-event date pair would) -- classifyLegacySignalActionability()'s
+    // own "looksLikeOldBug" heuristic correctly discards eventDate as
+    // untrustworthy when the two are identical (the exact signature of the
+    // OLD publication-date-fallback defect this repo already fixed), so an
+    // identical pair here would test that unrelated heuristic, not staleness.
+    event_date: daysAgo(400), publicationDate: daysAgo(395), confidence: 80
+  };
+  const built = buildOpportunity(raw, ACCOUNT_UNDATED);
+  const legacyFields = classifyLegacySignalActionability(built);
+  const signal = { ...built, ...legacyFields, isReal: true, identityConfidence: 'unconfirmed' };
+  assert(signal.actionabilityStatus.status === 'stale', `L-B: sanity -- a real event date 400 days in the past classifies as genuinely stale (got '${signal.actionabilityStatus.status}')`);
+  assert(sandbox.isUndatedNotStale(signal) === false, 'L-B: REQUIRED -- genuinely stale evidence is never treated as "undated-not-stale"');
+  assert(sandbox.signalDateAndActionabilityLine(signal) === 'No longer current', 'L-B: the label correctly stays "No longer current", never "Timing unclear"');
+  const html = sandbox.renderVerifiedSignals([signal]);
+  assert(html.includes('Shown for account history only') || html.includes('No longer current'), 'L-B: REQUIRED -- genuinely stale evidence keeps the historical-note treatment');
+  assert(!html.includes('use-signal-btn'), 'L-B: REQUIRED -- "Use This Signal" never renders for genuinely stale/expired evidence');
+}
+
+// ---------------------------------------------------------------------------
+// L-C -- newly discovered evergreen evidence. first_seen_at being "today"
+// must never, on its own, grant Priority; the signal may still surface as a
+// weak, usable Business Signal the rep can choose to act on.
+// ---------------------------------------------------------------------------
+{
+  const raw = {
+    accountName: 'Millrace Outfitters', sourceUrl: 'https://millraceoutfitters.example/about',
+    signalTitle: 'Millrace Outfitters Company Overview',
+    concrete_trigger: 'Millrace Outfitters maintains an evergreen company overview page',
+    business_context: 'Millrace Outfitters describes its retail operations, no dated activity disclosed.',
+    confidence: 75
+  };
+  const built = buildOpportunity(raw, ACCOUNT_UNDATED);
+  const legacyFields = classifyLegacySignalActionability(built);
+  // first_seen_at/dateFound reflect "discovered right now" -- deliberately
+  // NOT an input classifyLegacySignalActionability()/computeActionability()
+  // ever reads, proving fresh discovery alone cannot influence the result.
+  const signal = { ...built, ...legacyFields, isReal: true, identityConfidence: 'unconfirmed', firstSeenAt: new Date().toISOString(), dateFound: new Date().toISOString().slice(0, 10) };
+  const opp = asBusinessOpportunity(built, 'unconfirmed');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'L-C: REQUIRED -- freshly-discovered undated evidence never becomes Priority merely because House Accounts found it today');
+  const html = sandbox.renderVerifiedSignals([signal]);
+  assert(!html.includes('No external signals found'), 'L-C: REQUIRED -- still surfaces as a visible, weak Business Signal');
+  assert(html.includes('use-signal-btn'), 'L-C: the rep can still choose to use this signal');
+}
+
+// ---------------------------------------------------------------------------
+// L-D -- Possible Match with no date. Still a Possible Match regardless of
+// the undated-actionability correction -- never "Use This Signal", never
+// treated as a current Business Signal.
+// ---------------------------------------------------------------------------
+{
+  const undatedPossibleSignal = {
+    accountName: 'Halloway\'s', isReal: true, identityConfidence: 'possible',
+    sourceUrl: 'https://careers.larkspurgroup.example/preston-halloway',
+    signalTitle: 'Careers at Preston Halloway', signalDetail: 'Careers at Preston Halloway',
+    signalType: 'Business Activity', confidenceScore: 65
+    // No actionabilityStatus at all -- an undated Possible Match.
+  };
+  assert(sandbox.isPossibleMatchIdentity(undatedPossibleSignal) === true, 'L-D: sanity -- correctly identified as a Possible Match');
+  const html = sandbox.renderVerifiedSignals([undatedPossibleSignal]);
+  assert(/[Pp]ossible match/.test(html), 'L-D: REQUIRED -- still shows the Possible Match caution, undated or not');
+  assert(!html.includes('use-signal-btn'), 'L-D: REQUIRED -- "Use This Signal" never renders for a Possible Match, regardless of timing');
+  const opp = { ...undatedPossibleSignal, isVerifiedSignalOpportunity: true, signalLayerType: 'Business Activity Signal', account: undatedPossibleSignal.accountName };
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'L-D: REQUIRED -- an undated Possible Match never becomes Priority');
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

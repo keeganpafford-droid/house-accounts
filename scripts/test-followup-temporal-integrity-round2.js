@@ -272,10 +272,13 @@ function realBusinessOpp(overrides = {}){
   const weatherbyLikeOpp = realBusinessOpp({
     account: 'Weatherby Healthcare', accountName: 'Weatherby Healthcare',
     canonicalEventType: 'EVENT_CONFERENCE', opportunityType: 'EVENT_CONFERENCE',
-    actionabilityStatus: { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, label: 'Date unavailable' }
+    actionabilityStatus: { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, label: 'Timing unclear' }
   });
   assert(sandbox.isPriorityEligibleOpportunity(weatherbyLikeOpp) === false, 'required test 13: an undated Weatherby-style signal remains ineligible as an active play');
-  assert(sandbox.signalDateAndActionabilityLine(weatherbyLikeOpp) === 'Date unavailable', 'required test 13: the status line still reads "Date unavailable"');
+  // Undated Business Signal actionability correction: this label was
+  // renamed from "Date unavailable" to "Timing unclear" -- the underlying
+  // ineligible-for-Priority status (asserted just above) is unchanged.
+  assert(sandbox.signalDateAndActionabilityLine(weatherbyLikeOpp) === 'Timing unclear', 'required test 13: the status line still reads "Timing unclear"');
 }
 
 // ===========================================================================
@@ -343,7 +346,7 @@ function realBusinessOpp(overrides = {}){
       { isReal: true, sourceUrl: 'https://example.com/w3', signalType: 'Office Opening', title: 'Weatherby opened a regional office 10 months ago' }
     ],
     futureOpportunities: [
-      realBusinessOpp({ account: 'Weatherby Healthcare', accountName: 'Weatherby Healthcare', canonicalEventType: 'EVENT_CONFERENCE', sourceUrl: 'https://example.com/w1', actionabilityStatus: { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, label: 'Date unavailable' } }),
+      realBusinessOpp({ account: 'Weatherby Healthcare', accountName: 'Weatherby Healthcare', canonicalEventType: 'EVENT_CONFERENCE', sourceUrl: 'https://example.com/w1', actionabilityStatus: { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, label: 'Timing unclear' } }),
       realBusinessOpp({ account: 'Weatherby Healthcare', accountName: 'Weatherby Healthcare', canonicalEventType: 'NEW_LOCATION_OPENING', sourceUrl: 'https://example.com/w3', actionabilityStatus: { status: 'stale', tense: 'past', isPriorityEligible: false, label: 'No longer current' } })
     ]
   }];

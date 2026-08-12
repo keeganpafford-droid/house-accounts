@@ -288,9 +288,14 @@ const NOW = new Date('2026-08-04T00:00:00Z');
     sourceUrl: 'https://example.com/hpgr-webinar'
   };
   const result = classifyLegacySignalActionability(legacyWebinar);
-  assert(result.actionabilityStatus.status === 'unknown-date', `required coverage 7: a legacy undated webinar is classified "unknown-date"/Date unavailable, not stale (got "${result.actionabilityStatus.status}")`);
+  assert(result.actionabilityStatus.status === 'unknown-date', `required coverage 7: a legacy undated webinar is classified "unknown-date"/Timing unclear, not stale (got "${result.actionabilityStatus.status}")`);
   assert(result.actionabilityStatus.isPriorityEligible === false, 'required coverage 7: a legacy undated webinar is not priority eligible');
-  assert(result.actionabilityStatus.label === 'Date unavailable', 'required coverage 7: the label reads "Date unavailable"');
+  // Undated Business Signal actionability correction: this label was
+  // renamed from "Date unavailable" to "Timing unclear" -- the old text
+  // read like a stale/historical claim, which conflated "no date resolved"
+  // with "genuinely expired." The underlying property (not priority
+  // eligible, not stale) is unchanged.
+  assert(result.actionabilityStatus.label === 'Timing unclear', 'required coverage 7: the label reads "Timing unclear"');
 }
 {
   // Required coverage 8: a legacy ongoing signal published more than 180
@@ -1023,8 +1028,12 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
     { status: { status: 'upcoming' }, eventDate: '2026-09-15', expectSubstr: 'Upcoming' },
     { status: { status: 'recent-past' }, eventDate: '2026-07-01', expectSubstr: 'Recent event' },
     { status: { status: 'ongoing', usesPublicationDate: true }, publicationDate: '2026-07-20', expectSubstr: 'Ongoing business change' },
-    { status: { status: 'unknown-date' }, expectSubstr: 'Date unavailable' },
-    { status: { status: 'ongoing-undated', usesPublicationDate: true }, expectSubstr: 'Date unavailable' },
+    // Undated Business Signal actionability correction: renamed from "Date
+    // unavailable" to "Timing unclear" -- the old text read like a stale/
+    // historical claim, conflating "no date resolved" with "genuinely
+    // expired." The underlying status/eligibility is unchanged.
+    { status: { status: 'unknown-date' }, expectSubstr: 'Timing unclear' },
+    { status: { status: 'ongoing-undated', usesPublicationDate: true }, expectSubstr: 'Timing unclear' },
     { status: { status: 'stale' }, expectSubstr: 'No longer current' },
     { status: { status: 'ongoing-stale', usesPublicationDate: true }, expectSubstr: 'No longer current' }
   ];
@@ -1579,9 +1588,11 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const sandbox = makeSandbox();
   // Reproduces the exact leak: a signal-derived opportunity with NO
   // actionabilityStatus at all (a malformed/legacy shape) -- its own
-  // rendered status is honestly "Date unavailable", but the OLD filter
-  // (`actionabilityStatus?.isPriorityEligible !== false`) would have
-  // treated it as eligible, since `undefined !== false` is true.
+  // rendered status is honestly "Timing unclear" (renamed this round from
+  // "Date unavailable" -- see the Undated Business Signal actionability
+  // correction), but the OLD filter (`actionabilityStatus?.isPriorityEligible
+  // !== false`) would have treated it as eligible, since `undefined !==
+  // false` is true.
   const leakingOpp = {
     account: 'HPGR', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/hpgr-webinar',
     signalLayerType: 'Business Activity Signal', signalType: 'Event',
@@ -1589,10 +1600,10 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
     confidence: 70, publishedDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(), signalDate: new Date(NOW.getTime() - 2 * 86400000).toISOString()
   };
   const renderedLabel = sandbox.signalDateAndActionabilityLine(leakingOpp);
-  assert(renderedLabel === 'Date unavailable', `sanity: the leaking fixture's own rendered status really is "Date unavailable" (got: "${renderedLabel}")`);
+  assert(renderedLabel === 'Timing unclear', `sanity: the leaking fixture's own rendered status really is "Timing unclear" (got: "${renderedLabel}")`);
   const oldStyleEligible = leakingOpp?.actionabilityStatus?.isPriorityEligible !== false;
   assert(oldStyleEligible === true, 'sanity: the OLD flag-based check alone would have wrongly treated this fixture as eligible (undefined !== false)');
-  assert(sandbox.isPriorityEligibleOpportunity(leakingOpp) === false, 'required proof 17: isPriorityEligibleOpportunity() correctly excludes an opportunity whose rendered status is "Date unavailable", regardless of what a missing/stale flag would have claimed');
+  assert(sandbox.isPriorityEligibleOpportunity(leakingOpp) === false, 'required proof 17: isPriorityEligibleOpportunity() correctly excludes an opportunity whose rendered status is "Timing unclear", regardless of what a missing/stale flag would have claimed');
   assert(sandbox.priorityEligibleOpportunities([leakingOpp]).length === 0, 'required proof 17: priorityEligibleOpportunities() excludes the leaking fixture');
 
   for(const timebox of ['week', 'month', 'quarter', 'annual']){

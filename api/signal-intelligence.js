@@ -25,10 +25,41 @@ function truncateText(value = '', maxLength = 300) {
   return c.length > maxLength ? `${c.slice(0, maxLength - 1).trim()}…` : c;
 }
 
+// Identity-collision-hardening correction: a plain apostrophe collapse
+// (the general non-alnum-to-space rule below) turns a possessive company
+// name like "Wyman's" into a TWO-token "wyman s" -- a floating, disconnected
+// "s" that can then coincidentally re-attach to any OTHER text ending in
+// "wyman" + possessive grammar ("...celebrate a milestone for Oliver
+// Wyman's presence...") or even an unrelated "wyman s..." phrase entirely.
+// Stripping a genuine possessive 's/'s suffix BEFORE the general
+// punctuation collapse keeps "Wyman's" as the single, clean token "wyman"
+// it actually names -- required for isSingleTokenCompanyIdentity() below to
+// correctly recognize it as the single-token identity it is (the two-token
+// "wyman s" would otherwise look like a safer, more distinctive multi-word
+// phrase than it really is).
 function normalizeCompany(value = '') {
   return clean(value).toLowerCase()
+    .replace(/['’]s\b/g, '')
     .replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company|holdings?)\b\.?/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Identity-collision-hardening correction: a company's own name being just
+// ONE token after normalization (e.g. "Wyman's" -> "wyman", "Timberland" ->
+// "timberland") is the actual risk signal for a bare-text-match false
+// positive -- not raw character length. A single common word/surname/
+// category term can trivially appear inside completely unrelated text (an
+// ordinary English sentence, a DIFFERENT company's name that happens to
+// share the same word/surname, a place name) in a way a genuine multi-word
+// phrase almost never does by coincidence ("Northfield Instruments" as a
+// literal three-word run is a real claim; "wyman" or "timberland" as a bare
+// single word is not). Deliberately checks TOKEN COUNT, not string length --
+// a short-but-multi-word name ("ACI Corp" -> "aci") and a long-but-single-
+// word name are judged on the same, single, structural property.
+function isSingleTokenCompanyIdentity(name = '') {
+  const normalized = normalizeCompany(name);
+  if (!normalized) return false;
+  return normalized.split(' ').filter(Boolean).length === 1;
 }
 
 function normalizeUrl(value = '') {
@@ -647,7 +678,30 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   // 'possible' when the match is token-only and uncorroborated, so it can be
   // shown in Research Results for transparency without being treated as a
   // Business Signal (see isPossibleMatchIdentity() at every consumer).
-  if (hasBareNameMatch) return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+  //
+  // Identity-collision-hardening correction (this round): the paragraph
+  // above assumed hasBareNameMatch alone was strong enough evidence to
+  // reach 'unconfirmed' -- but the audit of the fresh production run proved
+  // this wasn't true when the account's OWN full name, once normalized, is
+  // itself just a single token (isSingleTokenCompanyIdentity()). "Wyman's"
+  // bare-matched "...Oliver Wyman's presence..." and "Timberland" bare-
+  // matched an unrelated "2027 Timberland Investment Conference" -- both
+  // via the STRONG hasBareNameMatch path (entity.reasons included "company
+  // named in source"), never distinctiveFallbackMatched at all. A single
+  // common word/surname/category term is exactly as consistent with a
+  // different, same-word entity (or the word's ordinary English sense) as
+  // it is with the real account, REGARDLESS of whether the match came via
+  // the bare-phrase check or the distinctive-token fallback -- the
+  // account's own name being a full, multi-word phrase (e.g. "Northfield
+  // Instruments") is what made the ORIGINAL bare-match branch trustworthy;
+  // a full name that is itself only one token never earned that trust. A
+  // multi-word bare match keeps its full 'unconfirmed' grade unchanged.
+  if (hasBareNameMatch && !isSingleTokenCompanyIdentity(companyName)) {
+    return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+  }
+  if (hasBareNameMatch) {
+    reasons.push('single-token company identity matched with no independent corroboration -- treated as a possible match, not a confirmed reference');
+  }
   return { grounded: true, identityConfidence: 'possible', reasons };
 }
 
@@ -2350,7 +2404,7 @@ function dedupeByEventFingerprint(items = [], options = {}) {
 }
 
 export {
-  SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
+  SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,

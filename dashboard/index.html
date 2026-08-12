@@ -1660,6 +1660,10 @@
   .verified-signal-business-signal{
     color:var(--muted);
   }
+  .verified-signal-timing-unclear{
+    color:var(--muted);
+    font-style:italic;
+  }
   .verified-signal-actions{
     margin-top:12px;
   }
@@ -6246,8 +6250,16 @@ function signalDateAndActionabilityLine(opp){
     case 'ongoing': return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Ongoing business change';
     case 'stale': return 'No longer current';
     case 'ongoing-stale': return 'No longer current';
-    case 'unknown-date': return 'Date unavailable';
-    case 'ongoing-undated': return 'Date unavailable';
+    // Undated Business Signal actionability correction: "we could not
+    // resolve a date" is not the same claim as "this is stale/expired" --
+    // the founder-confirmed conflation that made the BEST legitimate
+    // non-Priority Business Signals (an evergreen "Careers at X" page, for
+    // example) read as historical account debris and hid "Use This Signal"
+    // entirely. "Timing unclear" is the honest, non-alarming label for
+    // "identity is credible, timing cannot be established" -- distinct from
+    // "No longer current" (a real date IS known, and it's simply too old).
+    case 'unknown-date': return 'Timing unclear';
+    case 'ongoing-undated': return 'Timing unclear';
     // QA final round, item 1/17: a signal with NO recognized
     // actionabilityStatus.status at all (malformed, or never classified)
     // must never be guessed as "Ongoing business change" merely because a
@@ -6255,8 +6267,9 @@ function signalDateAndActionabilityLine(opp){
     // "event date substituted from publication date" mistake for a signal
     // that might genuinely be event-like (which requires its OWN event
     // date, never a publication date). An unclassified signal's honest
-    // status is unknown, full stop.
-    default: return 'Date unavailable';
+    // status is unknown, full stop -- same "timing unclear, not stale"
+    // principle as the two cases immediately above.
+    default: return 'Timing unclear';
   }
 }
 
@@ -6682,7 +6695,15 @@ function renderRepOpportunityCard(opp){
 function renderSingleVerifiedSignal(signal){
   const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
   const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
-  const eligible = isSignalPriorityEligible(signal);
+  // Undated Business Signal actionability correction: widened from
+  // isSignalPriorityEligible() alone so a legitimate signal HA simply
+  // couldn't date (isUndatedNotStale()) renders with normal outreach copy
+  // and remains "Use This Signal"-eligible, instead of collapsing into the
+  // same historical-note treatment reserved for genuinely stale/expired
+  // evidence. Priority eligibility itself is untouched -- see
+  // isResearchDetailsVisibleAsCurrentSignal()'s own header comment.
+  const eligible = isResearchDetailsVisibleAsCurrentSignal(signal);
+  const undatedNotStale = isUndatedNotStale(signal);
   // Round 5 correction, item 2: this "likely conversations" fallback used to
   // read signal.conversationStarter directly -- Research Details' per-signal
   // preview is a displayed Conversation Starter surface just like the card
@@ -6787,7 +6808,7 @@ function renderSingleVerifiedSignal(signal){
       <div class="verified-signal-meta">
         ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
       </div>
-      ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
+      ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : (undatedNotStale ? `<div class="verified-signal-meta verified-signal-timing-unclear">${escapeHtml(signalDateAndActionabilityLine(signal))}</div>` : '')}
       ${possibleMatch ? `<div class="verified-signal-meta verified-signal-possible-match">Possible match — identity uncertain, may not be about this account</div>` : ''}
       ${(!possibleMatch && signal?.identityConfidence === 'unconfirmed') ? `<div class="verified-signal-meta verified-signal-business-signal">Business signal — identity not independently corroborated</div>` : ''}
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
@@ -6822,6 +6843,42 @@ function renderVerifiedSignals(signals){
 // stale, undated, or past the ongoing-recency ceiling must not become a
 // priority opportunity card -- isPriorityEligible defaults true only for
 // legacy signals persisted before actionabilityStatus existed.
+//
+// Undated Business Signal actionability correction: "we could not resolve
+// a date" (computeActionability()'s 'unknown-date'/'ongoing-undated'
+// branches in api/research-batch.js) is a DIFFERENT claim than "genuinely
+// stale/expired" ('stale'/'ongoing-stale', where a real date IS known and
+// is simply too old). Both currently carry isPriorityEligible:false --
+// correctly, since neither should win a Priority slot -- but they must not
+// be treated identically for RENDER purposes: a legitimate, identity-
+// cleared, freshly-discovered signal HA simply couldn't date (an evergreen
+// "Careers at X" page is the confirmed production case) is not account
+// history, and hiding its normal outreach copy/"Use This Signal" action
+// behind the same "Shown for account history only" treatment as truly
+// expired evidence was the exact bug this closes. isSignalPriorityEligible()
+// itself is left completely unchanged (addSignalDerivedOpportunities()/the
+// priorities feed that consume it must keep their exact current meaning: an
+// undated signal still never auto-populates futureOpportunities/Additional
+// Opportunities and never wins a Priority slot merely because it was
+// freshly discovered -- isPriorityEligibleOpportunity() enforces that
+// independently via its own 'Timing unclear' label check). The two new
+// predicates below govern ONLY whether Research Details renders a signal
+// with its normal, current-signal treatment (outreach copy + "Use This
+// Signal" eligibility) versus the historical-note treatment reserved for
+// genuinely stale/expired evidence -- a rep choosing to act on it is the
+// ONLY path forward for an undated signal, never an automatic one.
+const UNDATED_NOT_STALE_STATUSES = new Set(['unknown-date', 'ongoing-undated']);
+function isUndatedNotStale(signal){
+  return UNDATED_NOT_STALE_STATUSES.has(signal?.actionabilityStatus?.status);
+}
+// References isSignalPriorityEligible() below by name -- safe (function
+// declarations hoist regardless of source order); deliberately placed
+// BEFORE that function's own declaration in the text so extraction ranges
+// several existing test files already end at (using its declaration as the
+// end-of-block marker) still capture this helper too.
+function isResearchDetailsVisibleAsCurrentSignal(signal){
+  return isSignalPriorityEligible(signal) || isUndatedNotStale(signal);
+}
 function isSignalPriorityEligible(signal){
   return signal?.actionabilityStatus?.isPriorityEligible !== false;
 }
@@ -11394,7 +11451,14 @@ function isPriorityEligibleOpportunity(opp){
   if(!hasConfirmedOrLegacyIdentity(opp)) return false;
   if(isWebResearchSignal(opp)){
     const label = signalDateAndActionabilityLine(opp);
-    if(label === 'Date unavailable' || label === 'No longer current') return false;
+    // 'Date unavailable' kept alongside the current 'Timing unclear' label
+    // defensively -- both mean the same "timing could not be established"
+    // exclusion; a freshly-discovered undated signal must never win a
+    // Priority slot merely because House Accounts found it today (see
+    // isUndatedNotStale()/isResearchDetailsVisibleAsCurrentSignal(), which
+    // widen ONLY Research-Details render/"Use This Signal" eligibility, and
+    // deliberately never touch this Priority gate).
+    if(label === 'Timing unclear' || label === 'Date unavailable' || label === 'No longer current') return false;
     // Final Beta Signal Intelligence Correction sprint: TWO legitimate
     // routes into Priority now, not one. Route B (hasCredibleActivationPlay) --
     // the richer Signal -> Audience -> Objective -> Moment -> Activation ->
