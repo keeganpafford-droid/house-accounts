@@ -186,8 +186,11 @@ const DASHBOARD_SRC = loadDashboardSource();
 
   // View Research fix (Global Business Trigger Intelligence sprint) added a
   // showResearchResults(opts) method to this object literal, ahead of
-  // researchList -- widened window to still capture it.
-  const managerExposeSrc = DASHBOARD_SRC.slice(DASHBOARD_SRC.indexOf('window.HouseAccountManager = {'), DASHBOARD_SRC.indexOf('window.HouseAccountManager = {') + 800);
+  // researchList -- widened window to still capture it. Beta correction
+  // (research access for all monitored accounts) added an open() method
+  // (with its own explanatory comment) ahead of isOpen() -- widened again
+  // (the full object literal is currently ~920 chars).
+  const managerExposeSrc = DASHBOARD_SRC.slice(DASHBOARD_SRC.indexOf('window.HouseAccountManager = {'), DASHBOARD_SRC.indexOf('window.HouseAccountManager = {') + 1200);
   assert(/researchList\(uploadId\)\{ return researchListAndFocus\(uploadId\); \}/.test(managerExposeSrc), 'REQUIRED: window.HouseAccountManager.researchList is wired directly to researchListAndFocus(), no intermediate re-implementation');
 
   const focusSrc = extractFn(DASHBOARD_SRC, 'researchListAndFocus');

@@ -2078,6 +2078,7 @@
 .acct-mgr-action:hover:not(:disabled){background:#0d9488;}
 .acct-mgr-action.acct-mgr-action-secondary{background:transparent;color:var(--ink);border:1px solid var(--line);}
 .acct-mgr-action.acct-mgr-action-secondary:hover:not(:disabled){border-color:var(--ink);}
+.acct-mgr-actions-group{display:flex;flex-direction:column;gap:6px;align-items:stretch;}
 .acct-mgr-status-line{grid-column:1/-1;font-size:.8rem;color:var(--muted);margin-top:-2px;}
 .acct-mgr-status-line.is-error{color:var(--danger);}
 .acct-mgr-status-line.is-success{color:#0d9488;}
@@ -7390,7 +7391,7 @@ async function researchAccountFromManageModal(accountName, listId){
     // above, so no separate reportResearchRunOutcome('complete', ...) call
     // is needed here either.
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    markResearchAccountDone(expectedUploadId, targetAccountName, {opportunities: account.signals.length});
+    markResearchAccountDone(expectedUploadId, targetAccountName, {opportunities: countLegitimateBusinessSignals(account.signals)});
     finishResearchTracker(expectedUploadId);
     return {ok:true, account};
   }catch(err){
@@ -7636,7 +7637,11 @@ async function researchListFromManageModal(listId, options = {}){
           account.lastResearchedAt = new Date().toISOString();
           if(signals.length){ withSignals += 1; totalSignals += signals.length; }
           addSignalDerivedOpportunities(account, account.signals);
-          chunkOpportunities += (account.futureOpportunities || []).length;
+          // "N business signals found" canonical definition -- see
+          // countLegitimateBusinessSignals()'s own header comment.
+          // opportunityCount below is a DIFFERENT, deliberately unchanged
+          // field (Priority/Additional-Opportunities count elsewhere).
+          chunkOpportunities += countLegitimateBusinessSignals(account.signals);
           accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
         });
         markResearchGroupDone(expectedUploadId, chunkNames, {opportunities: chunkOpportunities});
@@ -7727,7 +7732,9 @@ async function researchListFromManageModal(listId, options = {}){
         if(account.signals.length){ withSignals += 1; totalSignals += account.signals.length; }
         addSignalDerivedOpportunities(account, account.signals);
         accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
-        markResearchAccountDone(expectedUploadId, account.name, {opportunities: (account.futureOpportunities || []).length});
+        // "N business signals found" canonical definition -- see
+        // countLegitimateBusinessSignals()'s own header comment.
+        markResearchAccountDone(expectedUploadId, account.name, {opportunities: countLegitimateBusinessSignals(account.signals)});
       }catch(err){
         unregisterResearchAbort(expectedUploadId, account.name);
         if(err && err.name === 'AbortError'){
@@ -7963,7 +7970,9 @@ async function researchAccountByName(accountName, options = {}){
       await heartbeatCurrentResearchRun(attemptContext);
       await saveCurrentUpload('researched', attemptContext);
     }
-    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {opportunities: account.signals.length});
+    // "N business signals found" canonical definition -- see
+    // countLegitimateBusinessSignals()'s own header comment.
+    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {opportunities: countLegitimateBusinessSignals(account.signals)});
   }catch(err){
     if(trackerUploadId) unregisterResearchAbort(trackerUploadId, account.name);
     const stopped = trackerUploadId ? isResearchStopRequested(trackerUploadId) : false;
@@ -8410,7 +8419,15 @@ async function researchTopAccounts(options = {}){
       // for this run (researchAccountsBatch() itself leaves them
       // "researching"; see its own comment on why the done/not-done
       // decision has to happen here, once batchSignals is known).
-      markResearchGroupDone(currentUploadId, accounts.map(a => a.name), {opportunities: batchSignals});
+      // "N business signals found" canonical definition -- see
+      // countLegitimateBusinessSignals()'s own header comment. Deliberately
+      // a SEPARATE count from batchSignals just above, which stays the raw,
+      // unfiltered total -- batchSignals only ever decides whether the
+      // fallback loop is needed (a batch response containing only Possible
+      // Match rows must still count as "the batch worked," not trigger an
+      // unnecessary full per-account re-research).
+      const batchLegitimateSignals = accounts.reduce((sum, a) => sum + countLegitimateBusinessSignals(a.signals), 0);
+      markResearchGroupDone(currentUploadId, accounts.map(a => a.name), {opportunities: batchLegitimateSignals});
     }
 
     // Phase 2A implementation-review ROUND 6, item 1: this is the ONE,
@@ -8511,6 +8528,32 @@ function markResearchAccountStarted(uploadId, name){
   if(!tracker) return;
   tracker.researchingNames.add(name);
   notifyResearchTrackerChange(uploadId);
+}
+// Beta correction ("N business signals found" canonical definition): the
+// research-progress counter used to diverge by code path -- the batch path
+// counted every raw signal (including Possible Matches), the fallback path
+// counted account.futureOpportunities (which excludes Possible Matches but
+// ALSO excludes every undated signal, via isSignalPriorityEligible/
+// addSignalDerivedOpportunities -- too narrow now that an undated,
+// identity-legitimate signal is a real Business Signal, not Priority
+// eligibility). Neither was the right definition. A Business Signal is any
+// discovered signal credibly about the actual customer -- confirmed OR
+// legitimately unconfirmed, dated or not, with or without a commercialPlay,
+// Priority-eligible or not -- excluding ONLY a Possible Match (identity
+// itself uncertain) or an explicitly rejected identity. hasConfirmedOrLegacyIdentity()
+// is exactly that check, already used everywhere else this same distinction
+// matters (Priority eligibility, Research Details labeling). Deliberately
+// reuses the SAME base filter (isReal && sourceUrl) and the SAME dedupe
+// (dedupeFoundSignals()) renderVerifiedSignals() itself uses, so this count
+// can never disagree with what a rep actually sees when they open Research
+// Details. EVERY research-progress call site (batch and fallback alike)
+// must call this -- see markResearchAccountDone()/markResearchGroupDone()
+// callers in researchAccountsBatch()/researchAccountByName()/
+// researchTopAccounts() -- so the count cannot diverge into two
+// definitions again.
+function countLegitimateBusinessSignals(signals){
+  return dedupeFoundSignals((signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl))
+    .filter(hasConfirmedOrLegacyIdentity).length;
 }
 function markResearchAccountDone(uploadId, name, {failed = false, stopped = false, opportunities = 0} = {}){
   const tracker = researchRunTrackers.get(uploadId);
@@ -9242,7 +9285,8 @@ function renderRecentlyResearchedSection(){
             <button type="button" class="rr-dismiss-btn" aria-label="Dismiss ${escapeHtml(e.name)} from Recently Researched">✕</button>
           </div>
         </div>`).join('')}
-    </div>`;
+    </div>
+    <button type="button" class="btn btn-ghost btn-mini rr-view-all-btn">View all researched accounts →</button>`;
 }
 document.addEventListener('click', (event) => {
   const card = event.target.closest('.recently-researched-card');
@@ -9262,6 +9306,19 @@ document.addEventListener('click', (event) => {
     dismissResearchResult(uploadId, accountName, card.dataset.completedAt);
     renderRecentlyResearchedSection();
   }
+});
+// Beta correction (research access for all monitored accounts): a separate,
+// section-level listener -- the button lives as a sibling of
+// .recently-researched-card, not inside one, so the card-scoped listener
+// above (which returns immediately when no .recently-researched-card is an
+// ancestor) never sees this click. Opens the exact same Manage Customer
+// Accounts modal the existing #manageCustomerAccountsBtn already opens
+// (window.HouseAccountManager.open(), the same internal open() that button
+// calls) -- Recently Researched stays a compact top-5 view; this is only a
+// pointer into the existing, already-complete account list.
+document.addEventListener('click', (event) => {
+  if(!event.target.closest('.rr-view-all-btn')) return;
+  if(window.HouseAccountManager && typeof window.HouseAccountManager.open === 'function') window.HouseAccountManager.open();
 });
 // ===========================================================================
 
@@ -12760,6 +12817,26 @@ function escapeHtml(text){
  function accountRow(list, a){
    const paused = a.monitoringStatus === 'paused';
    const researched = !!a.lastResearchedAt;
+   // Beta correction (research access for all monitored accounts): Manage
+   // Customer Accounts' own account list (`page.accounts`, what `a` is
+   // here) is deliberately lightweight for scale -- see renderExpandedSection()'s
+   // own comment ("never list.accounts, which no longer exists on the
+   // summary object") -- it never carries signals/futureOpportunities.
+   // window.accountRadarAccounts is the SAME full-aggregate data source
+   // Recently Researched already reads (getRecentlyResearchedAccounts()),
+   // already loaded in memory by the main dashboard fetch -- no new fetch
+   // here, just the same cross-reference by name+uploadId. Uses the exact
+   // same dedupeFoundSignals()/isExplicitlyVerifiedIdentity() pair Recently
+   // Researched already uses for its own "N found · M verified" line, so
+   // the two surfaces can never quietly disagree about what "found"/
+   // "verified" mean.
+   const liveAccount = (window.accountRadarAccounts || []).find(x => x && x.uploadId === list.id && x.name === a.name);
+   const foundSignals = liveAccount ? dedupeFoundSignals(liveAccount.signals || []) : [];
+   const signalCount = foundSignals.length;
+   const verifiedCount = signalCount ? foundSignals.filter(isExplicitlyVerifiedIdentity).length : 0;
+   const researchSummary = researched
+     ? `${signalCount ? `${signalCount} signal${signalCount===1?'':'s'}${verifiedCount ? ` · ${verifiedCount} verified` : ''}` : 'No signals found'} · Last researched ${fmt(a.lastResearchedAt)}`
+     : 'Not researched yet';
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
    // ux/research-control-progress: this tab's own tracker (see
@@ -12793,11 +12870,29 @@ function escapeHtml(text){
      a.industry ? esc(a.industry) : '',
      a.domain ? esc(a.domain) : 'No domain on file',
      `Added ${fmt(a.dateAdded)}`,
-     researched ? `Last researched ${fmt(a.lastResearchedAt)}` : 'Not researched yet'
+     researchSummary
    ].filter(Boolean);
    const researchActionHtml = canStopThisRow
      ? `<button type="button" class="acct-mgr-action acct-mgr-action-stop" data-research-stop-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">Stop Research</button>`
      : `<button type="button" class="acct-mgr-action" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${researchLabel}</button>`;
+   // Beta correction: "View Research" only when there is something real to
+   // view (signalCount > 0 already implies the account was genuinely
+   // researched with results) -- mirrors Recently Researched's OWN
+   // `${e.signalCount ? button : ''}` pattern exactly (no button, not a
+   // disabled one, when nothing was found), the smallest existing pattern
+   // for this exact "zero research findings" case. Calls the SAME
+   // openResearchedAccountOpportunities() Recently Researched's own
+   // "View research"/"View opportunities" button calls -- it already
+   // decides Prepare for Call vs. the Research Results view on its own, and
+   // already closes this modal first when needed, so no new rendering or
+   // modal-management logic is added here.
+   const viewResearchHtml = signalCount > 0
+     ? `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">View Research</button>`
+     : '';
+   // Grouped into one wrapper so the row's existing 4-column grid
+   // (.acct-mgr-row, including its own mobile breakpoint) never needs a 5th
+   // column just because a second button now sometimes exists here.
+   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}</div>`;
    return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
         <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
@@ -12806,7 +12901,7 @@ function escapeHtml(text){
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
-      ${researchActionHtml}
+      ${actionsGroupHtml}
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
@@ -12842,12 +12937,13 @@ function escapeHtml(text){
      detailParts.push(`${snap.failed} failed`);
    }
    // Final Beta Signal Intelligence Correction sprint: renamed from
-   // "N opportunities found" -- snap.opportunitiesFound is fed by
-   // account.futureOpportunities.length (addSignalDerivedOpportunities()),
-   // which now excludes Possible Matches (see isPossibleMatchIdentity())
-   // but still includes every legitimate Business Signal regardless of
-   // Priority eligibility -- "opportunities" overclaimed a Priority-level
-   // recommendation for what is honestly a broader, pre-triage count.
+   // "N opportunities found". Beta correction (canonical count): every
+   // call site that sets snap.opportunitiesFound now uses the SAME
+   // countLegitimateBusinessSignals() -- excludes Possible Matches and
+   // rejected identity, but never requires a date, a commercialPlay, or
+   // Priority eligibility (see that function's own header comment). Batch
+   // and fallback research paths can no longer disagree about what this
+   // number means.
    if(snap.opportunitiesFound) detailParts.push(`${snap.opportunitiesFound} business signal${snap.opportunitiesFound===1?'':'s'} found`);
    const stopBtn = snap.finished ? '' : `<button type="button" class="btn btn-ghost btn-mini acct-mgr-progress-stop" data-research-stop-act="list" data-list-id="${esc(list.id)}">Stop Research</button>`;
    return `<div class="acct-mgr-progress-panel" role="status" aria-live="polite">
@@ -13082,6 +13178,12 @@ function escapeHtml(text){
  // without duplicating them.
  window.HouseAccountManager = {
    close(){ close(); },
+   // Beta correction (research access for all monitored accounts): exposes
+   // the SAME internal open() the existing #manageCustomerAccountsBtn
+   // click already calls -- lets "View all researched accounts →" (main
+   // script, near Recently Researched) open this exact modal without a
+   // second, parallel open path.
+   open(){ return open(); },
    isOpen(){ return isModalOpen(); },
    showError(opts){ return showInfoDialog(opts); },
    // View Research fix (Global Business Trigger Intelligence sprint): see
@@ -13642,6 +13744,21 @@ function escapeHtml(text){
      if(researchBtn.disabled) return;
      closeAllMenus();
      await handleResearchClick(researchBtn);
+     return;
+   }
+
+   // Beta correction (research access for all monitored accounts): reuses
+   // the SAME openResearchedAccountOpportunities() Recently Researched's
+   // own "View research"/"View opportunities" button already calls -- it
+   // already closes this modal itself before opening Prepare for Call or
+   // the Research Results view, so no modal-management logic is duplicated
+   // here.
+   const viewResearchBtn = e.target.closest('[data-view-research-act="account"]');
+   if(viewResearchBtn){
+     closeAllMenus();
+     const vrAccountName = viewResearchBtn.dataset.accountName;
+     const vrListId = viewResearchBtn.dataset.listId;
+     if(typeof openResearchedAccountOpportunities === 'function') await openResearchedAccountOpportunities(vrListId, vrAccountName);
      return;
    }
 
