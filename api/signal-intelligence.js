@@ -861,9 +861,9 @@ const COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT = `
 Beyond the factual event itself, reason like a smart promotional-products merchandise strategist sitting beside the rep -- not a copywriter drafting an email. Do not merely summarize the signal; interpret it commercially. Commercial Activation Reasoning sprint: your goal is to translate a business event into a commercial ACTIVATION, not a product category. "This event may create a need for promotional products" is not a play -- it is a merchandise justification wearing a play's clothing.
 
 First, separate what you actually know from what you're inferring:
-- FACT: directly stated or clearly supported by the evidence (e.g. "Impiricus hired a VP of Marketing & Brand Growth").
+- FACT: directly stated or clearly supported by the evidence (e.g. "the company hired a VP of Marketing & Brand Growth").
 - REASONABLE COMMERCIAL INFERENCE: a plausible implication you're using to reason toward an activation (e.g. "a new marketing leader may be evaluating how the brand shows up internally and externally, and may want an early, visible win"). Inference is allowed and expected -- this is where a real play comes from.
-- UNSUPPORTED ASSUMPTION: a specific plan, program, or initiative you have no actual evidence for (e.g. "Impiricus is beginning a comprehensive rebrand"). Never state this as if it were true. If your best play depends on an assumption like this, either soften it into an inference ("may be an early moment to...") or drop the play.
+- UNSUPPORTED ASSUMPTION: a specific plan, program, or initiative you have no actual evidence for (e.g. "the company is beginning a comprehensive rebrand" based on a leadership change alone, or "the company is launching an onboarding program" based on an acquisition alone). Never state this as if it were true. If your best play depends on an assumption like this, either soften it into an inference ("may be an early moment to...") or drop the play.
 
 Before generating commercialPlay/activationIdeas, work through four questions in order, silently, and let the answers actually shape what you write -- do not skip straight to a product category:
 1. AUDIENCE -- Who are the relevant audiences THIS signal creates, affects, or brings together? Do not default to employees -- name at least two plausible candidate audiences before you settle on one. Depending on the event and company, this might include employees, recruits, customers, prospects, investors/LPs, portfolio companies, executives, partners, dealers, field teams, event attendees, VIPs, volunteers, community members, or sponsors. A financing/fund-close signal specifically must have investors/LPs/portfolio companies weighed as a candidate audience alongside (not instead of) any operational/employee angle -- never settle on employee-onboarding/apparel as the only read of a financing signal without having actually considered who the money itself connects the company to. If you cannot name a real audience, confidence in any activation should fall sharply.
@@ -878,6 +878,12 @@ Before generating commercialPlay/activationIdeas, work through four questions in
 
 FUNDING AND EARNINGS/FINANCIAL-RESULTS SIGNALS SPECIFICALLY: these are weak by default. Funding alone does not imply hiring, onboarding, office expansion, events, or a customer launch -- "$20M raised" is not itself a reason to write "onboarding kits." A routine earnings call or financial-results announcement normally has no activation at all. Only write a commercialPlay for one of these signal types when the evidence ITSELF discloses a concrete downstream initiative (a stated hiring push, a market launch, an office expansion, a conference strategy) -- reason from that disclosed initiative, never from the funding/earnings event alone. Otherwise, omitting commercialPlay/activationIdeas/expansionPotential entirely is the correct, expected output for these two signal types -- a real signal with no credible activation is a legitimate result, not a gap to fill. NO GROUNDED ACTIVATION, NO PRIORITY: producing SOME activationIdeas does not by itself prove a real activation exists -- do not satisfy this requirement by manufacturing an idea ABOUT the funding/earnings event itself (e.g. a "brand visibility campaign," "funding announcement launch kit," or "social media campaign" for the raise/results). Announcing money is not a moment the audience experiences, even if you can picture marketing collateral for it -- that is exactly the "merchandise justification wearing a play's clothing" this whole framework exists to prevent, just with confident phrasing instead of hedged phrasing. If the only "activation" you can produce is about the financial event itself, you do not have one -- leave commercialPlay and activationIdeas empty.
 
+THE SAME "NO GROUNDED ACTIVATION, NO PRIORITY" STANDARD APPLIES TO EVERY OTHER WEAK-BY-DEFAULT SIGNAL TYPE, not just funding -- an acquisition, a leadership appointment, and a new-facility opening are each frequently reported with almost no operational detail, and each has its own version of the exact same trap:
+- Acquisition: the acquisition itself is not a welcome/integration moment -- only a DISCLOSED integration detail (a stated combined-team event, a customer transition plan, a branch consolidation) is. "Acquiring a company creates a great opportunity for onboarding kits" is a manufactured activation with no real audience specified; "the two teams are holding a joint welcome event for the combined field staff" is grounded because it names who and what actually happens.
+- Leadership appointment: a new executive's title alone never proves a rebrand, reorganization, or any other sweeping initiative is underway -- see the UNSUPPORTED ASSUMPTION example above. A real activation here comes from the INFERENCE that a new leader likely wants an early, visible win (see AUDIENCE/OBJECTIVE above), not from asserting a specific program the evidence never mentioned.
+- Facility opening or relocation: a new location is not itself a team/customer/community moment -- reflexively translating "new location" into uniforms, signage, or launch materials with no audience attached is the same merchandise-justification pattern as funding's "brand visibility campaign." A real activation names who experiences the opening (staff on their first day, customers visiting for the first time, the community at a ribbon cutting), not just that a new place now exists.
+In every case: a confidently-worded idea or narrative is not evidence of a real activation merely because it sounds specific -- if its entire content is the bare event category plus a generic campaign/visibility/launch noun with no audience or moment named, it is the same manufactured pattern regardless of which signal family it dresses up.
+
 A grounded signal with no credible commercial interpretation is a better output than fabricated commercial intelligence. Absence of commercialPlay, an empty activationIdeas list, and absence of expansionPotential are all valid and expected outcomes for weak or generic signals -- never force any of these fields merely because the schema has a place for them.
 
 For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting and do not ask to schedule a meeting. Never phrase this question by asking the buyer what THEIR plans/strategy/approach are for the event itself (e.g. "What promotional strategies are you considering for X?", "How do you plan to engage with X?", "What's your approach to X?") -- that outsources the thinking back to the buyer, which is the opposite of the point. If you have a real activation idea, lead with it (the permission-ask branch below). If you genuinely don't have enough to propose anything concrete, ask about ownership/timing/scope/whether a program already exists instead -- never ask the buyer to invent the commercial angle for you.
@@ -890,7 +896,16 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
   'apparel', 'branded apparel', 'drinkware', 'giveaways', 'promotional items',
   'promotional products', 'swag', 'branded merchandise', 'merchandise',
   'branded items', 'corporate gifts', 'custom products', 'promotional giveaways',
-  'branded swag', 'company swag', 'custom merchandise', 'branded gear'
+  'branded swag', 'company swag', 'custom merchandise', 'branded gear',
+  // Global Business Trigger Intelligence sprint: the founder's named facility-
+  // opening/relocation weak pattern ("new location -> uniforms / signage /
+  // launch materials") -- bare, unqualified translations of "there is a new
+  // place" into a product category, with no audience or moment attached. A
+  // qualified, specific idea using the same underlying words (e.g. "Staff
+  // opening-day polos", already a real idea in this suite's own strong
+  // facility-opening fixture) is unaffected -- this is still an exact
+  // whole-string match, never a substring search.
+  'uniforms', 'signage', 'launch materials'
 ]);
 
 // Deliberately a short, fixed list of content-free category labels -- the
@@ -903,15 +918,16 @@ function isGenericActivationIdea(idea = '') {
   if (!normalized) return true;
   if (GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized)) return true;
   // Commercial Activation Reasoning sprint, final validation round: an idea
-  // can be a manufactured funding-event activation even when it isn't one of
+  // can be a manufactured weak-event activation even when it isn't one of
   // the fixed bare-category phrases above (e.g. "Funding announcement launch
-  // kit", "Social media campaign for the seed round") -- see
-  // isFinancialEventDressedAsActivation()'s header comment below for the
-  // full rationale; same check, applied per-idea here.
-  return isFinancialEventDressedAsActivation(idea);
+  // kit", "Social media campaign for the seed round", "Acquisition
+  // celebration launch kit", "Comprehensive rebrand campaign") -- see
+  // isWeakEventDressedAsActivation()'s header comment below for the full
+  // rationale; same check, applied per-idea here.
+  return isWeakEventDressedAsActivation(idea);
 }
 
-// QA correction 4 (Impiricus finding): commercialPlay is free-form prose,
+// QA correction 4 (original finding): commercialPlay is free-form prose,
 // so it can't be screened with an exact-match phrase set the way
 // activationIdeas is above -- a full-sentence generic non-answer needs a
 // STRUCTURAL check instead. This deliberately stays a hedge-pattern + a
@@ -979,22 +995,37 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
 // Commercial Activation Reasoning sprint, final validation round (Neural
 // Trust/Black Hat funding finding): "NO IDEA, NO PRIORITY" is gameable --
 // the model can satisfy "produce a real activationIdea" by inventing one
-// for the funding/financial event ITSELF ("a great opportunity to run a
-// brand visibility campaign celebrating the round"), which is confident,
+// for the underlying event ITSELF ("a great opportunity to run a brand
+// visibility campaign celebrating the round"), which is confident,
 // well-formed prose with no hedge word at all, so GENERIC_COMMERCIAL_PLAY_HEDGE
 // never fires. The founder's stronger standard: a funding/financial event
 // is NEVER itself a real moment/touchpoint -- an idea or play whose entire
-// content is the financial event plus a generic campaign/visibility noun,
-// with nothing else concrete, is a manufactured activation regardless of
-// how confidently it's phrased. This is a SEPARATE, independent check
-// (financial-event-anchor + generic-campaign-noun, no hedge required) --
-// it only ever fires on this specific combination, so a genuinely grounded
+// content is the event plus a generic campaign/visibility noun, with
+// nothing else concrete, is a manufactured activation regardless of how
+// confidently it's phrased. This is a SEPARATE, independent check
+// (weak-event-anchor + generic-campaign-noun, no hedge required) -- it
+// only ever fires on this specific combination, so a genuinely grounded
 // funding-adjacent play (e.g. "the round is earmarked for opening three new
 // offices -- a reason to build a new-office welcome program for each") is
 // unaffected: "new-office welcome program" matches neither generic-campaign
 // noun list below.
-const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
-const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
+//
+// Global Business Trigger Intelligence sprint: originally scoped to
+// funding/earnings only (the confirmed Neural Trust case), but live QA
+// showed the exact same confident-dressed-up shape recurs for every other
+// signal family the prompt itself calls "weak by default" -- an acquisition
+// ("a great opportunity to run a brand visibility campaign celebrating the
+// deal"), a leadership appointment ("the new VP is a great moment to launch
+// a comprehensive rebrand"), or a facility opening ("a great opportunity to
+// run a visibility campaign for the grand opening"). None of these were
+// previously caught: WEAK_EVENT_ANCHOR only matched funding/earnings
+// language, so a confidently-worded fabrication anchored on any other weak
+// family sailed through unflagged. Widened to a family-agnostic anchor
+// covering every weak-by-default event category named in the founder's
+// brief -- content-based, not account-specific, so it applies identically
+// regardless of which company or signal triggered it.
+const WEAK_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results|acquisition|acquiring|acquired|acquires|merger|merged|new (?:vp|ceo|cfo|coo|cmo|cto|president|vice president|chief \w+ officer)|newly hired (?:vp|ceo|cfo|coo|cmo|cto|president)|appointed (?:as )?(?:vp|ceo|cfo|coo|cmo|cto|president|vice president)|named (?:ceo|president|chief|vice president)|leadership change|promoted to|new (?:facility|location|office|branch|plant)|grand opening|ribbon cutting|relocat(?:ed|ing|ion))\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign|comprehensive rebrand|rebrand campaign|brand relaunch|relaunch campaign)\b/i;
 // Deliberately a POSITIVE check (does a real audience/moment word appear
 // anywhere?) rather than the "strip stopwords until nothing survives"
 // pattern the older checks above use -- a natural, fluently-written
@@ -1004,17 +1035,41 @@ const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recog
 // instead of in a hedging voice (exactly what this sprint's prompt changes
 // pushed it toward). Presence of a genuine audience/moment word is a much
 // more robust signal of real grounding than absence of connective filler.
-const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
-function isFinancialEventDressedAsActivation(text = '') {
+//
+// Global Business Trigger Intelligence sprint: deliberately does NOT include
+// "acquisition"/"acquired"/"merger"/"leadership"/"executive"/"office"/
+// "facility"/"location"/"branch"/"store" -- every one of these is now also
+// part of WEAK_EVENT_ANCHOR above (the anchor has to name the event category
+// -- "acquisition", "new facility" -- to detect it in the first place), so
+// keeping the exact same words here would make the two lists cancel each
+// other out: almost any acquisition-, leadership-, or facility-anchored
+// narrative mentions its own event category ("acquisition", "the new
+// facility") somewhere in ordinary connective prose merely by describing
+// what kind of event happened, which would satisfy this check regardless of
+// whether a genuine audience/moment was ever named -- confirmed empirically
+// during this sprint: a facility-opening narrative anchored on "the new
+// facility" was still passing this check purely because "facility" is both
+// the anchor AND (in the pre-sprint list) a "grounded" word. A bare
+// event-category label -- what TYPE of thing happened, or WHERE it
+// happened -- is not the same claim as WHO experiences it; only WHO
+// (employees, customers, staff, the community, dealers, volunteers...) or a
+// genuine human touchpoint (welcome, onboarding, a trade show, a parade)
+// counts as real grounding here. Every strong held-out fixture in this
+// suite still passes on a WHO/touchpoint word alone (Solaris: "...for staff
+// and the patients visiting..." -- grounded by "staff", not by "location";
+// Vantage/Ridgeline: "...incoming...drivers and dispatch staff..." --
+// grounded by "staff", not by "acquisition").
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|launch event|onboarding|welcome|integration|community event|open house)\b/i;
+function isWeakEventDressedAsActivation(text = '') {
   const t = clean(text);
   if (!t) return false;
-  if (!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  if (!WEAK_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
   return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
 }
 function isGenericCommercialPlay(narrative = '') {
   const text = clean(narrative);
   if (!text) return false;
-  if (isFinancialEventDressedAsActivation(text)) return true;
+  if (isWeakEventDressedAsActivation(text)) return true;
   if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));

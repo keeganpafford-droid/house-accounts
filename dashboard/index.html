@@ -5815,19 +5815,31 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
 // stopwords until nothing survives" -- a confidently-written narrative
 // almost always contains the company's own name and ordinary connective
 // prose, so requiring full reduction is too strict once text isn't hedged.
-const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
-const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
-const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
-function isFinancialEventDressedAsActivation(text){
+//
+// Global Business Trigger Intelligence sprint (mirrors
+// api/signal-intelligence.js's identically-named/identically-widened
+// constants -- see that file's header comment for the full rationale):
+// widened from funding/earnings-only to every weak-by-default event family
+// (acquisition, leadership appointment, facility opening/relocation), and
+// GROUNDED_AUDIENCE_OR_MOMENT_WORDS no longer includes
+// "acquisition"/"acquired"/"merger"/"leadership"/"executive"/"office"/
+// "facility"/"location"/"branch"/"store" -- those words are now also part
+// of WEAK_EVENT_ANCHOR, so keeping them here too would cancel the widened
+// anchor out (a facility-anchored narrative naming "the new facility"
+// would satisfy both the anchor AND the "grounded" check on the same word).
+const WEAK_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results|acquisition|acquiring|acquired|acquires|merger|merged|new (?:vp|ceo|cfo|coo|cmo|cto|president|vice president|chief \w+ officer)|newly hired (?:vp|ceo|cfo|coo|cmo|cto|president)|appointed (?:as )?(?:vp|ceo|cfo|coo|cmo|cto|president|vice president)|named (?:ceo|president|chief|vice president)|leadership change|promoted to|new (?:facility|location|office|branch|plant)|grand opening|ribbon cutting|relocat(?:ed|ing|ion))\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign|comprehensive rebrand|rebrand campaign|brand relaunch|relaunch campaign)\b/i;
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|launch event|onboarding|welcome|integration|community event|open house)\b/i;
+function isWeakEventDressedAsActivation(text){
   const t = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if(!t) return false;
-  if(!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  if(!WEAK_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
   return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
 }
 function isGenericCommercialPlay(narrative){
   const text = String(narrative || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if(!text) return false;
-  if(isFinancialEventDressedAsActivation(text)) return true;
+  if(isWeakEventDressedAsActivation(text)) return true;
   if(!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
