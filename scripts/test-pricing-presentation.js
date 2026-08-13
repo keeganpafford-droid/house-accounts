@@ -41,7 +41,7 @@ assert(html.includes('id="selectorResult"'), 'pricing.html has a single live res
 // second, hand-written list.
 assert(/<input type="range" id="accountCountRange" class="selector-range" min="0" max="8" step="1"/.test(html), 'the slider spans exactly one position per pricing band (indices 0-8), not a linear 1-2,600 range');
 assert(!/<span>2,500\+<\/span>/.test(html), 'the old hardcoded "2,500+" static tick label is gone');
-assert(/PRICING_BANDS\.map\(b\s*=>/.test(html), 'the tick labels are generated from the canonical PRICING_BANDS list, not a second hardcoded copy');
+assert(/PRICING_BANDS\.map\(\(b,\s*i\)\s*=>/.test(html), 'the tick labels are generated from the canonical PRICING_BANDS list, not a second hardcoded copy');
 
 // Enterprise is a substantial visual "Contact Sales" state on the same
 // panel now, not hidden -- this reverses the earlier presentation-only

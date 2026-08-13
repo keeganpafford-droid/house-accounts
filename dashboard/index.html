@@ -3582,9 +3582,22 @@ function renderCustomerDashboard(data){
   // more than one upload, say so plainly instead of naming just one of
   // them; only use the single-upload phrasing when the aggregate really
   // is a single list.
+  // Founder QA correction: this panel counts only saved/uploaded CUSTOMER
+  // accounts (accounts.length here), which is a real but narrower subset
+  // of the org-wide monitored-account CAPACITY count shown elsewhere
+  // (Settings, the dashboard capacity badge) -- that total also includes
+  // prospect accounts from one-off/list research, which genuinely consume
+  // purchased capacity too. Traced against a real org: 28 saved customer
+  // accounts here + 22 prospect accounts (a separate upload, not shown in
+  // this panel) = the 50 the capacity badge correctly reports. Both
+  // numbers were already correct; the bug was calling both of them
+  // "monitored accounts". This panel now says "saved accounts" (matching
+  // the existing "Saved Accounts" mini-card label elsewhere on this same
+  // dashboard) instead of competing with the capacity badge's own
+  // "accounts monitored" language.
   const distinctUploadIds = new Set(accounts.map(a => a?.uploadId).filter(Boolean));
   const subtitleText = distinctUploadIds.size > 1
-    ? `Showing ${pluralize(accounts.length, 'monitored account')} combined across ${distinctUploadIds.size} uploaded lists. House Accounts will keep monitoring them and surface the newest reasons to reach out.`
+    ? `Showing ${pluralize(accounts.length, 'saved account')} combined across ${distinctUploadIds.size} uploaded lists. House Accounts will keep monitoring them and surface the newest reasons to reach out.`
     : `${data?.upload?.upload_name || 'your saved account list'} is saved. House Accounts will keep monitoring it and surface the newest reasons to reach out.`;
   showCustomerDashboardPanel({
     subtitleText,

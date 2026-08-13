@@ -114,5 +114,41 @@ for(const name of ['render', 'bandIndexForCount', 'syncFromRange', 'syncFromNumb
   assert(ctaEl.textContent === 'Start Free' && ctaEl.href === '/signup', 'Free retains its "Start Free" CTA, linking to /signup');
 }
 
+// --- QA correction: tick alignment geometry -----------------------------
+// The thumb's CENTER travels an inset track (thumbRadius to trackWidth
+// minus thumbRadius), not the full width. Each tick must be positioned
+// with the exact same calc() geometry the CSS-styled thumb uses --
+// verified two ways: (1) the CSS custom property and the JS constant that
+// must stay in sync are both actually 18px, and (2) the real
+// tick-generation statement (extracted verbatim, not reimplemented)
+// produces the exact expected `left: calc(...)` for every one of the 9
+// stops.
+{
+  const thumbCssMatch = PRICING_HTML.match(/--slider-thumb:\s*(\d+)px/);
+  const thumbJsMatch = PRICING_HTML.match(/const THUMB_PX = (\d+);/);
+  assert(thumbCssMatch && thumbJsMatch && thumbCssMatch[1] === thumbJsMatch[1], `REQUIRED: the CSS --slider-thumb custom property and the JS THUMB_PX constant must stay in sync (got CSS=${thumbCssMatch?.[1]}, JS=${thumbJsMatch?.[1]})`);
+}
+{
+  const startMarker = 'const THUMB_PX = 18;';
+  const endMarker = "}).join('');";
+  const start = PRICING_HTML.indexOf(startMarker);
+  const end = PRICING_HTML.indexOf(endMarker, start) + endMarker.length;
+  if(start === -1 || end === -1) throw new Error('Could not locate the tick-generation statement in pricing.html -- it may have been renamed or restructured.');
+  const TICKS_SRC = PRICING_HTML.slice(start, end);
+
+  const ticksEl = { innerHTML: '' };
+  const sandbox = { PRICING_BANDS, ticksEl };
+  vm.createContext(sandbox);
+  new vm.Script(TICKS_SRC, { filename: 'pricing-ticks-extract.js' }).runInContext(sandbox);
+
+  const THUMB_PX = 18;
+  const expectedLefts = PRICING_BANDS.map((b, i) => `calc(${THUMB_PX / 2}px + ${i / (PRICING_BANDS.length - 1)} * (100% - ${THUMB_PX}px))`);
+  for(let i = 0; i < PRICING_BANDS.length; i++){
+    assert(ticksEl.innerHTML.includes(`left:${expectedLefts[i]}`), `REQUIRED: tick ${i} (${PRICING_BANDS[i].key}) is positioned at the thumb-center-matching offset "${expectedLefts[i]}"`);
+  }
+  assert(ticksEl.innerHTML.includes('left:calc(9px + 0 * (100% - 18px))'), 'the first (Free) tick sits exactly at the thumb\'s leftmost resting position (9px in from the edge -- half the thumb width, not the raw 0% edge)');
+  assert(ticksEl.innerHTML.includes('left:calc(9px + 1 * (100% - 18px))'), 'the last (Enterprise) tick sits exactly at the thumb\'s rightmost resting position (9px in from the right edge)');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);
