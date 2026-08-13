@@ -2789,10 +2789,19 @@ function renderDashboardUsage(){
   const el=document.getElementById('dashboardTrialStatus');
   if(!el) return;
   const planLabel = info.plan ? info.plan.charAt(0).toUpperCase() + info.plan.slice(1) : 'Plan';
+  // Correction: info.isFree (== entitlement's isLimitedPlan) means "this
+  // org has a finite monitored-account cap" -- true for BOTH the actual
+  // Free plan AND any paid capacity band (e.g. a $99/mo 100-account org).
+  // It must not be read as "this org is on the Free plan." Only
+  // info.plan==='free' means that; every other finite-capacity org gets
+  // capacity-oriented language ("X / Y accounts monitored"), never the
+  // word "Free".
   el.textContent = info.trialExpired
     ? (info.trialUsed ? 'Trial used · Upgrade soon' : 'Trial expired · Upgrade to continue')
     : (info.isFree
-      ? `Free · ${info.used}/${info.limit} companies`
+      ? (info.plan === 'free'
+        ? `Free · ${info.used}/${info.limit} companies`
+        : `${info.used} / ${info.limit} accounts monitored`)
       : (info.trialDaysRemaining
         ? `${planLabel} trial · ${info.trialDaysRemaining} day${info.trialDaysRemaining===1?'':'s'} left`
         : `${info.used} companies monitored`));
@@ -6797,11 +6806,22 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
 // composite-identity comments on createOpportunity()/normalizeSavedAccount()
 // above), so any code that needs to find "this exact account's" card must
 // match both attributes together, never data-account alone.
+// Correction: the locked-card message used to hardcode "You're monitoring
+// 10 companies for free" regardless of plan -- correct for the actual
+// Free plan, but wrong on both the word "free" and the number for any
+// paid capacity-band org that reaches its own (non-10) limit. Mirrors the
+// same plan==='free' distinction as renderDashboardUsage()'s badge fix.
+function lockedAccountMessageHtml(){
+  const info = dashboardUsageInfo();
+  return info.plan === 'free'
+    ? `You’re monitoring ${info.limit} companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a>`
+    : `You’ve reached your ${info.limit}-account plan. <a class="upgrade-link" href="/pricing.html">Upgrade to monitor more accounts.</a>`;
+}
 function renderRepOpportunityCard(opp){
   if(opp._locked){
     const acct = escapeHtml(opp.account || opp.accountName || 'Locked company');
     const lockedUploadId = escapeHtml(opp.uploadId || '');
-    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card" data-account="${acct}" data-upload-id="${lockedUploadId}"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div></div>`;
+    return `<div class="opportunity-card daily-reason-card locked-card locked-sensitive-card" data-account="${acct}" data-upload-id="${lockedUploadId}"><div class="opp-card-header"><div class="opp-card-title">${acct}</div><div class="opp-headline">Additional opportunity locked</div></div><div class="lock-message">${lockedAccountMessageHtml()}</div></div>`;
   }
   const recBadge = recommendationBadgeMeta(opp);
   const emailLink = mailtoHref(opp.email || opp.contactEmail);
@@ -6854,7 +6874,7 @@ function renderRepOpportunityCard(opp){
       </div>
 
       <div class="opp-card-actions">
-        ${opp._locked ? `<div class="lock-message">You’re monitoring 10 companies for free. <a class="upgrade-link" href="/pricing.html">Upgrade to unlock the rest and enable ongoing monitoring.</a></div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
+        ${opp._locked ? `<div class="lock-message">${lockedAccountMessageHtml()}</div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
       </div>
     </div>`;
