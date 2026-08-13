@@ -1330,6 +1330,13 @@
     color:#0F766E;
     background:#EAFBF9;
   }
+  .sales-play-outreach-row .outreach-status{
+    display:inline-block;
+    margin-right:8px;
+    color:#0F766E;
+    font-size:0.85rem;
+    font-weight:600;
+  }
   .approach-note-wrap{
     margin-top:10px;
   }
@@ -10439,6 +10446,7 @@ window.closeSalesPlayModal = function(el){
 // two legitimate outreach attempts should.
 function wireOutreachRow(rowEl){
   const logBtn = rowEl.querySelector('.outreach-log-btn');
+  const statusEl = rowEl.querySelector('.outreach-status');
   const noteWrap = rowEl.querySelector('.approach-note-wrap');
   const noteInput = rowEl.querySelector('.approach-note-input');
   const noteSaveBtn = rowEl.querySelector('.approach-note-save');
@@ -10446,9 +10454,19 @@ function wireOutreachRow(rowEl){
   let outreachEventId = null;
   let inFlight = false;
 
+  // Founder-reported gap: the button used to relabel itself "Reached out
+  // ✓" and simply stay clickable -- a confirmation checkmark reads as
+  // "done," not as an affordance to click again, so the secondary "log a
+  // later attempt" action existed in the event architecture but was
+  // effectively invisible. The confirmation now lives in its own static
+  // statusEl; the button itself always shows the NEXT action available
+  // ("Log another outreach" once a first attempt is on record), so the
+  // secondary action is an explicit, visible control rather than a second
+  // click on something that looks finished.
   function showReachedOut(eventId){
     outreachEventId = eventId;
-    logBtn.textContent = 'Reached out ✓';
+    if(statusEl) statusEl.hidden = false;
+    logBtn.textContent = 'Log another outreach';
     logBtn.classList.add('outreach-logged');
     logBtn.disabled = false;
     logBtn.dataset.outreachLogAgain = '1';
@@ -10652,6 +10670,7 @@ window.createSalesPlayPanel = function(opp, opts){
         ${opts.repSelected ? `<div class="rep-selected-banner"><strong>REP-SELECTED SIGNAL</strong> — House Accounts found this signal but did not recommend it as a Priority. You chose to work it.</div>` : ''}
         ${(opp.id && opp.eventFingerprint) ? `
         <div class="sales-play-outreach-row" data-outreach-signal-id="${escapeHtml(opp.id)}" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
+          <span class="outreach-status" hidden>Reached out ✓</span>
           <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
           <div class="approach-note-wrap" hidden>
             <label class="approach-note-label">How did you approach this?</label>
