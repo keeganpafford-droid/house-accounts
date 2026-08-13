@@ -1340,6 +1340,16 @@
   .approach-note-wrap{
     margin-top:10px;
   }
+  .approach-note-readonly{
+    margin-top:10px;
+    padding:8px 10px;
+    border:1px solid #D8DEE9;
+    border-radius:8px;
+    background:#FFFFFF;
+    font-size:0.85rem;
+    color:#17375E;
+    white-space:pre-wrap;
+  }
   .approach-note-label{
     display:block;
     font-weight:700;
@@ -1365,6 +1375,10 @@
   }
   .approach-note-save{
     margin-top:8px;
+  }
+  .approach-note-cancel{
+    margin-top:8px;
+    margin-left:6px;
   }
   .relationship-badge{
     display:inline-flex;
@@ -10435,97 +10449,135 @@ window.closeSalesPlayModal = function(el){
   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 };
 
-// Signal feedback / organizational-learning foundation: "I reached out" +
-// the optional freeform approach note, both scoped to one outreach
-// attempt (the parent_event_id chain -- api/signal-events.js resolves the
-// rest). Single-flighted: the button disables itself for the duration of
-// its own request so a double-click before the network round-trip
-// completes cannot generate a second clientEventId for what was meant to
-// be one gesture. An explicit LATER click (after "Reached out ✓" is
-// showing) is a deliberate new attempt and gets a fresh id, exactly like
-// two legitimate outreach attempts should.
+// Signal feedback / organizational-learning foundation, live-QA final
+// correction: opening the outreach form must never itself be evidence
+// that an outreach occurred -- outreach_made is written ONLY when the rep
+// explicitly clicks "Save outreach," never merely by clicking "I reached
+// out"/"Log another outreach" (those two just open a blank draft form,
+// synchronously, with no network call at all). This row is always in
+// exactly one of three states, never a blend of two:
+//   INITIAL -- nothing saved yet: just the "I reached out" button.
+//   DRAFT   -- a form is open (first attempt or a later one): blank
+//     textarea, "Save outreach," "Cancel." Nothing is persisted while
+//     here; Cancel (or closing/navigating away) discards the draft with
+//     zero writes.
+//   SAVED   -- the latest outreach attempt is on record: "Reached out ✓,"
+//     its approach note as read-only text (if one exists), "Log another
+//     outreach." A saved outreach with no note is a valid, permanent
+//     state -- the note stays genuinely optional.
+// "Save outreach" is the one single-flighted action that writes anything:
+// one outreach_made, then (only if the trimmed textarea has text) one
+// approach_shared linked to that exact new outreach's id via
+// parent_event_id -- the same two-event shape already implemented,
+// simply triggered together by one explicit confirmation instead of two
+// separate clicks.
 function wireOutreachRow(rowEl){
   const logBtn = rowEl.querySelector('.outreach-log-btn');
   const statusEl = rowEl.querySelector('.outreach-status');
   const noteWrap = rowEl.querySelector('.approach-note-wrap');
   const noteInput = rowEl.querySelector('.approach-note-input');
   const noteSaveBtn = rowEl.querySelector('.approach-note-save');
+  const noteCancelBtn = rowEl.querySelector('.approach-note-cancel');
+  const noteReadonly = rowEl.querySelector('.approach-note-readonly');
   if(!logBtn) return;
-  let outreachEventId = null;
-  let inFlight = false;
+  let latestOutreachEventId = null;
+  let latestNoteText = null;
+  let saveInFlight = false;
 
-  // Founder-reported gap: the button used to relabel itself "Reached out
-  // ✓" and simply stay clickable -- a confirmation checkmark reads as
-  // "done," not as an affordance to click again, so the secondary "log a
-  // later attempt" action existed in the event architecture but was
-  // effectively invisible. The confirmation now lives in its own static
-  // statusEl; the button itself always shows the NEXT action available
-  // ("Log another outreach" once a first attempt is on record), so the
-  // secondary action is an explicit, visible control rather than a second
-  // click on something that looks finished.
-  function showReachedOut(eventId){
-    outreachEventId = eventId;
-    if(statusEl) statusEl.hidden = false;
+  function renderInitial(){
+    logBtn.hidden = false;
+    logBtn.textContent = 'I reached out';
+    logBtn.disabled = false;
+    if(statusEl) statusEl.hidden = true;
+    if(noteReadonly) noteReadonly.hidden = true;
+    if(noteWrap) noteWrap.hidden = true;
+  }
+
+  function renderSaved(){
+    logBtn.hidden = false;
     logBtn.textContent = 'Log another outreach';
     logBtn.classList.add('outreach-logged');
     logBtn.disabled = false;
-    logBtn.dataset.outreachLogAgain = '1';
-    if(noteWrap) noteWrap.hidden = false;
+    if(statusEl) statusEl.hidden = false;
+    if(noteReadonly){
+      if(latestNoteText){ noteReadonly.textContent = latestNoteText; noteReadonly.hidden = false; }
+      else noteReadonly.hidden = true;
+    }
+    if(noteWrap) noteWrap.hidden = true;
   }
-  rowEl.__houseAccountsShowReachedOut = showReachedOut;
 
-  async function markReachedOut(){
-    if(inFlight) return;
-    inFlight = true;
-    const isAnotherAttempt = logBtn.dataset.outreachLogAgain === '1';
-    if(isAnotherAttempt){
-      // A deliberate later attempt: reset visible state before logging the
-      // fresh gesture, so the UI never shows "Reached out" while the new
-      // attempt is still in flight.
-      logBtn.classList.remove('outreach-logged');
-      delete logBtn.dataset.outreachLogAgain;
-      if(noteInput) noteInput.value = '';
-    }
-    logBtn.disabled = true;
-    const originalLabel = logBtn.textContent;
-    logBtn.textContent = 'Logging…';
-    const result = await logSignalEvent('outreach_made', {
-      signalId: rowEl.dataset.outreachSignalId,
-      eventFingerprint: rowEl.dataset.outreachFingerprint,
-      accountName: rowEl.dataset.accountName,
-      clientEventId: generateClientEventId()
-    });
-    inFlight = false;
-    if(result && result.id){
-      showReachedOut(result.id);
-    }else{
-      logBtn.disabled = false;
-      logBtn.textContent = originalLabel;
-    }
+  // The draft form is the ONLY place a note can be typed, and it is
+  // always blank on open -- a prior attempt's note is history, never a
+  // starting point for a new one. The "I reached out"/"Log another
+  // outreach" button is hidden while drafting so only one action (Save
+  // outreach or Cancel) is ever on screen at a time.
+  function renderDraft(){
+    logBtn.hidden = true;
+    if(statusEl) statusEl.hidden = true;
+    if(noteReadonly) noteReadonly.hidden = true;
+    if(noteWrap) noteWrap.hidden = false;
+    if(noteInput) noteInput.value = '';
+    if(noteSaveBtn){ noteSaveBtn.disabled = false; noteSaveBtn.textContent = 'Save outreach'; }
+    if(noteCancelBtn) noteCancelBtn.disabled = false;
   }
-  logBtn.addEventListener('click', markReachedOut);
+
+  // hydrateOutreachRow() restores server-known SAVED state on reopen --
+  // exposed the same way the prior round's hooks were.
+  rowEl.__houseAccountsHydrateOutreach = function(eventId, noteText){
+    latestOutreachEventId = eventId;
+    latestNoteText = noteText || null;
+    renderSaved();
+  };
+
+  logBtn.addEventListener('click', renderDraft);
+
+  if(noteCancelBtn){
+    noteCancelBtn.addEventListener('click', () => {
+      if(latestOutreachEventId) renderSaved(); else renderInitial();
+    });
+  }
 
   if(noteInput && noteSaveBtn){
-    noteInput.addEventListener('input', () => { noteSaveBtn.disabled = !noteInput.value.trim(); });
     noteSaveBtn.addEventListener('click', async () => {
-      const note = noteInput.value.trim();
-      if(!note || !outreachEventId || noteSaveBtn.disabled) return;
+      if(saveInFlight) return;
+      saveInFlight = true;
       noteSaveBtn.disabled = true;
+      if(noteCancelBtn) noteCancelBtn.disabled = true;
       const originalLabel = noteSaveBtn.textContent;
       noteSaveBtn.textContent = 'Saving…';
-      const result = await logSignalEvent('approach_shared', {
-        parentEventId: outreachEventId,
-        note,
+      const note = noteInput.value.trim();
+      const outreachResult = await logSignalEvent('outreach_made', {
+        signalId: rowEl.dataset.outreachSignalId,
+        eventFingerprint: rowEl.dataset.outreachFingerprint,
+        accountName: rowEl.dataset.accountName,
         clientEventId: generateClientEventId()
       });
-      if(result && result.id){
-        noteSaveBtn.textContent = 'Saved ✓';
-      }else{
+      if(!outreachResult || !outreachResult.id){
+        saveInFlight = false;
+        noteSaveBtn.disabled = false;
+        if(noteCancelBtn) noteCancelBtn.disabled = false;
         noteSaveBtn.textContent = originalLabel;
-        noteSaveBtn.disabled = !noteInput.value.trim();
+        return;
       }
+      latestOutreachEventId = outreachResult.id;
+      latestNoteText = null;
+      // The note is genuinely optional -- an empty textarea means exactly
+      // one outreach_made and zero approach_shared, a fully valid saved
+      // state, not an error or an incomplete save.
+      if(note){
+        const noteResult = await logSignalEvent('approach_shared', {
+          parentEventId: outreachResult.id,
+          note,
+          clientEventId: generateClientEventId()
+        });
+        if(noteResult && noteResult.id) latestNoteText = note;
+      }
+      saveInFlight = false;
+      renderSaved();
     });
   }
+
+  renderInitial();
 }
 
 // Reflects this rep's prior outreach/approach-note state for THIS signal
@@ -10538,10 +10590,8 @@ async function hydrateOutreachRow(rowEl){
   const accountName = rowEl.dataset.accountName || '';
   const states = await fetchSignalEventStates([{eventFingerprint, accountName}]);
   const state = states[signalStateKey(eventFingerprint, accountName)];
-  if(state && state.outreachLogged && state.latestOutreachEventId && typeof rowEl.__houseAccountsShowReachedOut === 'function'){
-    rowEl.__houseAccountsShowReachedOut(state.latestOutreachEventId);
-    const noteInput = rowEl.querySelector('.approach-note-input');
-    if(noteInput && state.approachNote) noteInput.value = state.approachNote;
+  if(state && state.outreachLogged && state.latestOutreachEventId && typeof rowEl.__houseAccountsHydrateOutreach === 'function'){
+    rowEl.__houseAccountsHydrateOutreach(state.latestOutreachEventId, state.approachNote);
   }
 }
 
@@ -10671,13 +10721,15 @@ window.createSalesPlayPanel = function(opp, opts){
         ${(opp.id && opp.eventFingerprint) ? `
         <div class="sales-play-outreach-row" data-outreach-signal-id="${escapeHtml(opp.id)}" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
           <span class="outreach-status" hidden>Reached out ✓</span>
-          <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
+          <div class="approach-note-readonly" hidden></div>
           <div class="approach-note-wrap" hidden>
-            <label class="approach-note-label">How did you approach this?</label>
+            <label class="approach-note-label">How did you approach this outreach?</label>
             <div class="approach-note-helper">Optional — a sentence or two helps House Accounts learn what works for your team.</div>
             <textarea class="approach-note-input" maxlength="500" placeholder="Called the marketing director and referenced their new location. Pitched employee welcome kits instead of grand-opening merch. She asked me to send ideas."></textarea>
-            <button type="button" class="btn btn-ghost btn-mini approach-note-save" data-approach-save="1" disabled>Save note</button>
+            <button type="button" class="btn btn-ghost btn-mini approach-note-save" data-approach-save="1">Save outreach</button>
+            <button type="button" class="btn btn-ghost btn-mini approach-note-cancel" data-approach-cancel="1">Cancel</button>
           </div>
+          <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
         </div>` : ''}
         <div class="sales-play-output">
 
