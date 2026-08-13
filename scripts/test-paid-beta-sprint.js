@@ -2442,6 +2442,18 @@ function realFlagshipMergeCase(sandbox, account, investmentUrl, reopeningUrl){
   assert(!subtitleEl.textContent.includes('QA List.csv'), `required test 12: when accounts span multiple uploads, the subtitle no longer names just ONE of them by name -- avoids the exact mismatch reported (a stale upload name shown while the account/opportunity summary reflects a different, newer upload) (got: "${subtitleEl.textContent}")`);
   assert(/combined across 2 uploaded lists/.test(subtitleEl.textContent), `required test 12: the subtitle instead clearly states the accounts are combined across multiple uploaded lists, with an accurate count (got: "${subtitleEl.textContent}")`);
   assert(subtitleEl.textContent.includes('3'), `required test 12: the combined-accounts subtitle states the real total account count (3), not a stale/mismatched number (got: "${subtitleEl.textContent}")`);
+
+  // Founder QA correction (traced against a real org: 28 saved customer
+  // accounts here + 22 prospect accounts elsewhere = the 50 the org-wide
+  // capacity badge correctly reports): this panel counts only saved/
+  // uploaded customer accounts, a real but narrower subset of total
+  // monitored-account capacity, which also includes prospect accounts.
+  // Both numbers were already correct -- calling both "monitored
+  // accounts" was the bug. This panel now says "saved accounts", matching
+  // the dashboard's own "Saved Accounts" mini-card label, instead of
+  // colliding with the capacity badge's "accounts monitored" language.
+  assert(/3 saved accounts/.test(subtitleEl.textContent), `REQUIRED: the combined-accounts subtitle says "saved accounts", not "monitored accounts" -- it must not be read as the same quantity as the org-wide monitored-capacity badge (got: "${subtitleEl.textContent}")`);
+  assert(!/monitored account/i.test(subtitleEl.textContent), 'REQUIRED: the subtitle never uses the phrase "monitored account(s)" -- that language is reserved for the org-wide capacity count elsewhere on the dashboard');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

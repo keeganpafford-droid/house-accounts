@@ -273,6 +273,15 @@ function accountPayload(row){
   const metrics = row.metrics || {};
   return {
     name: row.account_name,
+    // Correction: the eligibility filter below (accountPayloads.filter)
+    // has always checked a.monitoringStatus, but this function never
+    // actually set it -- the real per-account pause flag api/
+    // monitoring-lists.js's pause-account action writes lives at
+    // raw_data.monitoring_status (snake_case), so the filter was a
+    // permanent no-op and an individually-paused account was still
+    // re-researched every week. Same field api/lib/entitlement.js's
+    // usageFor() now reads for capacity -- one pause definition, not two.
+    monitoringStatus: raw.monitoring_status || 'active',
     industry: row.industry || raw.industry || '',
     contactName: row.contact_name || raw.contactName || '',
     contactEmail: row.contact_email || raw.contactEmail || '',

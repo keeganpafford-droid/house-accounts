@@ -42,53 +42,91 @@ deploy.
       contact-form/feedback submissions — confirm they're addresses you
       actually monitor.
 
-## Manual beta billing process
+## Billing: Stripe Checkout (capacity bands)
 
-There is no billing provider (Stripe or otherwise) wired into this
-codebase. Plan state lives entirely on `ha_organizations` and is changed
-either by the organization owner through Settings, or manually by you
-directly against Supabase. Beta billing is a manual, out-of-band process
-layered on top of these real fields:
+As of the pricing/checkout sprint, House Accounts has a real self-serve
+paid path: `pricing.html`'s slider → `POST /api/create-checkout-session`
+→ Stripe-hosted Checkout → `POST /api/stripe-webhook` writes the result
+back onto `ha_organizations`. Pricing is per monitored-account capacity
+band only — see `pricing-bands.js` for the one canonical band list (same
+prices, same bands, used by the page, checkout, and the webhook). There
+are no feature tiers; every band gets the same product.
 
-**Relevant `ha_organizations` fields** (see `api/settings.js`):
-- `plan` — one of `free`, `solo`, `team`, `enterprise`. `solo` grants a
-  1-seat allowance, `team` a 25-seat allowance, `enterprise` unlimited
-  seats (`seat_limit: null`).
-- `subscription_status` — one of `inactive`, `trialing`, `active`, `paid`,
-  `manual`. `active`, `paid`, and `manual` are all treated as
-  "paid and unlimited" by `entitlement()`.
-- `trial_status` — `inactive` or `active`.
-- `trial_started_at`, `trial_end`, `trial_used` — the built-in 30-day
-  self-service trial. `trial_used` is a one-time flag; once a trial has
-  been consumed, `planPatch()` refuses to grant a second trial for that
-  organization ("Your 30-day trial has already been used.").
-- `seat_limit` — numeric or `null` (unlimited).
+**Required environment variables (Production):**
+- `STRIPE_SECRET_KEY` — the account's secret API key.
+- `STRIPE_WEBHOOK_SECRET` — the signing secret for the webhook endpoint
+  below.
+- `STRIPE_PRICE_ID_100`, `STRIPE_PRICE_ID_250`, `STRIPE_PRICE_ID_500`,
+  `STRIPE_PRICE_ID_750`, `STRIPE_PRICE_ID_1000`, `STRIPE_PRICE_ID_1500`,
+  `STRIPE_PRICE_ID_2500` — one recurring monthly Stripe Price ID per paid
+  band (see `pricing-bands.js` for the band→amount mapping this must
+  match). Free has no Price ID (no Stripe call at all); Enterprise is a
+  contact-sales state, also no Price ID.
 
-**To manually put a beta customer on a paid plan today:**
+**One-time manual Stripe dashboard setup:**
+1. Create one Stripe Product ("House Accounts").
+2. Create seven recurring **monthly** Prices under it, matching the
+   `pricing-bands.js` amounts exactly, and set each Price ID into its
+   `STRIPE_PRICE_ID_*` variable above.
+3. Add a webhook endpoint pointed at `https://<domain>/api/stripe-webhook`,
+   subscribed to `checkout.session.completed`,
+   `customer.subscription.updated`, and `customer.subscription.deleted`
+   (the only three events this codebase understands). Copy the generated
+   signing secret into `STRIPE_WEBHOOK_SECRET`.
+4. Do all of the above in **test mode** first and run a real test-mode
+   checkout before switching any of these variables to live-mode values.
+
+**What the webhook does and does not do:** it keeps
+`subscription_status`, `stripe_price_id`, and `account_capacity` in sync
+with what Stripe reports — nothing more. There is no automatic
+band-crossing upgrade, no proration, no grace period, and no
+dunning/retry handling. A canceled subscription (`customer.subscription.
+deleted`) simply flips `subscription_status` to `canceled`; the unified
+entitlement logic (`api/lib/entitlement.js`) then falls back to Free (or
+to an active Beta trial still in its window, if one applies) on its own —
+nothing separately resets `account_capacity` or `plan`.
+
+**Legacy manual billing still exists** for anything Stripe shouldn't
+handle (e.g. a hand-negotiated Enterprise deal). Plan state still lives on
+`ha_organizations` and can still be set directly:
+- `plan` — one of `free`, `solo`, `team`, `enterprise`, `paid`. `paid` is
+  what a real Stripe Checkout sets; `solo`/`team`/`enterprise` are legacy
+  values, still valid but no longer reachable through self-service.
+- `subscription_status` — `inactive`, `trialing`, `active`, `paid`,
+  `manual`, `canceled`, or a raw Stripe subscription status string written
+  by the webhook (e.g. `past_due`). `active`, `paid`, and `manual` are all
+  treated as "paid" by `entitlement()`.
+- `account_capacity` — numeric or `null` (unlimited). This is what
+  `entitlement()` actually enforces for a paid/manual org; set it directly
+  when manually granting access (e.g. `null` for a hand-negotiated
+  Enterprise deal, or a specific number to match what was agreed).
+- `seat_limit` — legacy column, no longer enforced anywhere. Every
+  organization has unlimited users/seats regardless of plan or capacity.
+
+**To manually put a beta customer on a paid plan without Stripe:**
 1. Have the customer sign up normally (creates their `ha_organizations`
    row with `plan: 'free'`).
-2. Collect payment out-of-band (invoice, ACH, whatever you've agreed with
-   the customer — there is no in-app payment flow to use instead).
-3. Update that organization's row directly (Supabase SQL editor or a
-   PATCH to `/api/settings` as an authenticated owner) to set:
-   - `plan` to `solo`, `team`, or `enterprise` per what they're paying for.
-   - `subscription_status` to `manual` — this is the status value that
-     exists specifically to represent "paid outside the app," and
-     `entitlement()` already treats it as fully paid/unlimited.
-   - `trial_status` to `inactive` and `trial_end` to `null`, so the UI
-     doesn't show trial messaging to a customer who is actually paid.
-4. Confirm via a real login as (or with) that customer that
-   `GET /api/settings` now reports `paidActive: true` and
-   `isLimitedPlan: false`.
+2. Collect payment out-of-band.
+3. Update that organization's row directly (Supabase SQL editor, or a
+   PATCH to `/api/settings` for a plan value — `/api/settings` only
+   accepts `free` self-service now, so a non-free manual grant must be a
+   direct Supabase edit) to set `plan` (`enterprise` or `paid`),
+   `subscription_status` to `manual`, and `account_capacity` to the
+   agreed number of monitored accounts (or `null` for unlimited).
+4. Confirm via a real login that `GET /api/settings` now reports
+   `paidActive: true` and `isLimitedPlan: false`.
 
-There is no automated renewal, dunning, or downgrade. Revisit each beta
-customer's `ha_organizations` row manually on whatever billing cadence you
-agreed with them (e.g., monthly) and update `subscription_status` by hand
-if they lapse.
+**No new 30-day trials are granted going forward** — Free (up to 10
+monitored accounts, no credit card) is the only no-payment entry point
+now. Existing Beta organizations already mid-trial keep their promised
+access until their existing `trial_end` (nothing was changed about
+already-active trials); once that trial ends, they fall back to Free
+unless they have a real paid/manual subscription by then.
 
 **Owner-only enforcement:** `api/settings.js` only allows a user whose
 `ha_users.app_role` is `owner` to call the `update-plan` self-service
-action; every attempt is written to the audit log (`auditLog()` calls in
+action or start Stripe Checkout (`api/create-checkout-session.js`); every
+`update-plan` attempt is written to the audit log (`auditLog()` calls in
 `api/settings.js`). Manual Supabase-side edits bypass this entirely, which
 is expected for beta operator use — just be aware it will not show up in
 that audit log.

@@ -3,6 +3,7 @@
 
 import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType, materiallyRepeats } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
+import { usageFor as sharedUsageFor } from './lib/entitlement.js';
 import { createHash } from 'crypto';
 
 // Phase 2A implementation-review item 5 — same instrumentation-privacy
@@ -279,40 +280,25 @@ async function authFetchUser(req){
 // regex to what lived here before), also used by api/settings.js and
 // api/research-batch.js's duplicate-company research check, instead of each
 // file hand-maintaining its own copy.
-async function orgUsers(orgId,userId){
-  if(orgId){
-    const rows = await supabase(`ha_users?organization_id=eq.${encodeURIComponent(orgId)}&select=id`, {method:'GET'}).catch(()=>[]);
-    return (Array.isArray(rows)?rows:[]).map(u=>u.id).filter(Boolean);
-  }
-  return [userId].filter(Boolean);
-}
 async function getOrganization(user){
   if(!user?.organization_id) return null;
   const rows = await supabase(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`, {method:'GET'}).catch(()=>[]);
   return Array.isArray(rows) ? rows[0] : null;
 }
 
-function daysRemaining(date){const t=new Date(date||0).getTime();if(!Number.isFinite(t)||t<=0)return null;return Math.max(0,Math.ceil((t-Date.now())/86400000))}
-function entitlement(org={}){const plan=clean(org.plan||'free').toLowerCase();const sub=clean(org.subscription_status||'').toLowerCase();const trial=clean(org.trial_status||'').toLowerCase();const trialDays=daysRemaining(org.trial_end);const trialActive=(trial==='active'||sub==='trialing')&&trialDays!==null&&trialDays>0;const paidActive=['active','paid','manual'].includes(sub);const unlimited=(plan!=='free')&&(trialActive||paidActive||plan==='enterprise');const expired=(sub==='trialing'||trial==='active')&&trialDays===0;return{plan,isFreePlan:!unlimited,companyLimit:unlimited?Infinity:10,trialDaysRemaining:trialDays,trialExpired:expired,trialUsed:!!org.trial_used,trialStartedAt:org.trial_started_at||''}}
+// Uses the one authoritative entitlement/count implementation
+// (api/lib/entitlement.js) instead of a locally hand-rolled, narrower
+// count -- this file's gate previously only looked at ha_accounts
+// (customer accounts), silently ignoring prospect/legacy accounts that
+// the dashboard's own usage display already counted toward the same
+// cap. Both now agree.
 async function getUsageContext(user){
   const org = await getOrganization(user);
-  const ent = entitlement(org || {});
-  const ids = await orgUsers(user.organization_id, user.id);
-  const inFilter = `in.(${ids.map(encodeURIComponent).join(',')})`;
-  let customer=[];
-  try{
-    const uploads = await supabase(`ha_uploads?user_id=${inFilter}&select=id,stage`, {method:'GET'});
-    const activeUploadIds = (Array.isArray(uploads)?uploads:[]).filter(u=>!['paused','archived'].includes(clean(u.stage).toLowerCase())).map(u=>u.id).filter(Boolean);
-    if(activeUploadIds.length){
-      const uploadFilter = `in.(${activeUploadIds.map(encodeURIComponent).join(',')})`;
-      customer = await supabase(`ha_accounts?upload_id=${uploadFilter}&select=account_name`, {method:'GET'});
-    }
-  }catch{}
-  const monitored = new Set([...(Array.isArray(customer)?customer:[]).map(r=>normalizeCompanyName(r.account_name))].filter(Boolean));
-  return {org, plan:ent.plan, isFreePlan: ent.isFreePlan, companyLimit: ent.companyLimit, monitored};
+  const usage = await sharedUsageFor(supabase, user, org);
+  return {org, plan: usage.plan, companyLimit: usage.companyLimit, monitored: new Set(usage.monitoredCompanyNames || [])};
 }
 function applyFreeLimitToAccounts(accounts, usage){
-  if(!usage?.isFreePlan) return {accounts, lockedCount:0, totalMonitoredAfter:null};
+  if(usage?.companyLimit == null) return {accounts, lockedCount:0, totalMonitoredAfter:null};
   const monitored = new Set(usage.monitored || []);
   let unlocked = 0, lockedCount = 0;
   const limited = accounts.map(a => {

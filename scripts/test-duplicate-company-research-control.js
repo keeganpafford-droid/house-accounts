@@ -272,7 +272,17 @@ async function run(){
   const settingsSrc = readFileSync(new URL('../api/settings.js', import.meta.url), 'utf8');
   const researchBatchSrc = readFileSync(new URL('../api/research-batch.js', import.meta.url), 'utf8');
   assert(/import\s*\{\s*normalizeCompanyName\s*\}\s*from\s*'\.\/company-identity\.js'/.test(saveUploadSrc) && !/function\s+normalizeCompanyName\s*\(/.test(saveUploadSrc), '16) api/save-upload.js still imports the shared normalizeCompanyName(), no local copy -- free-plan company counting is unaffected by this round');
-  assert(/import\s*\{\s*normalizeCompanyName\s*\}\s*from\s*'\.\/company-identity\.js'/.test(settingsSrc), '16) api/settings.js still imports the shared normalizeCompanyName() -- organization usage/account-limit enforcement is unaffected by this round');
+  // Pricing/billing sprint: api/settings.js's own account-limit/count logic
+  // was consolidated into api/lib/entitlement.js (the one authoritative
+  // implementation, also used by save-upload.js and prospect-one-off.js),
+  // so settings.js itself no longer imports normalizeCompanyName directly
+  // -- it delegates to entitlement.js, which does. Confirm the dependency
+  // chain still traces to the same shared implementation, with no local
+  // reimplementation anywhere.
+  const entitlementSrc = readFileSync(new URL('../api/lib/entitlement.js', import.meta.url), 'utf8');
+  assert(!/function\s+normalizeCompanyName\s*\(/.test(settingsSrc), '16) api/settings.js has no local reimplementation of normalizeCompanyName()');
+  assert(/import\s*\{\s*entitlement\s*,\s*usageFor(?:\s+as\s+\w+)?\s*\}\s*from\s*'\.\/lib\/entitlement\.js'/.test(settingsSrc), '16) api/settings.js delegates organization usage/account-limit enforcement to the shared api/lib/entitlement.js module');
+  assert(/import\s*\{\s*normalizeCompanyName\s*\}\s*from\s*'\.\.\/company-identity\.js'/.test(entitlementSrc) && !/function\s+normalizeCompanyName\s*\(/.test(entitlementSrc), '16) api/lib/entitlement.js (the one authoritative count/entitlement implementation) imports the shared normalizeCompanyName(), no local copy');
   assert(/import\s*\{\s*normalizeCompanyName\s*\}\s*from\s*'\.\/company-identity\.js'/.test(researchBatchSrc), '16) api/research-batch.js still imports the shared normalizeCompanyName() for the duplicate-company check itself');
   assert(!/fuzzy|levenshtein|similarity|soundex/i.test(researchBatchSrc.slice(researchBatchSrc.indexOf('findActiveDuplicateCompanyCollisions'), researchBatchSrc.indexOf('findActiveDuplicateCompanyCollisions') + 3000)), '16) no fuzzy/similarity matching was introduced -- exact normalized-key comparison only');
 }

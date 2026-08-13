@@ -86,7 +86,11 @@ async function run(){
     assert(auditLines.some(l => l.includes('update-plan.rejected') && l.includes('not-owner')), 'a rejected non-owner attempt is written to the audit log');
   }
 
-  // 2. Owner requests plan:'team' while trial not yet used -> succeeds, matches existing trial behavior.
+  // 2. Pricing/billing sprint (2026-08-13): owner requests plan:'team' ->
+  // rejected. No new 30-day paid-capacity trials are granted through this
+  // self-service endpoint anymore -- paid capacity is purchased through
+  // Stripe Checkout (api/create-checkout-session.js) instead, so 'team'
+  // (and 'solo') were removed from CLIENT_REQUESTABLE_PLANS.
   {
     orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
     global.fetch = mockFetch(OWNER);
@@ -94,9 +98,9 @@ async function run(){
     const req = fakeReq({ body: { action: 'update-plan', plan: 'team' } });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 200, 'owner requesting team plan (trial not yet used) succeeds');
-    assert(orgState.plan === 'team' && orgState.subscription_status === 'trialing', 'org state reflects the team trial after a successful owner-initiated change');
-    assert(auditLines.some(l => l.includes('update-plan.applied') && l.includes('"requestedPlan":"team"')), 'a successful owner-initiated change is written to the audit log with the requested plan');
+    assert(res.statusCode === 400, 'owner requesting team plan is rejected -- no new self-service trials are granted');
+    assert(orgState.plan === 'free', 'the rejected team request leaves the org on free, unchanged');
+    assert(auditLines.some(l => l.includes('update-plan.rejected') && l.includes('plan-not-allowlisted') && l.includes('"requestedPlan":"team"')), 'the rejected attempt is written to the audit log');
   }
 
   // 3. Owner requests plan:'enterprise' -> 400, rejected before planPatch ever runs, org unchanged.
@@ -143,68 +147,64 @@ async function run(){
   }
 
   // ---------------------------------------------------------------------
-  // Phase 2A implementation-review item 4: trial-reuse entitlement
-  // regression cases. Each state transition below runs through the REAL
-  // handler sequentially against the shared orgState mock, exactly as a
-  // single organization would experience it over time.
+  // Pricing/billing sprint (2026-08-13): the self-service update-plan
+  // action no longer grants any new trial -- 'solo' and 'team' are simply
+  // rejected, every time, regardless of the org's trial history. These
+  // cases replace the old free<->team/solo trial-lifecycle regressions
+  // (which tested trial-granting behavior that has been intentionally
+  // retired) with regressions proving that retirement is complete and
+  // doesn't regress by accident.
   // ---------------------------------------------------------------------
 
-  // 8. free -> team -> free -> team: switching back to free and requesting
-  // team again must NOT grant a second fresh trial.
+  // 8. A never-used-trial org requesting 'team' is rejected, not granted a
+  // fresh trial -- the prior behavior this replaces.
   {
     orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
     global.fetch = mockFetch(OWNER);
-    let res = fakeRes();
-    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
-    assert(res.statusCode === 200 && orgState.trial_used === true, 'free -> team: first request starts a trial and marks trial_used');
-    res = fakeRes();
-    await handler(fakeReq({ body: { action: 'update-plan', plan: 'free' } }), res);
-    assert(res.statusCode === 200 && orgState.plan === 'free', 'team -> free: downgrade to free succeeds');
-    assert(orgState.trial_used === true, 'team -> free: trial_used is NOT reset by downgrading to free (PATCH only touches the fields the free branch sets)');
-    res = fakeRes();
-    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
-    assert(res.statusCode === 403, 'free -> team a second time is REJECTED (403) -- cycling through free does not grant a second trial');
-    assert(orgState.plan === 'free', 'the rejected second team request leaves the org on free, not silently upgraded');
-  }
-
-  // 9. solo -> team: switching between paid tiers WHILE a trial is still
-  // active is allowed and continues the same trial clock (not a new one).
-  {
-    orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
-    global.fetch = mockFetch(OWNER);
-    await handler(fakeReq({ body: { action: 'update-plan', plan: 'solo' } }), fakeRes());
-    const trialEndAfterSolo = orgState.trial_end;
     const res = fakeRes();
     await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
-    assert(res.statusCode === 200 && orgState.plan === 'team', 'solo -> team while the trial is still active succeeds');
-    assert(orgState.trial_end === trialEndAfterSolo, 'switching solo -> team during an active trial continues the SAME trial_end, it does not restart a fresh 30-day clock');
+    assert(res.statusCode === 400 && orgState.trial_used === false, 'a never-used-trial org requesting team is rejected, not granted a fresh trial');
+    assert(orgState.plan === 'free', 'the org remains on free after the rejected request');
   }
 
-  // 10. team -> solo: same as above, reversed.
+  // 9. Free downgrade remains available and is a genuine no-op/idempotent
+  // action for an org already on free.
   {
     orgState = { id: ORG_ID, plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
     global.fetch = mockFetch(OWNER);
-    await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), fakeRes());
-    const trialEndAfterTeam = orgState.trial_end;
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-plan', plan: 'free' } }), res);
+    assert(res.statusCode === 200 && orgState.plan === 'free', 'requesting free while already on free succeeds (self-service downgrade path remains available)');
+  }
+
+  // 10. An org already mid-trial (e.g. an existing Beta organization from
+  // before this sprint) requesting 'solo' is still rejected -- switching
+  // between paid tiers via this endpoint is retired entirely, not just
+  // new-trial-granting. Existing trial access itself is untouched by this
+  // endpoint (see api/lib/entitlement.js's dynamic trial check).
+  {
+    orgState = { id: ORG_ID, plan: 'team', seat_limit: 25, subscription_status: 'trialing', trial_status: 'active', trial_used: true, trial_end: new Date(Date.now() + 20 * 86400000).toISOString() };
+    global.fetch = mockFetch(OWNER);
     const res = fakeRes();
     await handler(fakeReq({ body: { action: 'update-plan', plan: 'solo' } }), res);
-    assert(res.statusCode === 200 && orgState.plan === 'solo', 'team -> solo while the trial is still active succeeds');
-    assert(orgState.trial_end === trialEndAfterTeam, 'switching team -> solo during an active trial continues the SAME trial_end');
+    assert(res.statusCode === 400, 'an org mid-trial requesting a tier switch to solo is rejected');
+    assert(orgState.plan === 'team' && orgState.trial_end, 'the org\'s existing mid-trial state (plan, trial_end) is untouched by the rejected request');
   }
 
-  // 11. Expired trial -> team: an org whose trial has already ended AND was
-  // already used must not be silently re-granted a new trial.
+  // 11. Expired trial -> team: still rejected, same as always, now simply
+  // for the allowlist reason rather than the trial-already-used reason.
   {
     orgState = { id: ORG_ID, plan: 'solo', seat_limit: 1, subscription_status: 'trialing', trial_status: 'active', trial_used: true, trial_end: new Date(Date.now() - 5 * 86400000).toISOString() };
     global.fetch = mockFetch(OWNER);
     const res = fakeRes();
     await handler(fakeReq({ body: { action: 'update-plan', plan: 'team' } }), res);
-    assert(res.statusCode === 403, 'a request to switch to team after the org\'s trial has already expired (and was already used) is rejected (403), not silently renewed');
+    assert(res.statusCode === 400, 'a request to switch to team after the org\'s trial has already expired is rejected');
     assert(orgState.plan === 'solo', 'the org plan is unchanged by the rejected request');
   }
 
   // 7. Pure allowlist/config sanity.
-  assert(CLIENT_REQUESTABLE_PLANS.includes('free') && CLIENT_REQUESTABLE_PLANS.includes('solo') && CLIENT_REQUESTABLE_PLANS.includes('team'), 'the allowlist includes exactly the three legitimate self-service plans');
+  assert(CLIENT_REQUESTABLE_PLANS.length === 1 && CLIENT_REQUESTABLE_PLANS.includes('free'), 'the allowlist includes exactly one legitimate self-service plan: free (solo/team self-service trials are retired; paid capacity is purchased through Stripe Checkout)');
+  assert(!CLIENT_REQUESTABLE_PLANS.includes('solo') && !CLIENT_REQUESTABLE_PLANS.includes('team'), 'the allowlist no longer includes solo or team');
   assert(!CLIENT_REQUESTABLE_PLANS.includes('enterprise') && !CLIENT_REQUESTABLE_PLANS.includes('manual'), 'the allowlist excludes enterprise and manual');
   assert(planConfig('enterprise').plan === 'enterprise', 'planConfig() itself is left intact for a future internal/admin-only caller -- the allowlist, not planConfig(), is the gate');
 

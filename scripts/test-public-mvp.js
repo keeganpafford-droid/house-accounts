@@ -15,14 +15,24 @@ assert(signup.includes('/signup-form.js'),'Canonical signup component is not loa
 
 assert(signup.includes('Free Forever • No credit card required'),'Signup is missing the Free Forever badge');
 assert(signup.includes('Monitor up to 10 customer accounts for free—forever.'),'Signup is missing permanent free-tier copy');
-assert(signup.includes('Every paid plan starts with a 30-day free trial.'),'Signup is missing paid-trial clarification');
+// 2026-08-13 pricing decision: no new 30-day paid-capacity trials are
+// granted going forward -- Free is the only no-payment entry point, and
+// paid capacity is purchased through Stripe Checkout on the pricing page
+// instead. The old trial-clarification line is gone; signup now points
+// to pricing instead of promising a trial.
+assert(!signup.includes('Every paid plan starts with a 30-day free trial.'),'Signup still promises a 30-day free trial, which is no longer offered');
+assert(signup.includes('See pricing') && signup.includes('href="/pricing.html"'),'Signup is missing a link to pricing for customers who need more than the free tier');
 assert(home.includes('Free Forever • No credit card required'),'Homepage is missing the Free Forever badge');
 assert(home.includes('Monitor up to 10 customer accounts for free—forever.'),'Homepage is missing permanent free-tier copy');
 const pricing=fs.readFileSync('pricing.html','utf8');
 const signupScript=fs.readFileSync('signup-form.js','utf8');
-assert((pricing.match(/Start 30-Day Free Trial/g)||[]).length===2,'Solo and Team must use the same paid-trial CTA');
-assert(pricing.includes('href="/signup?plan=solo">Start 30-Day Free Trial'),'Solo paid CTA is incorrect');
-assert(pricing.includes('href="/signup?plan=team">Start 30-Day Free Trial'),'Team paid CTA is incorrect');
+// Pricing/billing sprint: the Solo/Team plan cards and their "Start
+// 30-Day Free Trial" CTAs were replaced by a single account-capacity
+// slider + Stripe Checkout. No plan-name query params, no trial CTAs.
+assert(!/Start 30-Day Free Trial/.test(pricing),'pricing.html still advertises the retired 30-day free trial CTA');
+assert(!pricing.includes('href="/signup?plan=solo"') && !pricing.includes('href="/signup?plan=team"'),'pricing.html still links to the retired plan-specific signup routes');
+assert(pricing.includes('id="accountCountRange"') && pricing.includes('id="accountCountInput"'),'pricing.html is missing the account-capacity slider/numeric input');
+assert(pricing.includes("/api/create-checkout-session"),'pricing.html does not wire up Stripe Checkout');
 assert(pricing.includes('href="/signup">Start Free'),'Free-tier CTA must use the permanent free signup route');
 assert(header.includes('href="/signup">Start Free'),'Header Start Free must use the permanent free signup route');
 assert(signupScript.includes("plan:requestedPlan"),'Canonical signup does not preserve selected free or paid plan');
