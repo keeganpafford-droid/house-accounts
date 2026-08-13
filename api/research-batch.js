@@ -14,6 +14,8 @@ import {
   dedupeOpportunities,
   resolveEventType,
   displayLabelForEventType,
+  canonicalTemplateFamily,
+  sellerCopyForTemplateFamily,
   extractEventDate,
   findPublicationContextDate,
   calendarDaysBetween,
@@ -156,7 +158,13 @@ function clean(text = '') {
 // a parent-domain source still has to name the specific account by name to
 // benefit at all -- but this does not fully close that gap. Flagged for the
 // founder rather than solved with an entity-specific exclusion list.
-const FREE_EMAIL_DOMAINS_RE = /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/;
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened to also exclude IANA-reserved documentation/placeholder domains
+// (RFC 2606: example.com/.net/.org/.edu) -- see api/research-account.js's
+// domainFromEmailDomain() for the full rationale (mirrored here, not
+// shared; scripts/test-global-business-trigger-intelligence.js proves both
+// endpoints and dashboard/index.html's extractEmailDomain() agree).
+const FREE_EMAIL_DOMAINS_RE = /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/;
 function domainFromContactEmail(email = '') {
   const match = String(email || '').trim().toLowerCase().match(/@([^\s>]+)$/);
   if (!match) return '';
@@ -1154,13 +1162,22 @@ function contextToOpener(context = '', type = '', ground = {}) {
   const c = clean(context);
   const accountName = clean(ground.accountName || '');
   const who = accountName ? `${accountName} is` : "you're";
-  if (/specific growth driver is not yet clear/i.test(c) || /hiring/i.test(type)) {
+  // Seller-copy classification-drift correction: same rule as
+  // canonicalTemplateFamily()'s own header comment -- this is the LAST-
+  // resort fallback (only reached once salesReadyOpener() has already found
+  // no canonical family support), so a specific claim here is gated the
+  // same way, never re-derived from free text alone. The prior funding/
+  // capital/investment/growth branch had no canonical-family counterpart
+  // anywhere in this template family and is dropped rather than gated --
+  // it falls to the honest, topic-neutral honestLimitedOpener() below
+  // instead of asserting an ungated "recent growth news" claim.
+  const family = canonicalTemplateFamily(type);
+  if (family === 'hiring' || /specific growth driver is not yet clear/i.test(c)) {
     return `I noticed ${who} growing the team recently. Is anything changing internally that your team is planning around?`;
   }
   if (!c) return honestLimitedOpener(accountName);
-  if (/event|conference|expo|trade show/i.test(`${c} ${type}`)) return `Saw ${accountName || 'the'} event activity and had a quick question — who handles branded materials or attendee follow-up?`;
-  if (/funding|capital|investment|growth/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} recent growth news and had a quick question — has that changed any hiring, onboarding, or brand initiatives?`;
-  if (/facility|location|distribution center|production capacity/i.test(c)) return `Saw ${accountName ? `${accountName}'s` : 'the'} expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?`;
+  if (family === 'events') return `Saw ${accountName || 'the'} event activity and had a quick question — who handles branded materials or attendee follow-up?`;
+  if (family === 'facility') return `Saw ${accountName ? `${accountName}'s` : 'the'} expansion activity and had a quick question — who supports team onboarding, apparel, or site launch needs?`;
   return honestLimitedOpener(accountName);
 }
 
@@ -1171,6 +1188,21 @@ function buildConcreteTrigger(raw = {}, type = '', accountName = '') {
   if (text) return compact(text, 120);
   return `${accountName || 'Company'} ${type || 'Business Activity'}`;
 }
+
+// Seller-copy classification-drift correction: the ONE place free text may
+// still influence WHICH specific seller-facing claim (facility expansion,
+// hiring, award, launch, etc.) a template selects is gated out here.
+// salesReadyWhy()/salesReadyOpener()/contextToOpener()/
+// promoCategoriesForMoment()/inferRecommendedBuyingTeam() below select
+// their SPECIFIC bucket ONLY via canonicalTemplateFamily() (now shared,
+// imported from signal-intelligence.js -- api/research-account.js's own
+// opportunityForSignal()/detectDepartment()/contactForSignal() consume the
+// exact same function, so neither endpoint maintains an independent
+// event-family classifier; see that function's own header comment for the
+// full production root-cause writeup). Free text may still feed a
+// topic-neutral generic fallback (contextToPromoWhy(), honestLimitedOpener())
+// -- it must never manufacture a SPECIFIC claim the canonical
+// classification does not itself support.
 
 function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
   const explicit = compact(raw.buying_moment || raw.buyingMoment || raw.opportunityCategory || '', 90);
@@ -1188,14 +1220,14 @@ function inferBuyingMoment(raw = {}, type = '', trigger = '', context = '') {
 }
 
 function promoCategoriesForMoment(moment = '', type = '', context = '') {
-  const t = clean(`${moment} ${type} ${context}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer/.test(t)) return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
-  if (/facility|location|plant|warehouse|operations|expansion|ribbon/.test(t)) return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
-  if (/trade show|event|conference|expo|booth|summit|webinar|open house/.test(t)) return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
-  if (/hiring|recruit|talent|onboarding|employee/.test(t)) return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
-  if (/product launch|launch|rebrand/.test(t)) return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
-  if (/contract|partnership|customer win|sales/.test(t)) return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return ['Event Giveaways','Volunteer Apparel','Banners','Community Gifts'];
+  if (family === 'facility') return ['Employee Apparel','Onboarding Kits','Safety Items','Opening-Day Gifts'];
+  if (family === 'events') return ['Event Kits','Booth Giveaways','Branded Apparel','Follow-Up Gifts'];
+  if (family === 'hiring') return ['Onboarding Items','Recruiting Materials','Employee Apparel','Recognition Gifts'];
+  if (family === 'launch') return ['Launch Kits','Customer Gifts','Event Giveaways','Branded Apparel'];
+  if (family === 'award') return ['Recognition Gifts','Awards','Employee Apparel','Celebration Kits'];
+  if (family === 'partnership') return ['Customer Appreciation','Sales Kits','Executive Gifts','Event Giveaways'];
   return ['Employee Apparel','Event Kits','Customer Appreciation','Recognition Gifts'];
 }
 
@@ -1220,15 +1252,15 @@ function salesReadyWhy(trigger = '', context = '', moment = '', type = '', groun
   if (ground.relatedPurchase?.confidence === 'confident' && ground.relatedPurchase.purchase?.category) {
     return `We supplied ${clean(ground.relatedPurchase.purchase.category)} for this -- worth asking how it went and finding out what's next.`;
   }
-  const t = clean(`${trigger} ${context} ${moment} ${type}`).toLowerCase();
   const suffix = groundedWhySuffix(ground);
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.${suffix}`;
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.${suffix}`;
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.${suffix}`;
-  if (/product launch|launch|rollout|unveil/.test(t)) return `Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.${suffix}`;
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.${suffix}`;
-  if (/contract|partnership|customer win/.test(t)) return `Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.${suffix}`;
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return `Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.${suffix}`;
+  if (family === 'facility') return `Facility launches usually create needs around employee apparel, onboarding materials, safety items, local PR giveaways, and opening-day gifts.${suffix}`;
+  if (family === 'events') return `Events usually require booth giveaways, attendee gifts, team apparel, signage, and follow-up items that help the sales or marketing team stay memorable.${suffix}`;
+  if (family === 'hiring') return `Hiring and onboarding create practical needs around recruiting materials, new-hire kits, employee apparel, and internal engagement.${suffix}`;
+  if (family === 'launch') return `Launches often need sales samples, customer gifts, launch kits, event materials, and branded touchpoints for internal and external audiences.${suffix}`;
+  if (family === 'award') return `Recognition moments create a natural reason to discuss employee gifts, awards, celebration kits, safety incentives, or customer-facing thank-you items.${suffix}`;
+  if (family === 'partnership') return `Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.${suffix}`;
   return contextToPromoWhy(context, type, ground);
 }
 
@@ -1295,35 +1327,33 @@ function salesReadyOpener(trigger = '', context = '', moment = '', type = '', gr
   const dept = clean((ground.recommendedBuyingTeam || [])[0] || '');
   const deptAsk = dept ? ` Is ${dept} the right team to ask about that?` : '';
   const historicalNote = ground.historicalFact ? ` Since ${ground.historicalFact}, this seems worth a quick note.` : '';
-  const t = clean(`${specific} ${context} ${moment} ${type}`).toLowerCase();
-  if (/community|sponsor|festival|fundraiser|philanthropy|volunteer|csr/.test(t)) return `${lead} Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts.${historicalNote} Want me to send over a few ideas that could fit?${deptAsk}`;
-  if (/facility|location|plant|warehouse|ribbon|expansion/.test(t)) return `${lead} For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts.${historicalNote} I had a few practical ideas around apparel and launch kits — worth sending over?${deptAsk}`;
-  if (/trade show|conference|expo|booth|summit|open house|customer event|webinar/.test(t)) return `${lead} Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items.${historicalNote} Want me to send over a few ideas?${deptAsk}`;
-  if (/hiring|recruit|talent|onboarding|employee experience/.test(t)) return `${lead} When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely.${historicalNote}${deptAsk || ' Is there someone I should ask about that?'}`;
-  if (/product launch|launch|rollout|unveil/.test(t)) return `${lead} Launches usually need internal hype, sales support, and customer-facing branded items.${historicalNote} I had a few simple launch-kit ideas — worth sending over?${deptAsk}`;
-  if (/award|recognition|anniversary|milestone|safety/.test(t)) return `${lead} Moments like that are a good chance to recognize employees or thank customers.${historicalNote} Would a few branded celebration or recognition ideas be useful?${deptAsk}`;
-  if (/contract|partnership|customer win/.test(t)) return `${lead} Wins like that often create internal and customer-facing communication needs.${historicalNote} I had a few ideas around team apparel and thank-you kits — worth sending over?${deptAsk}`;
+  const family = canonicalTemplateFamily(type);
+  if (family === 'community') return `${lead} Community events usually need volunteer apparel, banners, giveaways, and thank-you gifts.${historicalNote} Want me to send over a few ideas that could fit?${deptAsk}`;
+  if (family === 'facility') return `${lead} For site launches, teams usually balance employee onboarding, local PR, safety gear, and opening-day gifts.${historicalNote} I had a few practical ideas around apparel and launch kits — worth sending over?${deptAsk}`;
+  if (family === 'events') return `${lead} Events like that usually need booth giveaways, team apparel, attendee gifts, and follow-up items.${historicalNote} Want me to send over a few ideas?${deptAsk}`;
+  if (family === 'hiring') return `${lead} When teams are growing, onboarding kits, recruiting materials, and employee apparel usually become timely.${historicalNote}${deptAsk || ' Is there someone I should ask about that?'}`;
+  if (family === 'launch') return `${lead} Launches usually need internal hype, sales support, and customer-facing branded items.${historicalNote} I had a few simple launch-kit ideas — worth sending over?${deptAsk}`;
+  if (family === 'award') return `${lead} Moments like that are a good chance to recognize employees or thank customers.${historicalNote} Would a few branded celebration or recognition ideas be useful?${deptAsk}`;
+  if (family === 'partnership') return `${lead} Wins like that often create internal and customer-facing communication needs.${historicalNote} I had a few ideas around team apparel and thank-you kits — worth sending over?${deptAsk}`;
   return contextToOpener(context, type, ground);
 }
 
 
 function inferRecommendedBuyingTeam(type = '', context = '', summary = '', raw = {}) {
   const explicit = safeArray(raw.recommendedBuyingTeam || raw.buyingTeam || raw.likelyBuyingTeam || raw.likelyBuyers, 4);
-  const text = clean(`${type} ${context} ${summary} ${explicit.join(' ')}`).toLowerCase();
+  const family = canonicalTemplateFamily(type);
   let team = [];
-  if (/hiring|recruit|talent|onboarding|employee|people|best places|workforce|headcount/.test(text)) {
+  if (family === 'hiring') {
     team = ['HR / People', 'Talent Acquisition'];
-  } else if (/trade show|conference|expo|event|summit|booth|sponsor|launch|rebrand|brand awareness|community|csr|charity|fundraiser/.test(text)) {
-    team = ['Marketing', /community|csr|charity|fundraiser|sponsor/.test(text) ? 'Community Relations' : 'Events'];
-  } else if (/product launch|new product|rollout|new service|unveil/.test(text)) {
+  } else if (family === 'events' || family === 'community') {
+    team = ['Marketing', family === 'community' ? 'Community Relations' : 'Events'];
+  } else if (family === 'launch') {
     team = ['Marketing', 'Product Marketing'];
-  } else if (/facility|warehouse|plant|manufacturing|production|capacity|second shift|safety|distribution center|operations/.test(text)) {
+  } else if (family === 'facility') {
     team = ['Operations', 'HR / People'];
-  } else if (/funding|investment|capital|acquisition|merger|integration|leadership|new ceo|president|vp/.test(text)) {
+  } else if (family === 'award') {
     team = ['Marketing', 'HR / People'];
-  } else if (/award|recognition|milestone|anniversary/.test(text)) {
-    team = ['Marketing', 'HR / People'];
-  } else if (/contract|customer win|partnership|major deal/.test(text)) {
+  } else if (family === 'partnership') {
     team = ['Marketing', 'Sales'];
   }
   for (const item of explicit) {
@@ -1510,12 +1540,19 @@ function isWeakOldAward(raw = {}, text = '') {
   return fresh < 35 && !/actively promoting|celebrat|anniversary|milestone|event|campaign|press release/.test(t);
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round
+// (silent signal-loss diagnostics): now returns the specific rule name that
+// fired (a truthy string) or '' (falsy, unchanged call-site behavior) --
+// existing `if (... && prospectKillRule(...))` callers are unaffected since
+// both a boolean `true` and a non-empty string are truthy. This is what lets
+// makeSignal() below stamp a concrete, loggable reason instead of a bare
+// null, without adding a return-shape/schema change to makeSignal() itself.
 function prospectKillRule(raw = {}, type = '', summary = '', businessContext = '') {
   const text = `${type} ${raw.signalType || ''} ${raw.signalTitle || ''} ${raw.title || ''} ${summary} ${businessContext} ${raw.whyItMattersForPromo || ''} ${raw.sourceName || ''} ${raw.sourceUrl || ''}`;
-  if (hasNegativeOrIrrelevantContext(text)) return true;
-  if (isGenericSustainabilityOnly(text)) return true;
-  if (isWeakOldAward(raw, text)) return true;
-  return false;
+  if (hasNegativeOrIrrelevantContext(text)) return 'negative-or-irrelevant-context';
+  if (isGenericSustainabilityOnly(text)) return 'generic-sustainability-only';
+  if (isWeakOldAward(raw, text)) return 'weak-old-award';
+  return '';
 }
 
 function abdScores(raw = {}, type = '', summary = '', businessContext = '') {
@@ -1823,11 +1860,19 @@ function computeActionability({ eventCategory = 'ongoing', eventDate = null, dat
         }
       }
     }
-    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Date unavailable' };
+    // Undated Business Signal actionability correction: "Timing unclear" --
+    // no date could be resolved at all -- is a different, less alarming
+    // claim than "No longer current" (a real date IS known and it's simply
+    // past the recency window, the 'stale' branch just above). Renamed so
+    // this label never reads as a stale/historical claim it isn't; Priority
+    // eligibility itself (isPriorityEligible: false) is unchanged -- a
+    // freshly-discovered undated signal still never wins a Priority slot on
+    // its own.
+    return { status: 'unknown-date', tense: 'unknown', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: false, label: 'Timing unclear' };
   }
   const parsedPub = parseTrustworthyPublicationDate(publicationDate);
   if (!parsedPub) {
-    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Date unavailable' };
+    return { status: 'ongoing-undated', tense: 'ongoing', isPriorityEligible: false, excludeFromPriorities: true, usesPublicationDate: true, label: 'Timing unclear' };
   }
   const ageDays = calendarDaysBetween(now, parsedPub);
   if (ageDays <= ONGOING_RECENCY_CEILING_DAYS) {
@@ -1960,7 +2005,7 @@ function classifyLegacySignalActionability(payload = {}) {
     }
   }
   const actionabilityStatus = computeActionability({ eventCategory, eventDate, dateConfidence, publicationDate });
-  return {
+  const result = {
     eventCategory,
     actionabilityStatus,
     eventDate: eventDate || '',
@@ -1976,6 +2021,105 @@ function classifyLegacySignalActionability(payload = {}) {
     canonicalEventType,
     opportunityType: canonicalEventType
   };
+  // Final bounded Beta trust correction: a row with NO canonicalEventType
+  // at all on the raw stored payload never went through canonical
+  // classification at persist time (confirmed production case: rows
+  // persisted by api/research-account.js before this round, whose
+  // opportunityForSignal()/detectDepartment()/contactForSignal() computed
+  // their own independent seller copy with no canonicalEventType field at
+  // all). Its accompanying seller-facing fields (reasonToReachOut/whyNow/
+  // opportunityExplanation/opportunityCategory/affectedDepartment/
+  // suggestedContact/suggestedProducts/conversationStarter) cannot be
+  // trusted to agree with the freshly-resolved canonicalEventType just
+  // computed above, so they are regenerated here -- via the SAME shared,
+  // canonicalTemplateFamily()-gated table api/research-account.js's fixed
+  // helpers now use -- rather than left stale. Deliberately narrow: a row
+  // that already carries a real canonicalEventType was persisted by an
+  // already-fixed endpoint, so its own richer, grounded copy (real
+  // department/historical-fact suffixes, a model's own credible
+  // commercialPlay, etc.) is trusted as-is and never flattened to this
+  // generic per-family fallback. No schema migration/backfill -- this is a
+  // pure, bounded, read-time-only correction, applied once per hydration,
+  // exactly like the canonicalEventType re-derivation above.
+  if (!payload.canonicalEventType) {
+    const family = canonicalTemplateFamily(displayLabelForEventType(canonicalEventType));
+    const sellerCopy = sellerCopyForTemplateFamily(family);
+    result.reasonToReachOut = sellerCopy.reasonToReachOut;
+    result.whyNow = sellerCopy.whyNow;
+    result.opportunityExplanation = sellerCopy.whyNow;
+    result.opportunityCategory = sellerCopy.category;
+    result.promoOpportunity = sellerCopy.name;
+    result.affectedDepartment = sellerCopy.department;
+    result.suggestedContact = sellerCopy.contact;
+    result.conversationStarter = sellerCopy.conversationStarter;
+    result.suggestedProducts = sellerCopy.products;
+    // Final bounded Beta trust correction (Round C): recommendedBuyingTeam/
+    // likelyBuyers are deterministic, family-derived fields (same
+    // sellerCopy.department the affectedDepartment self-heal above already
+    // trusts) -- but groundedDepartmentForOpportunity() (dashboard/
+    // index.html, drives Prepare for Call's department grounding) checks
+    // opp.recommendedBuyingTeam/opp.likelyBuyers BEFORE opp.affectedDepartment,
+    // so leaving a stale, pre-Round-B array here (e.g. a Conference/Summit
+    // row's team frozen as ["HR / People"] by the old independent
+    // classifier) would keep overriding the now-correctly-healed
+    // affectedDepartment and reproduce the exact conflicting-interpretation
+    // defect this correction targets (confirmed production case: Cianbro's
+    // Maine CTE Business Summit signal showing an Events-oriented headline
+    // everywhere except a stale "HR / Employee Onboarding" buying team).
+    result.recommendedBuyingTeam = [sellerCopy.department];
+    result.likelyBuyers = [sellerCopy.department];
+  }
+  // Final bounded Beta trust correction (Round C): identityConfidence is
+  // stamped ONLY at persist time (verifyCandidateCompanyGrounding(), run
+  // once by research-batch.js/research-account.js) and, unlike
+  // canonicalEventType above, was never re-verified at read time -- so a row
+  // persisted under an OLDER, looser version of that grounding logic (e.g.
+  // the pre-local-clause-tightening isStandaloneSingleTokenMention(), which
+  // promoted a bare roster/breadcrumb single-token mention to 'unconfirmed'
+  // with no same-sentence claim required) keeps rendering as an actionable
+  // Business Signal forever, even after the grounding rule that produced it
+  // is fixed (confirmed production case: a Cianbro "ABC Convention > Past
+  // Events > ... > Schedule" roster listing, persisted 'unconfirmed' by the
+  // pre-fix rule, still opening Prepare for Call and Use This Signal).
+  // Re-verifies ONLY when doing so cannot manufacture a false regression:
+  //   - undefined/'unconfirmed' only -- 'confirmed' and 'rejected' are left
+  //     untouched. A stored 'confirmed' grade may depend on the account's
+  //     own website/location (verifyCandidateCompanyGrounding()'s domain/
+  //     location corroborators), neither of which is available here (this
+  //     function receives only the signal payload, never the account
+  //     record) -- recomputing without that context could wrongly demote a
+  //     legitimately confirmed signal. This is not a real gap for
+  //     'unconfirmed' rows specifically: if domain/location corroboration
+  //     had applied, the row would already have been stored 'confirmed' at
+  //     persist time (that computation DID have full account context), so a
+  //     currently-'unconfirmed' row is proof those paths already found
+  //     nothing -- recomputing without them cannot introduce a new false
+  //     negative, only correctly re-apply an improved entity-match/
+  //     single-token-fallback rule.
+  //   - only when enough raw evidence survives to recompute at all
+  //     (sourceUrl + companyName + some title/snippet text) -- a row with
+  //     genuinely nothing to re-verify from is left exactly as stored,
+  //     preserving the deliberate "undefined stays undefined, a true
+  //     legacy row, grandfathered" behavior get-dashboard.js's
+  //     signalToOpportunity() already documents.
+  //   - only DOWNGRADES are applied (recompute grade !== stored grade).
+  //     verifyCandidateCompanyGrounding() called with just {name} (no
+  //     location/website) can never grant MORE trust than the original,
+  //     fully-contexted computation already did, so any discrepancy here is
+  //     a correction the original computation would have made too, not a
+  //     new false positive.
+  const companyName = clean(payload.companyName || payload.accountName || '');
+  const evidenceUrl = clean(payload.sourceUrl || payload.source_url || '');
+  const evidenceTitle = clean(payload.rawTitle || title || payload.headline || '');
+  const evidenceSnippet = clean(payload.rawSnippet || businessContext || '');
+  if ((payload.identityConfidence === undefined || payload.identityConfidence === 'unconfirmed')
+    && companyName && evidenceUrl && (evidenceTitle || evidenceSnippet)) {
+    const regrounded = verifyCandidateCompanyGrounding({ title: evidenceTitle, snippet: evidenceSnippet, url: evidenceUrl }, { name: companyName });
+    if (regrounded.identityConfidence && regrounded.identityConfidence !== payload.identityConfidence) {
+      result.identityConfidence = regrounded.identityConfidence;
+    }
+  }
+  return result;
 }
 
 // product/commercial-opportunity-intelligence: commercialPlayNarrative is
@@ -2012,9 +2156,21 @@ function oneHistoricalOrderFact(account = {}) {
   return '';
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round
+// (silent signal-loss diagnostics): every `return null` below now first
+// stamps `raw.__rejectionReason` with a concise, machine-readable class
+// before discarding -- `raw` is the SAME object reference the caller
+// (madeSignalsRaw's map(), api/research-batch.js) already holds, so the
+// caller can log a real reason instead of a bare null. Reproduced
+// production case this closes: IDEXX Laboratories and Stonyfield Organic
+// each had a real raw model signal (rawSignals: 1) that silently became
+// mappedSignals: 0 with zero trace in the logs of which of this function's
+// three discard points fired, or why -- undiagnosable without a full
+// Vercel log archaeology exercise. This is diagnostic hardening only: no
+// discard CONDITION below changed, only that it is now explained.
 function makeSignal(raw = {}, account = {}, options = {}) {
   const accountName = clean(raw.accountName || raw.account || raw.company || raw.company_name || raw.companyName || '');
-  if (!accountName) return null;
+  if (!accountName) { raw.__rejectionReason = 'missing-account-name'; return null; }
   const sourceUrl = clean(raw.sourceUrl || raw.url || raw.sources?.[0]?.url || '');
   const rawConfidencePct = adjustedConfidence(raw, sourceUrl, raw.sourceType || raw.sourceName || '');
   // Phase 2A / B3: the canonical classification is computed once, here, from
@@ -2028,12 +2184,15 @@ function makeSignal(raw = {}, account = {}, options = {}) {
   const title = compact(concreteTrigger || raw.signalTitle || raw.headline || raw.title || `${accountName} business activity`, 150);
   const summary = compact(raw.whatChanged || raw.shortSummary || raw.summary || raw.signalDetail || raw.details || title, 240);
   const businessContext = buildBusinessContext(raw, type, summary, accountName);
-  if (options.enableProspectQuality && prospectKillRule(raw, type, summary, businessContext)) return null;
+  if (options.enableProspectQuality) {
+    const killReason = prospectKillRule(raw, type, summary, businessContext);
+    if (killReason) { raw.__rejectionReason = `prospect-kill-rule:${killReason}`; return null; }
+  }
   const floorConfidencePct = confidenceWithContextFloor(rawConfidencePct, raw, type, summary, businessContext);
   const abd = options.enableProspectQuality ? abdAdjustedConfidence(floorConfidencePct, raw, type, summary, businessContext) : { score: floorConfidencePct, abd: null };
   const leadershipAdjustment = leadershipVerificationAdjustment(raw, type, summary, businessContext, sourceUrl);
   const confidencePct = Math.max(0, Math.min(100, abd.score + leadershipAdjustment));
-  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) return null; // discard only junk, duplicates, or truly low-confidence signals.
+  if (confidencePct < 55 && !hasMeaningfulSignal(raw, type, summary, businessContext)) { raw.__rejectionReason = `low-confidence:${confidencePct}`; return null; } // discard only junk, duplicates, or truly low-confidence signals.
 
   // Paid-beta signal-date truth (Priority 1). eventDate is resolved ONLY from
   // parseable evidence text (via extractEventDate()) -- it never falls back
@@ -3265,6 +3424,7 @@ A buying moment is a concrete event that creates a real, identifiable human mome
 
 Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
 Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable commercial-activation angle.
+Whether to RETURN a buying moment at all (governed by the criteria on this line and "Reject" below) and whether you have a credible commercial ACTIVATION for it (commercial_play/activation_ideas/expansion_potential, see below) are separate judgments -- a real, current, sourced, material event about the account (an acquisition, leadership change, facility opening, funding event, product launch, sponsorship, etc.) should still be returned even when you conclude no credible activation exists yet. In that case return the factual fields and leave commercial_play/activation_ideas/expansion_potential empty or omitted -- never drop the whole buying moment merely because you couldn't responsibly infer a program around it.
 
 Reject:
 - generic company descriptions, mission/history/culture copy
@@ -3442,10 +3602,27 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
 
     const madeSignalsRaw = fixedSignals.map(s => {
-      const account = safeAccounts.find(a => a.name.toLowerCase() === clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase()) || {};
+      const rawSignalAccountName = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
+      const account = safeAccounts.find(a => a.name.toLowerCase() === rawSignalAccountName.toLowerCase()) || {};
+      // Global Business Trigger Intelligence sprint, founder correction round
+      // (silent signal-loss diagnostics): fixedSignals' own fuzzy substring
+      // correction above only fires when one name is a substring of the
+      // other -- a raw AI accountName that is neither (a paraphrase, an
+      // abbreviation the model invented) falls through both that pass AND
+      // this exact-match lookup, leaving `account` the empty-object fallback
+      // for the rest of this signal's pipeline. Logged here, at the exact
+      // point of failure, rather than only surfacing later as an unexplained
+      // gap between rawSignals and mappedSignals counts.
+      if (!account.name) {
+        console.warn('[Signal Intelligence] raw signal discarded: accountName did not resolve to any requested account', { rawAccountName: rawSignalAccountName, title: s.signalTitle || s.title || s.concrete_trigger || '' });
+        return null;
+      }
       const accountMode = clean(account.intelligenceMode).toLowerCase();
       const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
-      if (!mapped) return null;
+      if (!mapped) {
+        console.warn('[Signal Intelligence] raw signal discarded by makeSignal()', { company: account.name, reason: s.__rejectionReason || 'unknown', title: s.signalTitle || s.title || s.concrete_trigger || '' });
+        return null;
+      }
       const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
       let normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
       const validation = validateOpportunity(normalized);
@@ -3498,6 +3675,16 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
     });
     const mappedSignals = madeSignalsRaw.filter(Boolean);
     const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
+    // Global Business Trigger Intelligence sprint, founder correction round
+    // (silent signal-loss diagnostics): defense-in-depth logging -- the
+    // account-resolution check added above (madeSignalsRaw's map()) should
+    // make this filter a no-op in practice, but it is the last point a
+    // mapped signal could still be silently dropped before persistence, so
+    // it gets the same treatment rather than staying a bare count.
+    if (validMappedSignals.length !== mappedSignals.length) {
+      const droppedForInvalidAccountName = mappedSignals.filter(s => !validAccountNames.has(String(s.accountName || '').toLowerCase()));
+      console.warn('[Signal Intelligence] mapped signal(s) discarded: accountName not among requested accounts at final filter', droppedForInvalidAccountName.map(s => ({ accountName: s.accountName, title: s.signalTitle || '' })));
+    }
     // Temporal-integrity round: dedupeSignals()/dedupeOpportunities() above
     // are cheap first-pass collapses (same-account+type+topic-keywords, then
     // a legacy per-title fingerprint) that reduce the candidate count, but
@@ -3735,6 +3922,7 @@ export {
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES, compact,
+  canonicalTemplateFamily, contextToOpener, contextToPromoWhy, promoCategoriesForMoment, inferRecommendedBuyingTeam, buildBusinessContext,
   hasTrustworthyActionabilityMetadata, classifyLegacySignalActionability,
   openaiUsageFromResponse, enrichCandidatesWithFirecrawl,
   resolveDuplicateCheckScopeUserIds, findActiveDuplicateCompanyCollisions,

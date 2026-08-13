@@ -69,6 +69,19 @@ function normalizeSavedAccount(a){ return a; }
 function serializeAccountForStorage(a){ return a; }
 function getSavedLead(){ return null; }
 function addSignalDerivedOpportunities(account, signals){ account.futureOpportunities = (signals || []).map(s => ({account: account.name, signal: s})); }
+// Beta correction ("N business signals found" canonical definition):
+// countLegitimateBusinessSignals() itself is REAL, unmodified production
+// code -- it lives inside the same researchRunTrackers..
+// researchTrackerAccountState() source range TRACKER_SRC already extracts
+// verbatim (see this file's own dedicated coverage in
+// test-final-beta-signal-intelligence-correction.js for its correctness).
+// Only its two identity-grounding dependencies are stubbed here, matching
+// this file's established scope of chunk dispatch/stop/retry control flow,
+// not identity semantics -- a fixture signal in this file never sets
+// identityConfidence, so both stubs' simplified behavior matches what the
+// real helpers would return for these fixtures anyway.
+function dedupeFoundSignals(signals){ return (signals || []).filter(s => s && s.isReal !== false); }
+function hasConfirmedOrLegacyIdentity(opp){ return opp?.identityConfidence !== 'rejected' && opp?.identityConfidence !== 'possible'; }
 function deriveAccountIntelligenceMode(account){ return 'warm'; }
 function isWarmAccount(account){ return true; }
 function extractEmailDomain(email){ return String(email || '').split('@')[1] || ''; }

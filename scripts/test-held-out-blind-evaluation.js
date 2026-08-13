@@ -274,6 +274,111 @@ console.log('');
 console.log('');
 
 // ===========================================================================
+// Global Business Trigger Intelligence sprint: three more required held-out
+// scenarios (acquisition without a grounded activation, leadership change
+// without a concrete initiative, funding WITH a grounded downstream
+// initiative) -- all with fresh fictional companies never used anywhere
+// else in this file or in production code, proving the widened
+// WEAK_EVENT_ANCHOR/isWeakEventDressedAsActivation gate (api/
+// signal-intelligence.js) generalizes exactly like the original
+// funding-only version already proved to for unseen companies.
+// ===========================================================================
+
+// 9. ACQUISITION -- weak, no disclosed integration detail (Pinegrove
+//    Materials acquires Sturgeon Bay Supply, bare announcement only).
+{
+  const built = buildOpportunity({
+    accountName: 'Pinegrove Materials', sourceUrl: 'https://example.com/pinegrove-sturgeon-bay',
+    signalTitle: 'Pinegrove Materials Acquires Sturgeon Bay Supply',
+    concrete_trigger: 'the Sturgeon Bay Supply acquisition',
+    business_context: 'Pinegrove Materials announced it has acquired Sturgeon Bay Supply. No further details on integration plans were disclosed.',
+    event_date: daysAgo(4), publicationDate: daysAgo(4), confidence: 81
+  }, { name: 'Pinegrove Materials' });
+  assert(!!built, '9. Pinegrove Materials (acquisition, no disclosed integration): still produces a real opportunity object');
+  assert(built.commercialPlay === null && built.activationIdeas.length === 0, '9. Pinegrove Materials: no play/ideas fabricated for a bare acquisition announcement with no disclosed integration/welcome moment');
+  const opp = asBusinessOpportunity(built);
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (unseen company, acquisition without grounded activation): a bare acquisition announcement does not consume a priority slot');
+}
+// Manufactured-activation variant -- proves the widened "dressed as
+// activation" gate generalizes to a confidently-phrased, ungrounded
+// acquisition play for an unseen company, not just the original funding case.
+{
+  const built = buildOpportunity({
+    accountName: 'Pinegrove Materials', sourceUrl: 'https://example.com/pinegrove-sturgeon-bay-dressed',
+    signalTitle: 'Pinegrove Materials Acquires Sturgeon Bay Supply',
+    concrete_trigger: 'the Sturgeon Bay Supply acquisition',
+    business_context: 'Pinegrove Materials announced it has acquired Sturgeon Bay Supply.',
+    event_date: daysAgo(4), publicationDate: daysAgo(4), confidence: 81,
+    commercialPlay: { concept: 'Acquisition Momentum Campaign', narrative: 'Acquiring Sturgeon Bay Supply creates a great opportunity to run a brand visibility campaign celebrating the deal.' },
+    activationIdeas: ['Acquisition celebration launch kit', 'Acquisition announcement social media campaign']
+  }, { name: 'Pinegrove Materials' });
+  assert(built.commercialPlay === null, 'required property (unseen company): a confidently-phrased acquisition-event-dressed commercialPlay is caught for a company never seen in the prompt or any prior fixture');
+  assert(built.activationIdeas.length === 0, 'required property (unseen company): acquisition-event-dressed activationIdeas are filtered for an unseen company');
+  const opp = asBusinessOpportunity(built);
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (unseen company): the manufactured acquisition celebration campaign does not consume a priority slot');
+}
+
+// 10. LEADERSHIP CHANGE -- weak, no concrete initiative disclosed (Cardwell
+//     Precision Tooling names a new CFO, bare announcement only).
+{
+  const built = buildOpportunity({
+    accountName: 'Cardwell Precision Tooling', sourceUrl: 'https://example.com/cardwell-new-cfo',
+    signalTitle: 'Cardwell Precision Tooling Names New CFO',
+    concrete_trigger: 'the new CFO appointment',
+    business_context: 'Cardwell Precision Tooling announced the appointment of a new Chief Financial Officer. No further details on plans or initiatives were disclosed.',
+    event_date: daysAgo(3), publicationDate: daysAgo(3), confidence: 80
+  }, { name: 'Cardwell Precision Tooling' });
+  assert(!!built, '10. Cardwell Precision Tooling (leadership, no concrete initiative): still produces a real opportunity object');
+  assert(built.commercialPlay === null && built.activationIdeas.length === 0, '10. Cardwell Precision Tooling: no play/ideas fabricated for a bare leadership appointment with no disclosed initiative');
+  const opp = asBusinessOpportunity(built);
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (unseen company, leadership change without concrete initiative): a bare CFO appointment does not consume a priority slot');
+}
+// Manufactured-activation variant -- proves the widened gate catches the
+// founder's exact named failure shape ("New VP Marketing -> comprehensive
+// rebrand") for an unseen company.
+{
+  const built = buildOpportunity({
+    accountName: 'Cardwell Precision Tooling', sourceUrl: 'https://example.com/cardwell-new-vp-dressed',
+    signalTitle: 'Cardwell Precision Tooling Names New VP of Marketing',
+    concrete_trigger: 'the new VP of Marketing appointment',
+    business_context: 'Cardwell Precision Tooling announced the appointment of a new VP of Marketing.',
+    event_date: daysAgo(3), publicationDate: daysAgo(3), confidence: 80,
+    commercialPlay: { concept: 'New Leader Rebrand Push', narrative: 'The new VP of Marketing is a great moment to launch a comprehensive rebrand for the company.' },
+    activationIdeas: ['New VP brand awareness campaign', 'New VP comprehensive rebrand launch kit']
+  }, { name: 'Cardwell Precision Tooling' });
+  assert(built.commercialPlay === null, 'required property (unseen company): a confidently-phrased leadership-dressed "comprehensive rebrand" commercialPlay is caught for a company never seen in the prompt or any prior fixture -- the founder\'s exact named failure shape');
+  assert(built.activationIdeas.length === 0, 'required property (unseen company): leadership-dressed activationIdeas are filtered for an unseen company');
+  const opp = asBusinessOpportunity(built);
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === false, 'required property (unseen company): the manufactured new-leader rebrand push does not consume a priority slot');
+}
+
+// 11. FUNDING WITH a grounded downstream initiative -- Series B evidence
+//     itself discloses a real hiring push, and the play names a real
+//     audience; the widened gate must not over-block a genuinely grounded
+//     funding-adjacent play.
+{
+  const raw = {
+    accountName: 'Fenwick Robotics', sourceUrl: 'https://example.com/fenwick-series-b',
+    signalTitle: 'Fenwick Robotics Raises $18M Series B to Expand Field Engineering Team',
+    concrete_trigger: 'Fenwick Robotics raised an $18M Series B earmarked for a field engineering hiring push',
+    business_context: 'Fenwick Robotics announced an $18M Series B round, stating the funds will support a hiring push to double its field engineering team over the next two quarters.',
+    event_date: daysAgo(6), publicationDate: daysAgo(6), confidence: 85,
+    commercialPlay: { concept: 'Field Engineering Welcome Wave', narrative: 'The Series B is earmarked for doubling the field engineering team -- a reason to build a welcome moment for the new engineers joining over the next two quarters.' },
+    activationIdeas: ['New-hire field engineering welcome kit', 'Team onboarding-day gear']
+  };
+  const built = buildOpportunity(raw, { name: 'Fenwick Robotics' });
+  assert(isGenericCommercialPlay(raw.commercialPlay.narrative) === false, '11. Fenwick Robotics: sanity -- the gold commercialPlay narrative (grounded in a disclosed hiring initiative, not the funding event itself) is never flagged generic');
+  assert(built.commercialPlay !== null && built.activationIdeas.length > 0, 'required property (unseen company, funding + grounded downstream initiative): the widened gate does not over-block a genuinely grounded funding-adjacent play');
+  const opp = asBusinessOpportunity(built);
+  const statusLine = sandbox.signalDateAndActionabilityLine(opp);
+  assert(statusLine !== 'Date unavailable' && statusLine !== 'No longer current', `11. Fenwick Robotics: sanity -- exclusion is not a side effect of a date problem (got "${statusLine}")`);
+  assert(sandbox.hasCredibleActivationPlay(opp) === true, '11. Fenwick Robotics: hasCredibleActivationPlay() recognizes the real, evidence-disclosed activation for an unseen company');
+  assert(sandbox.isPriorityEligibleOpportunity(opp) === true, 'required property (unseen company, funding + grounded downstream initiative): remains priority-eligible');
+}
+
+console.log('');
+
+// ===========================================================================
 // GLOBAL-VS-ACCOUNT-SPECIFIC PROOF: confirm none of these held-out company
 // names appear anywhere in production code (prompts, gates, rendering) --
 // if the system were overfit to named development examples, these
@@ -287,7 +392,7 @@ console.log('');
     'api/signal-intelligence.js', 'api/research-account.js', 'api/research-batch.js',
     'api/get-dashboard.js', 'api/save-upload.js', 'dashboard/index.html'
   ];
-  const heldOutNames = ['Briarwood Credit Union', 'Vantage Fleet Solutions', 'Ridgeline Logistics', 'Solaris Orthodontics', 'Cobalt Brew Co.', 'Meridian Wealth Partners', 'Lumen Robotics', 'Ashford Industrial Supply', 'Thornton & Vale LLP'];
+  const heldOutNames = ['Briarwood Credit Union', 'Vantage Fleet Solutions', 'Ridgeline Logistics', 'Solaris Orthodontics', 'Cobalt Brew Co.', 'Meridian Wealth Partners', 'Lumen Robotics', 'Ashford Industrial Supply', 'Thornton & Vale LLP', 'Pinegrove Materials', 'Sturgeon Bay Supply', 'Cardwell Precision Tooling', 'Fenwick Robotics'];
   let leaked = [];
   for (const file of productionFiles){
     const src = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');

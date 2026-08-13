@@ -25,10 +25,41 @@ function truncateText(value = '', maxLength = 300) {
   return c.length > maxLength ? `${c.slice(0, maxLength - 1).trim()}…` : c;
 }
 
+// Identity-collision-hardening correction: a plain apostrophe collapse
+// (the general non-alnum-to-space rule below) turns a possessive company
+// name like "Wyman's" into a TWO-token "wyman s" -- a floating, disconnected
+// "s" that can then coincidentally re-attach to any OTHER text ending in
+// "wyman" + possessive grammar ("...celebrate a milestone for Oliver
+// Wyman's presence...") or even an unrelated "wyman s..." phrase entirely.
+// Stripping a genuine possessive 's/'s suffix BEFORE the general
+// punctuation collapse keeps "Wyman's" as the single, clean token "wyman"
+// it actually names -- required for isSingleTokenCompanyIdentity() below to
+// correctly recognize it as the single-token identity it is (the two-token
+// "wyman s" would otherwise look like a safer, more distinctive multi-word
+// phrase than it really is).
 function normalizeCompany(value = '') {
   return clean(value).toLowerCase()
+    .replace(/['’]s\b/g, '')
     .replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|co|company|holdings?)\b\.?/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Identity-collision-hardening correction: a company's own name being just
+// ONE token after normalization (e.g. "Wyman's" -> "wyman", "Timberland" ->
+// "timberland") is the actual risk signal for a bare-text-match false
+// positive -- not raw character length. A single common word/surname/
+// category term can trivially appear inside completely unrelated text (an
+// ordinary English sentence, a DIFFERENT company's name that happens to
+// share the same word/surname, a place name) in a way a genuine multi-word
+// phrase almost never does by coincidence ("Northfield Instruments" as a
+// literal three-word run is a real claim; "wyman" or "timberland" as a bare
+// single word is not). Deliberately checks TOKEN COUNT, not string length --
+// a short-but-multi-word name ("ACI Corp" -> "aci") and a long-but-single-
+// word name are judged on the same, single, structural property.
+function isSingleTokenCompanyIdentity(name = '') {
+  const normalized = normalizeCompany(name);
+  if (!normalized) return false;
+  return normalized.split(' ').filter(Boolean).length === 1;
 }
 
 function normalizeUrl(value = '') {
@@ -279,6 +310,246 @@ function socialProfileMatchesCompany(companyName = '', url = '') {
   const company = normalizeCompany(companyName).replace(/\s+/g, '');
   if (!handle || !company) return false;
   return handle.includes(company) || company.includes(handle);
+}
+
+// Identity-collision-hardening follow-up: the single-token downgrade in
+// verifyCandidateCompanyGrounding() below sends a collision-prone account
+// (e.g. "Unitil") to 'possible' unless independently corroborated -- but
+// every corroborator that existed at the time (verified company domain,
+// location match, known social profile) required the founder to have
+// UPLOADED that metadata. A single-token company legitimately sourced from
+// its own obvious first-party domain (confirmed production shape: "Unitil"
+// with no uploaded website, evidence hosted on unitil.com) had no way to
+// ever clear 'possible', even though the domain itself already IS the
+// identity evidence. This adds a SECOND, independent way to reach domain
+// corroboration -- comparing the candidate's own registrable-domain SLD
+// against the account's name directly, never requiring an uploaded
+// website. Deliberately EXACT SLD-equals-normalized-token only -- no
+// substring/contains/fuzzy matching, and only for single-token identities
+// (a multi-word company already reaches 'unconfirmed', not 'possible', on
+// a bare match alone, so it needs no domain rescue here). "unitil.com" ->
+// SLD "unitil" === normalizeCompany("Unitil") -> corroborated.
+// "timberlandpartners.com" -> SLD "timberlandpartners" !== "timberland" ->
+// never corroborated -- a different real company whose domain merely
+// CONTAINS the account's token must not be rescued by this check, or the
+// exact Timberland collision this whole correction targets would reopen.
+// Purely additive: a legitimate signal from a credible THIRD-PARTY source
+// (regulator, wire service, trade press) that isn't the company's own
+// domain is completely unaffected by this function -- it simply doesn't
+// gain this particular corroborator, and can still reach 'possible'
+// (visible, flagged) or 'confirmed'/'unconfirmed' via any other existing
+// path exactly as before.
+function registrableDomainSld(url = '') {
+  const host = sourceDomain(url);
+  if (!host) return '';
+  const labels = host.split('.').filter(Boolean);
+  if (labels.length < 2) return '';
+  return labels[labels.length - 2].toLowerCase();
+}
+function isExactSelfDomainMatch(companyName = '', url = '') {
+  if (!isSingleTokenCompanyIdentity(companyName)) return false;
+  const company = normalizeCompany(companyName).replace(/\s+/g, '');
+  const sld = registrableDomainSld(url);
+  return Boolean(company) && company === sld;
+}
+
+// Final bounded Beta trust correction: analogous to isExactSelfDomainMatch()
+// above, but for a social profile's own handle instead of a domain's
+// registrable SLD. Legitimate third-party/social evidence (e.g. an
+// Instagram post explicitly tagging @llbean) should not require a
+// pre-populated account.knownSocialProfiles list (see
+// accountKnownSocialProfileMatch()'s own comment -- no current caller
+// populates it) when the account's own name, compacted, exactly equals the
+// profile's own handle: the profile is speaking for itself, the same
+// reasoning isExactSelfDomainMatch() already applies to a namesake domain.
+// Deliberately NOT restricted to single-token company names (unlike the
+// domain check): a social handle is near-universally the compacted form of
+// a brand's FULL name regardless of word count ("L.L.Bean" -> "@llbean"),
+// unlike a domain SLD, which is far less commonly an exact compacted match
+// for a multi-word name -- that asymmetry is why isExactSelfDomainMatch()
+// itself stays single-token-only while this one does not. Deliberately
+// EXACT compacted-string equality only -- no substring/contains/fuzzy/
+// prefix/suffix matching, mirroring isExactSelfDomainMatch()'s own
+// discipline exactly. Purely additive: this is one MORE way to reach
+// corroboration, never a requirement -- every existing legitimate
+// non-social signal source (news, trade press, government, partner sites,
+// etc.) is completely unaffected, and social evidence with no exact handle
+// match still reaches whatever grade it would have reached before this
+// function existed.
+function isExactSelfSocialHandleMatch(companyName = '', url = '') {
+  if (!isSocialUrl(url)) return false;
+  const handle = normalizeCompany(socialHandleFromUrl(url)).replace(/\s+/g, '');
+  const company = normalizeCompany(companyName).replace(/\s+/g, '');
+  return Boolean(company) && Boolean(handle) && company === handle;
+}
+
+// ---------------------------------------------------------------------------
+// Identity-grounding correction (round: embedded-entity precision + one-word
+// third-party recall). ONE bounded, deterministic, contextual-adjacency
+// primitive drives both directions below. Deliberately scoped to
+// candidate.snippet ONLY -- never title (commonly Title-Case for every word,
+// which would make "is the next word capitalized" meaningless) and never
+// rawContent/pageContent (full-page noise, already excluded from identity
+// checks elsewhere in this module for the same reason -- see
+// verifyCandidateCompanyGrounding()'s own header comment on scoping).
+//
+// Reproduced production case (precision): an "Albany International" account
+// bare-matched evidence about "Albany International Airport" -- the account's
+// full multi-word phrase is a literal substring of a DIFFERENT, larger named
+// entity. entityMatch()'s plain substring check has no way to see that; the
+// existing single-token downgrade (isSingleTokenCompanyIdentity) never
+// applies here since "Albany International" is two tokens.
+//
+// Reproduced production case (recall): a "Cianbro" account (single-token)
+// with explicit, unambiguous third-party evidence ("Mark Brooks represented
+// Cianbro at the Maine CTE Business Summit") graded 'possible' purely because
+// no independent domain/location/social corroborator existed -- too
+// conservative once the evidence itself already makes clear which company is
+// meant.
+function companyNameMatchRegex(companyName = '') {
+  const tokens = normalizeCompany(companyName).split(' ').filter(Boolean);
+  if (!tokens.length) return null;
+  const escaped = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`\\b${escaped.join('[^a-zA-Z0-9]+')}\\b`, 'gi');
+}
+
+// The word immediately adjacent to a match, ONLY when separated by plain
+// whitespace -- a comma/period/other punctuation between the match and a
+// neighboring word is a genuine phrase/sentence boundary and must never be
+// treated as an extension (e.g. "...Group. Officials said..." -- "Officials"
+// is the start of a new sentence, not a continuation of "Group").
+function wordImmediatelyBefore(text, index) {
+  const m = text.slice(0, index).match(/([A-Za-z0-9][A-Za-z0-9'-]*)\s+$/);
+  return m ? m[1] : '';
+}
+function wordImmediatelyAfter(text, index) {
+  const m = text.slice(index).match(/^\s+([A-Za-z0-9][A-Za-z0-9'-]*)/);
+  return m ? m[1] : '';
+}
+
+function eachCompanyMatchNeighbors(companyName, text) {
+  const re = companyNameMatchRegex(companyName);
+  const t = String(text || '');
+  if (!re || !t) return [];
+  const results = [];
+  let m;
+  while ((m = re.exec(t))) {
+    results.push({
+      matchedText: m[0],
+      index: m.index,
+      before: wordImmediatelyBefore(t, m.index),
+      after: wordImmediatelyAfter(t, m.index + m[0].length)
+    });
+    if (m.index === re.lastIndex) re.lastIndex += 1; // defensive: \b...\b matches are never zero-length here, but never loop forever if that ever changes
+  }
+  return results;
+}
+
+// Identity-grounding correction (round: same-sentence/local-clause
+// tightening). The smallest unit of "local context" around a match --
+// bounded by the nearest sentence-ending punctuation (.!?) OR a structural
+// list/breadcrumb/table delimiter (newline, ">", "|", a bullet, ";") on
+// either side, whichever is closer. Deliberately includes the structural
+// delimiters, not just sentence punctuation: a roster/schedule/breadcrumb
+// page ("ABC Convention > Past Events > 2026 > Schedule" followed by a
+// dash- or newline-separated list of past exhibitor names) rarely uses
+// periods at all, so bounding on sentence punctuation alone would let the
+// "local clause" balloon out to the whole page -- exactly the false-
+// positive shape this correction exists to close.
+const LOCAL_CLAUSE_BOUNDARY = /[.!?\n>|•·]/;
+function localClauseAroundMatch(text, index, matchLength) {
+  const before = text.slice(0, index);
+  const after = text.slice(index + matchLength);
+  let start = 0;
+  for (let i = before.length - 1; i >= 0; i--) {
+    if (LOCAL_CLAUSE_BOUNDARY.test(before[i])) { start = i + 1; break; }
+  }
+  let end = text.length;
+  for (let i = 0; i < after.length; i++) {
+    if (LOCAL_CLAUSE_BOUNDARY.test(after[i])) { end = index + matchLength + i; break; }
+  }
+  return text.slice(start, end).trim();
+}
+
+function isCapitalizedWord(word = '') {
+  return /^[A-Z]/.test(word || '');
+}
+
+// A neighboring word that is one of the company's OWN generic legal-suffix
+// continuations (reuses GENERIC_COMPANY_WORDS and normalizeCompany()'s own
+// suffix-stripping vocabulary -- no new list) is never treated as evidence
+// of a DIFFERENT, larger entity -- "Cianbro Corporation" is still just
+// Cianbro speaking about itself, not a Cianbro-Corporation-shaped collision.
+const COMPANY_SUFFIX_WORDS = new Set(['incorporated', 'inc', 'llc', 'ltd', 'limited', 'corp', 'corporation', 'co', 'company', 'holding', 'holdings']);
+function isGenericContinuationWord(word = '') {
+  const normalized = String(word || '').toLowerCase().replace(/\.$/, '');
+  return GENERIC_COMPANY_WORDS.has(normalized) || COMPANY_SUFFIX_WORDS.has(normalized);
+}
+
+// Precision fix (Albany International / Airport shape): a MULTI-WORD bare
+// match is "embedded" when EVERY occurrence of the company's phrase in the
+// snippet is immediately adjacent (before or after) to another capitalized,
+// non-generic-suffix word -- i.e. no occurrence stands on its own. Requiring
+// EVERY occurrence (not just one) means a snippet that mentions the company
+// BOTH embedded ("...near Albany International Airport...") AND standalone
+// ("Albany International announced...") is correctly left alone -- a real
+// standalone self-mention exists, so this is not treated as a collision.
+function isEntityEmbeddedInLargerName(companyName, snippet = '') {
+  const occurrences = eachCompanyMatchNeighbors(companyName, snippet);
+  if (!occurrences.length) return false;
+  return occurrences.every(({ before, after }) => {
+    const extendedAfter = isCapitalizedWord(after) && !isGenericContinuationWord(after);
+    const extendedBefore = isCapitalizedWord(before) && !isGenericContinuationWord(before);
+    return extendedAfter || extendedBefore;
+  });
+}
+
+// Recall fix (Cianbro shape): a single-token bare match with no independent
+// corroborator may still be trusted as a legitimate (uncorroborated,
+// 'unconfirmed') reference when the evidence contains a genuine STANDALONE
+// capitalized mention of the token, GRAMMATICALLY ATTACHED to a real local
+// clause, AND that same local clause independently classifies into a
+// recognized business-activity family.
+//
+// Capitalization + isolation ALONE is not sufficient -- two failure shapes
+// both pass an isolation-only check identically to a genuine standalone
+// company mention ("Cianbro received the Safety Award."):
+//   1. a sentence-initial common-noun coincidence ("Timberland covers
+//      thousands of acres.") -- neither has an adjacent capitalized
+//      neighbor. Excluded by the classifySignalFamily() requirement below,
+//      scoped to the LOCAL clause (see localClauseAroundMatch()'s own
+//      comment) -- "covers thousands of acres" names no business-activity
+//      family.
+//   2. bare roster/directory/breadcrumb membership ("ABC Convention > Past
+//      Events > 2026 > Schedule" followed by the company appearing only as
+//      one dash- or comma-separated entry in a list of many) -- the page
+//      can be saturated with genuine event vocabulary ELSEWHERE while the
+//      company's own occurrence has no claim attached to it at all.
+//      Excluded by the grammatical-neighbor requirement below: a real
+//      sentence always joins the company mention to an adjacent lowercase
+//      word (a verb, preposition, or article) by plain whitespace, exactly
+//      like wordImmediatelyBefore()/After() already capture; a roster
+//      entry's neighbors are structural delimiters (dashes, pipes, commas,
+//      ">"), which those two helpers already treat as a hard boundary and
+//      report as no word at all.
+//
+// Deliberately STRICTER than isEntityEmbeddedInLargerName() above: NO
+// generic-suffix exemption here. "Timberland Partners announced..." must
+// stay a Possible Match for a "Timberland"-named account -- "Partners" is a
+// real, distinguishing word in a DIFFERENT company's actual name, not
+// necessarily Timberland's own suffix, and this promotion path must never
+// risk manufacturing a false Business Signal out of that ambiguity.
+function isStandaloneSingleTokenMention(companyName, snippet = '') {
+  if (!isSingleTokenCompanyIdentity(companyName)) return false;
+  const text = String(snippet || '');
+  const occurrences = eachCompanyMatchNeighbors(companyName, text);
+  return occurrences.some(({ matchedText, before, after, index }) => {
+    if (!isCapitalizedWord(matchedText)) return false;
+    if (isCapitalizedWord(before) || isCapitalizedWord(after)) return false;
+    if (!before && !after) return false;
+    const localClause = localClauseAroundMatch(text, index, matchedText.length);
+    return classifySignalFamily(localClause) !== 'unknown';
+  });
 }
 
 // Finds every explicit "City, ST" mention in text. A fresh RegExp is built
@@ -598,6 +869,12 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   }
 
   const domainCorroborated = entity.reasons.includes('verified company domain');
+  // Identity-collision-hardening follow-up: independent of domainCorroborated
+  // above (which requires an UPLOADED account.website) -- see
+  // isExactSelfDomainMatch()'s own header comment for the full rationale and
+  // the exact Unitil/Timberland contrast this exists to preserve.
+  const selfDomainCorroborated = isExactSelfDomainMatch(companyName, scopedCandidate.url);
+  if (selfDomainCorroborated) reasons.push('candidate domain exactly matches the account\'s own single-token company name');
   const locationCorroborated = entity.reasons.includes('location match');
   // Founder QA follow-up (Dover Holiday Parade): a THIRD-PARTY publisher
   // whose own domain is geographically tied to the account (city+state, not
@@ -613,18 +890,104 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   const publisherGeoCorroborated = entity.reasons.includes('publisher domain matches account city+state geography');
   const socialUrl = isSocialUrl(scopedCandidate.url);
   const knownSocialProfileMatch = socialUrl && accountKnownSocialProfileMatch(account, scopedCandidate.url);
-  const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && socialProfileMatchesCompany(companyName, scopedCandidate.url);
+  // Final bounded Beta trust correction: an EXACT compacted handle match
+  // (e.g. "@llbean" for account "L.L.Bean") is checked independently of
+  // knownSocialProfileMatch -- it requires no pre-populated
+  // account.knownSocialProfiles entry at all. See
+  // isExactSelfSocialHandleMatch()'s own header comment for the full
+  // rationale and its deliberate contrast with the weaker, non-corroborating
+  // inferredSocialHandleMatch below (a "resembles" check, never sufficient
+  // alone).
+  const exactSocialHandleCorroborated = socialUrl && !knownSocialProfileMatch && isExactSelfSocialHandleMatch(companyName, scopedCandidate.url);
+  const inferredSocialHandleMatch = socialUrl && !knownSocialProfileMatch && !exactSocialHandleCorroborated && socialProfileMatchesCompany(companyName, scopedCandidate.url);
   if (knownSocialProfileMatch) reasons.push('matches account\'s known official social profile');
+  else if (exactSocialHandleCorroborated) reasons.push('social handle exactly matches the account\'s own compacted company name');
   else if (inferredSocialHandleMatch) reasons.push('social handle text resembles account name (not independently verified -- does not count as corroboration alone)');
   else if (socialUrl) reasons.push('social source has no verifiable profile corroboration');
 
   const contradicted = hasLocationContradiction(scopedCandidate, account);
-  if (contradicted && !domainCorroborated && !knownSocialProfileMatch) {
+  // selfDomainCorroborated/exactSocialHandleCorroborated join
+  // domainCorroborated/knownSocialProfileMatch in overriding a location
+  // contradiction -- the account's own namesake domain or exactly-matched
+  // social handle (verified by exact match, same as an uploaded website or
+  // a known profile) is the company speaking for itself, exactly the same
+  // reasoning that already applies to domainCorroborated above.
+  if (contradicted && !domainCorroborated && !knownSocialProfileMatch && !selfDomainCorroborated && !exactSocialHandleCorroborated) {
     return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'source names a conflicting location with no compensating identity evidence'] };
   }
 
-  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated;
-  return { grounded: true, identityConfidence: corroborated ? 'confirmed' : 'unconfirmed', reasons };
+  const corroborated = domainCorroborated || locationCorroborated || knownSocialProfileMatch || publisherGeoCorroborated || selfDomainCorroborated || exactSocialHandleCorroborated;
+  if (corroborated) return { grounded: true, identityConfidence: 'confirmed', reasons };
+  // Final Beta Signal Intelligence Correction sprint: a name match that is
+  // ONLY the distinctive-token fallback (never the strong bare full-phrase/
+  // normalized-form match), with no independent corroborator either, is not
+  // the same claim as a genuine Business Signal -- it's the exact shape of
+  // the confirmed QA collisions (an uploaded "Wyman's" matching "Careers at
+  // Oliver Wyman | A Marsh business" -- a real, different company that
+  // happens to share the surname; an uploaded "Timberland" matching
+  // "Nusenda Credit Union on Instagram" -- the word "timberland" used in its
+  // ordinary-English sense, not the brand). hasBareNameMatch means the
+  // account's own (normalized) name genuinely appears in the source text --
+  // real evidence, even without a second corroborator, and stays
+  // 'unconfirmed' (a legitimate Business Signal). distinctiveFallbackMatched
+  // alone means only a shortened/surname-style TOKEN of the name was found,
+  // which is exactly as consistent with a different, same-surname/same-word
+  // entity as it is with the real account -- HA cannot tell those apart from
+  // this evidence alone, so the rep should not be asked to either. This is a
+  // strictly SMALLER-grant change: nameMatched (the reject/no-reject floor
+  // just above) still allows either kind of match through to a returned,
+  // visible result -- only the identityConfidence LABEL is downgraded to
+  // 'possible' when the match is token-only and uncorroborated, so it can be
+  // shown in Research Results for transparency without being treated as a
+  // Business Signal (see isPossibleMatchIdentity() at every consumer).
+  //
+  // Identity-collision-hardening correction (this round): the paragraph
+  // above assumed hasBareNameMatch alone was strong enough evidence to
+  // reach 'unconfirmed' -- but the audit of the fresh production run proved
+  // this wasn't true when the account's OWN full name, once normalized, is
+  // itself just a single token (isSingleTokenCompanyIdentity()). "Wyman's"
+  // bare-matched "...Oliver Wyman's presence..." and "Timberland" bare-
+  // matched an unrelated "2027 Timberland Investment Conference" -- both
+  // via the STRONG hasBareNameMatch path (entity.reasons included "company
+  // named in source"), never distinctiveFallbackMatched at all. A single
+  // common word/surname/category term is exactly as consistent with a
+  // different, same-word entity (or the word's ordinary English sense) as
+  // it is with the real account, REGARDLESS of whether the match came via
+  // the bare-phrase check or the distinctive-token fallback -- the
+  // account's own name being a full, multi-word phrase (e.g. "Northfield
+  // Instruments") is what made the ORIGINAL bare-match branch trustworthy;
+  // a full name that is itself only one token never earned that trust. A
+  // multi-word bare match keeps its full 'unconfirmed' grade unchanged --
+  // UNLESS the bare match is itself embedded inside a larger, different
+  // proper-name entity (the Albany International / Airport shape): a
+  // multi-word phrase escapes the single-token protection above entirely,
+  // so without this check a company phrase that is merely a literal prefix
+  // of an unrelated larger entity would sail straight to 'unconfirmed' with
+  // no protection at all. See isEntityEmbeddedInLargerName()'s own header
+  // comment for the exact rule (every occurrence embedded, snippet-scoped,
+  // generic-suffix-exempt).
+  if (hasBareNameMatch && !isSingleTokenCompanyIdentity(companyName)) {
+    if (!isEntityEmbeddedInLargerName(companyName, scopedCandidate.snippet)) {
+      return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+    }
+    reasons.push('bare match is embedded inside a larger, different proper-name entity in the source text -- treated as a possible match, not a confirmed reference');
+    return { grounded: true, identityConfidence: 'possible', reasons };
+  }
+  if (hasBareNameMatch) {
+    // Recall fix (Cianbro shape): before falling to the unconditional
+    // 'possible' default, check whether the evidence itself already
+    // contains a genuine standalone, contextual reference to the account --
+    // see isStandaloneSingleTokenMention()'s own header comment for the
+    // exact rule (capitalized + non-adjacent + a recognized business-event
+    // family in the snippet; deliberately excludes the sentence-initial
+    // common-noun coincidence this same round's QA required be preserved).
+    if (isStandaloneSingleTokenMention(companyName, scopedCandidate.snippet)) {
+      reasons.push('single-token company identity appears as a standalone, capitalized mention in an explicit business-activity context -- treated as a legitimate (uncorroborated) reference');
+      return { grounded: true, identityConfidence: 'unconfirmed', reasons };
+    }
+    reasons.push('single-token company identity matched with no independent corroboration -- treated as a possible match, not a confirmed reference');
+  }
+  return { grounded: true, identityConfidence: 'possible', reasons };
 }
 
 // GUARDRAIL (product/commercial-opportunity-intelligence): this identity key
@@ -858,12 +1221,14 @@ function validateOpportunity(opportunity = {}) {
 // output into one consistent internal shape regardless of casing.
 // ---------------------------------------------------------------------------
 const COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT = `
+IMPORTANT, READ FIRST -- SIGNAL vs. ACTIVATION are two separate judgments, not one: everything below is about whether YOU have a credible commercial ACTIVATION to recommend (commercialPlay/activationIdeas/expansionPotential). It is never about whether the underlying event itself gets reported. If the event is real, current, and sourced -- a genuine acquisition, leadership change, facility opening, funding event, product launch, sponsorship, or other material business development about this specific company -- return it as a signal regardless of whether you end up with a credible activation for it. "I don't have a confident commercial play for this yet" and "this event isn't worth mentioning" are different conclusions; only the first is what an empty/omitted commercialPlay, activationIdeas, and expansionPotential mean. A rep who learns "this customer just made an acquisition, no specific activation recommended yet" is far better served than a rep who never hears about the acquisition at all because you couldn't responsibly infer a program around it. Do not let restraint on the commercial fields talk you out of returning the signal itself -- withhold the activation, not the event.
+
 Beyond the factual event itself, reason like a smart promotional-products merchandise strategist sitting beside the rep -- not a copywriter drafting an email. Do not merely summarize the signal; interpret it commercially. Commercial Activation Reasoning sprint: your goal is to translate a business event into a commercial ACTIVATION, not a product category. "This event may create a need for promotional products" is not a play -- it is a merchandise justification wearing a play's clothing.
 
 First, separate what you actually know from what you're inferring:
-- FACT: directly stated or clearly supported by the evidence (e.g. "Impiricus hired a VP of Marketing & Brand Growth").
+- FACT: directly stated or clearly supported by the evidence (e.g. "the company hired a VP of Marketing & Brand Growth").
 - REASONABLE COMMERCIAL INFERENCE: a plausible implication you're using to reason toward an activation (e.g. "a new marketing leader may be evaluating how the brand shows up internally and externally, and may want an early, visible win"). Inference is allowed and expected -- this is where a real play comes from.
-- UNSUPPORTED ASSUMPTION: a specific plan, program, or initiative you have no actual evidence for (e.g. "Impiricus is beginning a comprehensive rebrand"). Never state this as if it were true. If your best play depends on an assumption like this, either soften it into an inference ("may be an early moment to...") or drop the play.
+- UNSUPPORTED ASSUMPTION: a specific plan, program, or initiative you have no actual evidence for (e.g. "the company is beginning a comprehensive rebrand" based on a leadership change alone, or "the company is launching an onboarding program" based on an acquisition alone). Never state this as if it were true. If your best play depends on an assumption like this, either soften it into an inference ("may be an early moment to...") or drop the play.
 
 Before generating commercialPlay/activationIdeas, work through four questions in order, silently, and let the answers actually shape what you write -- do not skip straight to a product category:
 1. AUDIENCE -- Who are the relevant audiences THIS signal creates, affects, or brings together? Do not default to employees -- name at least two plausible candidate audiences before you settle on one. Depending on the event and company, this might include employees, recruits, customers, prospects, investors/LPs, portfolio companies, executives, partners, dealers, field teams, event attendees, VIPs, volunteers, community members, or sponsors. A financing/fund-close signal specifically must have investors/LPs/portfolio companies weighed as a candidate audience alongside (not instead of) any operational/employee angle -- never settle on employee-onboarding/apparel as the only read of a financing signal without having actually considered who the money itself connects the company to. If you cannot name a real audience, confidence in any activation should fall sharply.
@@ -878,6 +1243,12 @@ Before generating commercialPlay/activationIdeas, work through four questions in
 
 FUNDING AND EARNINGS/FINANCIAL-RESULTS SIGNALS SPECIFICALLY: these are weak by default. Funding alone does not imply hiring, onboarding, office expansion, events, or a customer launch -- "$20M raised" is not itself a reason to write "onboarding kits." A routine earnings call or financial-results announcement normally has no activation at all. Only write a commercialPlay for one of these signal types when the evidence ITSELF discloses a concrete downstream initiative (a stated hiring push, a market launch, an office expansion, a conference strategy) -- reason from that disclosed initiative, never from the funding/earnings event alone. Otherwise, omitting commercialPlay/activationIdeas/expansionPotential entirely is the correct, expected output for these two signal types -- a real signal with no credible activation is a legitimate result, not a gap to fill. NO GROUNDED ACTIVATION, NO PRIORITY: producing SOME activationIdeas does not by itself prove a real activation exists -- do not satisfy this requirement by manufacturing an idea ABOUT the funding/earnings event itself (e.g. a "brand visibility campaign," "funding announcement launch kit," or "social media campaign" for the raise/results). Announcing money is not a moment the audience experiences, even if you can picture marketing collateral for it -- that is exactly the "merchandise justification wearing a play's clothing" this whole framework exists to prevent, just with confident phrasing instead of hedged phrasing. If the only "activation" you can produce is about the financial event itself, you do not have one -- leave commercialPlay and activationIdeas empty.
 
+THE SAME "NO GROUNDED ACTIVATION, NO PRIORITY" STANDARD APPLIES TO EVERY OTHER WEAK-BY-DEFAULT SIGNAL TYPE, not just funding -- an acquisition, a leadership appointment, and a new-facility opening are each frequently reported with almost no operational detail, and each has its own version of the exact same trap:
+- Acquisition: the acquisition itself is not a welcome/integration moment -- only a DISCLOSED integration detail (a stated combined-team event, a customer transition plan, a branch consolidation) is. "Acquiring a company creates a great opportunity for onboarding kits" is a manufactured activation with no real audience specified; "the two teams are holding a joint welcome event for the combined field staff" is grounded because it names who and what actually happens.
+- Leadership appointment: a new executive's title alone never proves a rebrand, reorganization, or any other sweeping initiative is underway -- see the UNSUPPORTED ASSUMPTION example above. A real activation here comes from the INFERENCE that a new leader likely wants an early, visible win (see AUDIENCE/OBJECTIVE above), not from asserting a specific program the evidence never mentioned.
+- Facility opening or relocation: a new location is not itself a team/customer/community moment -- reflexively translating "new location" into uniforms, signage, or launch materials with no audience attached is the same merchandise-justification pattern as funding's "brand visibility campaign." A real activation names who experiences the opening (staff on their first day, customers visiting for the first time, the community at a ribbon cutting), not just that a new place now exists.
+In every case: a confidently-worded idea or narrative is not evidence of a real activation merely because it sounds specific -- if its entire content is the bare event category plus a generic campaign/visibility/launch noun with no audience or moment named, it is the same manufactured pattern regardless of which signal family it dresses up.
+
 A grounded signal with no credible commercial interpretation is a better output than fabricated commercial intelligence. Absence of commercialPlay, an empty activationIdeas list, and absence of expansionPotential are all valid and expected outcomes for weak or generic signals -- never force any of these fields merely because the schema has a place for them.
 
 For the discovery question, give the single most useful thing to learn or confirm next -- ownership, timing, scope, whether a program already exists, which department owns it, or expansion potential. This is commercial discovery, not opener copy: do not write a scripted greeting and do not ask to schedule a meeting. Never phrase this question by asking the buyer what THEIR plans/strategy/approach are for the event itself (e.g. "What promotional strategies are you considering for X?", "How do you plan to engage with X?", "What's your approach to X?") -- that outsources the thinking back to the buyer, which is the opposite of the point. If you have a real activation idea, lead with it (the permission-ask branch below). If you genuinely don't have enough to propose anything concrete, ask about ownership/timing/scope/whether a program already exists instead -- never ask the buyer to invent the commercial angle for you.
@@ -890,7 +1261,16 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
   'apparel', 'branded apparel', 'drinkware', 'giveaways', 'promotional items',
   'promotional products', 'swag', 'branded merchandise', 'merchandise',
   'branded items', 'corporate gifts', 'custom products', 'promotional giveaways',
-  'branded swag', 'company swag', 'custom merchandise', 'branded gear'
+  'branded swag', 'company swag', 'custom merchandise', 'branded gear',
+  // Global Business Trigger Intelligence sprint: the founder's named facility-
+  // opening/relocation weak pattern ("new location -> uniforms / signage /
+  // launch materials") -- bare, unqualified translations of "there is a new
+  // place" into a product category, with no audience or moment attached. A
+  // qualified, specific idea using the same underlying words (e.g. "Staff
+  // opening-day polos", already a real idea in this suite's own strong
+  // facility-opening fixture) is unaffected -- this is still an exact
+  // whole-string match, never a substring search.
+  'uniforms', 'signage', 'launch materials'
 ]);
 
 // Deliberately a short, fixed list of content-free category labels -- the
@@ -898,20 +1278,38 @@ const GENERIC_ACTIVATION_IDEA_PHRASES = new Set([
 // ontology. A specific, qualified phrase ("Premium pool/beach towels") is
 // never caught by this even though it contains a generic word, because the
 // check is against the WHOLE cleaned idea string, not a substring search.
+// Final Beta Signal Intelligence Correction sprint: the SAME family-agnostic
+// gap isGenericCommercialPlay() closed for narrative text, applied per-idea.
+// isWeakEventDressedAsActivation() only fires when WEAK_EVENT_ANCHOR matches
+// (funding/acquisition/leadership/facility, deliberately never rebrand/
+// conference/product-launch), so a short idea phrase like "Rebrand launch
+// apparel" or "New-brand promotional giveaways" -- naming only a bare merch
+// category word with no real audience/moment, for an event family the
+// anchor never covers -- previously survived unfiltered. Deliberately a
+// SMALL, bare-category-word list (not the fuller GENERIC_COMMERCIAL_PLAY_NOUN
+// phrase set, which requires a qualifying word like "branded"/"custom" a
+// short idea title often omits) plus the SAME GROUNDED_AUDIENCE_OR_MOMENT_WORDS
+// positive check -- a real, grounded idea always names who it's for or what
+// moment it serves ("Volunteer polos for the staff working check-in",
+// "Welcome kit for new drivers"), so this never fires on genuine specificity.
+const GENERIC_MERCH_CATEGORY_WORD = /\b(?:apparel|gear|swag|merch|giveaways?|promo items?|promotional items?|kits?)\b/i;
 function isGenericActivationIdea(idea = '') {
   const normalized = clean(idea).toLowerCase().replace(/[.!]+$/, '');
   if (!normalized) return true;
   if (GENERIC_ACTIVATION_IDEA_PHRASES.has(normalized)) return true;
   // Commercial Activation Reasoning sprint, final validation round: an idea
-  // can be a manufactured funding-event activation even when it isn't one of
+  // can be a manufactured weak-event activation even when it isn't one of
   // the fixed bare-category phrases above (e.g. "Funding announcement launch
-  // kit", "Social media campaign for the seed round") -- see
-  // isFinancialEventDressedAsActivation()'s header comment below for the
-  // full rationale; same check, applied per-idea here.
-  return isFinancialEventDressedAsActivation(idea);
+  // kit", "Social media campaign for the seed round", "Acquisition
+  // celebration launch kit", "Comprehensive rebrand campaign") -- see
+  // isWeakEventDressedAsActivation()'s header comment below for the full
+  // rationale; same check, applied per-idea here.
+  if (isWeakEventDressedAsActivation(idea)) return true;
+  if (GENERIC_MERCH_CATEGORY_WORD.test(idea) && !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(idea)) return true;
+  return false;
 }
 
-// QA correction 4 (Impiricus finding): commercialPlay is free-form prose,
+// QA correction 4 (original finding): commercialPlay is free-form prose,
 // so it can't be screened with an exact-match phrase set the way
 // activationIdeas is above -- a full-sentence generic non-answer needs a
 // STRUCTURAL check instead. This deliberately stays a hedge-pattern + a
@@ -979,22 +1377,37 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
 // Commercial Activation Reasoning sprint, final validation round (Neural
 // Trust/Black Hat funding finding): "NO IDEA, NO PRIORITY" is gameable --
 // the model can satisfy "produce a real activationIdea" by inventing one
-// for the funding/financial event ITSELF ("a great opportunity to run a
-// brand visibility campaign celebrating the round"), which is confident,
+// for the underlying event ITSELF ("a great opportunity to run a brand
+// visibility campaign celebrating the round"), which is confident,
 // well-formed prose with no hedge word at all, so GENERIC_COMMERCIAL_PLAY_HEDGE
 // never fires. The founder's stronger standard: a funding/financial event
 // is NEVER itself a real moment/touchpoint -- an idea or play whose entire
-// content is the financial event plus a generic campaign/visibility noun,
-// with nothing else concrete, is a manufactured activation regardless of
-// how confidently it's phrased. This is a SEPARATE, independent check
-// (financial-event-anchor + generic-campaign-noun, no hedge required) --
-// it only ever fires on this specific combination, so a genuinely grounded
+// content is the event plus a generic campaign/visibility noun, with
+// nothing else concrete, is a manufactured activation regardless of how
+// confidently it's phrased. This is a SEPARATE, independent check
+// (weak-event-anchor + generic-campaign-noun, no hedge required) -- it
+// only ever fires on this specific combination, so a genuinely grounded
 // funding-adjacent play (e.g. "the round is earmarked for opening three new
 // offices -- a reason to build a new-office welcome program for each") is
 // unaffected: "new-office welcome program" matches neither generic-campaign
 // noun list below.
-const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
-const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
+//
+// Global Business Trigger Intelligence sprint: originally scoped to
+// funding/earnings only (the confirmed Neural Trust case), but live QA
+// showed the exact same confident-dressed-up shape recurs for every other
+// signal family the prompt itself calls "weak by default" -- an acquisition
+// ("a great opportunity to run a brand visibility campaign celebrating the
+// deal"), a leadership appointment ("the new VP is a great moment to launch
+// a comprehensive rebrand"), or a facility opening ("a great opportunity to
+// run a visibility campaign for the grand opening"). None of these were
+// previously caught: WEAK_EVENT_ANCHOR only matched funding/earnings
+// language, so a confidently-worded fabrication anchored on any other weak
+// family sailed through unflagged. Widened to a family-agnostic anchor
+// covering every weak-by-default event category named in the founder's
+// brief -- content-based, not account-specific, so it applies identically
+// regardless of which company or signal triggered it.
+const WEAK_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results|acquisition|acquiring|acquired|acquires|merger|merged|new (?:vp|ceo|cfo|coo|cmo|cto|president|vice president|chief \w+ officer)|newly hired (?:vp|ceo|cfo|coo|cmo|cto|president)|appointed (?:as )?(?:vp|ceo|cfo|coo|cmo|cto|president|vice president)|named (?:ceo|president|chief|vice president)|leadership change|promoted to|new (?:facility|location|office|branch|plant)|grand opening|ribbon cutting|relocat(?:ed|ing|ion))\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign|comprehensive rebrand|rebrand campaign|brand relaunch|relaunch campaign)\b/i;
 // Deliberately a POSITIVE check (does a real audience/moment word appear
 // anywhere?) rather than the "strip stopwords until nothing survives"
 // pattern the older checks above use -- a natural, fluently-written
@@ -1004,18 +1417,50 @@ const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recog
 // instead of in a hedging voice (exactly what this sprint's prompt changes
 // pushed it toward). Presence of a genuine audience/moment word is a much
 // more robust signal of real grounding than absence of connective filler.
-const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
-function isFinancialEventDressedAsActivation(text = '') {
+//
+// Global Business Trigger Intelligence sprint: deliberately does NOT include
+// "acquisition"/"acquired"/"merger"/"leadership"/"executive"/"office"/
+// "facility"/"location"/"branch"/"store" -- every one of these is now also
+// part of WEAK_EVENT_ANCHOR above (the anchor has to name the event category
+// -- "acquisition", "new facility" -- to detect it in the first place), so
+// keeping the exact same words here would make the two lists cancel each
+// other out: almost any acquisition-, leadership-, or facility-anchored
+// narrative mentions its own event category ("acquisition", "the new
+// facility") somewhere in ordinary connective prose merely by describing
+// what kind of event happened, which would satisfy this check regardless of
+// whether a genuine audience/moment was ever named -- confirmed empirically
+// during this sprint: a facility-opening narrative anchored on "the new
+// facility" was still passing this check purely because "facility" is both
+// the anchor AND (in the pre-sprint list) a "grounded" word. A bare
+// event-category label -- what TYPE of thing happened, or WHERE it
+// happened -- is not the same claim as WHO experiences it; only WHO
+// (employees, customers, staff, the community, dealers, volunteers...) or a
+// genuine human touchpoint (welcome, onboarding, a trade show, a parade)
+// counts as real grounding here. Every strong held-out fixture in this
+// suite still passes on a WHO/touchpoint word alone (Solaris: "...for staff
+// and the patients visiting..." -- grounded by "staff", not by "location";
+// Vantage/Ridgeline: "...incoming...drivers and dispatch staff..." --
+// grounded by "staff", not by "acquisition").
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|launch event|onboarding|welcome|integration|community event|open house)\b/i;
+function isWeakEventDressedAsActivation(text = '') {
   const t = clean(text);
   if (!t) return false;
-  if (!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  if (!WEAK_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
   return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
 }
 function isGenericCommercialPlay(narrative = '') {
   const text = clean(narrative);
   if (!text) return false;
-  if (isFinancialEventDressedAsActivation(text)) return true;
+  if (isWeakEventDressedAsActivation(text)) return true;
   if (!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
+  // Final Beta Signal Intelligence Correction sprint (mirrors
+  // dashboard/index.html's identically-widened check -- see that copy's
+  // header comment for the full rationale): a hedged "[event] may create an
+  // opportunity for [merch]" narrative with no genuine audience/moment named
+  // is the same manufactured pattern regardless of event family, independent
+  // of WEAK_EVENT_ANCHOR -- this generalizes protection against manufactured
+  // activation reasoning without adding more families to any anchor list.
+  if (!GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(text)) return true;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
   if (remaining.length === 0) return true;
@@ -1304,6 +1749,150 @@ function displayLabelForEventType(eventType = '') {
   return 'Business Activity';
 }
 
+// ---------------------------------------------------------------------------
+// Final bounded Beta trust correction: ONE canonical event classification
+// controls every specific seller-facing interpretation of what happened.
+// Both api/research-batch.js and api/research-account.js consume this SAME
+// function -- neither maintains its own independent event-family
+// classifier. Confirmed production root cause (live QA, Supabase trace):
+// api/research-account.js had its own parallel copy of this exact mapping
+// job, re-derived from loose free-text regex over signalType+department+
+// industry, completely disconnected from the canonical eventType either
+// endpoint had already computed -- producing e.g. a canonical
+// EVENT_CONFERENCE (Cianbro's Maine CTE Business Summit) rendering Hiring
+// seller copy, and a canonical BUSINESS_ACTIVITY_UNKNOWN (BerryDunn's
+// veterinary-accounting thought-leadership piece) rendering "Expansion or
+// location activity" Facility Launch copy -- neither of which the
+// canonical classification itself ever supported.
+//
+// A generic/unknown canonical label (Acquisition, Rebrand, Business
+// Activity, etc.) always maps to null, so every caller falls to its own
+// topic-neutral generic fallback rather than asserting a specific claim
+// the canonical classification does not support.
+function canonicalTemplateFamily(type = '') {
+  const t = String(type || '').toLowerCase();
+  if (/community/.test(t)) return 'community';
+  if (/facility|location|renovation|growth\s*\/\s*expansion/.test(t)) return 'facility';
+  if (/trade show|conference|events\s*\/\s*marketing/.test(t)) return 'events';
+  if (/hiring/.test(t)) return 'hiring';
+  if (/product launch|product\s*\/\s*service/.test(t)) return 'launch';
+  if (/award|recognition/.test(t)) return 'award';
+  if (/partnership|contract/.test(t)) return 'partnership';
+  if (/leadership/.test(t)) return 'leadership';
+  return null;
+}
+
+// Shared per-family seller-copy metadata, keyed by canonicalTemplateFamily()'s
+// own family keys -- the ONE table api/research-account.js's opportunityForSignal()/
+// detectDepartment()/contactForSignal() now read from (replacing their own
+// independent regex tables), and the same table api/research-batch.js's
+// classifyLegacySignalActionability() reads from for its bounded, missing-
+// canonicalEventType-only read-time self-heal (see that function's own
+// comment). Deliberately generic/topic-neutral for the `null` (unknown/
+// generic canonical type) entry -- never a specific claim, matching the
+// "generic fallback is fine when classification is uncertain" contract.
+const SELLER_COPY_BY_TEMPLATE_FAMILY = {
+  events: {
+    category: 'Trade Show / Event Support',
+    name: 'Trade Show / Event Merchandise Program',
+    department: 'Marketing / Events',
+    contact: 'Marketing Manager / Events Lead',
+    products: ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'],
+    whyNow: 'A public event creates a timely reason to ask about booth traffic, staff presentation, attendee giveaways, and customer follow-up.',
+    reasonToReachOut: 'Event activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the upcoming event or campaign needs staff apparel, attendee gifts, or customer-facing merch.'
+  },
+  facility: {
+    category: 'Facility / Location Launch',
+    name: 'New Location Launch Kit',
+    department: 'Operations / Production',
+    contact: 'Operations Manager / Safety Manager / HR Manager',
+    products: ['grand opening gifts', 'location-branded apparel', 'employee welcome kits', 'customer gifts'],
+    whyNow: 'Expansion or location activity creates a timely reason to ask about launch merchandise, employee gear, and customer-facing gifts.',
+    reasonToReachOut: 'Growth activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the growth activity creates any need for launch merch, employee gear, or customer gifts.'
+  },
+  award: {
+    category: 'Recognition / Celebration',
+    name: 'Recognition & Celebration Program',
+    department: 'Marketing / HR',
+    contact: 'Marketing Manager / HR Manager',
+    products: ['employee gifts', 'award apparel', 'thank-you kits', 'announcement mailers'],
+    whyNow: 'Recognition creates a natural opening to ask about employee celebration, customer announcements, and internal culture moments.',
+    reasonToReachOut: 'Recognition creates a timely reason to check in',
+    conversationStarter: 'Ask whether there are any employee, customer, or team appreciation moments coming up.'
+  },
+  leadership: {
+    category: 'Leadership Transition',
+    name: 'New Leader Welcome / Team Culture Kit',
+    department: 'Marketing / HR',
+    contact: 'Marketing Manager / HR Manager',
+    products: ['welcome gifts', 'team apparel', 'executive gifts', 'internal announcement kits'],
+    whyNow: 'Leadership changes create a light-touch reason to ask about internal communication, team culture, or executive gifting.',
+    reasonToReachOut: 'Leadership change creates a timely reason to check in',
+    conversationStarter: 'Ask whether the leadership change connects to any team engagement, recognition, or internal brand moments.'
+  },
+  launch: {
+    category: 'Product / Service Launch',
+    name: 'Product Launch Merchandise Kit',
+    department: 'Marketing / Sales',
+    contact: 'Marketing Manager / Sales Manager',
+    products: ['launch giveaways', 'sales team apparel', 'customer gifts', 'sample kits'],
+    whyNow: 'Launch activity creates a timely reason to ask about campaign merchandise, sales enablement, and customer-facing giveaways.',
+    reasonToReachOut: 'Launch activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the product or service launch needs any sales, customer, or campaign support.'
+  },
+  community: {
+    category: 'Community / Sponsorship',
+    name: 'Community Sponsorship Program',
+    department: 'Marketing / Community Relations',
+    contact: 'Marketing Manager / Community Relations Lead',
+    products: ['event giveaways', 'volunteer apparel', 'banners', 'community gifts'],
+    whyNow: 'Community programs often need volunteer apparel, banners, giveaways, sponsor gifts, and simple branded items for attendees or partners.',
+    reasonToReachOut: 'Community activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the community program needs volunteer apparel, banners, or sponsor gifts.'
+  },
+  partnership: {
+    category: 'Customer / Partnership Win',
+    name: 'Customer Appreciation & Partnership Program',
+    department: 'Marketing / Sales',
+    contact: 'Marketing Manager / Sales Manager',
+    products: ['customer appreciation gifts', 'sales kits', 'executive gifts', 'event giveaways'],
+    whyNow: 'Major wins can create needs around employee communication, customer appreciation, launch support, and brand visibility with new stakeholders.',
+    reasonToReachOut: 'Partnership activity creates a timely reason to check in',
+    conversationStarter: 'Ask whether the new partnership or contract creates any customer-facing or internal recognition needs.'
+  },
+  hiring: {
+    category: 'Employee Onboarding',
+    name: 'New Hire Onboarding Program',
+    department: 'HR / People',
+    contact: 'HR Manager / Department Lead',
+    products: ['new hire welcome kits', 'employee apparel', 'drinkware', 'recruiting giveaways'],
+    whyNow: 'Hiring creates a timely reason to ask about onboarding, recruiting, and employee welcome programs.',
+    reasonToReachOut: 'Hiring creates a timely reason to check in',
+    conversationStarter: 'Ask how they are handling onboarding, apparel, or employee experience for new hires.'
+  }
+};
+// Deliberately generic/topic-neutral -- used whenever canonicalTemplateFamily()
+// returns null (a generic/unknown canonical type). Mirrors the existing
+// generic fallback phrasing already used elsewhere (dashboard/index.html's
+// getReasonToReachOutTitle() own final default, "Business signal creates a
+// reason to reach out") so a generic classification reads consistently
+// across every surface, never a manufactured specific claim.
+const GENERIC_SELLER_COPY = {
+  category: 'General Business Activity',
+  name: 'General Outreach',
+  department: 'Relevant department',
+  contact: 'Relevant department lead',
+  products: ['employee apparel', 'event kits', 'customer appreciation', 'recognition gifts'],
+  whyNow: 'This is a real, public business update, though the specific initiative behind it is not yet clear from the evidence. Worth a quick check-in to see what is changing.',
+  reasonToReachOut: 'Business signal creates a reason to reach out',
+  conversationStarter: 'Ask what is changing internally and whether there is a role for branded merchandise or employee/customer recognition.'
+};
+function sellerCopyForTemplateFamily(family) {
+  return SELLER_COPY_BY_TEMPLATE_FAMILY[family] || GENERIC_SELLER_COPY;
+}
+
 function normalizeForMatch(value = '') {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -1371,7 +1960,30 @@ function resolveEventType(text = '', family = '') {
   if (hasGenuineAcquisitionLanguage && !mentionsGrantOrFunding && !mentionsInvestmentOrRenovation) {
     return { primaryType: 'ACQUISITION', candidateTypes: ['ACQUISITION'], recurring: false };
   }
-  if (/\bappoints?\b|\bappointed\b|\bnames?\b.*\bas\b|\bnamed\b.*\bas\b|\bpromotes?\b|\bpromoted\b|joins as|hired as|named (ceo|president|vice president|chief|director)/i.test(t)) {
+  // Final bounded Beta trust correction (Round C): "named"/"promotes"/
+  // "appoints" are common, ordinary verbs outside a personnel-appointment
+  // sense ("BerryDunn promotes a collaborative culture", "was named a Best
+  // Place to Work") -- a bare match on the verb alone, or the verb followed
+  // by "as" ANYWHERE later in the concatenated evidence text (title +
+  // whatChanged + business_context, joined with plain spaces, not sentence
+  // boundaries), previously let an unrelated award/careers page get
+  // classified as a leadership appointment merely because "named"/"promote"
+  // and "as" both happened to appear somewhere in the combined blob
+  // (documented, previously-unfixed limitation: scripts/test-canonical-
+  // classification.js's rank-14 Marriott case, "Named No. 1 Best Conference
+  // Hotel..." + a later, unrelated "...recognized AS the No. 1...").
+  // Genuine appointment language names a real ROLE close to the verb, in
+  // the SAME local clause (no sentence-ending punctuation crossed) -- "named
+  // CEO", "appointed Jane Smith as Chief Financial Officer", "promoted to
+  // Director". "as"/"to" is common ("appointed as CEO") but not required
+  // ("appointed Chief Financial Officer effective immediately" is just as
+  // genuine) -- the required, narrowing element is the nearby ROLE word
+  // itself, the same discipline hasGenuineAcquisitionLanguage() above
+  // already applies (verb + a real object, not the bare verb alone).
+  const LEADERSHIP_ROLE_WORD = '(?:ceo|cfo|coo|cto|cmo|president|vice[- ]president|vp|chief(?:\\s+\\w+){0,2}\\s+officer|chief|executive director|managing director|general manager|director|partner|principal|chairman|chairwoman|chairperson)';
+  const hasGenuineLeadershipLanguage =
+    new RegExp(`\\b(?:appoints?|appointed|names?|named|promotes?|promoted|joins|joined|hires?|hired|hiring)\\b[^.!?\\n]{0,50}\\b${LEADERSHIP_ROLE_WORD}\\b`, 'i').test(t);
+  if (hasGenuineLeadershipLanguage) {
     return { primaryType: 'LEADERSHIP_APPOINTMENT', candidateTypes: ['LEADERSHIP_APPOINTMENT'], recurring: false };
   }
   if (/trade show|tradeshow|\bexpo\b|\bbooth\b|exhibitor/i.test(t)) {
@@ -1459,11 +2071,13 @@ function resolveEventType(text = '', family = '') {
 }
 
 function extractFromOneField(t = '', companyNorm = '') {
-  if (!t) return { subjectEntity: null, location: null, role: null, anchor: null };
+  if (!t) return { subjectEntity: null, location: null, role: null, anchor: null, groupPromotionCount: null, groupPromotionRole: null };
   let subjectEntity = null;
   let location = null;
   let role = null;
   let anchor = null;
+  let groupPromotionCount = null;
+  let groupPromotionRole = null;
 
   const NON_LOCATION_WORDS = new Set(['new', 'our', 'its', 'their', 'the', 'this', 'next', 'another', 'a', 'an', 'latest', 'newest', 'grand', 'corp', 'inc', 'llc', 'co', 'company', 'corporation', 'ltd']);
   // Proper-noun sequence: 1-5 consecutive capitalized tokens. Used for any entity/place
@@ -1473,10 +2087,38 @@ function extractFromOneField(t = '', companyNorm = '') {
   // boundary is farther away than a fixed length cap.
   const PN = "[A-Z][A-Za-z0-9&.'-]*(?:\\s+[A-Z][A-Za-z0-9&.'-]*){0,4}";
   const acquisitionMatch = t.match(new RegExp(`(?:[Aa]cquires?|[Aa]cquired|[Aa]cquisition of|[Cc]ompletes acquisition of|[Ff]inalizes purchase of)\\s+(${PN})`));
+  // Founder correction (BerryDunn Careers): "hires"/"hired"/"the hiring of"
+  // are just as common a way to phrase a genuine leadership appointment
+  // ("BerryDunn hires Carson Hanrahan as Chief Transformation Officer",
+  // "the hiring of Carson Hanrahan as Chief Transformation Officer") as
+  // "appoints"/"names"/"promotes" -- resolveEventType()'s own
+  // hasGenuineLeadershipLanguage() (immediately above) is fixed to
+  // recognize "hires"/"hired"/"hiring" as a leadership verb too, but this
+  // extractor didn't, so a genuinely correct LEADERSHIP_APPOINTMENT
+  // classification still had no way to capture the
+  // specific person/role that justified it.
   const appointmentMatch =
-    t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
+    t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?|[Hh]ires?|[Hh]ired|[Hh]iring of)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
     t.match(new RegExp(`(${PN})\\s+joins\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
-    t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
+    t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to|hired as)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
+  // Founder correction (BerryDunn Careers, live-QA trace): a genuine
+  // GROUP promotion ("BerryDunn promotes 10 to principal") names no single
+  // individual, so appointmentMatch's (PN) proper-noun capture above can
+  // never match it -- confirmed live production case: the account's real,
+  // persisted rawSnippet was exactly this group-promotion sentence (no
+  // Carson-Hanrahan-shaped text was ever captured for this row at all), so
+  // subjectEntity/anchor stayed null and generateCanonicalTitle() fell all
+  // the way back to the source's own container-page title. The count and
+  // role named here ARE present, verbatim, in the real evidence -- this is
+  // not a name invented from the container title, only a second, narrower
+  // extraction shape for a fact appointmentMatch structurally cannot cover.
+  // Role capture is deliberately lowercase-only (no /i flag) -- a real role
+  // title in this "promoted N to ROLE" phrasing is a common noun ("principal",
+  // "senior manager"), so requiring lowercase naturally stops the capture at
+  // the next capitalized word (e.g. a company name repeating immediately
+  // after, as in "...promotes 10 to principal BerryDunn, a Portland...")
+  // instead of needing a punctuation boundary that may not be adjacent.
+  const groupPromotionMatch = t.match(/\b(?:[Pp]romotes?|[Pp]romoted)\s+(\d{1,4})\s+(?:people|employees|team members|staff|colleagues)?\s*to\s+([a-z][a-z]*(?:\s+[a-z]+){0,3})\b/);
   const facilityInAtMatch = t.match(new RegExp(`(?:facility|branch|office|location|plant)\\s+(?:in|at)\\s+(${PN})`, 'i'));
   const openingLocationMatch = t.match(new RegExp(`(?:grand opening|ribbon cutting|opening|opens?)\\s+(?:of|for)?\\s*(?:its|their|a|the)?\\s*(?:new)?\\s*(?:branch|location|office)?\\s*(?:in|at)\\s+(${PN})`, 'i'));
   const openingOfXLocationMatch = t.match(new RegExp(`(?:grand opening|opening)\\s+of\\s+(?:its|their|a|the)?\\s*(?:new\\s+)?(${PN})\\s+(?:location|branch|office)\\b`, 'i'));
@@ -1542,6 +2184,13 @@ function extractFromOneField(t = '', companyNorm = '') {
   const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
   if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
   if (appointmentMatch) { subjectEntity = trimTrailingPunct(appointmentMatch[1].trim()); role = appointmentMatch[2].trim(); }
+  // Only when no NAMED individual was found -- a real named appointment is
+  // always more specific than a group-promotion count, so it takes
+  // precedence when both happen to be present in the same text.
+  if (!subjectEntity && groupPromotionMatch) {
+    groupPromotionCount = groupPromotionMatch[1].trim();
+    groupPromotionRole = trimTrailingPunct(groupPromotionMatch[2].trim());
+  }
 
   if (facilityInAtMatch) location = trimTrailingPunct(facilityInAtMatch[1].trim());
   else if (openingOfXLocationMatch) location = trimTrailingPunct(openingOfXLocationMatch[1].trim());
@@ -1581,7 +2230,7 @@ function extractFromOneField(t = '', companyNorm = '') {
   else if (productNameMatch) anchor = trimTrailingPunct(productNameMatch[1].trim());
   else if (rebrandNameMatch) anchor = trimTrailingPunct(rebrandNameMatch[1].trim());
 
-  return { subjectEntity, location, role, anchor };
+  return { subjectEntity, location, role, anchor, groupPromotionCount, groupPromotionRole };
 }
 
 // Runs extraction on each field SEPARATELY (never on a blind concatenation of
@@ -1591,16 +2240,20 @@ function extractFromOneField(t = '', companyNorm = '') {
 function extractEventEntities(title = '', snippet = '', rawContent = '', companyNorm = '') {
   const fields = [clean(title), clean(snippet), clean(rawContent)].filter(Boolean);
   let subjectEntity = null, location = null, role = null, anchor = null;
+  let groupPromotionCount = null, groupPromotionRole = null;
   for (const f of fields) {
     const r = extractFromOneField(f, companyNorm);
     if (!subjectEntity && r.subjectEntity) subjectEntity = r.subjectEntity;
     if (!location && r.location) location = r.location;
     if (!role && r.role) role = r.role;
     if (!anchor && r.anchor) anchor = r.anchor;
+    if (!groupPromotionCount && r.groupPromotionCount) { groupPromotionCount = r.groupPromotionCount; groupPromotionRole = r.groupPromotionRole; }
     if (subjectEntity && location && role && anchor) break;
   }
   if (!subjectEntity && location) subjectEntity = location;
   return {
+    groupPromotionCount,
+    groupPromotionRole: groupPromotionRole ? groupPromotionRole.slice(0, 40) : null,
     subjectEntity: subjectEntity ? subjectEntity.slice(0, 60) : null,
     location: location ? location.slice(0, 60) : null,
     role: role ? role.slice(0, 70) : null,
@@ -1866,7 +2519,17 @@ function generateCanonicalTitle(eventType, identity = {}, evidence = []) {
     LOCATION_REOPENING: subject ? `${subject} Branch Reopening` : null,
     RENOVATION_COMPLETION: subject ? `${subject} Renovation Completed` : null,
     FACILITY_EXPANSION: identity.location ? `${identity.location} Facility Expansion` : null,
-    LEADERSHIP_APPOINTMENT: identity.subjectEntity ? `${identity.subjectEntity} Appointed${identity.role ? ` ${identity.role}` : ''}` : null,
+    // Founder correction (BerryDunn Careers, live-QA trace): a genuine
+    // GROUP promotion ("BerryDunn promotes 10 to principal") names no
+    // single individual, so it can never win the subjectEntity branch --
+    // used only as a fallback when no named appointee was extracted, and
+    // built ONLY from the count/role the real evidence actually named
+    // (never a fabricated person).
+    LEADERSHIP_APPOINTMENT: identity.subjectEntity
+      ? `${identity.subjectEntity} Appointed${identity.role ? ` ${identity.role}` : ''}`
+      : (identity.groupPromotionCount && identity.groupPromotionRole && companyDisplay
+        ? `${companyDisplay} Promotes ${identity.groupPromotionCount} to ${identity.groupPromotionRole.replace(/\b[a-z]/g, ch => ch.toUpperCase())}`
+        : null),
     ACQUISITION: identity.subjectEntity ? `Acquisition of ${identity.subjectEntity}` : null,
     PRODUCT_LAUNCH: identity.subjectEntity ? `${identity.subjectEntity} Launch` : (companyDisplay ? `${companyDisplay} Product Launch` : null)
   };
@@ -1967,7 +2630,7 @@ function resolveEvents(candidates = []) {
     // over the company field itself, and would otherwise mask a genuinely
     // distinctive anchor (the award's own name) present later in the same
     // sentence.
-    const { subjectEntity, location, role, anchor } = extractEventEntities(
+    const { subjectEntity, location, role, anchor, groupPromotionCount, groupPromotionRole } = extractEventEntities(
       c.rawTitle || c.title || c.headline || '',
       c.rawSnippet || c.snippet || '',
       c.rawContent || c.pageContent || '',
@@ -1996,6 +2659,12 @@ function resolveEvents(candidates = []) {
       candidateTypes: typeInfo.candidateTypes,
       recurring: typeInfo.recurring,
       subjectEntity, location, role, anchor,
+      // Founder correction (BerryDunn Careers, live-QA trace): display-only,
+      // like `location` above -- never fed into the fingerprint
+      // discriminator/anchor, so this fix cannot change event identity for
+      // any already-persisted row, only what generateCanonicalTitle() below
+      // is allowed to render instead of a bare container-page title.
+      groupPromotionCount, groupPromotionRole,
       eventDate, dateConfidence, year,
       normalizedUrl: normalizeUrl(c.url || c.sourceUrl || ''),
       evidenceText: text
@@ -2159,10 +2828,44 @@ function resolveEvents(candidates = []) {
       : ev.candidates.some(c => c.identityConfidence === 'unconfirmed') ? 'unconfirmed'
       : primaryCandidate.identityConfidence;
 
+    // Founder correction (BerryDunn Careers evidence provenance): `title`
+    // above is already the BEST available seller-facing title --
+    // generateCanonicalTitle() prefers a specifically extracted event
+    // ("Carson Hanrahan Appointed Chief Transformation Officer") built from
+    // identity.subjectEntity/role, and only falls back to the source's own
+    // (cleaned) headline when no such extraction succeeded. The code below
+    // previously did the opposite: it always preferred the RAW candidate's
+    // own title/headline -- the container/aggregator/profile page's own
+    // title (e.g. "BerryDunn - Careers") -- and only used the generated
+    // title as an unreachable last resort, silently discarding it into the
+    // canonicalTitle field below that nothing ever read. Confirmed
+    // production case: HA correctly classified a BerryDunn careers page's
+    // embedded Chief Transformation Officer hire as LEADERSHIP_APPOINTMENT
+    // (classification was never wrong), but "What changed"/How to
+    // Approach/Prepare for Call all rendered the generic "BerryDunn -
+    // Careers" container title instead of the specific grounded event that
+    // justified the classification. Only overrides when a real extraction
+    // succeeded (titleSource === 'generated') -- when nothing was
+    // extractable, the prior candidate-title-first behavior is unchanged.
+    const preferGeneratedTitle = titleSource === 'generated';
+    // Founder correction (BerryDunn Careers, live-QA trace): "What changed"
+    // (dashboard/index.html's Research Results row) reads whatChanged, a
+    // SEPARATE field from title/headline above, and was left completely
+    // untouched by the title fix -- confirmed live production case:
+    // whatChanged had independently degenerated to the bare company name
+    // ("BerryDunn"), so "What changed" rendered literally "BerryDunn" even
+    // once title/headline were fixed. Only overridden when whatChanged is
+    // genuinely degenerate (empty, or exactly the company name and nothing
+    // else) AND a real extraction succeeded -- a normal, already-descriptive
+    // whatChanged (an AI-authored narrative, a real sentence) is never
+    // replaced by the shorter generated title.
+    const whatChangedIsDegenerate = !clean(primaryCandidate.whatChanged || '') || normalizeForMatch(primaryCandidate.whatChanged) === ev.identity.company;
+    const preferGeneratedWhatChanged = preferGeneratedTitle && whatChangedIsDegenerate;
     return {
       ...primaryCandidate,
-      title: primaryCandidate.title || primaryCandidate.headline || title,
-      headline: primaryCandidate.headline || primaryCandidate.title || title,
+      title: preferGeneratedTitle ? title : (primaryCandidate.title || primaryCandidate.headline || title),
+      headline: preferGeneratedTitle ? title : (primaryCandidate.headline || primaryCandidate.title || title),
+      whatChanged: preferGeneratedWhatChanged ? title : primaryCandidate.whatChanged,
       url: bestEvidence?.url || primaryCandidate.url,
       sourceName: bestEvidence?.sourceName || primaryCandidate.sourceName,
       publishedAt: bestEvidence?.publishedDate || primaryCandidate.publishedAt || '',
@@ -2220,7 +2923,17 @@ function resolveOpportunityEvents(opportunities = []) {
   return resolveEvents(candidates).map(ev => ({
     ...ev,
     headline: ev.headline || ev.title,
-    signalTitle: ev.signalTitle || ev.headline || ev.title,
+    // Founder correction (BerryDunn Careers evidence provenance): ev's own
+    // `...primaryCandidate` spread (inside resolveEvents()'s return) can
+    // still carry the ORIGINAL, un-fixed opportunity's own signalTitle
+    // field (e.g. the raw "BerryDunn - Careers" container-page title) --
+    // that field is never touched by resolveEvents()'s title/headline fix
+    // above, so preferring it here would silently reintroduce the exact
+    // container-title leak that fix closes. ev.headline/ev.title are
+    // already the best available seller-facing title (specifically
+    // extracted when possible); signalTitle must agree with them, not with
+    // a stale, unrelated field carried through the spread.
+    signalTitle: ev.headline || ev.title,
     sourceUrl: ev.sourceUrl || ev.url
   }));
 }
@@ -2244,9 +2957,10 @@ function dedupeByEventFingerprint(items = [], options = {}) {
 }
 
 export {
-  SIGNAL_FAMILIES, clean, normalizeCompany, normalizeUrl, normalizeTitle, sourceDomain,
+  SIGNAL_FAMILIES, clean, normalizeCompany, isSingleTokenCompanyIdentity, isExactSelfDomainMatch, registrableDomainSld, normalizeUrl, normalizeTitle, sourceDomain,
   classifySignalFamily, signalSubtype, displaySignalType, sourceAuthority, freshnessScore,
   entityMatch, verifyCandidateCompanyGrounding, hasDistinctiveNameFallbackMatch, distinctiveCompanyTokens,
+  isEntityEmbeddedInLargerName, isStandaloneSingleTokenMention, isExactSelfSocialHandleMatch,
   isSocialUrl, socialProfileMatchesCompany, accountKnownSocialProfileMatch, accountCityStateGeoTokens, hasLocationContradiction, extractCityStatePairs,
   deriveAccountLocationFromContent, diagnoseAccountLocationExtraction,
   eventFingerprint, commercialScore, normalizeCandidate, clusterCandidates,
@@ -2257,7 +2971,7 @@ export {
   resolveOpportunityEvents, dedupeByEventFingerprint,
   fallbackEventDiscriminator, stableHash, normalizeForMatch,
   calendarDaysBetween,
-  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType,
+  EVENT_TYPE_DISPLAY_LABELS, displayLabelForEventType, canonicalTemplateFamily, sellerCopyForTemplateFamily,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT, EXPANSION_POTENTIAL_TAGS,
   normalizeCommercialIntelligence, isGenericActivationIdea, truncateText,
   isCommercialIntelligenceSignal, findLikelyRelatedPurchase, isGenericCommercialPlay

@@ -5,12 +5,19 @@ import {
   normalizeOpportunity,
   validateOpportunity,
   dedupeOpportunities,
-  classifySignalFamily,
-  displaySignalType,
   verifyCandidateCompanyGrounding,
   COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT,
-  normalizeCommercialIntelligence
+  normalizeCommercialIntelligence,
+  canonicalTemplateFamily,
+  sellerCopyForTemplateFamily
 } from './signal-intelligence.js';
+// Final bounded Beta trust correction: the SAME canonical event-type
+// resolver api/research-batch.js's makeSignal() already uses -- computed
+// once here too, so this endpoint's canonicalEventType/signalType can never
+// diverge from what api/research-batch.js would have assigned the exact
+// same evidence text. See canonicalTemplateFamily()'s own header comment
+// (signal-intelligence.js) for the full production root-cause writeup.
+import { resolveCanonicalEventType } from './research-batch.js';
 
 // Vercel Serverless Function: verified public signal research.
 // Uses public search plus optional OpenAI qualification when OPENAI_API_KEY is configured.
@@ -439,107 +446,44 @@ function extractCounts(text = '') {
   return matches.length ? Math.max(...matches) : null;
 }
 
-function detectDepartment(text = '', industry = '') {
-  const t = `${text} ${industry}`.toLowerCase();
-  if (/technician|service advisor|service department|mechanic|parts/.test(t)) return 'Service / Operations';
-  if (/production|manufactur|operator|machinist|cnc|warehouse|assembly|plant|facility|safety/.test(t)) return 'Operations / Production';
-  if (/sales consultant|sales rep|business development|account executive/.test(t)) return 'Sales';
-  if (/marketing|event|conference|expo|trade show|campaign/.test(t)) return 'Marketing / Events';
-  if (/hr|people|talent|recruit|hiring|careers/.test(t)) return 'HR / People';
-  if (/provider|doctor|nurse|clinical|dental|practice/.test(t)) return 'Clinical / Practice Operations';
-  return 'Relevant department';
+// Final bounded Beta trust correction: detectDepartment()/contactForSignal()/
+// opportunityForSignal() used to be three SEPARATE free-text regex
+// classifiers (matched against raw evidence text and/or signalType+
+// department+industry), completely independent of whatever canonical
+// eventType this endpoint (or api/research-batch.js) had already resolved
+// -- the confirmed root cause of a canonical EVENT_CONFERENCE (Cianbro's
+// Maine CTE Business Summit) rendering Hiring seller copy, and a canonical
+// BUSINESS_ACTIVITY_UNKNOWN (BerryDunn's veterinary-accounting thought-
+// leadership piece) rendering Facility Launch copy. All three now read
+// from ONE shared, canonicalTemplateFamily()-keyed table
+// (sellerCopyForTemplateFamily(), signal-intelligence.js) -- the SAME table
+// api/research-batch.js's classifyLegacySignalActionability() reads from
+// for its own read-time self-heal. `signalType` here is always the
+// canonical display label (see buildSignalIntelligence()/signalFromResult()/
+// makeAISignal() below) -- never independently re-derived from free text.
+// A generic/unknown canonical type correctly falls to the shared generic
+// fallback entry, never a specific claim. `industry` is accepted but no
+// longer used -- the per-industry department/contact sub-flavoring these
+// functions used to do was itself a second axis of independent
+// classification; folding it into the single canonical-family lookup is a
+// deliberate simplification, not an oversight.
+function detectDepartment(signalType = '', industry = '') {
+  return sellerCopyForTemplateFamily(canonicalTemplateFamily(signalType)).department;
 }
 
 function contactForSignal(signalType = '', department = '', industry = '') {
-  const combo = `${signalType} ${department} ${industry}`.toLowerCase();
-  if (/service|technician|mechanic/.test(combo)) return 'Service Director / HR Manager';
-  if (/production|operations|plant|safety|warehouse/.test(combo)) return 'Operations Manager / Safety Manager / HR Manager';
-  if (/event|trade show|marketing|conference/.test(combo)) return 'Marketing Manager / Events Lead';
-  if (/leadership|award|recognition/.test(combo)) return 'Marketing Manager / HR Manager';
-  if (/sales/.test(combo)) return 'Sales Manager / HR Manager';
-  if (/clinical|practice|provider/.test(combo)) return 'Practice Manager / HR Manager';
-  return 'HR Manager / Department Lead';
+  return sellerCopyForTemplateFamily(canonicalTemplateFamily(signalType)).contact;
 }
 
 function opportunityForSignal(signalType = '', department = '', industry = '') {
-  const combo = `${signalType} ${department} ${industry}`.toLowerCase();
-  if (/event|trade show|conference|expo|show/.test(combo)) {
-    return {
-      category: 'Trade Show / Event Support',
-      name: 'Trade Show / Event Merchandise Program',
-      products: ['booth giveaways', 'staff apparel', 'attendee gifts', 'signage'],
-      explanation: 'A public event creates a timely reason to ask about booth traffic, staff presentation, attendee giveaways, and customer follow-up.',
-      reasonToReachOut: 'Event activity creates a timely reason to check in',
-      conversationStarter: 'Ask whether the upcoming event or campaign needs staff apparel, attendee gifts, or customer-facing merch.'
-    };
-  }
-  if (/new location|expansion|facility|opening|grand opening/.test(combo)) {
-    return {
-      category: 'Facility / Location Launch',
-      name: 'New Location Launch Kit',
-      products: ['grand opening gifts', 'location-branded apparel', 'employee welcome kits', 'customer gifts'],
-      explanation: 'Expansion or location activity creates a timely reason to ask about launch merchandise, employee gear, and customer-facing gifts.',
-      reasonToReachOut: 'Growth activity creates a timely reason to check in',
-      conversationStarter: 'Ask whether the growth activity creates any need for launch merch, employee gear, or customer gifts.'
-    };
-  }
-  if (/award|recognized|recognition|milestone|anniversary/.test(combo)) {
-    return {
-      category: 'Recognition / Celebration',
-      name: 'Recognition & Celebration Program',
-      products: ['employee gifts', 'award apparel', 'thank-you kits', 'announcement mailers'],
-      explanation: 'Recognition creates a natural opening to ask about employee celebration, customer announcements, and internal culture moments.',
-      reasonToReachOut: 'Recognition creates a timely reason to check in',
-      conversationStarter: 'Ask whether there are any employee, customer, or team appreciation moments coming up.'
-    };
-  }
-  if (/leadership|appoint|promote|named|joins/.test(combo)) {
-    return {
-      category: 'Leadership Transition',
-      name: 'New Leader Welcome / Team Culture Kit',
-      products: ['welcome gifts', 'team apparel', 'executive gifts', 'internal announcement kits'],
-      explanation: 'Leadership changes create a light-touch reason to ask about internal communication, team culture, or executive gifting.',
-      reasonToReachOut: 'Leadership change creates a timely reason to check in',
-      conversationStarter: 'Ask whether the leadership change connects to any team engagement, recognition, or internal brand moments.'
-    };
-  }
-  if (/product|service launch|launch|unveil|release/.test(combo)) {
-    return {
-      category: 'Product / Service Launch',
-      name: 'Product Launch Merchandise Kit',
-      products: ['launch giveaways', 'sales team apparel', 'customer gifts', 'sample kits'],
-      explanation: 'Launch activity creates a timely reason to ask about campaign merchandise, sales enablement, and customer-facing giveaways.',
-      reasonToReachOut: 'Launch activity creates a timely reason to check in',
-      conversationStarter: 'Ask whether the product or service launch needs any sales, customer, or campaign support.'
-    };
-  }
-  if (/service|technician/.test(combo)) {
-    return {
-      category: 'Service Team Onboarding',
-      name: 'Technician / Service Team Onboarding Program',
-      products: ['uniform starter kits', 'service apparel', 'name-badge ready apparel', 'welcome kits'],
-      explanation: 'Service hiring creates a practical reason to ask about uniforms, onboarding, and department apparel.',
-      reasonToReachOut: 'Service team activity creates a timely reason to check in',
-      conversationStarter: 'Ask who handles apparel or onboarding gear for the service team.'
-    };
-  }
-  if (/production|operations|plant|safety|warehouse|manufactur/.test(combo)) {
-    return {
-      category: 'Workforce Onboarding / Safety',
-      name: 'Production Team Onboarding & Safety Program',
-      products: ['safety onboarding kits', 'department apparel', 'hi-vis items', 'recruiting giveaways'],
-      explanation: 'Manufacturing or operations hiring creates a timely reason to ask about safety onboarding, apparel, and recruiting support.',
-      reasonToReachOut: 'Workforce activity creates a timely reason to check in',
-      conversationStarter: 'Ask how the team is handling onboarding, safety, or recruiting support for new employees.'
-    };
-  }
+  const sellerCopy = sellerCopyForTemplateFamily(canonicalTemplateFamily(signalType));
   return {
-    category: 'Employee Onboarding',
-    name: 'New Hire Onboarding Program',
-    products: ['new hire welcome kits', 'employee apparel', 'drinkware', 'recruiting giveaways'],
-    explanation: 'Hiring creates a timely reason to ask about onboarding, recruiting, and employee welcome programs.',
-    reasonToReachOut: 'Hiring creates a timely reason to check in',
-    conversationStarter: 'Ask how they are handling onboarding, apparel, or employee experience for new hires.'
+    category: sellerCopy.category,
+    name: sellerCopy.name,
+    products: sellerCopy.products,
+    explanation: sellerCopy.whyNow,
+    reasonToReachOut: sellerCopy.reasonToReachOut,
+    conversationStarter: sellerCopy.conversationStarter
   };
 }
 
@@ -561,7 +505,7 @@ function valueRangeForSignal(signalType = '', count = null, sourceType = '') {
 function buildSignalIntelligence(result, accountName, signalType, industry = '') {
   const raw = `${result.title || ''} ${result.snippet || ''}`;
   const count = extractCounts(raw);
-  const department = detectDepartment(raw, industry);
+  const department = detectDepartment(signalType, industry);
   const sourceType = classifySource(result.url, result.title);
   const sourceName = cleanSourceName(result.url);
   const opp = opportunityForSignal(signalType, department, industry);
@@ -592,7 +536,7 @@ function buildSignalIntelligence(result, accountName, signalType, industry = '')
   };
 }
 
-function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0, industry = '') {
+function makeSignal(result, accountName, signalType, title, opportunityExplanation, suggestedContact, confidenceBoost = 0, industry = '', canonicalEventType = '') {
   const sourceType = classifySource(result.url, result.title);
   const intelligence = buildSignalIntelligence(result, accountName, signalType, industry);
   const label = signalConfidenceLabel(signalType, result, intelligence.count);
@@ -600,6 +544,13 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
   return {
     signalType,
     type: signalType,
+    // Final bounded Beta trust correction: persisted going forward so every
+    // reader (get-dashboard.js's rowToSignal(), normalizeOpportunity()'s own
+    // canonicalEventType-aware signalType reuse, dashboard's
+    // canonicalSignalKind()) can consume the SAME canonical classification
+    // this endpoint resolved, instead of re-deriving one independently.
+    canonicalEventType,
+    opportunityType: canonicalEventType,
     title: intelligence.promoOpportunity || title,
     signalLayerType: intelligence.signalLayerType,
     signalDetail: intelligence.signalDetail,
@@ -628,101 +579,50 @@ function makeSignal(result, accountName, signalType, title, opportunityExplanati
   };
 }
 
+// Final bounded Beta trust correction: the six regex checks below remain
+// exactly as they were and keep their ORIGINAL job -- deciding whether this
+// search result contains ANY signal-worthy language at all (the discovery/
+// acceptance gate), and tuning a small confidence boost by rough shape.
+// What changed is what happens once a check accepts: the SPECIFIC label and
+// every downstream seller-facing field used to be a hardcoded literal tied
+// to which regex happened to match here (e.g. always 'Hiring Activity' for
+// an accepted career/jobs match, regardless of what the evidence text
+// actually supported once read more carefully) -- an independent
+// classification, disconnected from api/research-batch.js's canonical
+// resolver. Now every accepted result is classified ONCE, by the SAME
+// resolveCanonicalEventType() api/research-batch.js's makeSignal() uses,
+// evaluated against this exact evidence text -- so an acceptance match here
+// only ever decides "is this worth a closer look," never "what specifically
+// happened." makeSignal()/buildSignalIntelligence() (already fixed above)
+// derive every seller-facing field from that one canonical result.
 function signalFromResult(result, accountName, industry = '') {
   if (!result || !result.url) return null;
   const rawText = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`;
   const text = rawText.toLowerCase();
   if (isBadSearchText(rawText)) return null;
   if (looksLikeGenericHomepage(result, accountName) && !hasStrongSignalContext(rawText, result.url)) return null;
-  const isAuto = /dealership|ford|automotive|service|technician|vehicle|used car/.test(text) || /Automotive/.test(industry || '');
-  const isHealthcare = /dental|medical|health|clinic|provider|practice/.test(text) || /Healthcare/.test(industry || '');
-  const isMfg = /manufactur|industrial|factory|plant|safety|facility|production|assembly|engineering/.test(text) || /Manufacturing/.test(industry || '');
 
-  if (/(career|careers|hiring|jobs|join our team|open position|openings|technician|sales consultant|recruit|now hiring|job opportunities|apply now)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Hiring Activity',
-      `${accountName} hiring or careers activity`,
-      isAuto
-        ? 'Hiring creates a timely reason to pitch new-hire onboarding kits, sales or service apparel, and recruiting giveaways.'
-        : isHealthcare
-          ? 'Hiring creates a timely reason to pitch new-provider onboarding kits, staff apparel, and employee welcome gifts.'
-          : isMfg
-            ? 'Hiring creates a timely reason to pitch recruiting giveaways, department apparel, safety onboarding kits, and new-hire welcome gifts.'
-            : 'Hiring creates a timely reason to pitch onboarding kits, recruiting giveaways, employee apparel, and welcome gifts.',
-      isAuto ? 'HR Manager / Service Director / Sales Manager' : 'HR Manager / Department Lead',
-      0.04,
-      industry
-    );
-  }
+  let confidenceBoost = 0;
+  if (/(career|careers|hiring|jobs|join our team|open position|openings|technician|sales consultant|recruit|now hiring|job opportunities|apply now)/i.test(text)) confidenceBoost = 0.04;
+  else if (/(event|conference|expo|show|summit|festival|webinar|open house|customer event|sponsorship)/i.test(text)) confidenceBoost = 0.03;
+  else if (/(new location|expansion|expands|opening|grand opening|new facility|renovation|relocation|moved to|opens|capacity expansion)/i.test(text)) confidenceBoost = 0.04;
+  else if (/(launch|new product|announces|unveils|release|model|lineup|new service|new program|introduces)/i.test(text)) confidenceBoost = 0.02;
+  else if (/(award|recognized|winner|honor|best of|certified|ranked|achievement|milestone|anniversary)/i.test(text)) confidenceBoost = 0;
+  else if (/(appoints|promotes|named|joins as|ceo|president|director|manager|leadership|new general manager|new vp)/i.test(text)) confidenceBoost = -0.02;
+  else return null;
 
-  if (/(event|conference|expo|show|summit|festival|webinar|open house|customer event|sponsorship)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Events / Conferences',
-      `${accountName} event or campaign activity`,
-      'Events create a timely reason to pitch attendee gifts, booth giveaways, staff apparel, signage, and customer-facing promotional merchandise.',
-      'Marketing Manager / Events Lead / Sales Manager',
-      0.03,
-      industry
-    );
-  }
-
-  if (/(new location|expansion|expands|opening|grand opening|new facility|renovation|relocation|moved to|opens|capacity expansion)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Expansion / New Location',
-      `${accountName} expansion or location activity`,
-      'Expansion creates a timely reason to pitch grand opening kits, location-branded apparel, employee welcome kits, customer gifts, and local launch merchandise.',
-      'Operations Manager / Marketing Manager / General Manager',
-      0.04,
-      industry
-    );
-  }
-
-  if (/(launch|new product|announces|unveils|release|model|lineup|new service|new program|introduces)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Product / Service Launch',
-      `${accountName} launch or announcement activity`,
-      'Launch activity creates a timely reason to pitch campaign merchandise, customer giveaways, sales team apparel, and product-specific sales kits.',
-      'Marketing Manager / Sales Manager',
-      0.02,
-      industry
-    );
-  }
-
-  if (/(award|recognized|winner|honor|best of|certified|ranked|achievement|milestone|anniversary)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Awards / Recognition',
-      `${accountName} award or recognition activity`,
-      'Recognition creates a timely reason to pitch employee celebration gifts, customer announcement mailers, thank-you gifts, and internal culture merchandise.',
-      'Marketing Manager / HR Manager',
-      0,
-      industry
-    );
-  }
-
-  if (/(appoints|promotes|named|joins as|ceo|president|director|manager|leadership|new general manager|new vp)/i.test(text)) {
-    return makeSignal(
-      result,
-      accountName,
-      'Leadership Changes',
-      `${accountName} leadership activity`,
-      'Leadership changes create a reason to pitch new-leader welcome packages, internal announcement gifts, team culture merchandise, or executive client gifts.',
-      'Executive Assistant / HR Manager / Marketing Manager',
-      -0.02,
-      industry
-    );
-  }
-
-  return null;
+  const canonicalType = resolveCanonicalEventType({ signalTitle: result.title || '', business_context: result.snippet || '' });
+  return makeSignal(
+    result,
+    accountName,
+    canonicalType.label,
+    `${accountName} business activity`,
+    undefined,
+    undefined,
+    confidenceBoost,
+    industry,
+    canonicalType.eventType
+  );
 }
 
 function dedupeSignals(signals) {
@@ -850,8 +750,20 @@ function normalizeSuggestedContactDetails(raw = {}, fallbackRole = '', candidate
 }
 
 function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry = '', multiSource = false) {
-  const signalFamily = classifySignalFamily(`${aiSignal.signalType || aiSignal.type || ''} ${aiSignal.signalTitle || aiSignal.headline || ''} ${aiSignal.whatChanged || aiSignal.summary || ''} ${candidate.title || ''} ${candidate.snippet || ''}`, candidate.signalFamily || candidate.intendedSignalFamily || '');
-  const signalType = displaySignalType(signalFamily);
+  // Final bounded Beta trust correction: classified ONCE via the SAME
+  // canonical resolveCanonicalEventType() api/research-batch.js's
+  // makeSignal() uses -- never the model's own self-declared
+  // aiSignal.signalType/type (Phase 2A/B3 doctrine: an independent
+  // AI-declared classification can never override the canonical one), and
+  // never classifySignalFamily()'s coarser family-only bucket, which had no
+  // way to apply resolveEventType()'s tighter, event-specific regexes (the
+  // acquisition-language tightening, the workshop/seminar plural fix, etc).
+  const canonicalType = resolveCanonicalEventType({
+    signalTitle: aiSignal.signalTitle || aiSignal.headline || candidate.title || '',
+    whatChanged: aiSignal.whatChanged || aiSignal.summary || '',
+    business_context: `${aiSignal.whatChanged || aiSignal.summary || ''} ${candidate.title || ''} ${candidate.snippet || ''}`
+  });
+  const signalType = canonicalType.label;
   const aiConfidence = confidenceFromAI(aiSignal.confidence);
   const sourceResult = {
     url: candidate.url || aiSignal.sourceUrl || '',
@@ -866,7 +778,8 @@ function makeAISignal(aiSignal = {}, candidate = {}, accountName = '', industry 
     aiSignal.whyItMatters || aiSignal.whyReachOut || 'Public business activity creates a timely reason to check in.',
     aiSignal.suggestedContact || '',
     0,
-    industry
+    industry,
+    canonicalType.eventType
   );
 
   const cleanSummary = compactSentence(aiSignal.shortSummary || aiSignal.summary || aiSignal.headline || aiSignal.signalTitle || candidate.title || candidate.snippet || '', 170);
@@ -960,9 +873,9 @@ ${accountNotes ? `Internal notes on file for this account (context only, never a
 Everything above this line about the account -- recent purchases, known contacts, purchase categories, internal notes -- exists to make an ALREADY-ESTABLISHED public signal sharper and more specific (better contact fit, a more relevant activation idea, or catching a need we may have already fulfilled). None of it is itself a reason to contact this account. If the public candidate sources below do not establish a real moment worth mentioning, return {"signals":[]} regardless of how much account context is available.
 
 Your job is NOT to summarize the company.
-Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, only once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days.
+Your job is to find the real human moment a public development creates -- for employees, customers, recruits, investors, partners, or another concrete audience the evidence actually supports -- and, once that moment is genuinely established, translate it into a specific, ownable branded initiative a promotional-products distributor could support in the next 90 days, WHEN the evidence credibly supports one.
 
-Do not start from "would this justify a promo/merch conversation?" -- start from "what is actually happening here, and for whom?" A technically real business update with no identifiable audience or activation is a correct, expected result to decline, not a failure to fix. See the commercial-activation reasoning discipline below for exactly how to work through this before writing commercialPlay/activationIdeas.
+Do not start from "would this justify a promo/merch conversation?" -- start from "what is actually happening here, and for whom?" These are two separate judgments. A technically real, current, sourced business update about this specific company should still be RETURNED as a signal even when you cannot identify a credible commercial activation for it -- in that case, report the event (concrete_trigger/business_context/source/etc.) and leave commercialPlay/activationIdeas/expansionPotential empty or omitted; that is a correct, expected result, not a failure to fix. Declining to return a signal at all is reserved for evidence that fails the underlying material/current/sourced bar (see "Reject" below and confidence >= 80 requirement) -- never merely because no activation was found for an otherwise real event. See the commercial-activation reasoning discipline below for exactly how to work through the activation question separately, once the event itself is established.
 
 Use the candidate public sources below. First identify what changed, factually. Then reason through who it affects and what they're likely trying to accomplish before considering any commercial translation.
 
@@ -1071,9 +984,23 @@ ${JSON.stringify(safeCandidates, null, 2)}`;
   }
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened from personal-webmail providers only to also exclude IANA-reserved
+// documentation/placeholder domains (RFC 2606: example.com/.net/.org/.edu) --
+// confirmed production case: a QA fixture's rep@example.com contact email
+// was inferred as the account's own company website, which then generated a
+// dead site:example.com search query and fed a domain into identity
+// grounding that could never correspond to any real evidence. This is a
+// GLOBAL domain-safety rule, not a QA-fixture-specific carve-out -- any
+// upload whose contact email happens to use a reserved/example domain (a
+// placeholder row, a template left unedited, a demo account) hits the exact
+// same failure mode. Mirrored, not shared, in api/research-batch.js's
+// FREE_EMAIL_DOMAINS_RE and dashboard/index.html's extractEmailDomain() --
+// scripts/test-global-business-trigger-intelligence.js proves all three
+// agree.
 function domainFromEmailDomain(emailDomain = '') {
   const d = String(emailDomain || '').trim().toLowerCase().replace(/^www\./,'');
-  if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(d)) return '';
+  if (!d || /gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/.test(d)) return '';
   return d;
 }
 

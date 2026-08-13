@@ -1309,6 +1309,15 @@
     font-size:0.82rem;
     color:#667085;
   }
+  .rep-selected-banner{
+    margin:0 28px 14px;
+    padding:10px 14px;
+    border-radius:8px;
+    background:#FFF7E6;
+    border:1px solid #F2C94C;
+    color:#7A5B00;
+    font-size:0.85rem;
+  }
   .relationship-badge{
     display:inline-flex;
     align-items:center;
@@ -1643,6 +1652,20 @@
   }
   .verified-signal-row strong{
     color:var(--navy);
+  }
+  .verified-signal-possible-match{
+    color:#B54708;
+    font-weight:700;
+  }
+  .verified-signal-business-signal{
+    color:var(--muted);
+  }
+  .verified-signal-timing-unclear{
+    color:var(--muted);
+    font-style:italic;
+  }
+  .verified-signal-actions{
+    margin-top:12px;
   }
   .likely-conversation-list{
     margin:6px 0 0 18px;
@@ -2055,6 +2078,7 @@
 .acct-mgr-action:hover:not(:disabled){background:#0d9488;}
 .acct-mgr-action.acct-mgr-action-secondary{background:transparent;color:var(--ink);border:1px solid var(--line);}
 .acct-mgr-action.acct-mgr-action-secondary:hover:not(:disabled){border-color:var(--ink);}
+.acct-mgr-actions-group{display:flex;flex-direction:column;gap:6px;align-items:stretch;}
 .acct-mgr-status-line{grid-column:1/-1;font-size:.8rem;color:var(--muted);margin-top:-2px;}
 .acct-mgr-status-line.is-error{color:var(--danger);}
 .acct-mgr-status-line.is-success{color:#0d9488;}
@@ -2122,8 +2146,10 @@
 .ha-toast-undo:focus-visible{outline:2px solid #5eead4;outline-offset:2px;}
 .ha-confirm-backdrop{position:fixed;inset:0;background:rgba(10,25,45,.55);z-index:10090;display:flex;align-items:center;justify-content:center;padding:20px;}
 .ha-confirm-dialog{background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.3);}
+.ha-confirm-dialog--wide{max-width:640px;}
 .ha-confirm-title{margin:0 0 10px;font-family:var(--display);font-size:1.2rem;color:var(--ink);}
-.ha-confirm-body{margin:0;color:var(--ink);font-size:.92rem;line-height:1.5;}
+.ha-confirm-body{margin:0;color:var(--ink);font-size:.92rem;line-height:1.5;max-height:65vh;overflow-y:auto;}
+.research-results-intro{margin-bottom:14px;}
 .ha-confirm-warning{margin:14px 0 20px;font-size:.8rem;color:var(--danger);font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
 .ha-confirm-actions{display:flex;justify-content:flex-end;gap:10px;}
 .ha-confirm-cancel{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:9px 16px;font-size:.85rem;cursor:pointer;font-family:var(--body);}
@@ -3864,6 +3890,10 @@ function applyPopulatedWorkspaceState(){
   if(example) example.style.display = 'none';
   if(results) results.style.display = 'block';
   if(memberEmpty) memberEmpty.style.display = 'none';
+  // Empty-workspace guided-tour correction: the one authoritative place
+  // this workspace transitions from empty to populated -- see
+  // maybeResumeGuidedTourAfterPopulation()'s own header comment.
+  if(typeof maybeResumeGuidedTourAfterPopulation === 'function') maybeResumeGuidedTourAfterPopulation();
 }
 
 function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
@@ -4075,12 +4105,26 @@ function guidedTourStatus(){
 
 // Five required steps, in the required order. `target` is a CSS selector
 // for the REAL interface element this step explains -- when that element
-// exists AND is actually visible (not hidden behind an empty #results
-// panel for a brand-new user with no data yet), the tour spotlights it in
-// place. When it exists but is not currently visible, the step still shows
-// its explanation as a centered card rather than skipping the step or
-// spotlighting nothing -- every new user completes all five steps even
-// before their first upload, which is exactly when this tour matters most.
+// exists AND is actually visible, the tour spotlights it in place. When it
+// exists but is not currently visible, the step still shows its
+// explanation as a centered card rather than skipping the step or
+// spotlighting nothing (a graceful fallback for the rare case a target is
+// transiently hidden for an OTHERWISE-populated workspace).
+//
+// Empty-workspace correction: steps 3-5 (Manage Customer Accounts, This
+// Week's Priorities, Prepare for Call) spotlight elements that live inside
+// #customerDashboard/#results -- applyEmptyWorkspaceState() keeps both
+// display:none for a brand-new account with zero uploaded data, and
+// .btn-generate-play (step 5) does not exist in the DOM at all until a real
+// opportunity card renders. Running all 5 steps against a brand-new,
+// zero-data workspace left three steps describing features the user could
+// not see or try -- the centered-card fallback above prevents a crash/stuck
+// state, but does not make the DESCRIBED feature real. The tour launcher
+// now runs only steps 1-2 (Add Customer Data / Upload Guides -- both live
+// in the global header, unaffected by upload state) for a zero-data
+// workspace, and resumes steps 3-5 automatically the first time real data
+// exists -- see guidedTourActiveSteps/guidedTourDeferredRemainder below and
+// maybeResumeGuidedTourAfterPopulation().
 const GUIDED_TOUR_STEPS = [
   {
     id: 'add-customer-data',
@@ -4129,6 +4173,14 @@ let guidedTourActive = false;
 let guidedTourTriggerEl = null;
 let guidedTourResizeHandlerBound = false;
 let guidedTourScrollLock = null;
+// Empty-workspace correction: the step list actually being shown THIS run
+// -- either the full GUIDED_TOUR_STEPS (returning user, populated
+// workspace, or a resumed run) or GUIDED_TOUR_STEPS.slice(0, 2) (a
+// brand-new, zero-data workspace). guidedTourDeferredRemainder is true only
+// for that truncated case, so finishGuidedTour() knows to mark steps 3-5
+// pending instead of the whole tour 'completed'.
+let guidedTourActiveSteps = GUIDED_TOUR_STEPS;
+let guidedTourDeferredRemainder = false;
 
 function guidedTourElements(){
   return {
@@ -4251,17 +4303,17 @@ function settleThenRunGuidedTourStep(cb){
 }
 
 function renderGuidedTourStep(){
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   if(!step) return;
   const { eyebrow, title, body, dots, backBtn, nextBtn, card } = guidedTourElements();
   if(eyebrow) eyebrow.textContent = step.eyebrow;
   if(title) title.textContent = step.title;
   if(body) body.textContent = step.body;
   if(dots){
-    dots.innerHTML = GUIDED_TOUR_STEPS.map((_, i) => `<span class="ha-tour-dot${i === guidedTourStepIndex ? ' active' : ''}"></span>`).join('');
+    dots.innerHTML = guidedTourActiveSteps.map((_, i) => `<span class="ha-tour-dot${i === guidedTourStepIndex ? ' active' : ''}"></span>`).join('');
   }
   if(backBtn) backBtn.disabled = guidedTourStepIndex === 0;
-  if(nextBtn) nextBtn.textContent = guidedTourStepIndex === GUIDED_TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+  if(nextBtn) nextBtn.textContent = guidedTourStepIndex === guidedTourActiveSteps.length - 1 ? 'Finish' : 'Next';
 
   // Required behavior: resolve the live target, scroll it into view when
   // needed, wait for scroll/layout to finish, calculate the target's
@@ -4276,7 +4328,7 @@ function renderGuidedTourStep(){
   }
   settleThenRunGuidedTourStep(() => {
     // Bail if the tour moved on or closed while this frame was pending.
-    if(!guidedTourActive || GUIDED_TOUR_STEPS[guidedTourStepIndex] !== step) return;
+    if(!guidedTourActive || guidedTourActiveSteps[guidedTourStepIndex] !== step) return;
     positionGuidedTourCard(target);
     lockGuidedTourScroll();
     if(card) card.focus({preventScroll:true});
@@ -4302,7 +4354,7 @@ function guidedTourKeydownHandler(e){
 
 function guidedTourResizeHandler(){
   if(!guidedTourActive) return;
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   const target = step && step.target ? document.querySelector(step.target) : null;
   positionGuidedTourCard(target);
 }
@@ -4314,7 +4366,7 @@ function guidedTourResizeHandler(){
 // rather than leaving the spotlight pointing at stale coordinates.
 function guidedTourScrollHandler(){
   if(!guidedTourActive) return;
-  const step = GUIDED_TOUR_STEPS[guidedTourStepIndex];
+  const step = guidedTourActiveSteps[guidedTourStepIndex];
   const target = step && step.target ? document.querySelector(step.target) : null;
   positionGuidedTourCard(target);
 }
@@ -4324,7 +4376,14 @@ function isHelpRelatedGuidedTourTrigger(el){
   return el.id === 'haHelpToggle' || Boolean(el.closest('#haHelpDropdown, .ha-help-dropdown'));
 }
 
-function launchGuidedTour(){
+// Empty-workspace correction: `options.resuming` is set ONLY by
+// maybeResumeGuidedTourAfterPopulation() below, resuming a previously
+// deferred run at step 3 (index 2) with the FULL step list -- everything
+// else (a first-time launch from the welcome modal's "Get Started", or
+// Help > Restart Product Tour) goes through the normal, non-resuming path,
+// which truncates to steps 1-2 for a still-empty workspace exactly as
+// before.
+function launchGuidedTour(options = {}){
   const { overlay } = guidedTourElements();
   if(!overlay) return;
   // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
@@ -4345,9 +4404,19 @@ function launchGuidedTour(){
     url.hash = '';
     window.history.replaceState(null, '', url.pathname + url.search);
   }
-  guidedTourTriggerEl = document.activeElement;
   guidedTourActive = true;
-  guidedTourStepIndex = 0;
+  if(options.resuming){
+    guidedTourTriggerEl = null;
+    guidedTourActiveSteps = GUIDED_TOUR_STEPS;
+    guidedTourDeferredRemainder = false;
+    guidedTourStepIndex = Math.min(Math.max(options.startIndex || 0, 0), GUIDED_TOUR_STEPS.length - 1);
+  } else {
+    guidedTourTriggerEl = document.activeElement;
+    const hasUploadedData = Array.isArray(window.accountRadarAccounts) && window.accountRadarAccounts.length > 0;
+    guidedTourActiveSteps = hasUploadedData ? GUIDED_TOUR_STEPS : GUIDED_TOUR_STEPS.slice(0, 2);
+    guidedTourDeferredRemainder = !hasUploadedData;
+    guidedTourStepIndex = 0;
+  }
   overlay.classList.add('active');
   overlay.setAttribute('aria-hidden', 'false');
   document.addEventListener('keydown', guidedTourKeydownHandler, true);
@@ -4406,7 +4475,7 @@ function closeGuidedTour(){
 }
 
 function nextGuidedTourStep(){
-  if(guidedTourStepIndex >= GUIDED_TOUR_STEPS.length - 1){
+  if(guidedTourStepIndex >= guidedTourActiveSteps.length - 1){
     finishGuidedTour();
     return;
   }
@@ -4423,8 +4492,39 @@ function skipGuidedTour(){
   closeGuidedTour();
 }
 function finishGuidedTour(){
+  if(guidedTourDeferredRemainder){
+    // Empty-workspace correction: only steps 1-2 ran because there was no
+    // uploaded data yet for steps 3-5 to spotlight -- mark the remainder
+    // pending (reusing the SAME per-user localStorage state primitive
+    // read/writeGuidedTourState() already provide) instead of 'completed',
+    // so maybeResumeGuidedTourAfterPopulation() picks the tour back up at
+    // step 3 automatically the first time real data exists, rather than
+    // either losing steps 3-5 forever or forcing steps 1-2 on the user a
+    // second time via a full relaunch.
+    writeGuidedTourState({ status: 'pending-resume', pendingResumeStep: 2, updatedAt: new Date().toISOString() });
+    closeGuidedTour();
+    return;
+  }
   markGuidedTourStatus('completed');
   closeGuidedTour();
+}
+
+// Empty-workspace correction: the ONE authoritative place #results/
+// #customerDashboard flip back to visible after a real upload
+// (applyPopulatedWorkspaceState() below) -- exactly the moment steps 3-5's
+// targets become real and visible again. Fires at most once per deferred
+// run: the pending marker is cleared (overwritten) BEFORE the tour is
+// relaunched, so a later silent refresh/re-render of the same already-
+// populated workspace can never relaunch it a second time. Never interrupts
+// an in-progress step (e.g. a user manually restarted the tour from Help
+// right as their upload finished).
+function maybeResumeGuidedTourAfterPopulation(){
+  if(guidedTourActive) return;
+  const state = readGuidedTourState();
+  if(state.status !== 'pending-resume' || typeof state.pendingResumeStep !== 'number') return;
+  const resumeStep = state.pendingResumeStep;
+  writeGuidedTourState({ status: 'resumed-in-progress', updatedAt: new Date().toISOString() });
+  launchGuidedTour({ resuming: true, startIndex: resumeStep });
 }
 
 function wireGuidedTourControls(){
@@ -4840,12 +4940,18 @@ function accountSignalsPanel(accountName, uploadId){
   return card ? card.querySelector('.signal-research-panel') : null;
 }
 
+// Global Business Trigger Intelligence sprint, founder correction round:
+// widened to also exclude IANA-reserved documentation/placeholder domains
+// (RFC 2606: example.com/.net/.org/.edu) -- mirrors api/research-account.js's
+// domainFromEmailDomain() and api/research-batch.js's FREE_EMAIL_DOMAINS_RE
+// (see either's comment for the full rationale); parity proven by
+// scripts/test-global-business-trigger-intelligence.js.
 function extractEmailDomain(email){
   const value = String(email || '').trim().toLowerCase();
   const match = value.match(/@([^\s>]+)$/);
   if(!match) return '';
   const domain = match[1].replace(/^www\./,'');
-  if(/gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com/.test(domain)) return '';
+  if(/gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|aol\.com|example\.com|example\.net|example\.org|example\.edu/.test(domain)) return '';
   return domain;
 }
 
@@ -4988,6 +5094,45 @@ function cleanBusinessText(text){
   return stripTrailingTruncation(t);
 }
 
+// Final bounded Beta trust correction (Round C): seller-facing outreach
+// copy (How to Approach / Email / Call Script / Subject / Questions to
+// Ask) must never directly reproduce raw, un-cleaned source-page text --
+// breadcrumb navigation ("ABC Convention > Past Events > Past ABC
+// Conventions > 2026 > Schedule"), SEO titles, or publisher-suffix
+// artifacts ("Hiring Now! - Zippia", "Careers - MyWorkdayJobs"). Confirmed
+// production shape: businessSuggestedOpener()/groundedInitiativeTitle()
+// embedded opp.signalTitle directly, and opp.signalTitle is frequently the
+// raw candidate.headline a search provider returned (normalizeOpportunity()
+// in api/signal-intelligence.js falls back to it verbatim when no
+// AI-authored signalTitle/headline/concreteTrigger exists) -- never
+// cleaned beyond whitespace/HTML stripping. cleanBusinessText()/
+// cleanSalesPlayText() already strip a few known junk phrases, but neither
+// detects these two specific artifact SHAPES; this is the bounded,
+// deterministic detector every outreach-copy surface gates on before
+// embedding any raw evidence text.
+const KNOWN_JOB_BOARD_OR_PUBLISHER_SUFFIX = /\b(Zippia|MyWorkdayJobs|ZipRecruiter|Glassdoor(?:\.com)?|Indeed(?:\.com)?|SimplyHired|CareerBuilder|Handshake|LiveAndWorkIn\w*|BuiltIn|Monster\.com|LinkedIn Jobs)\b/i;
+function looksLikeRawSourceArtifact(text){
+  const t = String(text || '').trim();
+  if(!t) return true;
+  // Breadcrumb/pagination chain -- an ordinary sentence essentially never
+  // contains a literal " > " separator; a scraped page's navigation trail
+  // (or an SEO title chain like "Category > Subcategory > Page") does.
+  if(/\s>\s/.test(t)) return true;
+  // A known job board / careers-aggregator / publisher name appearing in
+  // the text is a reliable tell that this is a raw scraped page title, not
+  // an actual fact about the company.
+  if(KNOWN_JOB_BOARD_OR_PUBLISHER_SUFFIX.test(t)) return true;
+  return false;
+}
+// The single shared gate: cleans, then rejects anything that still looks
+// like a raw source artifact rather than a usable factual phrase. Returns
+// '' when unusable so every caller falls back to its own natural,
+// canonical-family-based phrasing instead of embedding junk.
+function cleanEvidencePhraseForOutreach(text){
+  const cleaned = cleanBusinessText(text);
+  return looksLikeRawSourceArtifact(cleaned) ? '' : cleaned;
+}
+
 // QA round 3, item 2: canonical business-event classification, shared by
 // businessSignalKind()/opportunityHeadline() and inferSalesPlaySignalType()
 // (Best Next Move / Questions to Ask / email / subject bucket selection) --
@@ -5071,9 +5216,9 @@ function businessSignalKind(opp){
 
 function businessSignalPlainSummary(opp){
   const account = opp.account || 'this account';
-  const detail = cleanBusinessText(opp.signalDetail || opp.signalTitle || opp.signalSummary || opp.shortSummary || '');
+  const detail = cleanEvidencePhraseForOutreach(opp.signalDetail || opp.signalTitle || opp.signalSummary || opp.shortSummary || '');
   const kind = businessSignalKind(opp);
-  if(detail && detail.length > 12 && !/^Ford Dealer|^Dentist Exeter|^Careers with/i.test(detail)) return shortText(detail, 150);
+  if(detail && detail.length > 12) return shortText(detail, 150);
   if(kind === 'hiring') return `${account} has public hiring or careers activity worth checking on.`;
   if(kind === 'event') return `${account} has public event, campaign, or community activity worth checking on.`;
   if(kind === 'expansion') return `${account} has public growth or expansion activity worth checking on.`;
@@ -5081,6 +5226,46 @@ function businessSignalPlainSummary(opp){
   if(kind === 'leadership') return `${account} has public leadership or team-change activity worth checking on.`;
   if(kind === 'launch') return `${account} has public product, service, or campaign activity worth checking on.`;
   return `Recent public activity gives a timely reason to reconnect with ${account}.`;
+}
+
+// Final bounded Beta trust correction (Round C): a short, concrete
+// discovery question per canonical family -- never a vague "anything
+// coming up?" closer. Deliberately asks about something specific enough to
+// be worth answering (onboarding vs. recruiting for hiring, whether an
+// event is ongoing, what's still being planned for an opening) rather than
+// an open-ended "is anything changing" that invites no real reply. Reused
+// by both the specific-evidence-available branch and the no-usable-
+// evidence fallback of businessSuggestedOpener() below, so the QUESTION
+// asked never disagrees with the canonical family driving the rest of the
+// card/Prepare-for-Call surfaces.
+function naturalDiscoveryQuestion(kind){
+  if(kind === 'hiring') return 'Is growth or onboarding something you’re focused on right now?';
+  if(kind === 'event') return 'Do you expect that to be an ongoing thing for the team?';
+  if(kind === 'expansion') return 'Is there anything around it your team is still planning for?';
+  if(kind === 'recognition') return 'Is that something worth celebrating with the team?';
+  if(kind === 'leadership') return 'Is there anything new internally worth supporting as things settle in?';
+  if(kind === 'launch') return 'Is there anything customer-facing you’re still lining up around it?';
+  return 'Anything on your end worth catching up on?';
+}
+// Discovery-first fallback for a rep-selected/weak signal whose raw
+// evidence text is not usable seller-facing copy (a breadcrumb chain, an
+// SEO/publisher title, or simply too little text to quote) --
+// looksLikeRawSourceArtifact() below is what routes a call here instead of
+// embedding the raw text. Still references the real, canonical-family fact
+// (we DO know, deterministically, that this is hiring/event/expansion/
+// etc.) rather than a mystery "some activity" placeholder -- "the
+// normalized factual / canonical signal meaning," per the founder's
+// contract, not the raw title, and never the empty "anything coming up"
+// filler this correction replaces.
+function naturalDiscoveryFallbackOpener(kind, contact, account){
+  const question = naturalDiscoveryQuestion(kind);
+  if(kind === 'hiring') return `Hey ${contact} — saw ${account} has some hiring activity out right now. ${question}`;
+  if(kind === 'event') return `Hey ${contact} — saw ${account} was involved with a recent event. ${question}`;
+  if(kind === 'expansion') return `Hey ${contact} — saw some location or growth news for ${account}. ${question}`;
+  if(kind === 'recognition') return `Hey ${contact} — saw ${account} picked up some recent recognition. ${question}`;
+  if(kind === 'leadership') return `Hey ${contact} — saw there’s been a leadership change at ${account}. ${question}`;
+  if(kind === 'launch') return `Hey ${contact} — saw ${account} has something new launching. ${question}`;
+  return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
 }
 
 // Paid-beta grounded outreach (Priority 2): this is the LAST-RESORT
@@ -5091,6 +5276,17 @@ function businessSignalPlainSummary(opp){
 // this replaces. When there truly isn't enough signal detail to be
 // specific, it says so plainly (a transparent limited state) instead of
 // inventing urgency or implying a merch program that doesn't exist.
+//
+// Final bounded Beta trust correction (Round C): "enough signal detail to
+// be specific" now also requires the detail to survive
+// looksLikeRawSourceArtifact() -- a raw breadcrumb chain or SEO/publisher
+// title is not usable seller-facing copy even though it is real text from
+// the source (confirmed production case: "Hey there — saw ABC
+// Convention > Past Events > Past ABC Conventions > 2026 > Schedule.
+// Anything coming up that we should be thinking about?"). When the raw
+// text doesn't qualify, naturalDiscoveryFallbackOpener() still references
+// the real canonical family honestly instead of embedding it or falling
+// back to empty filler.
 function businessSuggestedOpener(opp){
   // QA round 3, item 5: greeting must be a verified person name, never a
   // department/role placeholder that happens to be sitting in opp.contact
@@ -5100,9 +5296,9 @@ function businessSuggestedOpener(opp){
   const contact = knownContact && !knownContact.includes('/') ? knownContact.split(' ')[0] : 'there';
   const kind = businessSignalKind(opp);
   const account = opp.account || 'this account';
-  const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
+  const detail = cleanEvidencePhraseForOutreach(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
   if(!detail || detail.length < 8){
-    return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
+    return naturalDiscoveryFallbackOpener(kind, contact, account);
   }
   // R7 follow-up: shortText() appends a real ellipsis when it truncates --
   // fine as a standalone evidence-bullet marker, but disqualifying when it
@@ -5110,17 +5306,7 @@ function businessSuggestedOpener(opp){
   // now rejects ANY ellipsis in this field). Stripped here since more
   // sentence text always follows immediately in the same template.
   const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
-  if(kind === 'hiring') return `Hey ${contact} — saw ${specific}. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
-  // R7 follow-up: no longer names merch/attendee gifts/staff gear directly --
-  // the permanent Conversation Starter rule bans a direct product ask here
-  // regardless of posture; a product idea can still be offered later, once
-  // ownership/context is established, via Email/Call Script/Best Next Move.
-  if(kind === 'event') return `Hey ${contact} — saw ${specific}. Is there anything coming up that your team is already planning around?`;
-  if(kind === 'expansion') return `Hey ${contact} — saw ${specific}. Is that creating any internal or customer-facing needs we should be thinking about?`;
-  if(kind === 'recognition') return `Hey ${contact} — saw ${specific}. Anything coming up where employee or customer appreciation would be useful?`;
-  if(kind === 'leadership') return `Hey ${contact} — saw ${specific}. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
-  if(kind === 'launch') return `Hey ${contact} — saw ${specific}. Is there anything customer-facing or sales-team related that would be worth planning around?`;
-  return `Hey ${contact} — saw ${specific}. Anything coming up that we should be thinking about?`;
+  return `Hey ${contact} — saw ${specific}. ${naturalDiscoveryQuestion(kind)}`;
 }
 
 function getRepFriendlyWhy(opp){
@@ -5815,20 +6001,50 @@ const GENERIC_COMMERCIAL_PLAY_PROCEDURAL_WORDS = new Set([
 // stopwords until nothing survives" -- a confidently-written narrative
 // almost always contains the company's own name and ordinary connective
 // prose, so requiring full reduction is too strict once text isn't hedged.
-const FINANCIAL_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results)\b/i;
-const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign)\b/i;
-const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|office|facility|location|branch|store|launch event|onboarding|welcome|integration|acquisition|acquired|merger|leadership|executive|community event|open house)\b/i;
-function isFinancialEventDressedAsActivation(text){
+//
+// Global Business Trigger Intelligence sprint (mirrors
+// api/signal-intelligence.js's identically-named/identically-widened
+// constants -- see that file's header comment for the full rationale):
+// widened from funding/earnings-only to every weak-by-default event family
+// (acquisition, leadership appointment, facility opening/relocation), and
+// GROUNDED_AUDIENCE_OR_MOMENT_WORDS no longer includes
+// "acquisition"/"acquired"/"merger"/"leadership"/"executive"/"office"/
+// "facility"/"location"/"branch"/"store" -- those words are now also part
+// of WEAK_EVENT_ANCHOR, so keeping them here too would cancel the widened
+// anchor out (a facility-anchored narrative naming "the new facility"
+// would satisfy both the anchor AND the "grounded" check on the same word).
+const WEAK_EVENT_ANCHOR = /\b(?:funding|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results|acquisition|acquiring|acquired|acquires|merger|merged|new (?:vp|ceo|cfo|coo|cmo|cto|president|vice president|chief \w+ officer)|newly hired (?:vp|ceo|cfo|coo|cmo|cto|president)|appointed (?:as )?(?:vp|ceo|cfo|coo|cmo|cto|president|vice president)|named (?:ceo|president|chief|vice president)|leadership change|promoted to|new (?:facility|location|office|branch|plant)|grand opening|ribbon cutting|relocat(?:ed|ing|ion))\b/i;
+const GENERIC_CAMPAIGN_NOUN = /\b(?:brand visibility|brand awareness|brand recognition|visibility campaign|awareness campaign|social(?:\s+media)?\s+campaign|launch kit|celebration campaign|pr campaign|press campaign|milestone campaign|funding announcement|announcement campaign|comprehensive rebrand|rebrand campaign|brand relaunch|relaunch campaign)\b/i;
+const GROUNDED_AUDIENCE_OR_MOMENT_WORDS = /\b(?:employee|employees|staff|workforce|team|customer|customers|client|clients|community|families|family|attendee|attendees|volunteer|volunteers|partner|partners|dealer|dealers|franchisee|recruit|recruits|hire|hires|hiring|conference|summit|trade show|expo|booth|parade|festival|sponsor|sponsorship|launch event|onboarding|welcome|integration|community event|open house)\b/i;
+function isWeakEventDressedAsActivation(text){
   const t = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if(!t) return false;
-  if(!FINANCIAL_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
+  if(!WEAK_EVENT_ANCHOR.test(t) || !GENERIC_CAMPAIGN_NOUN.test(t)) return false;
   return !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(t);
 }
 function isGenericCommercialPlay(narrative){
   const text = String(narrative || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if(!text) return false;
-  if(isFinancialEventDressedAsActivation(text)) return true;
+  if(isWeakEventDressedAsActivation(text)) return true;
   if(!GENERIC_COMMERCIAL_PLAY_HEDGE.test(text) || !GENERIC_COMMERCIAL_PLAY_NOUN.test(text)) return false;
+  // Final Beta Signal Intelligence Correction sprint: family-agnostic check --
+  // a hedged "[event] may create an opportunity for [merch]" narrative with
+  // no genuine audience/moment named is the same manufactured pattern
+  // regardless of which event family produced it, or whether WEAK_EVENT_ANCHOR
+  // even recognizes that family. Confirmed production case: a Planet Fitness
+  // rebrand narrative ("The rebrand may create opportunities for promotional
+  // products that reflect the new brand identity and engage both existing and
+  // new members.") survived the stopword-reduction check below (it names
+  // "brand identity"/"members"), yet names no real audience/moment beyond a
+  // generic membership-engagement gesture -- exactly what
+  // GROUNDED_AUDIENCE_OR_MOMENT_WORDS already exists to test for in
+  // isWeakEventDressedAsActivation() above. Applying that SAME positive check
+  // here, independent of WEAK_EVENT_ANCHOR, generalizes protection against
+  // manufactured activation reasoning without adding "rebrand"/"conference"/
+  // "product launch"/"sponsorship" to any anchor list -- those event families
+  // remain fully eligible; only the boilerplate hedge+merch-noun shape with
+  // nothing else concrete is caught.
+  if(!GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(text)) return true;
   const remaining = text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !GENERIC_COMMERCIAL_PLAY_STOPWORDS.has(w));
   if(remaining.length === 0) return true;
@@ -6189,8 +6405,16 @@ function signalDateAndActionabilityLine(opp){
     case 'ongoing': return pubDate ? `Ongoing business change — Published: ${formatShortDate(pubDate)}` : 'Ongoing business change';
     case 'stale': return 'No longer current';
     case 'ongoing-stale': return 'No longer current';
-    case 'unknown-date': return 'Date unavailable';
-    case 'ongoing-undated': return 'Date unavailable';
+    // Undated Business Signal actionability correction: "we could not
+    // resolve a date" is not the same claim as "this is stale/expired" --
+    // the founder-confirmed conflation that made the BEST legitimate
+    // non-Priority Business Signals (an evergreen "Careers at X" page, for
+    // example) read as historical account debris and hid "Use This Signal"
+    // entirely. "Timing unclear" is the honest, non-alarming label for
+    // "identity is credible, timing cannot be established" -- distinct from
+    // "No longer current" (a real date IS known, and it's simply too old).
+    case 'unknown-date': return 'Timing unclear';
+    case 'ongoing-undated': return 'Timing unclear';
     // QA final round, item 1/17: a signal with NO recognized
     // actionabilityStatus.status at all (malformed, or never classified)
     // must never be guessed as "Ongoing business change" merely because a
@@ -6198,8 +6422,9 @@ function signalDateAndActionabilityLine(opp){
     // "event date substituted from publication date" mistake for a signal
     // that might genuinely be event-like (which requires its OWN event
     // date, never a publication date). An unclassified signal's honest
-    // status is unknown, full stop.
-    default: return 'Date unavailable';
+    // status is unknown, full stop -- same "timing unclear, not stale"
+    // principle as the two cases immediately above.
+    default: return 'Timing unclear';
   }
 }
 
@@ -6352,19 +6577,32 @@ function renderVerifiedOpportunitySection(opp){
   // 'confirmed'-only check -- a legacy row now correctly reads "Unconfirmed
   // Research" here, matching the product invariant that ONLY an explicit
   // 'confirmed' grade may be described as verified.
-  // Live-QA correction (signal-family PFC label): "Unconfirmed Research"
-  // describes web-research identity uncertainty (isExplicitlyVerifiedIdentity()
-  // is a 'confirmed'-only check against opp.identityConfidence, a field that
-  // only ever exists on a signal that went through verifyCandidateCompanyGrounding()
+  // Live-QA correction (signal-family PFC label): describes web-research
+  // identity uncertainty (isExplicitlyVerifiedIdentity() is a 'confirmed'-
+  // only check against opp.identityConfidence, a field that only ever
+  // exists on a signal that went through verifyCandidateCompanyGrounding()
   // -- see that function's own header comment). A Follow-Up/Repeat-Pattern
   // opportunity is grounded in the customer's own uploaded order history --
   // isWebResearchSignal() is false for it, identityConfidence was never
-  // applicable, and the heading was defaulting to "Unconfirmed Research"
-  // for every one of them regardless, implying a doubt about company
-  // identity that was never the actual question for this signal family.
+  // applicable, and the heading correctly reads "Account History" for those.
   // isWebResearchSignal() gates the SAME family distinction evidenceSourceLabel()
   // already answers "Account history" for immediately below.
-  const heading = isExplicitlyVerifiedIdentity(opp) ? 'Verified Opportunity' : (isWebResearchSignal(opp) ? 'Unconfirmed Research' : 'Account History');
+  //
+  // Final Beta Signal Intelligence Correction sprint: renamed from
+  // "Unconfirmed Research" to "Credible Business Signal." A signal reaching
+  // this renderer at all is never a Possible Match (isPriorityEligibleOpportunity()/
+  // the "Use This Signal" gate both already exclude identityConfidence
+  // 'possible' before Prepare for Call is ever opened -- see
+  // isPossibleMatchIdentity()), so the true state here is "HA believes this
+  // is genuinely about the customer, just without a second independent
+  // corroborator" -- not a warning. Confirmed production case this fixes:
+  // a Service Credit Union Priority (a dated, first-party-sourced Veterans
+  // Conference, with a real Play and activation ideas) prominently reading
+  // "UNCONFIRMED RESEARCH" directly contradicted the fact that HA was
+  // simultaneously recommending it. Strong caution language is reserved for
+  // an actual Possible Match, in renderSingleVerifiedSignal()'s Research
+  // Details rendering -- the only surface a Possible Match is ever shown on.
+  const heading = isExplicitlyVerifiedIdentity(opp) ? 'Verified Opportunity' : (isWebResearchSignal(opp) ? 'Credible Business Signal' : 'Account History');
   return `<div class="sales-play-detail-card"><h3 style="margin:0 0 12px;color:#17375E;">${heading}</h3><div class="sales-play-detail-grid">
     <div class="sales-play-detail-item"><strong>Signal</strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</div>
     <div class="sales-play-detail-item"><strong>Status</strong>${escapeHtml(dateLine)}</div>
@@ -6612,7 +6850,15 @@ function renderRepOpportunityCard(opp){
 function renderSingleVerifiedSignal(signal){
   const confidence = signal.confidenceLevel || confidenceLabel(signal.confidence);
   const published = signal.publishedDate || signal.signalDate || signal.dateFound || '';
-  const eligible = isSignalPriorityEligible(signal);
+  // Undated Business Signal actionability correction: widened from
+  // isSignalPriorityEligible() alone so a legitimate signal HA simply
+  // couldn't date (isUndatedNotStale()) renders with normal outreach copy
+  // and remains "Use This Signal"-eligible, instead of collapsing into the
+  // same historical-note treatment reserved for genuinely stale/expired
+  // evidence. Priority eligibility itself is untouched -- see
+  // isResearchDetailsVisibleAsCurrentSignal()'s own header comment.
+  const eligible = isResearchDetailsVisibleAsCurrentSignal(signal);
+  const undatedNotStale = isUndatedNotStale(signal);
   // Round 5 correction, item 2: this "likely conversations" fallback used to
   // read signal.conversationStarter directly -- Research Details' per-signal
   // preview is a displayed Conversation Starter surface just like the card
@@ -6623,15 +6869,18 @@ function renderSingleVerifiedSignal(signal){
   const conversations = Array.isArray(signal.likelyConversations) && signal.likelyConversations.length
     ? signal.likelyConversations
     : [signal.opportunityCategory || getSuggestedOpener(signal) || signal.whyNow || 'Relevant account conversation'];
-  // Trust correction (entity-disambiguation): an unconfirmed-identity signal
-  // must never carry active-tense outreach copy (why it matters, suggested
-  // contact, likely conversations) -- Research Details is the one surface an
-  // unconfirmed signal is still allowed to appear on at all (every active
-  // surface -- Prepare for Call, Additional Opportunities, the priorities
-  // grid -- already excludes it via isPriorityEligibleOpportunity()), and it
-  // must read as unconfirmed research, never as a verified reason to reach
-  // out. Same suppress-and-label pattern as the `!eligible` branch below.
-  const identityUnconfirmed = signal?.identityConfidence === 'unconfirmed' || signal?.identityConfidence === 'rejected';
+  // Final Beta Signal Intelligence Correction sprint: 'unconfirmed' is now a
+  // legitimate Business Signal (the ordinary case for any account with no
+  // uploaded website/location to independently corroborate against), not a
+  // reason to suppress outreach copy -- only an actual Possible Match
+  // (identityConfidence 'possible': the evidence only matched via a
+  // shortened/surname-style token, e.g. an uploaded "Wyman's" matching
+  // "Oliver Wyman," never independently corroborated) or a legacy/defensive
+  // 'rejected' row (which should never actually reach persistence, but is
+  // handled the same way here if it somehow does) suppress it. See
+  // isPossibleMatchIdentity() for the canonical check.
+  const possibleMatch = isPossibleMatchIdentity(signal);
+  const identityRejected = signal?.identityConfidence === 'rejected';
   // Temporal-integrity round, item 4: this is the one venue an ineligible
   // (stale/expired/date-unavailable) signal is still allowed to appear at
   // all -- Research Details/account history, as clearly labeled historical
@@ -6669,7 +6918,7 @@ function renderSingleVerifiedSignal(signal){
     || (getActivationIdeas(signal).length ? `We have specific ideas for this: ${getActivationIdeas(signal).slice(0,2).join(' and ')}.` : '')
     || signal.whyNow || signal.reasonToReachOut || signal.whyItMattersForPromo
     || 'This creates a timely reason to reach out.';
-  const outreachRows = (eligible && !identityUnconfirmed) ? `
+  const outreachRows = (eligible && !possibleMatch && !identityRejected) ? `
       <div class="verified-signal-row"><strong>Why it matters:</strong> ${escapeHtml(whyItMattersText)}</div>
       <div class="verified-signal-row"><strong>Likely buyers:</strong> ${escapeHtml((signal.recommendedBuyingTeam || signal.likelyBuyers || [signal.suggestedContact || 'Relevant department lead']).slice(0,3).join(', '))}</div>
       <div class="verified-signal-row"><strong>Suggested Contact:</strong> ${escapeHtml(signal.suggestedContactDetails?.name || 'No verified individual identified')}${signal.suggestedContactDetails?.title ? ` — ${escapeHtml(signal.suggestedContactDetails.title)}` : ''}</div>
@@ -6678,21 +6927,48 @@ function renderSingleVerifiedSignal(signal){
         <ul class="likely-conversation-list">${conversations.slice(0,4).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
       </div>
       ${(signal.likelyProducts || signal.commonPromoCategories || []).length ? `<div class="verified-signal-row"><strong>Possible categories:</strong> ${escapeHtml((signal.likelyProducts || signal.commonPromoCategories).slice(0,5).join(', '))}</div>` : ''}
-  ` : (identityUnconfirmed ? `
-      <div class="verified-signal-row verified-signal-historical-note">Unconfirmed research -- company identity could not be corroborated for this source. Not shown as a reason to reach out.</div>
+  ` : (possibleMatch ? `
+      <div class="verified-signal-row verified-signal-historical-note">Possible match -- House Accounts could not confirm this evidence is actually about this account (the match relies on a shortened or common-word reference, not the full company name, with no independent corroboration). Shown for transparency only -- not treated as a business signal or reason to reach out.</div>
+  ` : (identityRejected ? `
+      <div class="verified-signal-row verified-signal-historical-note">Identity not corroborated -- not shown as a reason to reach out.</div>
   ` : `
       <div class="verified-signal-row verified-signal-historical-note">Shown for account history only -- not a current reason to reach out.</div>
-  `);
+  `));
+  // Final Beta Signal Intelligence Correction sprint, "USE THIS SIGNAL": a
+  // legitimate Business Signal (real identity match, current/dated) that HA
+  // did not itself recommend as a Priority may still be exactly what an
+  // experienced rep already knows how to act on. Deliberately excluded for
+  // a Possible Match (identity itself uncertain -- see the founder principle
+  // that reps decide commercial usefulness, HA decides whether it's about
+  // the customer) and for a signal already Priority-eligible (it already has
+  // its own "Prepare for Call" entry point from the priorities feed).
+  const alreadyPriorityEligible = typeof isPriorityEligibleOpportunity === 'function' && isPriorityEligibleOpportunity(signal);
+  const useSignalButton = (eligible && !possibleMatch && !identityRejected && !alreadyPriorityEligible)
+    ? `<button type="button" class="btn btn-ghost btn-mini use-signal-btn" data-use-signal="1" data-signal-source="${escapeHtml(signal.sourceUrl || '')}">Use This Signal →</button>`
+    : '';
+  // Bug fix (paid-beta-sprint "root cause 2" regression): the payload used
+  // to embed the signal's raw conversationStarter verbatim via
+  // JSON.stringify(signal) -- an ungated legacy phrase (e.g. "Can we chat
+  // about this?") never renders in the visible "Likely conversations" row
+  // (that already goes through getSuggestedOpener()'s groundedness gate),
+  // but it WAS still leaking into the DOM unfiltered inside this hidden
+  // data attribute. getSuggestedOpener(signal) is the exact same gate
+  // already used to compute the visible conversations list above --
+  // reusing it here keeps the "Use This Signal" payload consistent with
+  // what the rep actually saw, never a hidden ungated copy of it.
+  const signalPayload = useSignalButton ? { ...signal, conversationStarter: getSuggestedOpener(signal) } : null;
   return `
-    <div class="verified-signal-simple">
+    <div class="verified-signal-simple" ${useSignalButton ? `data-signal-payload="${escapeHtml(JSON.stringify(signalPayload))}"` : ''}>
       <div class="verified-signal-simple-title">${escapeHtml(signal.signalDetail || signal.title || signal.signalType || 'Business signal')}</div>
       <div class="verified-signal-meta">
         ${escapeHtml(signal.signalType || signal.type || 'Business Activity')} · ${escapeHtml(confidence)} confidence${published ? ` · Published: ${escapeHtml(published)}` : ''} · <a class="source-link" target="_blank" href="${escapeHtml(signal.sourceUrl)}">${escapeHtml(sourceDomain(signal.sourceUrl) || 'View source')}</a>
       </div>
-      ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : ''}
-      ${identityUnconfirmed ? `<div class="verified-signal-meta verified-signal-not-current">Unconfirmed research -- identity not corroborated</div>` : ''}
+      ${!eligible ? `<div class="verified-signal-meta verified-signal-not-current">${escapeHtml(signalDateAndActionabilityLine(signal) || 'No longer current')}</div>` : (undatedNotStale ? `<div class="verified-signal-meta verified-signal-timing-unclear">${escapeHtml(signalDateAndActionabilityLine(signal))}</div>` : '')}
+      ${possibleMatch ? `<div class="verified-signal-meta verified-signal-possible-match">Possible match — identity uncertain, may not be about this account</div>` : ''}
+      ${(!possibleMatch && signal?.identityConfidence === 'unconfirmed') ? `<div class="verified-signal-meta verified-signal-business-signal">Business signal — identity not independently corroborated</div>` : ''}
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
       ${outreachRows}
+      ${useSignalButton ? `<div class="verified-signal-actions">${useSignalButton}</div>` : ''}
     </div>`;
 }
 
@@ -6722,6 +6998,42 @@ function renderVerifiedSignals(signals){
 // stale, undated, or past the ongoing-recency ceiling must not become a
 // priority opportunity card -- isPriorityEligible defaults true only for
 // legacy signals persisted before actionabilityStatus existed.
+//
+// Undated Business Signal actionability correction: "we could not resolve
+// a date" (computeActionability()'s 'unknown-date'/'ongoing-undated'
+// branches in api/research-batch.js) is a DIFFERENT claim than "genuinely
+// stale/expired" ('stale'/'ongoing-stale', where a real date IS known and
+// is simply too old). Both currently carry isPriorityEligible:false --
+// correctly, since neither should win a Priority slot -- but they must not
+// be treated identically for RENDER purposes: a legitimate, identity-
+// cleared, freshly-discovered signal HA simply couldn't date (an evergreen
+// "Careers at X" page is the confirmed production case) is not account
+// history, and hiding its normal outreach copy/"Use This Signal" action
+// behind the same "Shown for account history only" treatment as truly
+// expired evidence was the exact bug this closes. isSignalPriorityEligible()
+// itself is left completely unchanged (addSignalDerivedOpportunities()/the
+// priorities feed that consume it must keep their exact current meaning: an
+// undated signal still never auto-populates futureOpportunities/Additional
+// Opportunities and never wins a Priority slot merely because it was
+// freshly discovered -- isPriorityEligibleOpportunity() enforces that
+// independently via its own 'Timing unclear' label check). The two new
+// predicates below govern ONLY whether Research Details renders a signal
+// with its normal, current-signal treatment (outreach copy + "Use This
+// Signal" eligibility) versus the historical-note treatment reserved for
+// genuinely stale/expired evidence -- a rep choosing to act on it is the
+// ONLY path forward for an undated signal, never an automatic one.
+const UNDATED_NOT_STALE_STATUSES = new Set(['unknown-date', 'ongoing-undated']);
+function isUndatedNotStale(signal){
+  return UNDATED_NOT_STALE_STATUSES.has(signal?.actionabilityStatus?.status);
+}
+// References isSignalPriorityEligible() below by name -- safe (function
+// declarations hoist regardless of source order); deliberately placed
+// BEFORE that function's own declaration in the text so extraction ranges
+// several existing test files already end at (using its declaration as the
+// end-of-block marker) still capture this helper too.
+function isResearchDetailsVisibleAsCurrentSignal(signal){
+  return isSignalPriorityEligible(signal) || isUndatedNotStale(signal);
+}
 function isSignalPriorityEligible(signal){
   return signal?.actionabilityStatus?.isPriorityEligible !== false;
 }
@@ -6747,7 +7059,15 @@ function isSignalPriorityEligible(signal){
 // six call sites) does can leave a residual duplicate for a later render to
 // pick up.
 function addSignalDerivedOpportunities(account, signals){
-  (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl && isSignalPriorityEligible(signal)).forEach(signal => {
+  // Final Beta Signal Intelligence Correction sprint: a Possible Match
+  // (identityConfidence 'possible' -- identity itself materially uncertain,
+  // see isPossibleMatchIdentity()) never becomes an opportunity object at
+  // all -- it stays visible only in the raw account.signals array (rendered
+  // transparently via renderVerifiedSignals() in Research Details), never in
+  // account.futureOpportunities, so it can never reach the Priority feed,
+  // Additional Opportunities, or the research-progress "N business signals
+  // found" count (which is exactly this array's length).
+  (signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl && isSignalPriorityEligible(signal) && !isPossibleMatchIdentity(signal)).forEach(signal => {
     const type = signal.signalType || signal.type || '';
     const name = signal.promoOpportunity || signal.opportunityCategory || `${type} Promo Opportunity`;
     const products = Array.isArray(signal.likelyProducts) && signal.likelyProducts.length
@@ -7225,7 +7545,7 @@ async function researchAccountFromManageModal(accountName, listId){
     // above, so no separate reportResearchRunOutcome('complete', ...) call
     // is needed here either.
     clearActiveResearchBreadcrumb(expectedUploadId, researchRunId);
-    markResearchAccountDone(expectedUploadId, targetAccountName, {opportunities: account.signals.length});
+    markResearchAccountDone(expectedUploadId, targetAccountName, {opportunities: countLegitimateBusinessSignals(account.signals)});
     finishResearchTracker(expectedUploadId);
     return {ok:true, account};
   }catch(err){
@@ -7471,7 +7791,11 @@ async function researchListFromManageModal(listId, options = {}){
           account.lastResearchedAt = new Date().toISOString();
           if(signals.length){ withSignals += 1; totalSignals += signals.length; }
           addSignalDerivedOpportunities(account, account.signals);
-          chunkOpportunities += (account.futureOpportunities || []).length;
+          // "N business signals found" canonical definition -- see
+          // countLegitimateBusinessSignals()'s own header comment.
+          // opportunityCount below is a DIFFERENT, deliberately unchanged
+          // field (Priority/Additional-Opportunities count elsewhere).
+          chunkOpportunities += countLegitimateBusinessSignals(account.signals);
           accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
         });
         markResearchGroupDone(expectedUploadId, chunkNames, {opportunities: chunkOpportunities});
@@ -7562,7 +7886,9 @@ async function researchListFromManageModal(listId, options = {}){
         if(account.signals.length){ withSignals += 1; totalSignals += account.signals.length; }
         addSignalDerivedOpportunities(account, account.signals);
         accountResults.push({uploadId: expectedUploadId, accountId: account.id, accountName: account.name, signalCount: account.signals.length, opportunityCount: (account.futureOpportunities || []).length});
-        markResearchAccountDone(expectedUploadId, account.name, {opportunities: (account.futureOpportunities || []).length});
+        // "N business signals found" canonical definition -- see
+        // countLegitimateBusinessSignals()'s own header comment.
+        markResearchAccountDone(expectedUploadId, account.name, {opportunities: countLegitimateBusinessSignals(account.signals)});
       }catch(err){
         unregisterResearchAbort(expectedUploadId, account.name);
         if(err && err.name === 'AbortError'){
@@ -7798,7 +8124,9 @@ async function researchAccountByName(accountName, options = {}){
       await heartbeatCurrentResearchRun(attemptContext);
       await saveCurrentUpload('researched', attemptContext);
     }
-    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {opportunities: account.signals.length});
+    // "N business signals found" canonical definition -- see
+    // countLegitimateBusinessSignals()'s own header comment.
+    if(trackerUploadId) markResearchAccountDone(trackerUploadId, account.name, {opportunities: countLegitimateBusinessSignals(account.signals)});
   }catch(err){
     if(trackerUploadId) unregisterResearchAbort(trackerUploadId, account.name);
     const stopped = trackerUploadId ? isResearchStopRequested(trackerUploadId) : false;
@@ -8245,7 +8573,15 @@ async function researchTopAccounts(options = {}){
       // for this run (researchAccountsBatch() itself leaves them
       // "researching"; see its own comment on why the done/not-done
       // decision has to happen here, once batchSignals is known).
-      markResearchGroupDone(currentUploadId, accounts.map(a => a.name), {opportunities: batchSignals});
+      // "N business signals found" canonical definition -- see
+      // countLegitimateBusinessSignals()'s own header comment. Deliberately
+      // a SEPARATE count from batchSignals just above, which stays the raw,
+      // unfiltered total -- batchSignals only ever decides whether the
+      // fallback loop is needed (a batch response containing only Possible
+      // Match rows must still count as "the batch worked," not trigger an
+      // unnecessary full per-account re-research).
+      const batchLegitimateSignals = accounts.reduce((sum, a) => sum + countLegitimateBusinessSignals(a.signals), 0);
+      markResearchGroupDone(currentUploadId, accounts.map(a => a.name), {opportunities: batchLegitimateSignals});
     }
 
     // Phase 2A implementation-review ROUND 6, item 1: this is the ONE,
@@ -8346,6 +8682,32 @@ function markResearchAccountStarted(uploadId, name){
   if(!tracker) return;
   tracker.researchingNames.add(name);
   notifyResearchTrackerChange(uploadId);
+}
+// Beta correction ("N business signals found" canonical definition): the
+// research-progress counter used to diverge by code path -- the batch path
+// counted every raw signal (including Possible Matches), the fallback path
+// counted account.futureOpportunities (which excludes Possible Matches but
+// ALSO excludes every undated signal, via isSignalPriorityEligible/
+// addSignalDerivedOpportunities -- too narrow now that an undated,
+// identity-legitimate signal is a real Business Signal, not Priority
+// eligibility). Neither was the right definition. A Business Signal is any
+// discovered signal credibly about the actual customer -- confirmed OR
+// legitimately unconfirmed, dated or not, with or without a commercialPlay,
+// Priority-eligible or not -- excluding ONLY a Possible Match (identity
+// itself uncertain) or an explicitly rejected identity. hasConfirmedOrLegacyIdentity()
+// is exactly that check, already used everywhere else this same distinction
+// matters (Priority eligibility, Research Details labeling). Deliberately
+// reuses the SAME base filter (isReal && sourceUrl) and the SAME dedupe
+// (dedupeFoundSignals()) renderVerifiedSignals() itself uses, so this count
+// can never disagree with what a rep actually sees when they open Research
+// Details. EVERY research-progress call site (batch and fallback alike)
+// must call this -- see markResearchAccountDone()/markResearchGroupDone()
+// callers in researchAccountsBatch()/researchAccountByName()/
+// researchTopAccounts() -- so the count cannot diverge into two
+// definitions again.
+function countLegitimateBusinessSignals(signals){
+  return dedupeFoundSignals((signals || []).filter(signal => signal && signal.isReal && signal.sourceUrl))
+    .filter(hasConfirmedOrLegacyIdentity).length;
 }
 function markResearchAccountDone(uploadId, name, {failed = false, stopped = false, opportunities = 0} = {}){
   const tracker = researchRunTrackers.get(uploadId);
@@ -8495,14 +8857,26 @@ function getWhyNowText(opp){
 
 
 function getReasonToReachOutTitle(opp){
-  const type = String(opp.signalType || opp.opportunityCategory || opp.opportunityType || '').toLowerCase();
   if(opp.isVerifiedSignalOpportunity || opp.sourceUrl){
-    if(type.includes('hiring')) return 'Hiring creates a timely reason to check in';
-    if(type.includes('event') || type.includes('conference') || type.includes('trade show')) return 'Event activity creates a timely reason to check in';
-    if(type.includes('expansion') || type.includes('location') || type.includes('facility')) return 'Growth activity creates a timely reason to check in';
-    if(type.includes('award') || type.includes('recognition')) return 'Recognition creates a timely reason to check in';
-    if(type.includes('leadership')) return 'Leadership change creates a timely reason to check in';
-    if(type.includes('launch')) return 'Launch activity creates a timely reason to check in';
+    // Final bounded Beta trust correction: reads the SAME canonical
+    // classification canonicalSignalKind() already provides to the card
+    // headline/Opportunity Summary/recommended department (see that
+    // function's own header comment: "so the card headline, Opportunity
+    // Summary, recommended department, and outreach can never disagree
+    // about what kind of business event this is") -- never opp.signalType
+    // substring matching, which is frozen at discovery time and can
+    // disagree with the live opp.canonicalEventType/opportunityType
+    // classifyLegacySignalActionability() recomputes fresh on every read
+    // (confirmed production case: a canonical EVENT_AWARD rendering this
+    // Prepare-for-Call header as "Hiring" because a stale signalType string
+    // happened to contain "hiring").
+    const kind = canonicalSignalKind(opp);
+    if(kind === 'hiring') return 'Hiring creates a timely reason to check in';
+    if(kind === 'event') return 'Event activity creates a timely reason to check in';
+    if(kind === 'expansion') return 'Growth activity creates a timely reason to check in';
+    if(kind === 'recognition') return 'Recognition creates a timely reason to check in';
+    if(kind === 'leadership') return 'Leadership change creates a timely reason to check in';
+    if(kind === 'launch') return 'Launch activity creates a timely reason to check in';
     return 'Business signal creates a reason to reach out';
   }
   // Live-QA correction (category/program copy drift, round 2): this is the
@@ -8762,6 +9136,34 @@ function scrollToAccountResult(uploadId, accountName){
   if(target){ target.scrollIntoView({behavior:'smooth', block:'center'}); highlightResultElement(target); }
 }
 
+// Final Beta Signal Intelligence Correction sprint, "USE THIS SIGNAL": opens
+// the existing Prepare for Call surface for a signal the rep deliberately
+// chose to work, even though House Accounts did not recommend it as a
+// Priority. This must NEVER promote the signal into the Priority feed,
+// change any persisted priority status, or manufacture a commercialPlay/
+// activationIdeas that doesn't already exist -- so it builds the opportunity
+// shape directly from the raw signal's OWN already-computed fields (a
+// discovered signal already carries commercialPlay/activationIdeas/
+// suggestedContactDetails/actionabilityStatus verbatim -- see
+// rowToSignal()/makeSignal()), with zero new derivation logic. Whatever
+// createSalesPlayPanel()'s own section renderers already do for an absent
+// Play/Ideas (hide the section entirely) is exactly the desired behavior
+// here too -- reusing the SAME renderer, not a parallel one.
+function repSelectedOpportunityFromSignal(signal){
+  return {
+    ...signal,
+    account: signal.account || signal.accountName || 'this account',
+    signalLayerType: signal.signalLayerType || 'Business Activity Signal',
+    isVerifiedSignalOpportunity: true,
+    opportunityType: signal.opportunityType || 'SIGNAL-DRIVEN'
+  };
+}
+function useSignalAsRepSelected(signal){
+  if(!signal) return;
+  const opp = repSelectedOpportunityFromSignal(signal);
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
+}
+
 // Follow-up round: the single production "View Opportunities" handoff --
 // used identically by the research-completion toast and by the Recently
 // Researched row's own "View opportunities" button (requirement 8) --
@@ -8843,24 +9245,34 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   const dedupedCluster = sortDailyReasons(dedupeOpportunities(collapseDuplicateAccountHistorySignals(rawOpportunities)));
   const opportunities = priorityEligibleOpportunities(dedupedCluster);
   if(!opportunities.length){
+    // Founder correction round (Global Business Trigger Intelligence sprint,
+    // "signal vs. priority" product decision): the primary Recently
+    // Researched click-through must never be a dead end when research found
+    // real, legitimate signals -- it only used to check priorityEligibleOpportunities()
+    // (a stricter, activation-gated question) and show a generic error
+    // dialog whenever that came back empty, even though a rep who saw "3
+    // signals found" on the card just clicked expecting to see them.
+    // "No credible activation to recommend" and "nothing worth showing" are
+    // different facts; this branch now tells them apart using the SAME raw-
+    // signal source and dedupe (dedupeFoundSignals()) Recently Researched's
+    // own "N signals found" count already uses (getRecentlyResearchedAccounts()),
+    // so the count in the dialog can never disagree with the count on the
+    // card that was just clicked.
+    const foundSignals = dedupeFoundSignals(account.signals || []);
+    if(foundSignals.length){
+      if(window.HouseAccountManager && typeof window.HouseAccountManager.showResearchResults === 'function'){
+        await window.HouseAccountManager.showResearchResults({
+          accountName,
+          introHtml: `House Accounts found ${foundSignals.length} signal${foundSignals.length === 1 ? '' : 's'} for ${escapeHtml(accountName)}. None currently meets the bar for a recommended play -- here's what was found:`,
+          signalsHtml: renderVerifiedSignals(foundSignals)
+        });
+      }
+      return;
+    }
     if(window.HouseAccountManager && typeof window.HouseAccountManager.showError === 'function'){
-      // Preview QA item 5 / verified-terminology sprint: keep "signal(s)
-      // found" and "active opportunity" honestly distinct -- researchedSignalCount
-      // reflects everything actually discovered/persisted for this account
-      // (dedupedCluster, before the eligibility filter above removes the
-      // non-current ones), never conflated with the zero that remain
-      // eligible as a live play. Dropped "verified" from the wording
-      // entirely here (not just softened) -- dedupedCluster mixes
-      // confirmed, unconfirmed, and legacy signals alike, and this message
-      // is fundamentally about ACTIVENESS eligibility, not identity
-      // confirmation.
-      const researchedSignalCount = dedupedCluster.length;
-      const bodyHtml = researchedSignalCount
-        ? `Research found ${researchedSignalCount} signal${researchedSignalCount === 1 ? '' : 's'} for ${escapeHtml(accountName)}, but none ${researchedSignalCount === 1 ? 'is' : 'are'} currently active enough to recommend as a live opportunity. The research has been saved and will continue to be monitored.`
-        : `Research completed for ${escapeHtml(accountName)}, but no specific opportunity was generated from the result. The account's saved data has been refreshed.`;
       await window.HouseAccountManager.showError({
-        title: 'No active opportunity to show',
-        bodyHtml,
+        title: 'No research results to show',
+        bodyHtml: `Research completed for ${escapeHtml(accountName)}, but no specific signal was generated from the result. The account's saved data has been refreshed.`,
         okLabel: 'Got it'
       });
     }
@@ -9039,7 +9451,8 @@ function renderRecentlyResearchedSection(){
             <button type="button" class="rr-dismiss-btn" aria-label="Dismiss ${escapeHtml(e.name)} from Recently Researched">✕</button>
           </div>
         </div>`).join('')}
-    </div>`;
+    </div>
+    <button type="button" class="btn btn-ghost btn-mini rr-view-all-btn">View all researched accounts →</button>`;
 }
 document.addEventListener('click', (event) => {
   const card = event.target.closest('.recently-researched-card');
@@ -9059,6 +9472,19 @@ document.addEventListener('click', (event) => {
     dismissResearchResult(uploadId, accountName, card.dataset.completedAt);
     renderRecentlyResearchedSection();
   }
+});
+// Beta correction (research access for all monitored accounts): a separate,
+// section-level listener -- the button lives as a sibling of
+// .recently-researched-card, not inside one, so the card-scoped listener
+// above (which returns immediately when no .recently-researched-card is an
+// ancestor) never sees this click. Opens the exact same Manage Customer
+// Accounts modal the existing #manageCustomerAccountsBtn already opens
+// (window.HouseAccountManager.open(), the same internal open() that button
+// calls) -- Recently Researched stays a compact top-5 view; this is only a
+// pointer into the existing, already-complete account list.
+document.addEventListener('click', (event) => {
+  if(!event.target.closest('.rr-view-all-btn')) return;
+  if(window.HouseAccountManager && typeof window.HouseAccountManager.open === 'function') window.HouseAccountManager.open();
 });
 // ===========================================================================
 
@@ -9706,12 +10132,24 @@ function groundedDepartmentForOpportunity(opp){
 // QA round 2, item 3/4: the exact surfaced initiative -- the real signal
 // title/trigger -- not a bucketed generic phrase like "an upcoming event or
 // campaign" that says nothing about what actually happened.
+//
+// Final bounded Beta trust correction (Round C): this feeds Email/Call
+// Script/Subject/Questions to Ask (via triggerPhraseForSignal()) -- the
+// SAME raw-source-artifact risk businessSuggestedOpener() has (a
+// breadcrumb chain or SEO/publisher title masquerading as the real signal
+// title) applies here too, or Prepare for Call's outreach surfaces could
+// quote junk even after How to Approach was fixed to avoid it. When the
+// raw text doesn't qualify, this returns '' so triggerPhraseForSignal()
+// falls through to ctx.whyNow (businessSignalPlainSummary()'s own,
+// independently gated, canonical-family-honest text) rather than embedding
+// it anyway.
 function groundedInitiativeTitle(opp){
   // QA round 3, item 5: strip any trailing sentence punctuation once, at
   // the source -- callers embed this phrase mid-sentence (e.g. "Lead with
   // {title}.") and a raw AI-generated signalTitle/concreteTrigger that
   // already ends in "." would otherwise produce a double period downstream.
-  return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '').replace(/[.!?]+$/, '');
+  const raw = cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '');
+  return looksLikeRawSourceArtifact(raw) ? '' : raw.replace(/[.!?]+$/, '');
 }
 
 // Closes the Prepare for Call panel and balances the shared overlay-open
@@ -9839,6 +10277,7 @@ window.createSalesPlayPanel = function(opp, opts){
           </div>
           <button class="sales-play-close" onclick="closeSalesPlayModal(this)">×</button>
         </div>
+        ${opts.repSelected ? `<div class="rep-selected-banner"><strong>REP-SELECTED SIGNAL</strong> — House Accounts found this signal but did not recommend it as a Priority. You chose to work it.</div>` : ''}
         <div class="sales-play-output">
 
           <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
@@ -9856,7 +10295,7 @@ window.createSalesPlayPanel = function(opp, opts){
                  the same reason -- an account-history opportunity was never
                  "unconfirmed research" (that describes web-research identity
                  doubt, not order-history grounding). -->
-            <div class="sales-play-group-label">${isExplicitlyVerifiedIdentity(opp) ? 'Verified Signal / Evidence' : (isWebResearchSignal(opp) ? 'Unconfirmed Research' : 'Account History')}</div>
+            <div class="sales-play-group-label">${isExplicitlyVerifiedIdentity(opp) ? 'Verified Signal / Evidence' : (isWebResearchSignal(opp) ? 'Credible Business Signal' : 'Account History')}</div>
             ${renderVerifiedOpportunitySection(opp)}
           </div>
 
@@ -11022,21 +11461,60 @@ function setActiveTimebox(timebox){
 // date, and signalDateAndActionabilityLine()'s own default ("Date
 // unavailable" when there's no publication date either) must not exclude
 // them.
-// Trust correction (entity-disambiguation): identityConfidence only exists on
-// a signal that has been through the tri-state grounding verifier (see
-// api/signal-intelligence.js's verifyCandidateCompanyGrounding()). A signal
-// with NO identityConfidence field at all is a LEGACY row, persisted before
-// this field existed -- it must keep its prior (unchanged) eligibility
-// behavior. Silently treating a legacy row as 'confirmed' would let an
-// already-persisted contamination slip through undetected; silently treating
-// it as 'unconfirmed' would empty the priority feed of every pre-existing
-// signal overnight, for accounts that have not been re-researched yet. Only
-// a NEW signal explicitly graded 'unconfirmed' or 'rejected' is excluded
-// here -- 'confirmed' and legacy (field absent) are both eligible, subject
-// to the existing rules below.
+// Global Business Trigger Intelligence sprint, founder correction round:
+// identityConfidence only exists on a signal that has been through the
+// tri-state grounding verifier (see api/signal-intelligence.js's
+// verifyCandidateCompanyGrounding()), and that verifier's tri-state was
+// never actually three usable outcomes in practice -- 'rejected' is a hard
+// discard already applied BEFORE persistence (api/research-account.js and
+// api/research-batch.js both drop a rejected candidate and never write it
+// to ha_signals at all), so identityConfidence on any row that actually
+// reaches this function can only ever be 'confirmed', 'unconfirmed', or
+// absent (legacy). Treating 'unconfirmed' as ineligible here therefore did
+// not mean "identity is suspect" -- it meant "no SECOND, independent
+// corroborator (a known company domain, a matching location, a known
+// social profile) happened to exist," which most ordinary customer-order
+// CSV uploads (no website/location column at all) can never supply
+// regardless of how strong the underlying evidence is. Confirmed production
+// case: a BerryDunn press release hosted on berrydunn.com itself, naming
+// BerryDunn by name, still graded 'unconfirmed' purely because the uploaded
+// account had no website field to compare that domain against -- and was
+// then excluded from every priority surface for it.
+//
+// Founder decision: 'confirmed' remains a real, stronger trust grade (still
+// the sole basis for isExplicitlyVerifiedIdentity()'s "Verified Opportunity"
+// labeling below -- that is intentionally unchanged), but it must not be a
+// secret mandatory prerequisite for a signal to even be CONSIDERED for
+// commercial/priority evaluation. A signal whose company name was actually
+// matched in the evidence (verifyCandidateCompanyGrounding()'s nameMatched
+// floor) and was not rejected for contradicted/ambiguous identity is
+// "grounded/probable" and must be allowed to proceed -- only an EXPLICIT
+// 'rejected' grade (kept here as defense-in-depth even though it should
+// never reach this function given the pre-persistence filter above) is
+// excluded, alongside the pre-existing legacy grandfather policy.
+// Final Beta Signal Intelligence Correction sprint: identityConfidence now
+// has a fourth real outcome, 'possible' (see
+// api/signal-intelligence.js's verifyCandidateCompanyGrounding()) -- a name
+// match that only ever cleared the distinctive-token fallback (a shortened/
+// surname-style reference), never the strong bare/normalized full-name
+// match, and was never independently corroborated either. Confirmed QA
+// collisions this closes: an uploaded "Wyman's" matching "Careers at Oliver
+// Wyman | A Marsh business" (a different, real company sharing the
+// surname), and an uploaded "Timberland" matching "Nusenda Credit Union on
+// Instagram" (the ordinary-English word, not the brand). A Possible Match
+// is not the same claim as a Business Signal -- HA cannot tell it apart
+// from a genuine same-name/same-word collision using this evidence alone,
+// so per the founder's principle ("the rep can decide whether a real
+// customer signal is commercially useful; House Accounts should decide
+// whether the evidence is actually about the customer"), it must never
+// reach a priority surface. isPossibleMatchIdentity() below is the
+// canonical check every consumer (eligibility, rendering, "Use This
+// Signal") reuses.
+function isPossibleMatchIdentity(opp){
+  return opp?.identityConfidence === 'possible';
+}
 function hasConfirmedOrLegacyIdentity(opp){
-  const identity = opp?.identityConfidence;
-  return identity === undefined || identity === null || identity === 'confirmed';
+  return opp?.identityConfidence !== 'rejected' && !isPossibleMatchIdentity(opp);
 }
 
 // Trust correction (verified-terminology sprint): a SEPARATE, stricter
@@ -11076,27 +11554,157 @@ function foundAndVerifiedSuffix(signals){
   return verifiedCount ? ` · ${verifiedCount} verified` : '';
 }
 
+// Final Beta Signal Intelligence Correction sprint: deliberately NOT the
+// same list as WEAK_EVENT_ANCHOR (which governs whether a COMMERCIAL PLAY
+// reads as manufactured, for Route B). This anchor only ever matches the
+// funding/earnings family the founder brief still explicitly names as
+// forbidden noise ("routine earnings; generic financial updates; weak
+// funding announcements with no meaningful relationship relevance") --
+// conferences, sponsorships, community events, product launches,
+// acquisitions, expansions, facility activity, rebrands, and leadership
+// moments are all real, standalone-worthy business moments and must never
+// be treated as noise here merely because they belong to a family that can
+// ALSO produce a weak commercial play elsewhere. Scans the signal's own
+// FACTUAL description only (title/whatChanged/businessContext/trigger),
+// never commercialPlay -- Route A's whole point is that no activation text
+// needs to exist at all.
+const ROUTINE_FINANCIAL_NOISE_ANCHOR = /\b(?:funding|financing|seed round|series [a-z]\b|investment round|financing round|capital raise|raised \$|an? ipo\b|going public|earnings|financial results|quarterly results|investor conference call|investor earnings call)\b/i;
+// A second, deliberately family-agnostic anchor: text that names no real
+// event at all -- just vague "corporate update"/"routine matters" boilerplate
+// -- is routine noise regardless of which WEAK_EVENT_ANCHOR family (if any)
+// it happens to touch. Confirmed production case: an Amoskeag-shaped signal
+// ("issued a general corporate update covering routine business matters")
+// matches neither ROUTINE_FINANCIAL_NOISE_ANCHOR nor WEAK_EVENT_ANCHOR, so it
+// needs its own explicit catch.
+const GENERIC_VAGUE_CORPORATE_ANCHOR = /\b(?:corporate update|routine (?:business )?matters|general (?:corporate )?update|administrative update|housekeeping update|routine filing|routine disclosure)\b/i;
+// Covers the strong signal families the founder explicitly protects
+// (conference/sponsorship/community event are already in
+// GROUNDED_AUDIENCE_OR_MOMENT_WORDS; acquisition/leadership/facility are
+// already in WEAK_EVENT_ANCHOR) that AREN'T yet named by either: rebrand,
+// product launch, milestone/anniversary, expansion into a new market. Used
+// only as a POSITIVE "is there any identifiable business moment at all"
+// check below -- never to exclude anything, so widening it can only make
+// MORE real events Route A eligible, never fewer.
+const STRONG_EVENT_FAMILY_ANCHOR = /\b(?:rebrand|re-brand|brand relaunch|product launch|launching (?:a|its|their) new|new product line|anniversary|milestone|expansion into|expanding into|entering (?:a )?new market|groundbreaking|now open|opening its doors)\b/i;
+function hasIdentifiableBusinessMoment(text){
+  return WEAK_EVENT_ANCHOR.test(text) || GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(text) || STRONG_EVENT_FAMILY_ANCHOR.test(text);
+}
+// Deliberately excludes businessContext/companyContext/opportunityExplanation/
+// whyThisMatters -- confirmed by direct inspection that normalizeOpportunity()
+// backfills those fields with a GENERIC TEMPLATED narrative (e.g. "...appears
+// to have leadership changes that may signal new priorities, team-building
+// needs..." for ANY leadership-family signal with no disclosed specifics) any
+// time the source itself discloses nothing further. That template's own
+// boilerplate names audience words ("team", "employee engagement",
+// "onboarding") that would otherwise defeat the GROUNDED_AUDIENCE_OR_MOMENT_WORDS
+// check below for every bare leadership/acquisition announcement -- exactly
+// the founder-named "New VP -> comprehensive rebrand" failure shape, just
+// arrived at from the noise side instead of the play side. signalTitle/title/
+// signalDetail/whatChanged/concreteTrigger instead reflect the actual
+// evidence-derived trigger text, not manufactured buyer-side narrative.
+function factualSignalText(opp){
+  return [opp?.signalTitle, opp?.title, opp?.signalDetail, opp?.whatChanged, opp?.concreteTrigger, opp?.concrete_trigger]
+    .filter(Boolean).join(' ');
+}
+// Bug fix: GROUNDED_AUDIENCE_OR_MOMENT_WORDS includes ordinary business-name
+// words ("partners", "family", "community", "team") that plenty of REAL
+// company names legitimately contain (e.g. "Millbrook Dental Partners"),
+// which would otherwise self-satisfy the grounded-word check on every
+// mention of the company's own name -- a bare "Millbrook Dental Partners
+// acquired a local dental practice, no further detail disclosed" would
+// incorrectly read as grounded merely because the account is named
+// "...Partners". Stripping the account's own name out of the factual text
+// before running any anchor check removes this false signal without
+// touching the anchors themselves.
+function stripAccountNameMentions(text, opp){
+  const name = String(opp?.accountName || opp?.account || opp?.companyName || '').trim();
+  if(!name || name.length < 3) return text;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(text || '').replace(new RegExp(escaped, 'gi'), ' ');
+}
+// Bug fix (first-draft under-scope): ROUTINE_FINANCIAL_NOISE_ANCHOR alone
+// only ever matched the funding/earnings family, so bare acquisition/
+// leadership/facility announcements with no disclosed specific detail
+// (e.g. "acquired a minority stake... no further operational detail
+// disclosed", "appointment of a new CFO... no further details on plans or
+// initiatives were disclosed") incorrectly cleared Route A. Reusing the
+// EXISTING WEAK_EVENT_ANCHOR (already correctly scoped to funding/
+// acquisition/leadership/facility -- see its own header comment) plus the
+// EXISTING GROUNDED_AUDIENCE_OR_MOMENT_WORDS positive check closes that gap
+// without adding a single new family to any anchor: a weak-by-default-family
+// event is routine noise for Route A UNLESS the signal's own factual text
+// discloses a real audience/moment beyond the bare announcement (e.g. a
+// named hiring push, welcome event, or integration detail). Conference/
+// sponsorship/community-event/product-launch/rebrand/expansion/milestone
+// signals are never in WEAK_EVENT_ANCHOR, so they never reach this branch at
+// all -- they clear Route A purely on being a real, current, correctly-
+// identified, non-vague business moment, per the founder's explicit "do not
+// blacklist strong signal families" instruction.
+function isRoutineFinancialNoise(opp){
+  const text = stripAccountNameMentions(factualSignalText(opp), opp);
+  if(GENERIC_VAGUE_CORPORATE_ANCHOR.test(text)) return true;
+  if(ROUTINE_FINANCIAL_NOISE_ANCHOR.test(text)) return true;
+  if(WEAK_EVENT_ANCHOR.test(text) && !GROUNDED_AUDIENCE_OR_MOMENT_WORDS.test(text)) return true;
+  // A mention that names no identifiable business moment at all -- e.g. a
+  // company named only in passing inside an unrelated trends roundup, with
+  // no event/audience/moment language of its own -- is too ambiguous to
+  // stand alone, regardless of family.
+  if(!hasIdentifiableBusinessMoment(text)) return true;
+  return false;
+}
+// Route A -- Strong Signal / Relationship Priority (updated product
+// doctrine: "NO GROUNDED REASON TO ENGAGE -> NO PRIORITY", where a grounded
+// commercial activation is ONE kind of grounded reason to engage, not the
+// only one). The underlying business event itself can be a real, current,
+// correctly-identified, non-routine moment a good rep would want to know
+// about and potentially reference with this customer -- independent of
+// whether HA can responsibly recommend a specific commercial activation for
+// it. A Route A Priority requires no commercialPlay/activationIdeas at all;
+// "This is worth staying close to" is itself a valid recommendation.
+// Deliberately NOT a family allowlist -- any real, correctly-identified,
+// current/upcoming, non-routine-noise Business Activity Signal qualifies,
+// regardless of which event family it belongs to. Identity is checked by
+// the caller (isPriorityEligibleOpportunity(), via hasConfirmedOrLegacyIdentity())
+// before this is ever reached; isPossibleMatchIdentity() is re-checked here
+// too so this predicate stays correct if ever reused standalone.
+function hasStrongStandaloneSignal(opp){
+  if(!isWebResearchSignal(opp)) return false;
+  if(isPossibleMatchIdentity(opp)) return false;
+  return !isRoutineFinancialNoise(opp);
+}
+
 function isPriorityEligibleOpportunity(opp){
   if(!opp) return false;
-  // This is a hard trust gate, not a ranking preference -- an unconfirmed
-  // signal can never win a primary/priority slot, even when no confirmed
-  // alternative exists for the account (controlled-beta policy: telling the
-  // rep no verified opportunity was found beats presenting a possibly
-  // wrong-company one). Checked before the actionability/date checks below
-  // so a low-trust signal is excluded regardless of how fresh or "current"
-  // it otherwise looks.
+  // This is a hard trust gate, not a ranking preference -- a Possible Match
+  // (identity itself materially uncertain) or an explicitly rejected signal
+  // can never win a priority slot, even when no better alternative exists
+  // for the account (controlled-beta policy: telling the rep no verified
+  // opportunity was found beats presenting a possibly wrong-company one).
+  // Checked before the actionability/date checks below so a low-trust
+  // signal is excluded regardless of how fresh or "current" it otherwise
+  // looks.
   if(!hasConfirmedOrLegacyIdentity(opp)) return false;
   if(isWebResearchSignal(opp)){
     const label = signalDateAndActionabilityLine(opp);
-    if(label === 'Date unavailable' || label === 'No longer current') return false;
-    // Beta Seller Experience sprint: a real, identity-confirmed, dated
-    // Business Activity Signal still should not compete for a priority
-    // slot against a genuine play if the pipeline itself could not produce
-    // one -- see hasCredibleActivationPlay()'s own comment. Scoped to
-    // web-research signals only: Follow-Up and Repeat/Pattern opportunities
-    // are grounded in real purchase history, not commercialPlay/
-    // activationIdeas, and are completely unaffected by this check.
-    if(!hasCredibleActivationPlay(opp)) return false;
+    // 'Date unavailable' kept alongside the current 'Timing unclear' label
+    // defensively -- both mean the same "timing could not be established"
+    // exclusion; a freshly-discovered undated signal must never win a
+    // Priority slot merely because House Accounts found it today (see
+    // isUndatedNotStale()/isResearchDetailsVisibleAsCurrentSignal(), which
+    // widen ONLY Research-Details render/"Use This Signal" eligibility, and
+    // deliberately never touch this Priority gate).
+    if(label === 'Timing unclear' || label === 'Date unavailable' || label === 'No longer current') return false;
+    // Final Beta Signal Intelligence Correction sprint: TWO legitimate
+    // routes into Priority now, not one. Route B (hasCredibleActivationPlay) --
+    // the richer Signal -> Audience -> Objective -> Moment -> Activation ->
+    // Concepts reasoning chain -- remains the best outcome when it's real.
+    // Route A (hasStrongStandaloneSignal) admits a strong, correctly-
+    // identified, current, non-routine-noise business moment on its own,
+    // with no commercialPlay/activationIdeas required -- "sometimes the
+    // best thing a rep can do is simply know that something important is
+    // happening at their customer and stay in touch around it." Either
+    // route is sufficient; neither is required to also satisfy the other.
+    if(!hasCredibleActivationPlay(opp) && !hasStrongStandaloneSignal(opp)) return false;
   }
   // Live-QA correction (Meridian stale Follow-Up, round 5): a Follow-Up
   // Signal opportunity had NO age ceiling at all -- signalLayerType
@@ -11689,6 +12297,23 @@ document.addEventListener('click', (event) => {
     const card = saveBtn.closest('.account-card');
     const accountName = card ? card.dataset.accountName : null;
     if(uiKey != null && accountName) saveAccountMetadataEdit(uiKey, accountName);
+    return;
+  }
+  // Final Beta Signal Intelligence Correction sprint, "USE THIS SIGNAL":
+  // delegated from renderSingleVerifiedSignal()'s button, wherever that
+  // renders (Research Details, Manage Customer Accounts, View Research) --
+  // one handler, one entry point, matching this file's existing delegation
+  // convention for every other signal/opportunity action button.
+  const useSignalBtn = event.target.closest('.use-signal-btn');
+  if(useSignalBtn){
+    const card = useSignalBtn.closest('.verified-signal-simple');
+    const raw = card ? card.dataset.signalPayload : '';
+    if(raw){
+      try{
+        const signal = JSON.parse(raw);
+        if(typeof useSignalAsRepSelected === 'function') useSignalAsRepSelected(signal);
+      }catch(err){ /* malformed payload -- nothing to recover, fail silently */ }
+    }
     return;
   }
 });
@@ -12370,6 +12995,26 @@ function escapeHtml(text){
  function accountRow(list, a){
    const paused = a.monitoringStatus === 'paused';
    const researched = !!a.lastResearchedAt;
+   // Beta correction (research access for all monitored accounts): Manage
+   // Customer Accounts' own account list (`page.accounts`, what `a` is
+   // here) is deliberately lightweight for scale -- see renderExpandedSection()'s
+   // own comment ("never list.accounts, which no longer exists on the
+   // summary object") -- it never carries signals/futureOpportunities.
+   // window.accountRadarAccounts is the SAME full-aggregate data source
+   // Recently Researched already reads (getRecentlyResearchedAccounts()),
+   // already loaded in memory by the main dashboard fetch -- no new fetch
+   // here, just the same cross-reference by name+uploadId. Uses the exact
+   // same dedupeFoundSignals()/isExplicitlyVerifiedIdentity() pair Recently
+   // Researched already uses for its own "N found · M verified" line, so
+   // the two surfaces can never quietly disagree about what "found"/
+   // "verified" mean.
+   const liveAccount = (window.accountRadarAccounts || []).find(x => x && x.uploadId === list.id && x.name === a.name);
+   const foundSignals = liveAccount ? dedupeFoundSignals(liveAccount.signals || []) : [];
+   const signalCount = foundSignals.length;
+   const verifiedCount = signalCount ? foundSignals.filter(isExplicitlyVerifiedIdentity).length : 0;
+   const researchSummary = researched
+     ? `${signalCount ? `${signalCount} signal${signalCount===1?'':'s'}${verifiedCount ? ` · ${verifiedCount} verified` : ''}` : 'No signals found'} · Last researched ${fmt(a.lastResearchedAt)}`
+     : 'Not researched yet';
    const runState = list.researchRunState || {status:'idle'};
    const runActive = runState.status === 'active';
    // ux/research-control-progress: this tab's own tracker (see
@@ -12403,11 +13048,29 @@ function escapeHtml(text){
      a.industry ? esc(a.industry) : '',
      a.domain ? esc(a.domain) : 'No domain on file',
      `Added ${fmt(a.dateAdded)}`,
-     researched ? `Last researched ${fmt(a.lastResearchedAt)}` : 'Not researched yet'
+     researchSummary
    ].filter(Boolean);
    const researchActionHtml = canStopThisRow
      ? `<button type="button" class="acct-mgr-action acct-mgr-action-stop" data-research-stop-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">Stop Research</button>`
      : `<button type="button" class="acct-mgr-action" data-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}"${researchDisabled?' disabled':''}${researchTitle?` title="${esc(researchTitle)}"`:''}>${researchLabel}</button>`;
+   // Beta correction: "View Research" only when there is something real to
+   // view (signalCount > 0 already implies the account was genuinely
+   // researched with results) -- mirrors Recently Researched's OWN
+   // `${e.signalCount ? button : ''}` pattern exactly (no button, not a
+   // disabled one, when nothing was found), the smallest existing pattern
+   // for this exact "zero research findings" case. Calls the SAME
+   // openResearchedAccountOpportunities() Recently Researched's own
+   // "View research"/"View opportunities" button calls -- it already
+   // decides Prepare for Call vs. the Research Results view on its own, and
+   // already closes this modal first when needed, so no new rendering or
+   // modal-management logic is added here.
+   const viewResearchHtml = signalCount > 0
+     ? `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">View Research</button>`
+     : '';
+   // Grouped into one wrapper so the row's existing 4-column grid
+   // (.acct-mgr-row, including its own mobile breakpoint) never needs a 5th
+   // column just because a second button now sometimes exists here.
+   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}</div>`;
    return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
         <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
@@ -12416,7 +13079,7 @@ function escapeHtml(text){
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
         <span class="acct-dot ${paused?'acct-dot-paused':'acct-dot-active'}"></span><span class="acct-toggle-label">${paused?'Paused':'Active'}</span>
       </button>
-      ${researchActionHtml}
+      ${actionsGroupHtml}
       <div class="acct-mgr-menu-wrap">
         <button type="button" class="acct-mgr-menu-btn" data-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(a.name)}">⋯</button>
         <div class="acct-mgr-menu" role="menu">
@@ -12451,7 +13114,15 @@ function escapeHtml(text){
      // A stopped run's failed/stopped breakdown is already in countLine.
      detailParts.push(`${snap.failed} failed`);
    }
-   if(snap.opportunitiesFound) detailParts.push(`${snap.opportunitiesFound} opportunit${snap.opportunitiesFound===1?'y':'ies'} found`);
+   // Final Beta Signal Intelligence Correction sprint: renamed from
+   // "N opportunities found". Beta correction (canonical count): every
+   // call site that sets snap.opportunitiesFound now uses the SAME
+   // countLegitimateBusinessSignals() -- excludes Possible Matches and
+   // rejected identity, but never requires a date, a commercialPlay, or
+   // Priority eligibility (see that function's own header comment). Batch
+   // and fallback research paths can no longer disagree about what this
+   // number means.
+   if(snap.opportunitiesFound) detailParts.push(`${snap.opportunitiesFound} business signal${snap.opportunitiesFound===1?'':'s'} found`);
    const stopBtn = snap.finished ? '' : `<button type="button" class="btn btn-ghost btn-mini acct-mgr-progress-stop" data-research-stop-act="list" data-list-id="${esc(list.id)}">Stop Research</button>`;
    return `<div class="acct-mgr-progress-panel" role="status" aria-live="polite">
       <div class="acct-mgr-progress-head">
@@ -12685,8 +13356,17 @@ function escapeHtml(text){
  // without duplicating them.
  window.HouseAccountManager = {
    close(){ close(); },
+   // Beta correction (research access for all monitored accounts): exposes
+   // the SAME internal open() the existing #manageCustomerAccountsBtn
+   // click already calls -- lets "View all researched accounts →" (main
+   // script, near Recently Researched) open this exact modal without a
+   // second, parallel open path.
+   open(){ return open(); },
    isOpen(){ return isModalOpen(); },
    showError(opts){ return showInfoDialog(opts); },
+   // View Research fix (Global Business Trigger Intelligence sprint): see
+   // showResearchResultsDialog()'s own comment below.
+   showResearchResults(opts){ return showResearchResultsDialog(opts); },
    // Live QA round 6: the upload-success modal's "Research N accounts" CTA
    // entry point -- see researchListAndFocus()'s own comment above.
    researchList(uploadId){ return researchListAndFocus(uploadId); }
@@ -13149,7 +13829,7 @@ function escapeHtml(text){
  // component system) but with a single acknowledgement button and no
  // "cannot be undone" warning line, since nothing destructive happened.
  // Used to replace window.alert() for the HA004 server rejection.
- function showInfoDialog({title, bodyHtml, okLabel}){
+ function showInfoDialog({title, bodyHtml, okLabel, wide}){
    // Follow-up round: beginOverlay() replaces the old one-shot closeMenus()
    // call -- see showDestructiveConfirm()'s comment above.
    if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
@@ -13159,10 +13839,18 @@ function escapeHtml(text){
      const triggerEl = document.activeElement;
      const backdrop = document.createElement('div');
      backdrop.className = 'ha-confirm-backdrop';
+     // View Research fix (Global Business Trigger Intelligence sprint):
+     // `wide` is opt-in, used only by showResearchResultsDialog() below --
+     // every existing plain-text error/confirmation call site is unaffected
+     // (no `wide` passed, same 420px dialog as before). bodyHtml's wrapper
+     // changed from <p> to <div> so nested block content (renderVerifiedSignals()'s
+     // real signal-card markup) is valid HTML, not just tolerated by
+     // browser error-recovery -- harmless for the existing plain-text
+     // callers, which render identically either way.
      backdrop.innerHTML = `
-       <div class="ha-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="haInfoTitle" aria-describedby="haInfoBody">
+       <div class="ha-confirm-dialog${wide ? ' ha-confirm-dialog--wide' : ''}" role="alertdialog" aria-modal="true" aria-labelledby="haInfoTitle" aria-describedby="haInfoBody">
          <h3 class="ha-confirm-title" id="haInfoTitle">${esc(title)}</h3>
-         <p class="ha-confirm-body" id="haInfoBody">${bodyHtml}</p>
+         <div class="ha-confirm-body" id="haInfoBody">${bodyHtml}</div>
          <div class="ha-confirm-actions">
            <button type="button" class="ha-confirm-cancel ha-info-ok">${esc(okLabel || 'Got it')}</button>
          </div>
@@ -13187,6 +13875,24 @@ function escapeHtml(text){
      backdrop.addEventListener('click', e => { if(e.target === backdrop) close(); });
      document.addEventListener('keydown', onKeydown, true);
      okBtn.focus();
+   });
+ }
+
+ // View Research fix (Global Business Trigger Intelligence sprint): the
+ // "signal vs. priority" product decision means openResearchedAccountOpportunities()
+ // (main script, above) must be able to show a rep the real signals research
+ // found for an account even when NONE of them cleared the stricter
+ // Priority bar -- reusing showInfoDialog()'s existing modal chrome (wide
+ // variant) rather than building a second, parallel research-detail view.
+ // signalsHtml is expected to already be renderVerifiedSignals()'s own
+ // output -- this function adds no rendering logic of its own, only the
+ // dialog shell and the intro line explaining why there's no Priority card.
+ function showResearchResultsDialog({accountName, introHtml, signalsHtml}){
+   return showInfoDialog({
+     title: `Research Results — ${accountName}`,
+     bodyHtml: `<div class="research-results-intro">${introHtml}</div>${signalsHtml}`,
+     okLabel: 'Close',
+     wide: true
    });
  }
 
@@ -13216,6 +13922,21 @@ function escapeHtml(text){
      if(researchBtn.disabled) return;
      closeAllMenus();
      await handleResearchClick(researchBtn);
+     return;
+   }
+
+   // Beta correction (research access for all monitored accounts): reuses
+   // the SAME openResearchedAccountOpportunities() Recently Researched's
+   // own "View research"/"View opportunities" button already calls -- it
+   // already closes this modal itself before opening Prepare for Call or
+   // the Research Results view, so no modal-management logic is duplicated
+   // here.
+   const viewResearchBtn = e.target.closest('[data-view-research-act="account"]');
+   if(viewResearchBtn){
+     closeAllMenus();
+     const vrAccountName = viewResearchBtn.dataset.accountName;
+     const vrListId = viewResearchBtn.dataset.listId;
+     if(typeof openResearchedAccountOpportunities === 'function') await openResearchedAccountOpportunities(vrListId, vrAccountName);
      return;
    }
 

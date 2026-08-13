@@ -288,9 +288,14 @@ const NOW = new Date('2026-08-04T00:00:00Z');
     sourceUrl: 'https://example.com/hpgr-webinar'
   };
   const result = classifyLegacySignalActionability(legacyWebinar);
-  assert(result.actionabilityStatus.status === 'unknown-date', `required coverage 7: a legacy undated webinar is classified "unknown-date"/Date unavailable, not stale (got "${result.actionabilityStatus.status}")`);
+  assert(result.actionabilityStatus.status === 'unknown-date', `required coverage 7: a legacy undated webinar is classified "unknown-date"/Timing unclear, not stale (got "${result.actionabilityStatus.status}")`);
   assert(result.actionabilityStatus.isPriorityEligible === false, 'required coverage 7: a legacy undated webinar is not priority eligible');
-  assert(result.actionabilityStatus.label === 'Date unavailable', 'required coverage 7: the label reads "Date unavailable"');
+  // Undated Business Signal actionability correction: this label was
+  // renamed from "Date unavailable" to "Timing unclear" -- the old text
+  // read like a stale/historical claim, which conflated "no date resolved"
+  // with "genuinely expired." The underlying property (not priority
+  // eligible, not stale) is unchanged.
+  assert(result.actionabilityStatus.label === 'Timing unclear', 'required coverage 7: the label reads "Timing unclear"');
 }
 {
   // Required coverage 8: a legacy ongoing signal published more than 180
@@ -392,7 +397,14 @@ const NOW = new Date('2026-08-04T00:00:00Z');
   assert(historicalFact === "you've ordered Apparel for them before (3 orders on file)", `oneHistoricalOrderFact() produces a real, specific fact from real order data (got: "${historicalFact}")`);
   assert(oneHistoricalOrderFact({}) === '', 'oneHistoricalOrderFact() returns nothing invented when the account has no real order history');
 
-  const opener = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a product webinar.', '', 'Webinar', {
+  // Seller-copy classification-drift correction: `type` here is now the
+  // CANONICAL label the real pipeline actually assigns for webinar text
+  // (resolveEventType()'s own \bwebinars?\b branch resolves to
+  // EVENT_CONFERENCE -> displayLabelForEventType() -> 'Conference / Summit'
+  // -- salesReadyOpener() no longer independently re-derives its bucket
+  // from free text, so a literal 'Webinar' type string here would no
+  // longer match anything real).
+  const opener = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a product webinar.', '', 'Conference / Summit', {
     accountName: 'HPGR', actionability: { status: 'unknown-date', tense: 'unknown' }, recommendedBuyingTeam: ['Marketing'], historicalFact
   });
   assert(opener.includes('HPGR') && opener.includes('HRCe product webinar'), `the fallback opener references the exact company and exact signal trigger, not a generic category phrase (got: "${opener}")`);
@@ -403,7 +415,7 @@ const NOW = new Date('2026-08-04T00:00:00Z');
 {
   // Two different companies, two different real signals, in the SAME
   // category, must not receive the same generic outreach text.
-  const openerA = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a webinar.', '', 'Webinar', { accountName: 'HPGR', actionability: { status: 'unknown-date' } });
+  const openerA = salesReadyOpener('HRCe product webinar', 'HPGR is promoting a webinar.', '', 'Conference / Summit', { accountName: 'HPGR', actionability: { status: 'unknown-date' } });
   const openerB = salesReadyOpener('annual distributor summit', 'Acme Distributors is hosting its annual summit.', '', 'Conference / Summit', { accountName: 'Acme Distributors', actionability: { status: 'unknown-date' } });
   assert(openerA !== openerB, 'two different companies with two different signals in the same category (events) receive genuinely different outreach text');
   assert(openerA.includes('HPGR') && !openerA.includes('Acme Distributors'), 'company A\'s opener names company A, not company B');
@@ -1023,8 +1035,12 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
     { status: { status: 'upcoming' }, eventDate: '2026-09-15', expectSubstr: 'Upcoming' },
     { status: { status: 'recent-past' }, eventDate: '2026-07-01', expectSubstr: 'Recent event' },
     { status: { status: 'ongoing', usesPublicationDate: true }, publicationDate: '2026-07-20', expectSubstr: 'Ongoing business change' },
-    { status: { status: 'unknown-date' }, expectSubstr: 'Date unavailable' },
-    { status: { status: 'ongoing-undated', usesPublicationDate: true }, expectSubstr: 'Date unavailable' },
+    // Undated Business Signal actionability correction: renamed from "Date
+    // unavailable" to "Timing unclear" -- the old text read like a stale/
+    // historical claim, conflating "no date resolved" with "genuinely
+    // expired." The underlying status/eligibility is unchanged.
+    { status: { status: 'unknown-date' }, expectSubstr: 'Timing unclear' },
+    { status: { status: 'ongoing-undated', usesPublicationDate: true }, expectSubstr: 'Timing unclear' },
     { status: { status: 'stale' }, expectSubstr: 'No longer current' },
     { status: { status: 'ongoing-stale', usesPublicationDate: true }, expectSubstr: 'No longer current' }
   ];
@@ -1579,9 +1595,11 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const sandbox = makeSandbox();
   // Reproduces the exact leak: a signal-derived opportunity with NO
   // actionabilityStatus at all (a malformed/legacy shape) -- its own
-  // rendered status is honestly "Date unavailable", but the OLD filter
-  // (`actionabilityStatus?.isPriorityEligible !== false`) would have
-  // treated it as eligible, since `undefined !== false` is true.
+  // rendered status is honestly "Timing unclear" (renamed this round from
+  // "Date unavailable" -- see the Undated Business Signal actionability
+  // correction), but the OLD filter (`actionabilityStatus?.isPriorityEligible
+  // !== false`) would have treated it as eligible, since `undefined !==
+  // false` is true.
   const leakingOpp = {
     account: 'HPGR', isVerifiedSignalOpportunity: true, sourceUrl: 'https://example.com/hpgr-webinar',
     signalLayerType: 'Business Activity Signal', signalType: 'Event',
@@ -1589,10 +1607,10 @@ for(const timebox of ['week', 'month', 'quarter', 'annual']){
     confidence: 70, publishedDate: new Date(NOW.getTime() - 2 * 86400000).toISOString(), signalDate: new Date(NOW.getTime() - 2 * 86400000).toISOString()
   };
   const renderedLabel = sandbox.signalDateAndActionabilityLine(leakingOpp);
-  assert(renderedLabel === 'Date unavailable', `sanity: the leaking fixture's own rendered status really is "Date unavailable" (got: "${renderedLabel}")`);
+  assert(renderedLabel === 'Timing unclear', `sanity: the leaking fixture's own rendered status really is "Timing unclear" (got: "${renderedLabel}")`);
   const oldStyleEligible = leakingOpp?.actionabilityStatus?.isPriorityEligible !== false;
   assert(oldStyleEligible === true, 'sanity: the OLD flag-based check alone would have wrongly treated this fixture as eligible (undefined !== false)');
-  assert(sandbox.isPriorityEligibleOpportunity(leakingOpp) === false, 'required proof 17: isPriorityEligibleOpportunity() correctly excludes an opportunity whose rendered status is "Date unavailable", regardless of what a missing/stale flag would have claimed');
+  assert(sandbox.isPriorityEligibleOpportunity(leakingOpp) === false, 'required proof 17: isPriorityEligibleOpportunity() correctly excludes an opportunity whose rendered status is "Timing unclear", regardless of what a missing/stale flag would have claimed');
   assert(sandbox.priorityEligibleOpportunities([leakingOpp]).length === 0, 'required proof 17: priorityEligibleOpportunities() excludes the leaking fixture');
 
   for(const timebox of ['week', 'month', 'quarter', 'annual']){
@@ -2230,7 +2248,15 @@ function realFlagshipMergeCase(sandbox, account, investmentUrl, reopeningUrl){
   assert(!starter.includes('....'), `acceptance 4: the rendered Conversation Starter never contains the source excerpt's raw "...." truncation artifact (got: "${starter}")`);
   assert(!/…/.test(starter), `acceptance 4: the rendered Conversation Starter never contains an unresolved unicode ellipsis either (got: "${starter}")`);
   assert(/campus\. /.test(starter) || /campus,/.test(starter), `acceptance 5: the starter reads as a complete clause ending the fact cleanly before the next sentence (got: "${starter}")`);
-  assert(/is that|do you know|who|leading/i.test(starter), `acceptance 5: the starter still asks a referral-focused question (got: "${starter}")`);
+  // Final bounded Beta trust correction (Round C): naturalDiscoveryQuestion()
+  // replaced the old per-kind closer templates with the founder's own
+  // concrete-question phrasing ("Is there anything around it your team is
+  // still planning for?" for the expansion/renovation family here) -- still
+  // a real, specific, non-pitching discovery question, just no longer
+  // literally shaped as "who/is that/leading" referral phrasing. Broadened
+  // to accept either wording family rather than only the one this test
+  // happened to see at the time it was written.
+  assert(/is that|do you know|who|leading|is there anything|still (planning|lining up)|worth (celebrating|catching up)|focused on|ongoing (thing|initiative)/i.test(starter), `acceptance 5: the starter still asks a real, specific, non-pitching discovery question (got: "${starter}")`);
 
   // acceptance 6: leadWithAccountContext() with a source-text account
   // reference that differs in punctuation/spacing from the stored account

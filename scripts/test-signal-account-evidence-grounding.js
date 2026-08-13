@@ -225,19 +225,21 @@ assert(
   '16) ambiguous social candidate: name match, no location/domain, and a handle that is neither the account\'s own nor explicitly a different named business -> unconfirmed (same general rule as non-social sources, no social-specific carve-out needed)'
 );
 
-// 7) Founder QA follow-up: an INFERRED social handle match (the handle text
-// merely resembles the company name, with no known-official-profile data on
-// file) must NOT confirm by itself -- this is the exact shape of the
-// original Dover Honda failure (an unrelated real "Dover Honda" could just
-// as easily post from "@dover_honda"). Same evidence as the old test 17,
-// different expected outcome: unconfirmed, not confirmed.
+// 7) Final bounded Beta trust correction (Item 3): isExactSelfSocialHandleMatch()
+// now distinguishes a genuinely EXACT compacted handle match ("dover_honda"
+// -> "doverhonda" === normalizeCompany("Dover Honda") -> "doverhonda") from
+// a merely-INFERRED/resembling match (substring/contains, see test 16 and
+// the AMBIGUOUS case below). This is the identical mechanism the founder's
+// own L.L.Bean/@llbean example exercises -- exact equality only, no
+// substring/fuzzy matching -- so it is deliberately, correctly promoted to
+// 'confirmed' here too, superseding this test's pre-Item-3 expectation.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Dover Honda announces platinum sponsorship of the 2026 Dover Holiday Parade',
     snippet: 'We are proud to be the lead sponsor of this year\'s holiday parade!',
     url: 'https://www.instagram.com/dover_honda',
-  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
-  '17) inferred social handle match alone (text resembles account name, no known-official-profile data) -> unconfirmed, NOT confirmed -- a same-name-but-wrong-company profile would pass this exact check equally easily, so it is not independent evidence'
+  }, DOVER_HONDA).identityConfidence === 'confirmed',
+  '17) an EXACT compacted social-handle match ("dover_honda" === "Dover Honda" compacted) is corroborating evidence and confirms, per Item 3 -- distinct from the merely-resembling/ambiguous case in test 16'
 );
 
 // 7b) the SAME evidence confirms once House Accounts actually knows this is
@@ -253,15 +255,19 @@ assert(
   '17b) the identical candidate confirms once the account record carries a KNOWN official profile matching this exact handle/URL'
 );
 
-// 7c) an inferred handle match must not override a location contradiction
-// either -- only a KNOWN profile (or domain) counts as compensating evidence.
+// 7c) Item 3 extends the SAME location-contradiction-override treatment
+// already given to domainCorroborated/knownSocialProfileMatch/
+// selfDomainCorroborated to exactSocialHandleCorroborated -- a genuine
+// EXACT self-handle match is first-party-strength evidence, so (like the
+// account's own domain in test 14) it compensates for an explicit
+// new-market location claim rather than being vetoed by it.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Dover Honda expands to new Indianapolis, IN location',
     snippet: 'We are proud to announce our new satellite location!',
     url: 'https://www.instagram.com/dover_honda',
-  }, DOVER_HONDA).identityConfidence === 'rejected',
-  '17c) inferred-only handle match does not compensate for an explicit location contradiction -- still rejected (contrast with test 14, where the account\'s own DOMAIN does compensate)'
+  }, DOVER_HONDA).identityConfidence === 'confirmed',
+  '17c) an EXACT compacted social-handle match compensates for an explicit location contradiction, same as the account\'s own domain does in test 14 -- both are first-party-strength self-identification evidence'
 );
 
 // 8) distinctive-token fallback follows the SAME corroboration/contradiction rules
@@ -412,14 +418,24 @@ assert(
 
 // 29) distinctive-token fallback still works ONLY under its existing
 // intended rules (bounded generic-word exclusion, ANY-token match) -- the
-// gate rewrite must not have disturbed this separate mechanism.
+// gate rewrite must not have disturbed this separate mechanism. Final Beta
+// Signal Intelligence Correction sprint: the RESULT grade for a token-only,
+// uncorroborated fallback match is now 'possible' (Possible Match), not
+// 'unconfirmed' -- this is the exact confirmed-collision shape (an uploaded
+// "Wyman's" matching "Careers at Oliver Wyman | A Marsh business", a
+// different company that merely shares a surname/token) the sprint's
+// identity-separation fix targets. The account is named "Arthur J.
+// Gallagher" here; the candidate text contains only the bare, ambiguous
+// token "Gallagher," never the account's actual (normalized) full name --
+// exactly as consistent with a different Gallagher-named entity as with
+// this one, so it must not be shown as a legitimate Business Signal.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Insurance brokerage completes acquisition',
     snippet: 'Gallagher acquired Wilson M. Beck Insurance Services in a deal announced this week.',
     url: 'https://example-blog.com/gallagher-shortname',
-  }, GALLAGHER).identityConfidence === 'unconfirmed',
-  '29) distinctive-token fallback ("Gallagher") still grounds (unconfirmed, no corroborator here) exactly as before -- the fallback mechanism itself is untouched by the gate rewrite'
+  }, GALLAGHER).identityConfidence === 'possible',
+  '29) distinctive-token fallback ("Gallagher") still grounds enough to return a visible result, but grades as \'possible\' (Possible Match, identity uncertain), not a legitimate Business Signal -- the fallback mechanism\'s own matching rules are untouched, only the resulting confidence label'
 );
 assert(
   verifyCandidateCompanyGrounding({

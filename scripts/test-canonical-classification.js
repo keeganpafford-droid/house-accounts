@@ -74,20 +74,26 @@ const cases = [
     expectEventType: 'PARTNERSHIP'
   },
   {
-    // NOTE: also a discovered classifier-accuracy limitation, not a
-    // consistency bug: resolveEventType()'s LEADERSHIP_APPOINTMENT pattern
-    // (\bnamed\b.*\bas\b) matches across the concatenated evidence text —
-    // "Named No. 1 Best..." (signalTitle) followed later by "recognized AS
-    // the No. 1..." (whatChanged) — because the regex is not anchored to a
-    // single sentence/field and "named"/"as" both appear, even though this
-    // is an award announcement, not a personnel appointment. Logged as a
-    // limitation for the Phase 2A validation report rather than hidden.
+    // Final bounded Beta trust correction (Round C): this WAS a discovered
+    // classifier-accuracy limitation -- resolveEventType()'s
+    // LEADERSHIP_APPOINTMENT pattern (\bnamed\b.*\bas\b) matched across the
+    // concatenated evidence text -- "Named No. 1 Best..." (signalTitle)
+    // followed later by "recognized AS the No. 1..." (whatChanged) --
+    // because the regex was not anchored to a single sentence/field and
+    // "named"/"as" both appeared, even though this is an award announcement,
+    // not a personnel appointment (confirmed live-QA production shape: a
+    // generic BerryDunn careers page containing "named ... Best Place to
+    // Work ... as recognized ..." was misclassified the identical way). Now
+    // fixed: LEADERSHIP_APPOINTMENT requires a real ROLE word (CEO, Chief
+    // Financial Officer, Director, etc.) in the same local clause as the
+    // verb, so a bare "named"/"as" co-occurrence with no actual role no
+    // longer qualifies.
     rank: 14, account: 'New York Marriott Marquis', declaredType: 'Conference / Summit',
     raw: { accountName: 'New York Marriott Marquis', signal_type: 'Conference / Summit', signalTitle: 'Named No. 1 Best Conference Hotel in NYC for 2026-2027',
       whatChanged: 'The New York Marriott Marquis has been recognized as the No. 1 Best Conference Hotel in New York City for 2026-2027.',
       business_context: 'This recognition can enhance the hotel\'s reputation and attract more events, leading to increased demand for promotional products.',
       confidence: 33, sourceUrl: 'https://www.linkedin.com/posts/x' },
-    logOnly: true
+    expectNotEventType: 'LEADERSHIP_APPOINTMENT'
   },
   {
     // NOTE: also a discovered classifier-accuracy limitation: resolveEventType()

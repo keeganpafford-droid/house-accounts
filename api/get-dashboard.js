@@ -191,6 +191,18 @@ function rowToSignal(row){
   const payload = { ...rawPayload, ...legacyFields };
   const sourceUrl = clean(row.source_url || payload.sourceUrl || '');
   const confidence = Number(row.confidence || payload.confidenceScore || payload.confidence || 0) || 0;
+  // Final bounded Beta trust correction: row.why_reach_out is a separate,
+  // flat DB column written at persist time -- for a row whose raw payload
+  // never carried a canonicalEventType at all, that column reflects
+  // whatever independent (now-fixed) classifier produced it, not the
+  // freshly-regenerated, canonically-gated payload.whyNow
+  // classifyLegacySignalActionability() just computed above. Preferring the
+  // stored column unconditionally would silently mask that self-heal. A row
+  // that DID carry a real canonicalEventType was persisted by an
+  // already-canonical-aware endpoint, so the stored column and the payload
+  // already agree -- kept as the preferred source there, unchanged.
+  const canonicalEventTypeWasMissing = !rawPayload.canonicalEventType;
+  const legacyWhyReachOut = canonicalEventTypeWasMissing ? '' : row.why_reach_out;
   return {
     ...payload,
     isReal: true,
@@ -200,8 +212,8 @@ function rowToSignal(row){
     title: row.title || payload.title || payload.signalTitle || 'Verified business signal',
     signalTitle: row.title || payload.signalTitle || payload.title || 'Verified business signal',
     signalDetail: row.title || payload.signalDetail || payload.whatChanged || 'Verified business signal',
-    whyNow: row.why_reach_out || payload.whyNow || payload.whyItMattersForPromo || payload.reasonToReachOut || '',
-    whyItMattersForPromo: row.why_reach_out || payload.whyItMattersForPromo || payload.whyNow || '',
+    whyNow: legacyWhyReachOut || payload.whyNow || payload.whyItMattersForPromo || payload.reasonToReachOut || '',
+    whyItMattersForPromo: legacyWhyReachOut || payload.whyItMattersForPromo || payload.whyNow || '',
     confidence,
     confidenceScore: confidence,
     confidenceLevel: confidenceWord(confidence),
@@ -595,8 +607,19 @@ function buildAccountsFromRows(accountRows, signalRows){
       byAccount.set(row.account_name, {name: row.account_name, uploadId: row.upload_id, monitoringStatus:'active', lastResearchedAt:'', industry:'Saved Account', revenue:0, orderCount:0, confidence:0, relationshipStrength:0, mostRecentDate:'Unknown', categoryTypes:[], signals:[], futureOpportunities:[]});
     }
     const acct = byAccount.get(row.account_name);
-    acct.signals.push(rowToSignal(row));
-    acct.futureOpportunities.push(signalToOpportunity(row));
+    const signal = rowToSignal(row);
+    acct.signals.push(signal);
+    // Final Beta Signal Intelligence Correction sprint: a Possible Match
+    // (identityConfidence 'possible' -- see api/signal-intelligence.js's
+    // verifyCandidateCompanyGrounding()) never becomes an opportunity object
+    // on reload, mirroring addSignalDerivedOpportunities()'s identical
+    // exclusion on the live-research path (dashboard/index.html) -- it stays
+    // visible only in acct.signals (rendered transparently in Research
+    // Details), never in futureOpportunities, so it can never reach the
+    // Priority feed or Additional Opportunities after a page reload either.
+    if(signal.identityConfidence !== 'possible'){
+      acct.futureOpportunities.push(signalToOpportunity(row));
+    }
   }
   return {
     accountList: Array.from(byAccount.values()).map(a => {
@@ -781,6 +804,11 @@ export default async function handler(req, res){
     const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
       if(!Number.isFinite(t) || t < sevenDaysAgo) return false;
+      // Final Beta Signal Intelligence Correction sprint: a Possible Match
+      // (identityConfidence 'possible') must not inflate "Newly Detected"
+      // either -- same principle as futureOpportunities' exclusion above,
+      // applied to this separate discovery-recency badge.
+      if((s.payload || {}).identityConfidence === 'possible') return false;
       const { actionabilityStatus } = classifyLegacySignalActionability(s.payload || {});
       return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);

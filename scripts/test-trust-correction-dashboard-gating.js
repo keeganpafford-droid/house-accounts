@@ -108,9 +108,16 @@ assert(
 );
 
 // ---------------------------------------------------------------------------
-// 11) an unconfirmed opportunity can never displace a confirmed opportunity,
-// regardless of freshness/raw confidence -- give the UNCONFIRMED item a much
-// higher confidence and a fresher date than the confirmed one.
+// 11) Founder correction round (Global Business Trigger Intelligence sprint):
+// 'unconfirmed' ("grounded/probable" -- name-matched, not contradicted, just
+// missing a second independent corroborator most order-history CSV uploads
+// never had a website/location field to supply in the first place) is no
+// longer excluded from priority eligibility outright. It is a real,
+// good-faith signal and must be allowed to compete on its own merits
+// (confidence, freshness, activation credibility) like any other eligible
+// opportunity -- 'confirmed' remains a strictly higher trust grade (see 12
+// below, the "Verified Opportunity" label stays 'confirmed'-only), but is no
+// longer a secret mandatory prerequisite just to be CONSIDERED.
 // ---------------------------------------------------------------------------
 const confirmedParade = businessOpp({
   signalTitle: 'Dover Holiday Parade Platinum Sponsorship',
@@ -130,13 +137,13 @@ const unconfirmedRebrand = businessOpp({
 });
 const mixedEligible = sandbox.priorityEligibleOpportunities([confirmedParade, unconfirmedRebrand]);
 assert(
-  mixedEligible.length === 1 && mixedEligible[0].identityConfidence === 'confirmed',
-  '11a) the unconfirmed (higher-confidence, fresher) signal is excluded entirely -- only the confirmed one survives priority eligibility'
+  mixedEligible.length === 2,
+  '11a) a grounded/probable (unconfirmed) signal is no longer excluded from priority eligibility outright -- both the confirmed and the unconfirmed signal survive the gate'
 );
 const rankedMixed = sandbox.sortDailyReasons(mixedEligible);
 assert(
-  rankedMixed[0]?.identityConfidence === 'confirmed',
-  '11b) after eligibility + ranking, the confirmed signal is first (the unconfirmed one never even reaches ranking)'
+  rankedMixed.length === 2 && rankedMixed.some(o => o.identityConfidence === 'confirmed') && rankedMixed.some(o => o.identityConfidence === 'unconfirmed'),
+  '11b) both the confirmed and unconfirmed signals reach ranking -- identity grade no longer decides who is even considered'
 );
 
 // Legacy compatibility: a signal with NO identityConfidence field at all
@@ -169,8 +176,8 @@ assert(
   '12a) a confirmed opportunity still renders the "Verified Opportunity" heading'
 );
 assert(
-  !unconfirmedHtml.includes('Verified Opportunity') && unconfirmedHtml.includes('Unconfirmed Research'),
-  '12b) an unconfirmed opportunity never renders "Verified Opportunity" -- it renders an explicit "Unconfirmed Research" label instead'
+  !unconfirmedHtml.includes('Verified Opportunity') && unconfirmedHtml.includes('Credible Business Signal'),
+  '12b) an unconfirmed opportunity never renders "Verified Opportunity" -- it renders an explicit "Credible Business Signal" label instead'
 );
 // Verified-terminology sprint: this assertion is DELIBERATELY inverted from
 // its prior form. The old heading logic defaulted to "Verified Opportunity"
@@ -182,10 +189,16 @@ assert(
 // slot. Whether it may be LABELED "verified" is this different question,
 // and per the product invariant only an explicit 'confirmed' grade
 // qualifies -- isExplicitlyVerifiedIdentity() is a positive, 'confirmed'-
-// only check, so a legacy row now correctly reads "Unconfirmed Research."
+// only check, so a legacy row now correctly reads "Credible Business Signal."
+// Final Beta Signal Intelligence Correction sprint: this label was renamed
+// again, from "Unconfirmed Research" to "Credible Business Signal" -- the
+// old text prominently read like a warning banner for what is actually just
+// a credible company match without secondary corroboration, contradicting
+// the founder's confidence-language correction. The underlying property
+// (never "Verified Opportunity" for a non-'confirmed' grade) is unchanged.
 assert(
-  !legacyHtml.includes('Verified Opportunity') && legacyHtml.includes('Unconfirmed Research'),
-  '12c) a legacy opportunity (no identityConfidence field) never renders "Verified Opportunity" -- it renders "Unconfirmed Research," since it was never actually run through the tri-state grounding verifier'
+  !legacyHtml.includes('Verified Opportunity') && legacyHtml.includes('Credible Business Signal'),
+  '12c) a legacy opportunity (no identityConfidence field) never renders "Verified Opportunity" -- it renders "Credible Business Signal," since it was never actually run through the tri-state grounding verifier'
 );
 
 // ---------------------------------------------------------------------------

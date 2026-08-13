@@ -189,6 +189,15 @@ function getOpportunityScore(opp){ return 0; }
 function sortDailyReasons(opps){ return opps; }
 function dedupeOpportunities(items){ return items; }
 function dedupeFoundSignals(signals){ return signals || []; }
+// Beta correction ("N business signals found" canonical definition): this
+// file's scope is dashboard/save/reattachment orchestration, not identity
+// semantics (dedicated coverage lives in
+// test-final-beta-signal-intelligence-correction.js's countLegitimateBusinessSignals()
+// tests) -- stubbed the same way dedupeFoundSignals()/isExplicitlyVerifiedIdentity()
+// above already are, so researchAccountsBatch()'s real, unmodified control-
+// flow logic can run without needing the real identity-grounding helper
+// chain in scope.
+function countLegitimateBusinessSignals(signals){ return (signals || []).length; }
 function isExplicitlyVerifiedIdentity(opp){ return opp?.identityConfidence === 'confirmed'; }
 function foundAndVerifiedSuffix(signals){ const n = (signals || []).filter(isExplicitlyVerifiedIdentity).length; return n ? (' - ' + n + ' verified') : ''; }
 function recommendationBadgeMeta(o){ return {label:'Reach Out'}; }

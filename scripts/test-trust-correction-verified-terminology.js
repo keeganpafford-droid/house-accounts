@@ -40,6 +40,7 @@ const CORE_SRC = [
   extractFn(DASHBOARD_SRC, 'sourceDomain'),
   extractFn(DASHBOARD_SRC, 'foundSignalDedupeKey'),
   extractFn(DASHBOARD_SRC, 'dedupeFoundSignals'),
+  extractFn(DASHBOARD_SRC, 'isPossibleMatchIdentity'),
   extractFn(DASHBOARD_SRC, 'hasConfirmedOrLegacyIdentity'),
   extractFn(DASHBOARD_SRC, 'isExplicitlyVerifiedIdentity'),
   extractFn(DASHBOARD_SRC, 'foundAndVerifiedSuffix')

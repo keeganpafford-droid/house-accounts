@@ -37,12 +37,18 @@ const pricingHtml = readFileSync(new URL('../pricing.html', import.meta.url), 'u
 // ---------------------------------------------------------------------------
 const overlayOpeners = [
   { name: 'openAddCustomerDataModal (Add Customer Data modal)', re: /function openAddCustomerDataModal\(\)\{[\s\S]{0,600}?closeMenus\(\)/ },
-  { name: 'launchGuidedTour (guided tour)', re: /function launchGuidedTour\(\)\{[\s\S]{0,400}?closeMenus\(\)/ },
+  // Empty-workspace correction: launchGuidedTour() gained an `options`
+  // param (default {}) to support the bounded automatic resume-after-
+  // upload call site (see test-guided-tour-empty-workspace-correction.js).
+  { name: 'launchGuidedTour (guided tour)', re: /function launchGuidedTour\(options = \{\}\)\{[\s\S]{0,400}?closeMenus\(\)/ },
   { name: 'showBetaWelcomeModal (Welcome modal)', re: /function showBetaWelcomeModal\(\)\{[\s\S]{0,600}?closeMenus\(\)/ },
   { name: 'createSalesPlayPanel (Prepare for Call panel)', re: /window\.createSalesPlayPanel = function\(opp, opts\)\{[\s\S]{0,400}?closeMenus\(\)/ },
   { name: 'Manage Customer Accounts modal open()', re: /function open\(\)\{[\s\S]{0,400}?closeMenus\(\)/ },
   { name: 'showDestructiveConfirm (delete confirm dialog)', re: /function showDestructiveConfirm\(\{title, bodyHtml, confirmLabel\}\)\{[\s\S]{0,400}?closeMenus\(\)/ },
-  { name: 'showInfoDialog (info dialog)', re: /function showInfoDialog\(\{title, bodyHtml, okLabel\}\)\{[\s\S]{0,400}?closeMenus\(\)/ }
+  // View Research fix (Global Business Trigger Intelligence sprint): showInfoDialog()
+  // gained an optional `wide` param (used only by showResearchResultsDialog()) --
+  // same function, same closeMenus() call, wider signature.
+  { name: 'showInfoDialog (info dialog)', re: /function showInfoDialog\(\{title, bodyHtml, okLabel, wide\}\)\{[\s\S]{0,400}?closeMenus\(\)/ }
 ];
 for(const opener of overlayOpeners){
   assert(opener.re.test(dashboardHtml), `${opener.name} calls window.HouseAccountsHeader.closeMenus() before opening`);

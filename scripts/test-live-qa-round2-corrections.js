@@ -266,8 +266,14 @@ const DASHBOARD_SRC = loadDashboardSource();
 // relies on.
 // ===========================================================================
 {
-  const headingSites = [...DASHBOARD_SRC.matchAll(/isExplicitlyVerifiedIdentity\(opp\) \? '[^']+' : \(isWebResearchSignal\(opp\) \? 'Unconfirmed Research' : '[^']+'\)/g)];
-  assert(headingSites.length === 2, `REQUIRED: both Prepare for Call heading call sites (renderVerifiedOpportunitySection() and the sales-play-group-label) are signal-family-aware -- account-history opportunities no longer default to "Unconfirmed Research" (got ${headingSites.length} matching site(s))`);
+  // Final Beta Signal Intelligence Correction sprint: the confidence-language
+  // fix renamed this label from "Unconfirmed Research" (read like a warning
+  // for what is actually just an uncorroborated-but-credible identity) to
+  // "Credible Business Signal" -- the underlying property this test proves
+  // (both call sites stay signal-family-aware, account-history opportunities
+  // never fall into this label) is unchanged, only the literal text is.
+  const headingSites = [...DASHBOARD_SRC.matchAll(/isExplicitlyVerifiedIdentity\(opp\) \? '[^']+' : \(isWebResearchSignal\(opp\) \? 'Credible Business Signal' : '[^']+'\)/g)];
+  assert(headingSites.length === 2, `REQUIRED: both Prepare for Call heading call sites (renderVerifiedOpportunitySection() and the sales-play-group-label) are signal-family-aware -- account-history opportunities no longer default to "Credible Business Signal" (got ${headingSites.length} matching site(s))`);
 
   const SRC = [
     extractFn(DASHBOARD_SRC, 'isWebResearchSignal'),

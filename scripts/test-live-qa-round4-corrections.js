@@ -90,6 +90,7 @@ const SRC = [
   extractRange(DASHBOARD_SRC, 'function isPriorityEligibleOpportunity(opp){', 'function priorityEligibleOpportunities(opps){'),
   extractFn(DASHBOARD_SRC, 'sortDailyReasons'),
   extractFn(DASHBOARD_SRC, 'getDailyReasonScore'),
+  extractFn(DASHBOARD_SRC, 'isPossibleMatchIdentity'),
   extractFn(DASHBOARD_SRC, 'hasConfirmedOrLegacyIdentity'),
   extractFn(DASHBOARD_SRC, 'hasCredibleActivationPlay'),
   extractFn(DASHBOARD_SRC, 'signalDateAndActionabilityLine'),
