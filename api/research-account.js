@@ -1123,8 +1123,35 @@ function resolveAccountCandidate(candidates, sourceUrl) {
   return candidates.find(c => c.url === sourceUrl) || null;
 }
 
+// Security correction sprint (pre-Beta): this endpoint calls paid
+// OpenAI/Serper/Brave/Tavily/Firecrawl APIs off a client-supplied
+// accountName with no Supabase interaction of its own, so it previously had
+// no auth check at all -- any caller could trigger unlimited paid research
+// runs. Requires a verified Supabase Bearer token identifying a real
+// authenticated user before any provider call is made. Does not otherwise
+// change research logic, providers, or per-call limits.
+async function authenticateRequest(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return false;
+  const rawUrl = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!rawUrl || !key) return false;
+  const url = String(rawUrl).trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
+  try {
+    const resp = await fetch(`${url}/auth/v1/user`, {
+      headers: { apikey: key, Authorization: `Bearer ${token}` }
+    });
+    if (!resp.ok) return false;
+    const authUser = await resp.json();
+    return !!authUser?.id;
+  } catch {
+    return false;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  if (!(await authenticateRequest(req))) return res.status(401).json({ error: 'Authentication required' });
   const startedAt = Date.now();
   try {
     const { accountName, industry, cityState, emailDomain, notes, employees, contactName, purchases, website, contacts, categories } = req.body || {};

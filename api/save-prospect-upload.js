@@ -125,33 +125,6 @@ async function getUserFromAuth(req) {
   return null;
 }
 
-async function upsertUser(lead = {}, page = '', req = null) {
-  const authUser = req ? await getUserFromAuth(req) : null;
-  if (authUser?.id) return authUser;
-
-  const email = clean(lead.email).toLowerCase();
-  if (!email) throw new Error('Missing user email');
-
-  const users = await supabase('ha_users?on_conflict=email', {
-    method: 'POST',
-    prefer: 'resolution=merge-duplicates,return=representation',
-    body: JSON.stringify([{
-      email,
-      name: clean(lead.name),
-      company: clean(lead.company),
-      role: clean(lead.role),
-      house_accounts: clean(lead.houseAccounts || lead.house_accounts),
-      crm_erp: clean(lead.crmErp || lead.crm_erp),
-      source_page: clean(page),
-      updated_at: new Date().toISOString()
-    }])
-  });
-
-  const user = Array.isArray(users) ? users[0] : users;
-  if (!user?.id) throw new Error('User upsert did not return an id.');
-  return user;
-}
-
 function dedupeAccounts(rawAccounts) {
   const byCompany = new Map();
 
@@ -274,13 +247,13 @@ export default async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    const lead = body.lead || {};
     const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
 
     if (!rawAccounts.length) return json(res, 400, { error: 'No prospect accounts provided' });
 
-    const user = await upsertUser(lead, body.page || body.sourcePage, req);
-    const userEmail = clean(user.email || lead.email).toLowerCase();
+    const user = await getUserFromAuth(req);
+    if (!user?.id) return json(res, 401, { error: 'Authentication required' });
+    const userEmail = clean(user.email).toLowerCase();
     if (!userEmail) throw new Error('Could not resolve user email for prospect save.');
 
     const accounts = dedupeAccounts(rawAccounts);

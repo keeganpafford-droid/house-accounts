@@ -316,21 +316,21 @@ async function runWithFetchSpy(body, headers, fn){
 }
 
 {
-  // Regression (item 18 support): the public prospect-intelligence mode is
-  // completely unaffected by this hotfix -- with no CRON_SECRET configured
-  // at all, it proceeds past the new gate (which only checks
-  // mode==='weekly-monitoring') into its own pre-existing, unrelated
-  // OPENAI_API_KEY check. This intentionally proves the residual exposure
-  // (prospect-intelligence still has no authorization of its own) is
-  // unchanged by this patch, not fixed by it -- exactly as scoped.
+  // Security correction sprint (pre-Beta), superseding the original
+  // "regression 18" note below: the public prospect-intelligence mode's
+  // residual unauthenticated exposure this file used to document as
+  // unchanged-by-design is now closed by resolveAuthenticatedCaller() (see
+  // scripts/test-security-correction-anonymous-endpoints.js for the full
+  // dedicated coverage). With no Authorization header at all, the request is
+  // now rejected with 401 BEFORE it ever reaches the OPENAI_API_KEY check
+  // this test previously asserted it fell through to.
   setBaseEnv({ cronSecret: null });
   const { res, fetchCalls } = await runWithFetchSpy(
     { mode: 'prospect-intelligence', accounts: [{ name: 'Acme Co' }] },
     { host: 'example.test' } // no Authorization header, no uploadId
   );
-  assert(res.statusCode === 400, 'a prospect-intelligence request with no CRON_SECRET configured and no auth header is NOT rejected by the new gate -- it reaches the pre-existing OPENAI_API_KEY check unchanged (regression 18)');
-  assert(res.body?.error === 'OPENAI_API_KEY not configured', 'the 400 is the endpoint\'s own pre-existing error for this mode, confirming the new gate never activated for prospect-intelligence (regression 18)');
-  assert(fetchCalls === 0, 'no downstream call is made either way for this scenario (OPENAI_API_KEY missing short-circuits before any fetch, same as before this hotfix)');
+  assert(res.statusCode === 401, 'REQUIRED: a prospect-intelligence request with no Authorization header is now rejected by the security correction sprint\'s auth gate, before ever reaching the OPENAI_API_KEY check (formerly regression 18, now closed)');
+  assert(fetchCalls === 0, 'the rejected anonymous prospect-intelligence request makes zero downstream calls, including no attempt to check OPENAI_API_KEY');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
