@@ -2053,6 +2053,71 @@ function classifyLegacySignalActionability(payload = {}) {
     result.suggestedContact = sellerCopy.contact;
     result.conversationStarter = sellerCopy.conversationStarter;
     result.suggestedProducts = sellerCopy.products;
+    // Final bounded Beta trust correction (Round C): recommendedBuyingTeam/
+    // likelyBuyers are deterministic, family-derived fields (same
+    // sellerCopy.department the affectedDepartment self-heal above already
+    // trusts) -- but groundedDepartmentForOpportunity() (dashboard/
+    // index.html, drives Prepare for Call's department grounding) checks
+    // opp.recommendedBuyingTeam/opp.likelyBuyers BEFORE opp.affectedDepartment,
+    // so leaving a stale, pre-Round-B array here (e.g. a Conference/Summit
+    // row's team frozen as ["HR / People"] by the old independent
+    // classifier) would keep overriding the now-correctly-healed
+    // affectedDepartment and reproduce the exact conflicting-interpretation
+    // defect this correction targets (confirmed production case: Cianbro's
+    // Maine CTE Business Summit signal showing an Events-oriented headline
+    // everywhere except a stale "HR / Employee Onboarding" buying team).
+    result.recommendedBuyingTeam = [sellerCopy.department];
+    result.likelyBuyers = [sellerCopy.department];
+  }
+  // Final bounded Beta trust correction (Round C): identityConfidence is
+  // stamped ONLY at persist time (verifyCandidateCompanyGrounding(), run
+  // once by research-batch.js/research-account.js) and, unlike
+  // canonicalEventType above, was never re-verified at read time -- so a row
+  // persisted under an OLDER, looser version of that grounding logic (e.g.
+  // the pre-local-clause-tightening isStandaloneSingleTokenMention(), which
+  // promoted a bare roster/breadcrumb single-token mention to 'unconfirmed'
+  // with no same-sentence claim required) keeps rendering as an actionable
+  // Business Signal forever, even after the grounding rule that produced it
+  // is fixed (confirmed production case: a Cianbro "ABC Convention > Past
+  // Events > ... > Schedule" roster listing, persisted 'unconfirmed' by the
+  // pre-fix rule, still opening Prepare for Call and Use This Signal).
+  // Re-verifies ONLY when doing so cannot manufacture a false regression:
+  //   - undefined/'unconfirmed' only -- 'confirmed' and 'rejected' are left
+  //     untouched. A stored 'confirmed' grade may depend on the account's
+  //     own website/location (verifyCandidateCompanyGrounding()'s domain/
+  //     location corroborators), neither of which is available here (this
+  //     function receives only the signal payload, never the account
+  //     record) -- recomputing without that context could wrongly demote a
+  //     legitimately confirmed signal. This is not a real gap for
+  //     'unconfirmed' rows specifically: if domain/location corroboration
+  //     had applied, the row would already have been stored 'confirmed' at
+  //     persist time (that computation DID have full account context), so a
+  //     currently-'unconfirmed' row is proof those paths already found
+  //     nothing -- recomputing without them cannot introduce a new false
+  //     negative, only correctly re-apply an improved entity-match/
+  //     single-token-fallback rule.
+  //   - only when enough raw evidence survives to recompute at all
+  //     (sourceUrl + companyName + some title/snippet text) -- a row with
+  //     genuinely nothing to re-verify from is left exactly as stored,
+  //     preserving the deliberate "undefined stays undefined, a true
+  //     legacy row, grandfathered" behavior get-dashboard.js's
+  //     signalToOpportunity() already documents.
+  //   - only DOWNGRADES are applied (recompute grade !== stored grade).
+  //     verifyCandidateCompanyGrounding() called with just {name} (no
+  //     location/website) can never grant MORE trust than the original,
+  //     fully-contexted computation already did, so any discrepancy here is
+  //     a correction the original computation would have made too, not a
+  //     new false positive.
+  const companyName = clean(payload.companyName || payload.accountName || '');
+  const evidenceUrl = clean(payload.sourceUrl || payload.source_url || '');
+  const evidenceTitle = clean(payload.rawTitle || title || payload.headline || '');
+  const evidenceSnippet = clean(payload.rawSnippet || businessContext || '');
+  if ((payload.identityConfidence === undefined || payload.identityConfidence === 'unconfirmed')
+    && companyName && evidenceUrl && (evidenceTitle || evidenceSnippet)) {
+    const regrounded = verifyCandidateCompanyGrounding({ title: evidenceTitle, snippet: evidenceSnippet, url: evidenceUrl }, { name: companyName });
+    if (regrounded.identityConfidence && regrounded.identityConfidence !== payload.identityConfidence) {
+      result.identityConfidence = regrounded.identityConfidence;
+    }
   }
   return result;
 }

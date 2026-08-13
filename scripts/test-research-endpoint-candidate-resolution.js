@@ -17,15 +17,21 @@
 // Both replaced a previous `find(...) || {}` (silent empty-object fallback,
 // never rejecting) with a hard requirement (`|| null`, rejected upstream).
 //
-// Extracts the real, verbatim functions via a hardcoded contiguous line
-// range from each file; if either file changes shape, extractLines() below
-// throws instead of silently testing stale/wrong code.
+// Extracts the real, verbatim functions by NAME (scripts/lib/dashboard-
+// extract.js's semantic, brace-aware extractFn() -- not by hardcoded line
+// number). Final bounded Beta trust correction (Round C): this file
+// previously used its own hand-rolled extractLines(), which located each
+// function by absolute physical line number and broke on any unrelated
+// upstream edit to either file (confirmed twice now in consecutive rounds).
+// extractFn() finds a top-level function by its name instead, so it is
+// immune to line-number drift from edits elsewhere in the file.
 //
 // Usage: node scripts/test-research-endpoint-candidate-resolution.js
 import { readFileSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { extractFn } from './lib/dashboard-extract.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -35,18 +41,9 @@ function assert(condition, message) {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function extractLines(filePath, label, startLine, endLine, expectedFirst) {
-  const lines = readFileSync(filePath, 'utf8').split('\n');
-  const first = lines[startLine - 1];
-  if (!first || !first.startsWith(expectedFirst)) {
-    throw new Error(`extractLines(${label}): ${filePath} line ${startLine} is "${first}", expected to start with "${expectedFirst}" -- source has shifted, update the line range in this test.`);
-  }
-  return lines.slice(startLine - 1, endLine).join('\n');
-}
-
 // --- api/research-batch.js: requireResolvedCandidate(candidates, mapped, account) ---
 const RESEARCH_BATCH_PATH = path.join(__dirname, '..', 'api', 'research-batch.js');
-const REQUIRE_RESOLVED_CANDIDATE_SRC = extractLines(RESEARCH_BATCH_PATH, 'requireResolvedCandidate', 2436, 2439, 'function requireResolvedCandidate(candidates, mapped, account) {');
+const REQUIRE_RESOLVED_CANDIDATE_SRC = extractFn(readFileSync(RESEARCH_BATCH_PATH, 'utf8'), 'requireResolvedCandidate');
 const batchSandbox = {};
 vm.createContext(batchSandbox);
 vm.runInContext(`${REQUIRE_RESOLVED_CANDIDATE_SRC}\nthis.requireResolvedCandidate = requireResolvedCandidate;`, batchSandbox);
@@ -55,7 +52,7 @@ assert(typeof requireResolvedCandidate === 'function', 'extracted the real requi
 
 // --- api/research-account.js: resolveAccountCandidate(candidates, sourceUrl) ---
 const RESEARCH_ACCOUNT_PATH = path.join(__dirname, '..', 'api', 'research-account.js');
-const RESOLVE_ACCOUNT_CANDIDATE_SRC = extractLines(RESEARCH_ACCOUNT_PATH, 'resolveAccountCandidate', 1121, 1124, 'function resolveAccountCandidate(candidates, sourceUrl) {');
+const RESOLVE_ACCOUNT_CANDIDATE_SRC = extractFn(readFileSync(RESEARCH_ACCOUNT_PATH, 'utf8'), 'resolveAccountCandidate');
 const accountSandbox = {};
 vm.createContext(accountSandbox);
 vm.runInContext(`${RESOLVE_ACCOUNT_CANDIDATE_SRC}\nthis.resolveAccountCandidate = resolveAccountCandidate;`, accountSandbox);

@@ -5094,6 +5094,45 @@ function cleanBusinessText(text){
   return stripTrailingTruncation(t);
 }
 
+// Final bounded Beta trust correction (Round C): seller-facing outreach
+// copy (How to Approach / Email / Call Script / Subject / Questions to
+// Ask) must never directly reproduce raw, un-cleaned source-page text --
+// breadcrumb navigation ("ABC Convention > Past Events > Past ABC
+// Conventions > 2026 > Schedule"), SEO titles, or publisher-suffix
+// artifacts ("Hiring Now! - Zippia", "Careers - MyWorkdayJobs"). Confirmed
+// production shape: businessSuggestedOpener()/groundedInitiativeTitle()
+// embedded opp.signalTitle directly, and opp.signalTitle is frequently the
+// raw candidate.headline a search provider returned (normalizeOpportunity()
+// in api/signal-intelligence.js falls back to it verbatim when no
+// AI-authored signalTitle/headline/concreteTrigger exists) -- never
+// cleaned beyond whitespace/HTML stripping. cleanBusinessText()/
+// cleanSalesPlayText() already strip a few known junk phrases, but neither
+// detects these two specific artifact SHAPES; this is the bounded,
+// deterministic detector every outreach-copy surface gates on before
+// embedding any raw evidence text.
+const KNOWN_JOB_BOARD_OR_PUBLISHER_SUFFIX = /\b(Zippia|MyWorkdayJobs|ZipRecruiter|Glassdoor(?:\.com)?|Indeed(?:\.com)?|SimplyHired|CareerBuilder|Handshake|LiveAndWorkIn\w*|BuiltIn|Monster\.com|LinkedIn Jobs)\b/i;
+function looksLikeRawSourceArtifact(text){
+  const t = String(text || '').trim();
+  if(!t) return true;
+  // Breadcrumb/pagination chain -- an ordinary sentence essentially never
+  // contains a literal " > " separator; a scraped page's navigation trail
+  // (or an SEO title chain like "Category > Subcategory > Page") does.
+  if(/\s>\s/.test(t)) return true;
+  // A known job board / careers-aggregator / publisher name appearing in
+  // the text is a reliable tell that this is a raw scraped page title, not
+  // an actual fact about the company.
+  if(KNOWN_JOB_BOARD_OR_PUBLISHER_SUFFIX.test(t)) return true;
+  return false;
+}
+// The single shared gate: cleans, then rejects anything that still looks
+// like a raw source artifact rather than a usable factual phrase. Returns
+// '' when unusable so every caller falls back to its own natural,
+// canonical-family-based phrasing instead of embedding junk.
+function cleanEvidencePhraseForOutreach(text){
+  const cleaned = cleanBusinessText(text);
+  return looksLikeRawSourceArtifact(cleaned) ? '' : cleaned;
+}
+
 // QA round 3, item 2: canonical business-event classification, shared by
 // businessSignalKind()/opportunityHeadline() and inferSalesPlaySignalType()
 // (Best Next Move / Questions to Ask / email / subject bucket selection) --
@@ -5177,9 +5216,9 @@ function businessSignalKind(opp){
 
 function businessSignalPlainSummary(opp){
   const account = opp.account || 'this account';
-  const detail = cleanBusinessText(opp.signalDetail || opp.signalTitle || opp.signalSummary || opp.shortSummary || '');
+  const detail = cleanEvidencePhraseForOutreach(opp.signalDetail || opp.signalTitle || opp.signalSummary || opp.shortSummary || '');
   const kind = businessSignalKind(opp);
-  if(detail && detail.length > 12 && !/^Ford Dealer|^Dentist Exeter|^Careers with/i.test(detail)) return shortText(detail, 150);
+  if(detail && detail.length > 12) return shortText(detail, 150);
   if(kind === 'hiring') return `${account} has public hiring or careers activity worth checking on.`;
   if(kind === 'event') return `${account} has public event, campaign, or community activity worth checking on.`;
   if(kind === 'expansion') return `${account} has public growth or expansion activity worth checking on.`;
@@ -5187,6 +5226,46 @@ function businessSignalPlainSummary(opp){
   if(kind === 'leadership') return `${account} has public leadership or team-change activity worth checking on.`;
   if(kind === 'launch') return `${account} has public product, service, or campaign activity worth checking on.`;
   return `Recent public activity gives a timely reason to reconnect with ${account}.`;
+}
+
+// Final bounded Beta trust correction (Round C): a short, concrete
+// discovery question per canonical family -- never a vague "anything
+// coming up?" closer. Deliberately asks about something specific enough to
+// be worth answering (onboarding vs. recruiting for hiring, whether an
+// event is ongoing, what's still being planned for an opening) rather than
+// an open-ended "is anything changing" that invites no real reply. Reused
+// by both the specific-evidence-available branch and the no-usable-
+// evidence fallback of businessSuggestedOpener() below, so the QUESTION
+// asked never disagrees with the canonical family driving the rest of the
+// card/Prepare-for-Call surfaces.
+function naturalDiscoveryQuestion(kind){
+  if(kind === 'hiring') return 'Is growth or onboarding something you’re focused on right now?';
+  if(kind === 'event') return 'Do you expect that to be an ongoing thing for the team?';
+  if(kind === 'expansion') return 'Is there anything around it your team is still planning for?';
+  if(kind === 'recognition') return 'Is that something worth celebrating with the team?';
+  if(kind === 'leadership') return 'Is there anything new internally worth supporting as things settle in?';
+  if(kind === 'launch') return 'Is there anything customer-facing you’re still lining up around it?';
+  return 'Anything on your end worth catching up on?';
+}
+// Discovery-first fallback for a rep-selected/weak signal whose raw
+// evidence text is not usable seller-facing copy (a breadcrumb chain, an
+// SEO/publisher title, or simply too little text to quote) --
+// looksLikeRawSourceArtifact() below is what routes a call here instead of
+// embedding the raw text. Still references the real, canonical-family fact
+// (we DO know, deterministically, that this is hiring/event/expansion/
+// etc.) rather than a mystery "some activity" placeholder -- "the
+// normalized factual / canonical signal meaning," per the founder's
+// contract, not the raw title, and never the empty "anything coming up"
+// filler this correction replaces.
+function naturalDiscoveryFallbackOpener(kind, contact, account){
+  const question = naturalDiscoveryQuestion(kind);
+  if(kind === 'hiring') return `Hey ${contact} — saw ${account} has some hiring activity out right now. ${question}`;
+  if(kind === 'event') return `Hey ${contact} — saw ${account} was involved with a recent event. ${question}`;
+  if(kind === 'expansion') return `Hey ${contact} — saw some location or growth news for ${account}. ${question}`;
+  if(kind === 'recognition') return `Hey ${contact} — saw ${account} picked up some recent recognition. ${question}`;
+  if(kind === 'leadership') return `Hey ${contact} — saw there’s been a leadership change at ${account}. ${question}`;
+  if(kind === 'launch') return `Hey ${contact} — saw ${account} has something new launching. ${question}`;
+  return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
 }
 
 // Paid-beta grounded outreach (Priority 2): this is the LAST-RESORT
@@ -5197,6 +5276,17 @@ function businessSignalPlainSummary(opp){
 // this replaces. When there truly isn't enough signal detail to be
 // specific, it says so plainly (a transparent limited state) instead of
 // inventing urgency or implying a merch program that doesn't exist.
+//
+// Final bounded Beta trust correction (Round C): "enough signal detail to
+// be specific" now also requires the detail to survive
+// looksLikeRawSourceArtifact() -- a raw breadcrumb chain or SEO/publisher
+// title is not usable seller-facing copy even though it is real text from
+// the source (confirmed production case: "Hey there — saw ABC
+// Convention > Past Events > Past ABC Conventions > 2026 > Schedule.
+// Anything coming up that we should be thinking about?"). When the raw
+// text doesn't qualify, naturalDiscoveryFallbackOpener() still references
+// the real canonical family honestly instead of embedding it or falling
+// back to empty filler.
 function businessSuggestedOpener(opp){
   // QA round 3, item 5: greeting must be a verified person name, never a
   // department/role placeholder that happens to be sitting in opp.contact
@@ -5206,9 +5296,9 @@ function businessSuggestedOpener(opp){
   const contact = knownContact && !knownContact.includes('/') ? knownContact.split(' ')[0] : 'there';
   const kind = businessSignalKind(opp);
   const account = opp.account || 'this account';
-  const detail = cleanBusinessText(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
+  const detail = cleanEvidencePhraseForOutreach(opp.signalTitle || opp.opportunity || opp.signalDetail || opp.signalSummary || '');
   if(!detail || detail.length < 8){
-    return `Hey ${contact} — we found public activity for ${account}, but not enough detail yet to point to one specific reason to reach out. Worth a quick check-in on what's changing internally?`;
+    return naturalDiscoveryFallbackOpener(kind, contact, account);
   }
   // R7 follow-up: shortText() appends a real ellipsis when it truncates --
   // fine as a standalone evidence-bullet marker, but disqualifying when it
@@ -5216,17 +5306,7 @@ function businessSuggestedOpener(opp){
   // now rejects ANY ellipsis in this field). Stripped here since more
   // sentence text always follows immediately in the same template.
   const specific = shortText(detail, 90).replace(/[.…]+$/, '').trim();
-  if(kind === 'hiring') return `Hey ${contact} — saw ${specific}. Is anything changing around onboarding, recruiting, or employee experience that would be worth planning for?`;
-  // R7 follow-up: no longer names merch/attendee gifts/staff gear directly --
-  // the permanent Conversation Starter rule bans a direct product ask here
-  // regardless of posture; a product idea can still be offered later, once
-  // ownership/context is established, via Email/Call Script/Best Next Move.
-  if(kind === 'event') return `Hey ${contact} — saw ${specific}. Is there anything coming up that your team is already planning around?`;
-  if(kind === 'expansion') return `Hey ${contact} — saw ${specific}. Is that creating any internal or customer-facing needs we should be thinking about?`;
-  if(kind === 'recognition') return `Hey ${contact} — saw ${specific}. Anything coming up where employee or customer appreciation would be useful?`;
-  if(kind === 'leadership') return `Hey ${contact} — saw ${specific}. Is there anything new internally that would be worth supporting from a brand or employee-experience standpoint?`;
-  if(kind === 'launch') return `Hey ${contact} — saw ${specific}. Is there anything customer-facing or sales-team related that would be worth planning around?`;
-  return `Hey ${contact} — saw ${specific}. Anything coming up that we should be thinking about?`;
+  return `Hey ${contact} — saw ${specific}. ${naturalDiscoveryQuestion(kind)}`;
 }
 
 function getRepFriendlyWhy(opp){
@@ -10052,12 +10132,24 @@ function groundedDepartmentForOpportunity(opp){
 // QA round 2, item 3/4: the exact surfaced initiative -- the real signal
 // title/trigger -- not a bucketed generic phrase like "an upcoming event or
 // campaign" that says nothing about what actually happened.
+//
+// Final bounded Beta trust correction (Round C): this feeds Email/Call
+// Script/Subject/Questions to Ask (via triggerPhraseForSignal()) -- the
+// SAME raw-source-artifact risk businessSuggestedOpener() has (a
+// breadcrumb chain or SEO/publisher title masquerading as the real signal
+// title) applies here too, or Prepare for Call's outreach surfaces could
+// quote junk even after How to Approach was fixed to avoid it. When the
+// raw text doesn't qualify, this returns '' so triggerPhraseForSignal()
+// falls through to ctx.whyNow (businessSignalPlainSummary()'s own,
+// independently gated, canonical-family-honest text) rather than embedding
+// it anyway.
 function groundedInitiativeTitle(opp){
   // QA round 3, item 5: strip any trailing sentence punctuation once, at
   // the source -- callers embed this phrase mid-sentence (e.g. "Lead with
   // {title}.") and a raw AI-generated signalTitle/concreteTrigger that
   // already ends in "." would otherwise produce a double period downstream.
-  return cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '').replace(/[.!?]+$/, '');
+  const raw = cleanSalesPlayText(opp?.signalTitle || opp?.concreteTrigger || opp?.concrete_trigger || opp?.title || '');
+  return looksLikeRawSourceArtifact(raw) ? '' : raw.replace(/[.!?]+$/, '');
 }
 
 // Closes the Prepare for Call panel and balances the shared overlay-open

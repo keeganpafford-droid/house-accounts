@@ -2248,7 +2248,15 @@ function realFlagshipMergeCase(sandbox, account, investmentUrl, reopeningUrl){
   assert(!starter.includes('....'), `acceptance 4: the rendered Conversation Starter never contains the source excerpt's raw "...." truncation artifact (got: "${starter}")`);
   assert(!/…/.test(starter), `acceptance 4: the rendered Conversation Starter never contains an unresolved unicode ellipsis either (got: "${starter}")`);
   assert(/campus\. /.test(starter) || /campus,/.test(starter), `acceptance 5: the starter reads as a complete clause ending the fact cleanly before the next sentence (got: "${starter}")`);
-  assert(/is that|do you know|who|leading/i.test(starter), `acceptance 5: the starter still asks a referral-focused question (got: "${starter}")`);
+  // Final bounded Beta trust correction (Round C): naturalDiscoveryQuestion()
+  // replaced the old per-kind closer templates with the founder's own
+  // concrete-question phrasing ("Is there anything around it your team is
+  // still planning for?" for the expansion/renovation family here) -- still
+  // a real, specific, non-pitching discovery question, just no longer
+  // literally shaped as "who/is that/leading" referral phrasing. Broadened
+  // to accept either wording family rather than only the one this test
+  // happened to see at the time it was written.
+  assert(/is that|do you know|who|leading|is there anything|still (planning|lining up)|worth (celebrating|catching up)|focused on|ongoing (thing|initiative)/i.test(starter), `acceptance 5: the starter still asks a real, specific, non-pitching discovery question (got: "${starter}")`);
 
   // acceptance 6: leadWithAccountContext() with a source-text account
   // reference that differs in punctuation/spacing from the stored account

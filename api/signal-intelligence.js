@@ -1960,7 +1960,30 @@ function resolveEventType(text = '', family = '') {
   if (hasGenuineAcquisitionLanguage && !mentionsGrantOrFunding && !mentionsInvestmentOrRenovation) {
     return { primaryType: 'ACQUISITION', candidateTypes: ['ACQUISITION'], recurring: false };
   }
-  if (/\bappoints?\b|\bappointed\b|\bnames?\b.*\bas\b|\bnamed\b.*\bas\b|\bpromotes?\b|\bpromoted\b|joins as|hired as|named (ceo|president|vice president|chief|director)/i.test(t)) {
+  // Final bounded Beta trust correction (Round C): "named"/"promotes"/
+  // "appoints" are common, ordinary verbs outside a personnel-appointment
+  // sense ("BerryDunn promotes a collaborative culture", "was named a Best
+  // Place to Work") -- a bare match on the verb alone, or the verb followed
+  // by "as" ANYWHERE later in the concatenated evidence text (title +
+  // whatChanged + business_context, joined with plain spaces, not sentence
+  // boundaries), previously let an unrelated award/careers page get
+  // classified as a leadership appointment merely because "named"/"promote"
+  // and "as" both happened to appear somewhere in the combined blob
+  // (documented, previously-unfixed limitation: scripts/test-canonical-
+  // classification.js's rank-14 Marriott case, "Named No. 1 Best Conference
+  // Hotel..." + a later, unrelated "...recognized AS the No. 1...").
+  // Genuine appointment language names a real ROLE close to the verb, in
+  // the SAME local clause (no sentence-ending punctuation crossed) -- "named
+  // CEO", "appointed Jane Smith as Chief Financial Officer", "promoted to
+  // Director". "as"/"to" is common ("appointed as CEO") but not required
+  // ("appointed Chief Financial Officer effective immediately" is just as
+  // genuine) -- the required, narrowing element is the nearby ROLE word
+  // itself, the same discipline hasGenuineAcquisitionLanguage() above
+  // already applies (verb + a real object, not the bare verb alone).
+  const LEADERSHIP_ROLE_WORD = '(?:ceo|cfo|coo|cto|cmo|president|vice[- ]president|vp|chief(?:\\s+\\w+){0,2}\\s+officer|chief|executive director|managing director|general manager|director|partner|principal|chairman|chairwoman|chairperson)';
+  const hasGenuineLeadershipLanguage =
+    new RegExp(`\\b(?:appoints?|appointed|names?|named|promotes?|promoted|joins|joined|hired)\\b[^.!?\\n]{0,50}\\b${LEADERSHIP_ROLE_WORD}\\b`, 'i').test(t);
+  if (hasGenuineLeadershipLanguage) {
     return { primaryType: 'LEADERSHIP_APPOINTMENT', candidateTypes: ['LEADERSHIP_APPOINTMENT'], recurring: false };
   }
   if (/trade show|tradeshow|\bexpo\b|\bbooth\b|exhibitor/i.test(t)) {
