@@ -13,6 +13,19 @@
 // never from recommendation text the browser supplies. Raw rep behavior
 // captured here is proprietary to the organization that generated it and
 // is never pooled, benchmarked, or exposed across organizations.
+//
+// Identity, post-verification-pass correction: signal_id (the exact
+// ha_signals row a rep saw/acted on) and event_fingerprint (the durable
+// business-event identity, retained for longitudinal learning across a
+// ha_signals row being refreshed) are deliberately DIFFERENT identities
+// with different jobs. A write is always resolved by signal_id, never by
+// event_fingerprint alone -- ha_signals' own persistence constraint,
+// (user_id, event_fingerprint) with no account_name/upload_id scoping,
+// proves event_fingerprint is not guaranteed unique to one account. Read-
+// back (GET) is keyed by (event_fingerprint, account_name) together --
+// the smallest durable pairing that stays correct across a refreshed
+// ha_signals row while still preventing two different accounts that
+// share a fingerprint from bleeding into each other's feedback state.
 function json(res, status, body) { res.setHeader('Cache-Control', 'no-store, max-age=0'); return res.status(status).json(body); }
 function clean(v = '') { return String(v || '').trim(); }
 
@@ -164,21 +177,31 @@ async function handlePost(req, res, user, organizationId) {
     return json(res, 200, { ok: true, id: row.id });
   }
 
-  // Every other event type references a signal by its durable
-  // event_fingerprint, resolved against the CALLER'S ORGANIZATION (not
-  // just their own rows) -- a fingerprint that doesn't resolve to any
-  // org-owned ha_signals row is rejected outright, before anything is
-  // written. account_name and the recommendation snapshot come from the
-  // resolved row itself; a signalId "hint" is never trusted or used to
-  // bypass this lookup.
-  const eventFingerprint = clean(body.eventFingerprint);
-  if (!eventFingerprint) return json(res, 400, { error: 'eventFingerprint is required.' });
+  // Every other event type references the EXACT ha_signals row the rep
+  // acted on, by signalId -- never by event_fingerprint alone.
+  // event_fingerprint is NOT guaranteed to identify one account/business-
+  // event context: ha_signals' own persistence constraint is (user_id,
+  // event_fingerprint) only (see api/save-upload.js and api/weekly-scan.js's
+  // `on_conflict=user_id,event_fingerprint` upserts) -- there is no
+  // account_name or upload_id in that key. Two distinct real accounts
+  // under the same user whose company name/family/subtype/month/entity
+  // tokens happen to normalize identically (normalizeCompany() in
+  // api/signal-intelligence.js aggressively strips punctuation, case, and
+  // corporate suffixes) would upsert into the SAME ha_signals row, so
+  // resolving a write by fingerprint alone could attach a rep's judgment
+  // to the wrong account's row. Resolving by the exact row id, then
+  // verifying that row's owner is in the caller's organization, is what
+  // keeps this correct; event_fingerprint/account_name/the recommendation
+  // snapshot are then derived from that exact resolved row, never trusted
+  // from the browser.
+  const signalId = clean(body.signalId);
+  if (!signalId) return json(res, 400, { error: 'signalId is required.' });
 
   const orgUserIds = await resolveOrgUserIds(user.id, organizationId);
-  const signalRows = await sb(`ha_signals?event_fingerprint=eq.${encodeURIComponent(eventFingerprint)}&user_id=in.(${orgUserIds.map(id => encodeURIComponent(id)).join(',')})&select=*`, { method: 'GET' });
-  const candidates = Array.isArray(signalRows) ? signalRows : [];
-  if (!candidates.length) return json(res, 404, { error: 'Signal not found for your organization.' });
-  const signal = candidates.find(r => r.user_id === user.id) || candidates[0];
+  const signalRows = await sb(`ha_signals?id=eq.${encodeURIComponent(signalId)}&select=*&limit=1`, { method: 'GET' });
+  const signal = (Array.isArray(signalRows) ? signalRows[0] : null);
+  if (!signal || !orgUserIds.includes(signal.user_id)) return json(res, 404, { error: 'Signal not found for your organization.' });
+  const eventFingerprint = signal.event_fingerprint;
 
   // Semantic dedupe for signal judgment only: a changed opinion (Useful ->
   // Not useful, or vice versa) is real new learning history; repeating
@@ -208,6 +231,23 @@ async function handlePost(req, res, user, organizationId) {
   return json(res, 200, { ok: true, id: row.id });
 }
 
+// event_fingerprint alone is not a safe read-back key for the same reason
+// it is not a safe write-resolution key (see handlePost's own identity
+// comment): ha_signals only guarantees uniqueness per (user_id,
+// event_fingerprint), never per account, so two distinct real accounts
+// that happen to normalize to the same fingerprint could otherwise bleed
+// each other's feedback history together. account_name is captured on
+// every ha_signal_events row at write time (see handlePost), so pairing
+// it with event_fingerprint is the smallest additional identity that
+// keeps read-back attached to the correct account context -- without
+// giving up longitudinal read-back across a ha_signals row being
+// refreshed/upserted in place (a switch to signal_id would break that,
+// since a refreshed row's id can change while its fingerprint/account
+// stay the same for what is still, to the rep, the same business event).
+function readBackKey(eventFingerprint, accountName) {
+  return `${eventFingerprint}::${clean(accountName)}`;
+}
+
 // Batched, current-rep-only read-back -- reflects THIS rep's own latest
 // state so the UI doesn't feel like it forgot prior feedback on reopen.
 // Deliberately never aggregates across the organization (no manager/team
@@ -215,29 +255,62 @@ async function handlePost(req, res, user, organizationId) {
 // separate signal-ownership check is needed: the query can never surface
 // another user's rows regardless of what fingerprints are requested.
 async function handleGet(req, res, user) {
-  const raw = clean(req.query?.eventFingerprints || '');
-  const fingerprints = [...new Set(raw.split(',').map(clean).filter(Boolean))].slice(0, MAX_READBACK_FINGERPRINTS);
-  if (!fingerprints.length) return json(res, 400, { error: 'eventFingerprints is required.' });
+  let requestedKeys;
+  try {
+    const raw = clean(req.query?.keys || '');
+    if (!raw) throw new Error('empty');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('not an array');
+    requestedKeys = parsed
+      .map(k => ({ eventFingerprint: clean(k?.eventFingerprint), accountName: clean(k?.accountName) }))
+      .filter(k => k.eventFingerprint);
+  } catch {
+    return json(res, 400, { error: 'keys is required (a JSON array of {eventFingerprint, accountName}).' });
+  }
+  const seen = new Set();
+  const keys = [];
+  for (const k of requestedKeys) {
+    const composite = readBackKey(k.eventFingerprint, k.accountName);
+    if (seen.has(composite)) continue;
+    seen.add(composite);
+    keys.push(k);
+  }
+  const capped = keys.slice(0, MAX_READBACK_FINGERPRINTS);
+  if (!capped.length) return json(res, 400, { error: 'keys is required (a JSON array of {eventFingerprint, accountName}).' });
 
+  const fingerprints = [...new Set(capped.map(k => k.eventFingerprint))];
   const filter = `in.(${fingerprints.map(f => `"${f.replace(/"/g, '')}"`).join(',')})`;
   const rows = await sb(`ha_signal_events?user_id=eq.${encodeURIComponent(user.id)}&event_fingerprint=${filter}&select=*&order=created_at.desc`, { method: 'GET' });
+  const allRows = Array.isArray(rows) ? rows : [];
 
   const states = {};
-  for (const fp of fingerprints) states[fp] = { feedback: null, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
-  for (const row of (Array.isArray(rows) ? rows : [])) {
-    const state = states[row.event_fingerprint];
-    if (!state) continue;
-    // Rows arrive newest-first, so the first row seen per fingerprint for
-    // a given field IS the latest -- only ever set once per field.
-    if (state.feedback === null && (row.event_type === 'signal_useful' || row.event_type === 'signal_not_useful')) {
-      state.feedback = row.event_type === 'signal_useful' ? 'useful' : 'not_useful';
+  for (const k of capped) {
+    const composite = readBackKey(k.eventFingerprint, k.accountName);
+    const state = { feedback: null, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
+    states[composite] = state;
+    // Rows arrive newest-first; scoped to this exact (fingerprint,
+    // account) pair so a different account sharing the same fingerprint
+    // can never contribute to this state.
+    const relevant = allRows.filter(row => row.event_fingerprint === k.eventFingerprint && clean(row.account_name) === clean(k.accountName));
+    for (const row of relevant) {
+      if (state.feedback === null && (row.event_type === 'signal_useful' || row.event_type === 'signal_not_useful')) {
+        state.feedback = row.event_type === 'signal_useful' ? 'useful' : 'not_useful';
+      }
+      if (!state.outreachLogged && row.event_type === 'outreach_made') {
+        state.outreachLogged = true;
+        state.latestOutreachEventId = row.id;
+      }
     }
-    if (!state.outreachLogged && row.event_type === 'outreach_made') {
-      state.outreachLogged = true;
-      state.latestOutreachEventId = row.id;
-    }
-    if (state.approachNote === null && row.event_type === 'approach_shared') {
-      state.approachNote = row.payload?.approachNote || null;
+    // approach_shared is created AFTER its parent outreach_made, so it
+    // sorts BEFORE its own parent in this newest-first list -- the note
+    // for THIS state must only ever come from the approach_shared row
+    // whose parent_event_id is the latest outreach attempt just resolved
+    // above, never merely the most recent approach_shared row seen for
+    // this fingerprint/account. An older outreach attempt's leftover note
+    // must never appear to belong to a newer attempt that has none yet.
+    if (state.latestOutreachEventId) {
+      const note = relevant.find(row => row.event_type === 'approach_shared' && row.parent_event_id === state.latestOutreachEventId);
+      if (note) state.approachNote = note.payload?.approachNote || null;
     }
   }
   return json(res, 200, { ok: true, states });
@@ -258,4 +331,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { resolveOrgUserIds, buildRecommendationSnapshot, truncate, EVENT_TYPES };
+export { resolveOrgUserIds, buildRecommendationSnapshot, truncate, EVENT_TYPES, readBackKey };

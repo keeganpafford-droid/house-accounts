@@ -2983,19 +2983,36 @@ function generateClientEventId(){
   });
 }
 
+// Post-verification-pass correction: signalId (the exact ha_signals row
+// the rep saw/acted on) and eventFingerprint (the durable business-event
+// identity) are different identities -- api/signal-events.js now resolves
+// every write by signalId, never by eventFingerprint alone, since a
+// fingerprint is not guaranteed to identify one account (see that file's
+// own header comment). eventFingerprint is still sent/stored for
+// longitudinal learning, just never trusted for write resolution.
+//
+// signalStateKey() mirrors api/signal-events.js's own readBackKey() --
+// GET read-back is keyed by (eventFingerprint, accountName) together, the
+// smallest pairing that stays correct across a refreshed ha_signals row
+// while still keeping two different accounts that share a fingerprint
+// from bleeding into each other's feedback state.
+function signalStateKey(eventFingerprint, accountName){
+  return `${eventFingerprint}::${accountName || ''}`;
+}
+
 // Fire-and-forget, matching captureLead()'s own contract above: a failure
 // here must never block or fail the user-visible action that triggered
 // it. Returns the parsed response body (so a caller needing the new
 // event's id -- e.g. outreach_made, before an approach note can reference
 // it as parentEventId -- can use it), or null on any failure.
-async function logSignalEvent(eventType, {eventFingerprint, accountName, clientEventId, parentEventId, note} = {}){
+async function logSignalEvent(eventType, {signalId, eventFingerprint, accountName, clientEventId, parentEventId, note} = {}){
   try{
     const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) return null;
     const res = await fetch('/api/signal-events', {
       method:'POST',
       headers,
-      body: JSON.stringify({eventType, eventFingerprint, accountName, clientEventId, parentEventId, note})
+      body: JSON.stringify({eventType, signalId, eventFingerprint, accountName, clientEventId, parentEventId, note})
     });
     const data = await res.json().catch(() => ({}));
     if(!res.ok) return null;
@@ -3010,13 +3027,21 @@ async function logSignalEvent(eventType, {eventFingerprint, accountName, clientE
 // contract. Never throws -- a failure here just means feedback controls
 // render in their default (unanswered) state, exactly as if this rep had
 // never given feedback yet; it never blocks rendering.
-async function fetchSignalEventStates(eventFingerprints){
-  const list = [...new Set((eventFingerprints || []).filter(Boolean))];
+async function fetchSignalEventStates(keys){
+  const seen = new Set();
+  const list = [];
+  for(const k of (keys || [])){
+    if(!k || !k.eventFingerprint) continue;
+    const composite = signalStateKey(k.eventFingerprint, k.accountName || '');
+    if(seen.has(composite)) continue;
+    seen.add(composite);
+    list.push({eventFingerprint: k.eventFingerprint, accountName: k.accountName || ''});
+  }
   if(!list.length) return {};
   try{
     const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : {};
     if(!headers) return {};
-    const res = await fetch(`/api/signal-events?eventFingerprints=${encodeURIComponent(list.join(','))}`, {headers});
+    const res = await fetch(`/api/signal-events?keys=${encodeURIComponent(JSON.stringify(list))}`, {headers});
     const data = await res.json().catch(() => ({}));
     if(!res.ok) return {};
     return data.states || {};
@@ -3036,9 +3061,9 @@ async function hydrateSignalFeedbackButtons(root){
   const scope = root || document;
   const buttons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
   if(!buttons.length) return;
-  const states = await fetchSignalEventStates(buttons.map(b => b.dataset.eventFingerprint));
+  const states = await fetchSignalEventStates(buttons.map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''})));
   buttons.forEach(btn => {
-    const state = states[btn.dataset.eventFingerprint];
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
     if(!state || !state.feedback) return;
     const isPressed = (btn.dataset.signalFeedback === 'useful' && state.feedback === 'useful')
       || (btn.dataset.signalFeedback === 'not_useful' && state.feedback === 'not_useful');
@@ -7164,9 +7189,9 @@ function renderSingleVerifiedSignal(signal){
   // correctly flag even a Possible Match or historical signal as not
   // useful. Placed here, not on the Priority card or inside Prepare for
   // Call, so a rep can judge a signal without first opening either.
-  const signalFeedbackButtons = signal.eventFingerprint ? `
-    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="useful" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👍 Useful</button>
-    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="not_useful" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👎 Not useful</button>
+  const signalFeedbackButtons = (signal.id && signal.eventFingerprint) ? `
+    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="useful" data-signal-id="${escapeHtml(signal.id)}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👍 Useful</button>
+    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="not_useful" data-signal-id="${escapeHtml(signal.id)}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👎 Not useful</button>
   ` : '';
   // Bug fix (paid-beta-sprint "root cause 2" regression): the payload used
   // to embed the signal's raw conversationStarter verbatim via
@@ -9394,8 +9419,8 @@ function useSignalAsRepSelected(signal){
   // Signal feedback / organizational-learning foundation: implicit
   // engagement event -- the rep chose to act on THIS signal over other
   // options presented. Fire-and-forget, never blocks opening the panel.
-  if(opp.eventFingerprint){
-    logSignalEvent('signal_selected', {eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
+  if(opp.id){
+    logSignalEvent('signal_selected', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
   }
   if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
 }
@@ -10447,6 +10472,7 @@ function wireOutreachRow(rowEl){
     const originalLabel = logBtn.textContent;
     logBtn.textContent = 'Logging…';
     const result = await logSignalEvent('outreach_made', {
+      signalId: rowEl.dataset.outreachSignalId,
       eventFingerprint: rowEl.dataset.outreachFingerprint,
       accountName: rowEl.dataset.accountName,
       clientEventId: generateClientEventId()
@@ -10491,8 +10517,9 @@ function wireOutreachRow(rowEl){
 async function hydrateOutreachRow(rowEl){
   const eventFingerprint = rowEl.dataset.outreachFingerprint;
   if(!eventFingerprint) return;
-  const states = await fetchSignalEventStates([eventFingerprint]);
-  const state = states[eventFingerprint];
+  const accountName = rowEl.dataset.accountName || '';
+  const states = await fetchSignalEventStates([{eventFingerprint, accountName}]);
+  const state = states[signalStateKey(eventFingerprint, accountName)];
   if(state && state.outreachLogged && state.latestOutreachEventId && typeof rowEl.__houseAccountsShowReachedOut === 'function'){
     rowEl.__houseAccountsShowReachedOut(state.latestOutreachEventId);
     const noteInput = rowEl.querySelector('.approach-note-input');
@@ -10516,8 +10543,8 @@ window.createSalesPlayPanel = function(opp, opts){
   // ENGAGEMENT event, not positive feedback -- the rep looked at this in
   // more depth, nothing more. Fire-and-forget, never delays the panel
   // opening.
-  if(opp.eventFingerprint){
-    logSignalEvent('prepare_call_opened', {eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
+  if(opp.id){
+    logSignalEvent('prepare_call_opened', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
   }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
@@ -10623,8 +10650,8 @@ window.createSalesPlayPanel = function(opp, opts){
           <button class="sales-play-close" onclick="closeSalesPlayModal(this)">×</button>
         </div>
         ${opts.repSelected ? `<div class="rep-selected-banner"><strong>REP-SELECTED SIGNAL</strong> — House Accounts found this signal but did not recommend it as a Priority. You chose to work it.</div>` : ''}
-        ${opp.eventFingerprint ? `
-        <div class="sales-play-outreach-row" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
+        ${(opp.id && opp.eventFingerprint) ? `
+        <div class="sales-play-outreach-row" data-outreach-signal-id="${escapeHtml(opp.id)}" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
           <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
           <div class="approach-note-wrap" hidden>
             <label class="approach-note-label">How did you approach this?</label>
@@ -12689,10 +12716,11 @@ document.addEventListener('click', (event) => {
   const feedbackBtn = event.target.closest('.signal-feedback-btn');
   if(feedbackBtn){
     const feedback = feedbackBtn.dataset.signalFeedback;
+    const signalId = feedbackBtn.dataset.signalId;
     const eventFingerprint = feedbackBtn.dataset.eventFingerprint;
-    if(!feedback || !eventFingerprint) return;
+    if(!feedback || !signalId || !eventFingerprint) return;
     const actionsRow = feedbackBtn.closest('.verified-signal-actions');
-    const siblingBtn = actionsRow ? Array.from(actionsRow.querySelectorAll('.signal-feedback-btn')).find(b => b !== feedbackBtn && b.dataset.eventFingerprint === eventFingerprint) : null;
+    const siblingBtn = actionsRow ? Array.from(actionsRow.querySelectorAll('.signal-feedback-btn')).find(b => b !== feedbackBtn && b.dataset.signalId === signalId) : null;
     feedbackBtn.setAttribute('aria-pressed', 'true');
     feedbackBtn.classList.add('signal-feedback-active');
     if(siblingBtn){
@@ -12700,6 +12728,7 @@ document.addEventListener('click', (event) => {
       siblingBtn.classList.remove('signal-feedback-active');
     }
     logSignalEvent(feedback === 'useful' ? 'signal_useful' : 'signal_not_useful', {
+      signalId,
       eventFingerprint,
       accountName: feedbackBtn.dataset.accountName || '',
       clientEventId: generateClientEventId()
@@ -14246,6 +14275,15 @@ function escapeHtml(text){
          </div>
        </div>`;
      document.body.appendChild(backdrop);
+     // Point 4, Signal Feedback verification pass: showResearchResultsDialog()
+     // below reuses this same dialog shell to render renderVerifiedSignals()'s
+     // real signal cards (Manage Customer Accounts' "Research Results" view) --
+     // those cards carry the same Useful/Not-useful controls as the main
+     // dashboard and must reflect this rep's own prior feedback the same way.
+     // Safe to call unconditionally for every other (plain-text) use of this
+     // dialog too -- hydrateSignalFeedbackButtons() is a no-op when there are
+     // no .signal-feedback-btn elements to hydrate.
+     if(typeof hydrateSignalFeedbackButtons === 'function') hydrateSignalFeedbackButtons(backdrop);
      const okBtn = backdrop.querySelector('.ha-info-ok');
 
      function close(){
