@@ -9,14 +9,20 @@
 // functions with no DOM side effects, so no document stubbing beyond what
 // the existing convention already provides.
 //
-// Covers: the new Why Now -> The Opportunity -> Activation Ideas -> Why It
-// Could Matter -> Best Next Question card hierarchy; hidden-when-empty
-// behavior for the three new optional sections; the primary card's
-// strongest-~3-ideas cap vs. Prepare for Call's full list; old-signal
-// backward compatibility (Opportunity falls back through legacy fields,
-// Activation Ideas/Why It Could Matter stay hidden); and Prepare for Call's
-// demotion of Best Next Move/Email/Call Script/Success Looks Like into a
-// collapsed Outreach section.
+// Covers: the Why Now -> Status -> The Play -> Ideas to Send -> Recommended
+// contact -> How to Approach card hierarchy; hidden-when-empty behavior for
+// the optional sections; the primary card's strongest-~2-ideas cap vs.
+// Prepare for Call's full list; old-signal backward compatibility
+// (Opportunity falls back through legacy fields, Activation Ideas stay
+// hidden); and Prepare for Call's demotion of Best Next Move/Email/Call
+// Script/Success Looks Like into a collapsed Outreach section.
+//
+// Compact Business Signal / Opportunity Cards sprint: the Dashboard card no
+// longer renders Why It Could Grow at all (renderWhyItCouldMatterSection()
+// is no longer called from renderRepOpportunityCard()) -- it remains a
+// Prepare for Call-only detail, via renderWhyItCouldGrowSection(). The
+// function/data are untouched; only the primary card's render call was
+// removed. Activation Ideas on the card dropped from a cap of 3 to 2.
 //
 // Usage: node scripts/test-commercial-intelligence-card-ux.js
 import vm from 'vm';
@@ -115,40 +121,77 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
 }
 
 // ===========================================================================
-// New-schema signal, full commercial intelligence: all five sections render,
-// in the approved order, with real content.
+// New-schema signal, full commercial intelligence: the Dashboard card's
+// remaining sections render in the approved order, with real content.
 //
 // QA correction 4 (Product Finding 2 -- UX simplification): labels renamed
 // toward one consistent mental model -- Why Now / The Play / Ideas to Send
-// / Why It Could Grow / How to Approach (previously The Opportunity /
-// Activation Ideas / Why It Could Matter / Best Next Question). Same
-// underlying fields, same hide-when-empty rules.
+// / How to Approach (previously The Opportunity / Activation Ideas / Best
+// Next Question). Same underlying fields, same hide-when-empty rules.
+//
+// Compact Business Signal / Opportunity Cards sprint: Why It Could Grow is
+// no longer part of this order at all -- it is REQUIRED to be entirely
+// absent from the Dashboard card now, even when a real expansionPotential
+// narrative exists (proving the removal is unconditional, not merely
+// "still hidden because this fixture happens to have none" the way the
+// existing absence tests further down already prove for the *empty* case).
+// It must still render via Prepare for Call's own
+// renderWhyItCouldGrowSection(), proving the underlying data/function are
+// untouched -- only the card's render call was removed.
 // ===========================================================================
 {
   const opp = baseOpp({
     commercialPlay: { concept: '50 Summers', narrative: 'Build a limited collection celebrating 50 summers of backyard memories.' },
     activationIdeas: ['Premium pool/beach towels', 'Heritage hats', 'Installer/team workwear', 'Customer cooler kits'],
-    expansionPotential: { narrative: 'Field apparel, seasonal hiring, and the Azureon relationship could all recur beyond this one order.', tags: ['recurring-program', 'parent-org-route'] }
+    expansionPotential: { narrative: 'Field apparel, seasonal hiring, and the Azureon relationship could all recur beyond this one order.', tags: ['recurring-program', 'parent-org-route'] },
+    isVerifiedSignalOpportunity: true
   });
   const html = sandbox.renderRepOpportunityCard(opp);
+  // Scoped to the visible header only for every "must NOT appear" check --
+  // opp-card-actions' "Prepare for Call" button embeds the FULL opp object
+  // (every activation idea, the complete expansion-potential narrative,
+  // etc.) as a JSON payload for its onclick handler, which is necessary
+  // (Prepare for Call needs the complete data) but would otherwise make a
+  // whole-card substring check see text that is not actually visibly
+  // rendered. Same convention the activation-ideas-cap test below already
+  // uses.
+  const visibleHeader = html.split('opp-card-actions')[0];
   const whyNowIdx = html.indexOf('Why Now');
+  const statusIdx = html.indexOf('Status');
   const playIdx = html.indexOf('The Play');
   const ideasIdx = html.indexOf('Ideas to Send');
-  const growIdx = html.indexOf('Why It Could Grow');
+  const contactIdx = html.indexOf('Recommended contact');
   const approachIdx = html.indexOf('How to Approach');
-  assert([whyNowIdx, playIdx, ideasIdx, growIdx, approachIdx].every(i => i !== -1), `all five section labels are present (got indices ${JSON.stringify([whyNowIdx, playIdx, ideasIdx, growIdx, approachIdx])})`);
-  assert(whyNowIdx < playIdx && playIdx < ideasIdx && ideasIdx < growIdx && growIdx < approachIdx, 'the five sections render in the approved order: Why Now -> The Play -> Ideas to Send -> Why It Could Grow -> How to Approach');
+  const indices = { whyNowIdx, statusIdx, playIdx, ideasIdx, contactIdx, approachIdx };
+  assert(Object.values(indices).every(i => i !== -1), `all six section labels are present (got ${JSON.stringify(indices)})`);
+  assert(whyNowIdx < statusIdx && statusIdx < playIdx && playIdx < ideasIdx && ideasIdx < contactIdx && contactIdx < approachIdx, `REQUIRED: the Dashboard card sections render in the approved order: Why Now -> Status (timing) -> The Play -> Ideas to Send -> Recommended contact -> How to Approach (got ${JSON.stringify(indices)})`);
   assert(html.includes('50 Summers'), 'the commercial play concept renders on the card');
   assert(html.includes('50 summers of backyard memories'), 'the commercial play narrative renders on the card');
-  assert(html.includes('Premium pool/beach towels') && html.includes('Heritage hats') && html.includes('Installer/team workwear'), 'specific activation ideas render as chips');
+  assert(visibleHeader.includes('Premium pool/beach towels') && visibleHeader.includes('Heritage hats'), 'specific activation ideas render as chips');
+  assert(!visibleHeader.includes('Installer/team workwear') && !visibleHeader.includes('Customer cooler kits'), 'the Dashboard card does not visibly show ideas beyond the strongest ~2, even though the underlying data has four');
   assert(!html.includes('Why it matters'), 'the old generic "Why it matters" label is gone, replaced by "The Play"');
   assert(!html.includes('>Conversation starter<'), 'the old "Conversation starter" label is gone, replaced by "How to Approach"');
+
+  // REQUIRED: Why It Could Grow is unconditionally absent from the
+  // Dashboard card -- this fixture has a real, non-empty expansionPotential
+  // narrative, so the only reason it can be missing is the sprint's
+  // intentional removal, not the pre-existing hide-when-empty rule.
+  assert(!visibleHeader.includes('Why It Could Grow'), 'REQUIRED: the Dashboard card never renders Why It Could Grow, even when a real expansion-potential narrative exists');
+  assert(!visibleHeader.includes('Field apparel, seasonal hiring'), 'REQUIRED: the expansion-potential narrative text itself never leaks onto the visible Dashboard card');
+
+  // REQUIRED: Prepare for Call can still render Why It Could Grow for the
+  // exact same opportunity -- the underlying function/data are untouched,
+  // only the Dashboard card's call to them was removed.
+  const growHtml = sandbox.renderWhyItCouldGrowSection(opp);
+  assert(growHtml.includes('Why It Could Grow'), 'REQUIRED: renderWhyItCouldGrowSection() (used by Prepare for Call) still renders Why It Could Grow for the same opportunity');
+  assert(growHtml.includes('Field apparel, seasonal hiring, and the Azureon relationship'), 'REQUIRED: Prepare for Call still shows the real expansion-potential narrative text');
 }
 
 // ===========================================================================
-// Primary card caps Activation Ideas at ~3; Prepare for Call's full detail
-// helper shows the complete list. Two strong ideas are shown as two, never
-// padded to three.
+// Compact Business Signal / Opportunity Cards sprint: the Dashboard card
+// caps Activation Ideas at ~2 (was ~3); Prepare for Call's full detail
+// helper is untouched and still shows the complete list. One strong idea
+// still renders as one, never padded toward two.
 // ===========================================================================
 {
   const opp = baseOpp({ activationIdeas: ['Idea One', 'Idea Two', 'Idea Three', 'Idea Four', 'Idea Five', 'Idea Six'] });
@@ -159,15 +202,15 @@ for (const fn of [sandbox.renderRepOpportunityCard, sandbox.renderOpportunitySec
   // Call needs the complete data) but would otherwise make a whole-card
   // substring check see ideas that are not actually visibly rendered.
   const cardVisibleHeader = cardHtml.split('opp-card-actions')[0];
-  assert(cardVisibleHeader.includes('Idea One') && cardVisibleHeader.includes('Idea Two') && cardVisibleHeader.includes('Idea Three'), 'the primary card shows the first 3 activation ideas');
-  assert(!cardVisibleHeader.includes('Idea Four') && !cardVisibleHeader.includes('Idea Five') && !cardVisibleHeader.includes('Idea Six'), 'the primary card does NOT visibly show ideas beyond the strongest ~3');
+  assert(cardVisibleHeader.includes('Idea One') && cardVisibleHeader.includes('Idea Two'), 'REQUIRED: the Dashboard card shows the first 2 activation ideas');
+  assert(!cardVisibleHeader.includes('Idea Three') && !cardVisibleHeader.includes('Idea Four') && !cardVisibleHeader.includes('Idea Five') && !cardVisibleHeader.includes('Idea Six'), 'REQUIRED: the Dashboard card does NOT visibly show ideas beyond the strongest ~2 (cap dropped from 3 to 2)');
   const fullHtml = sandbox.renderIdeasToSendSection(opp);
-  assert(fullHtml.includes('Idea Four') && fullHtml.includes('Idea Five') && fullHtml.includes('Idea Six'), 'Prepare for Call\'s Ideas to Send section shows the complete (untruncated) activation-ideas list');
+  assert(fullHtml.includes('Idea Three') && fullHtml.includes('Idea Four') && fullHtml.includes('Idea Five') && fullHtml.includes('Idea Six'), 'Prepare for Call\'s Ideas to Send section is unaffected by the card\'s cap change -- still shows the complete (untruncated) activation-ideas list');
 
-  const twoIdeaOpp = baseOpp({ activationIdeas: ['Only Idea One', 'Only Idea Two'] });
-  const twoIdeaHtml = sandbox.renderRepOpportunityCard(twoIdeaOpp);
-  const chipCount = (twoIdeaHtml.match(/opp-idea-chip/g) || []).length;
-  assert(chipCount === 2, `exactly 2 ideas render as 2 chips, never padded toward 3 (got ${chipCount})`);
+  const oneIdeaOpp = baseOpp({ activationIdeas: ['Only Idea One'] });
+  const oneIdeaHtml = sandbox.renderRepOpportunityCard(oneIdeaOpp);
+  const chipCount = (oneIdeaHtml.match(/opp-idea-chip/g) || []).length;
+  assert(chipCount === 1, `exactly 1 idea renders as 1 chip, never padded toward 2 (got ${chipCount})`);
 }
 
 // ===========================================================================
