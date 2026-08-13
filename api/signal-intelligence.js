@@ -1982,7 +1982,7 @@ function resolveEventType(text = '', family = '') {
   // already applies (verb + a real object, not the bare verb alone).
   const LEADERSHIP_ROLE_WORD = '(?:ceo|cfo|coo|cto|cmo|president|vice[- ]president|vp|chief(?:\\s+\\w+){0,2}\\s+officer|chief|executive director|managing director|general manager|director|partner|principal|chairman|chairwoman|chairperson)';
   const hasGenuineLeadershipLanguage =
-    new RegExp(`\\b(?:appoints?|appointed|names?|named|promotes?|promoted|joins|joined|hired)\\b[^.!?\\n]{0,50}\\b${LEADERSHIP_ROLE_WORD}\\b`, 'i').test(t);
+    new RegExp(`\\b(?:appoints?|appointed|names?|named|promotes?|promoted|joins|joined|hires?|hired|hiring)\\b[^.!?\\n]{0,50}\\b${LEADERSHIP_ROLE_WORD}\\b`, 'i').test(t);
   if (hasGenuineLeadershipLanguage) {
     return { primaryType: 'LEADERSHIP_APPOINTMENT', candidateTypes: ['LEADERSHIP_APPOINTMENT'], recurring: false };
   }
@@ -2085,10 +2085,20 @@ function extractFromOneField(t = '', companyNorm = '') {
   // boundary is farther away than a fixed length cap.
   const PN = "[A-Z][A-Za-z0-9&.'-]*(?:\\s+[A-Z][A-Za-z0-9&.'-]*){0,4}";
   const acquisitionMatch = t.match(new RegExp(`(?:[Aa]cquires?|[Aa]cquired|[Aa]cquisition of|[Cc]ompletes acquisition of|[Ff]inalizes purchase of)\\s+(${PN})`));
+  // Founder correction (BerryDunn Careers): "hires"/"hired"/"the hiring of"
+  // are just as common a way to phrase a genuine leadership appointment
+  // ("BerryDunn hires Carson Hanrahan as Chief Transformation Officer",
+  // "the hiring of Carson Hanrahan as Chief Transformation Officer") as
+  // "appoints"/"names"/"promotes" -- resolveEventType()'s own
+  // hasGenuineLeadershipLanguage() (immediately above) is fixed to
+  // recognize "hires"/"hired"/"hiring" as a leadership verb too, but this
+  // extractor didn't, so a genuinely correct LEADERSHIP_APPOINTMENT
+  // classification still had no way to capture the
+  // specific person/role that justified it.
   const appointmentMatch =
-    t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
+    t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?|[Hh]ires?|[Hh]ired|[Hh]iring of)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
     t.match(new RegExp(`(${PN})\\s+joins\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
-    t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
+    t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to|hired as)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
   const facilityInAtMatch = t.match(new RegExp(`(?:facility|branch|office|location|plant)\\s+(?:in|at)\\s+(${PN})`, 'i'));
   const openingLocationMatch = t.match(new RegExp(`(?:grand opening|ribbon cutting|opening|opens?)\\s+(?:of|for)?\\s*(?:its|their|a|the)?\\s*(?:new)?\\s*(?:branch|location|office)?\\s*(?:in|at)\\s+(${PN})`, 'i'));
   const openingOfXLocationMatch = t.match(new RegExp(`(?:grand opening|opening)\\s+of\\s+(?:its|their|a|the)?\\s*(?:new\\s+)?(${PN})\\s+(?:location|branch|office)\\b`, 'i'));
@@ -2771,10 +2781,30 @@ function resolveEvents(candidates = []) {
       : ev.candidates.some(c => c.identityConfidence === 'unconfirmed') ? 'unconfirmed'
       : primaryCandidate.identityConfidence;
 
+    // Founder correction (BerryDunn Careers evidence provenance): `title`
+    // above is already the BEST available seller-facing title --
+    // generateCanonicalTitle() prefers a specifically extracted event
+    // ("Carson Hanrahan Appointed Chief Transformation Officer") built from
+    // identity.subjectEntity/role, and only falls back to the source's own
+    // (cleaned) headline when no such extraction succeeded. The code below
+    // previously did the opposite: it always preferred the RAW candidate's
+    // own title/headline -- the container/aggregator/profile page's own
+    // title (e.g. "BerryDunn - Careers") -- and only used the generated
+    // title as an unreachable last resort, silently discarding it into the
+    // canonicalTitle field below that nothing ever read. Confirmed
+    // production case: HA correctly classified a BerryDunn careers page's
+    // embedded Chief Transformation Officer hire as LEADERSHIP_APPOINTMENT
+    // (classification was never wrong), but "What changed"/How to
+    // Approach/Prepare for Call all rendered the generic "BerryDunn -
+    // Careers" container title instead of the specific grounded event that
+    // justified the classification. Only overrides when a real extraction
+    // succeeded (titleSource === 'generated') -- when nothing was
+    // extractable, the prior candidate-title-first behavior is unchanged.
+    const preferGeneratedTitle = titleSource === 'generated';
     return {
       ...primaryCandidate,
-      title: primaryCandidate.title || primaryCandidate.headline || title,
-      headline: primaryCandidate.headline || primaryCandidate.title || title,
+      title: preferGeneratedTitle ? title : (primaryCandidate.title || primaryCandidate.headline || title),
+      headline: preferGeneratedTitle ? title : (primaryCandidate.headline || primaryCandidate.title || title),
       url: bestEvidence?.url || primaryCandidate.url,
       sourceName: bestEvidence?.sourceName || primaryCandidate.sourceName,
       publishedAt: bestEvidence?.publishedDate || primaryCandidate.publishedAt || '',
@@ -2832,7 +2862,17 @@ function resolveOpportunityEvents(opportunities = []) {
   return resolveEvents(candidates).map(ev => ({
     ...ev,
     headline: ev.headline || ev.title,
-    signalTitle: ev.signalTitle || ev.headline || ev.title,
+    // Founder correction (BerryDunn Careers evidence provenance): ev's own
+    // `...primaryCandidate` spread (inside resolveEvents()'s return) can
+    // still carry the ORIGINAL, un-fixed opportunity's own signalTitle
+    // field (e.g. the raw "BerryDunn - Careers" container-page title) --
+    // that field is never touched by resolveEvents()'s title/headline fix
+    // above, so preferring it here would silently reintroduce the exact
+    // container-title leak that fix closes. ev.headline/ev.title are
+    // already the best available seller-facing title (specifically
+    // extracted when possible); signalTitle must agree with them, not with
+    // a stale, unrelated field carried through the spread.
+    signalTitle: ev.headline || ev.title,
     sourceUrl: ev.sourceUrl || ev.url
   }));
 }
