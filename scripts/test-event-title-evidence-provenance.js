@@ -154,5 +154,88 @@ const BERRYDUNN_SOURCE_URL = 'https://www.consulting.us/news/berrydunn-careers';
   assert(fallback.titleSource === 'fallback-source-title', `sanity: no extraction reports titleSource "fallback-source-title" (got "${fallback.titleSource}")`);
 }
 
+// ===========================================================================
+// 7. LIVE-QA PARITY: the exact real persisted ha_signals row (id
+// 18430666-5650-4e32-af7a-3dc1f5ee4a29, traced directly via Supabase
+// execute_sql during this follow-up round) -- not a synthetic
+// extraction-friendly fixture. Field values below are copied verbatim from
+// the real stored `payload` JSONB column.
+//
+// Trace result: the deterministic reproduction in section 3 above passed
+// against a SYNTHETIC evidence sentence ("BerryDunn hires Carson Hanrahan
+// as Chief Transformation Officer") that does not match what was actually
+// captured for this real row. The real row's rawSnippet is a GROUP
+// promotion sentence ("has promoted 10 team members in its 2025 principal
+// class") with no named individual at all -- rawContent is empty (no full
+// page scrape was ever captured), so the Carson Hanrahan fact genuinely
+// does not exist anywhere in this row's persisted evidence. This is
+// founder root cause #1 ("the legacy persisted row does not contain enough
+// raw evidence for the new extractor") -- NOT #2 (reconciliation not
+// running -- it runs, unconditionally, on every dashboard read via
+// api/get-dashboard.js's canonicalizeAccountOpportunities()) and NOT #3
+// (no later hydration step restores the old title -- resolveOpportunityEvents()
+// is the last write before the client ever sees the object).
+//
+// Fix: extractFromOneField()'s new groupPromotionMatch captures the count
+// and role actually present in the real evidence ("10" / "principal") --
+// never a fabricated name -- so generateCanonicalTitle() has a second,
+// narrower path to a real title when no named appointee exists.
+// ===========================================================================
+{
+  const LIVE_BERRYDUNN_ROW = {
+    url: 'https://www.consulting.us/firms/berrydunn/careers',
+    type: 'Leadership Change',
+    title: 'BerryDunn - Careers',
+    whyNow: 'BerryDunn has public leadership or team-change activity. Ask whether the leadership change connects to any team engagement, recognition, or internal brand moments.',
+    snippet: 'BerryDunn',
+    headline: 'BerryDunn - Careers',
+    rawTitle: 'BerryDunn - Careers',
+    eventDate: '',
+    sourceUrl: 'https://www.consulting.us/firms/berrydunn/careers',
+    confidence: 0.86,
+    rawContent: '',
+    rawSnippet: 'BerryDunn promotes 10 to principal BerryDunn, a Portland, Maine-based accounting and consulting firm, has promoted 10 team members in its 2025 principal class.',
+    signalType: 'Leadership Change',
+    sourceName: 'consulting.us',
+    sourceType: 'Careers / job posting',
+    accountName: 'BerryDunn',
+    companyName: 'BerryDunn',
+    publishedAt: '',
+    signalTitle: 'BerryDunn - Careers',
+    signal_type: 'Leadership Change',
+    whatChanged: 'BerryDunn',
+    businessContext: 'BerryDunn',
+    signalDetail: 'BerryDunn has public leadership or team-change activity.',
+    signalFamily: 'leadership',
+    signalSubtype: 'Promotion',
+    canonicalTitle: 'BerryDunn - Careers',
+    opportunityType: 'LEADERSHIP_APPOINTMENT',
+    canonicalEventType: 'LEADERSHIP_APPOINTMENT',
+    identityConfidence: 'unconfirmed',
+    affectedDepartment: 'Marketing / HR'
+  };
+
+  // Sanity: reproduces the exact live-QA symptom BEFORE tracing why -- title
+  // and whatChanged are both still the generic container title/bare company
+  // name in the raw stored payload itself (this is what the founder's
+  // screenshot showed).
+  assert(LIVE_BERRYDUNN_ROW.title === 'BerryDunn - Careers', 'sanity: the real stored payload\'s title is the generic container page title, exactly as founder QA reported');
+  assert(LIVE_BERRYDUNN_ROW.whatChanged === 'BerryDunn', 'sanity: the real stored payload\'s whatChanged is literally just the bare company name, exactly as founder QA reported');
+
+  const [resolved] = resolveOpportunityEvents([LIVE_BERRYDUNN_ROW]);
+  assert(resolved.title === 'BerryDunn Promotes 10 to Principal', `REQUIRED (live-QA parity): the exact real persisted row now resolves to a specific, non-fabricated title built from the real evidence (got "${resolved.title}")`);
+  assert(resolved.headline === 'BerryDunn Promotes 10 to Principal', `REQUIRED: headline agrees (got "${resolved.headline}")`);
+  assert(resolved.signalTitle === 'BerryDunn Promotes 10 to Principal', `REQUIRED: signalTitle (the field every dashboard surface reads) agrees (got "${resolved.signalTitle}")`);
+  assert(resolved.whatChanged === 'BerryDunn Promotes 10 to Principal', `REQUIRED: "What changed" is no longer the bare company name (got "${resolved.whatChanged}")`);
+  assert(resolved.title !== 'BerryDunn - Careers', 'REQUIRED: "BerryDunn - Careers" is never used as the customer-facing event title for this row');
+  assert(resolved.whatChanged !== 'BerryDunn', 'REQUIRED: "What changed: BerryDunn" is never emitted as a substitute for the event for this row');
+  assert(resolved.eventIdentity.eventType === 'LEADERSHIP_APPOINTMENT', `REQUIRED: canonical event TYPE is unchanged -- still Leadership Change, never reclassified (got "${resolved.eventIdentity.eventType}")`);
+  assert(!/Carson Hanrahan/i.test(resolved.title), 'REQUIRED: no name is fabricated for this row -- the real evidence never mentions Carson Hanrahan, so the title correctly uses only the group-promotion fact (count + role) actually present');
+
+  // Preserve: this exact row's event_fingerprint/identity path is untouched
+  // -- the fix is display-only, never fed into the discriminator/anchor.
+  assert(resolved.eventFingerprint.startsWith('v2|'), `preserve: the event_fingerprint is still v2-tagged, identity logic untouched by this fix (got "${resolved.eventFingerprint}")`);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

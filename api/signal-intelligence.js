@@ -2071,11 +2071,13 @@ function resolveEventType(text = '', family = '') {
 }
 
 function extractFromOneField(t = '', companyNorm = '') {
-  if (!t) return { subjectEntity: null, location: null, role: null, anchor: null };
+  if (!t) return { subjectEntity: null, location: null, role: null, anchor: null, groupPromotionCount: null, groupPromotionRole: null };
   let subjectEntity = null;
   let location = null;
   let role = null;
   let anchor = null;
+  let groupPromotionCount = null;
+  let groupPromotionRole = null;
 
   const NON_LOCATION_WORDS = new Set(['new', 'our', 'its', 'their', 'the', 'this', 'next', 'another', 'a', 'an', 'latest', 'newest', 'grand', 'corp', 'inc', 'llc', 'co', 'company', 'corporation', 'ltd']);
   // Proper-noun sequence: 1-5 consecutive capitalized tokens. Used for any entity/place
@@ -2099,6 +2101,24 @@ function extractFromOneField(t = '', companyNorm = '') {
     t.match(new RegExp(`(?:[Aa]ppoints?|[Nn]ames?|[Pp]romotes?|[Hh]ires?|[Hh]ired|[Hh]iring of)\\s+(${PN})\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
     t.match(new RegExp(`(${PN})\\s+joins\\s+as\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`)) ||
     t.match(new RegExp(`(${PN})\\s+(?:has been |was |is )?(?:appointed|named|promoted to|hired as)\\s+([A-Za-z0-9&, -]{3,70}?)(?:\\.|,?\\s+effective\\b|$)`));
+  // Founder correction (BerryDunn Careers, live-QA trace): a genuine
+  // GROUP promotion ("BerryDunn promotes 10 to principal") names no single
+  // individual, so appointmentMatch's (PN) proper-noun capture above can
+  // never match it -- confirmed live production case: the account's real,
+  // persisted rawSnippet was exactly this group-promotion sentence (no
+  // Carson-Hanrahan-shaped text was ever captured for this row at all), so
+  // subjectEntity/anchor stayed null and generateCanonicalTitle() fell all
+  // the way back to the source's own container-page title. The count and
+  // role named here ARE present, verbatim, in the real evidence -- this is
+  // not a name invented from the container title, only a second, narrower
+  // extraction shape for a fact appointmentMatch structurally cannot cover.
+  // Role capture is deliberately lowercase-only (no /i flag) -- a real role
+  // title in this "promoted N to ROLE" phrasing is a common noun ("principal",
+  // "senior manager"), so requiring lowercase naturally stops the capture at
+  // the next capitalized word (e.g. a company name repeating immediately
+  // after, as in "...promotes 10 to principal BerryDunn, a Portland...")
+  // instead of needing a punctuation boundary that may not be adjacent.
+  const groupPromotionMatch = t.match(/\b(?:[Pp]romotes?|[Pp]romoted)\s+(\d{1,4})\s+(?:people|employees|team members|staff|colleagues)?\s*to\s+([a-z][a-z]*(?:\s+[a-z]+){0,3})\b/);
   const facilityInAtMatch = t.match(new RegExp(`(?:facility|branch|office|location|plant)\\s+(?:in|at)\\s+(${PN})`, 'i'));
   const openingLocationMatch = t.match(new RegExp(`(?:grand opening|ribbon cutting|opening|opens?)\\s+(?:of|for)?\\s*(?:its|their|a|the)?\\s*(?:new)?\\s*(?:branch|location|office)?\\s*(?:in|at)\\s+(${PN})`, 'i'));
   const openingOfXLocationMatch = t.match(new RegExp(`(?:grand opening|opening)\\s+of\\s+(?:its|their|a|the)?\\s*(?:new\\s+)?(${PN})\\s+(?:location|branch|office)\\b`, 'i'));
@@ -2164,6 +2184,13 @@ function extractFromOneField(t = '', companyNorm = '') {
   const trimTrailingPunct = (s) => s ? s.replace(/[.,;:]+$/, '').trim() : s;
   if (acquisitionMatch) subjectEntity = trimTrailingPunct(acquisitionMatch[1].trim());
   if (appointmentMatch) { subjectEntity = trimTrailingPunct(appointmentMatch[1].trim()); role = appointmentMatch[2].trim(); }
+  // Only when no NAMED individual was found -- a real named appointment is
+  // always more specific than a group-promotion count, so it takes
+  // precedence when both happen to be present in the same text.
+  if (!subjectEntity && groupPromotionMatch) {
+    groupPromotionCount = groupPromotionMatch[1].trim();
+    groupPromotionRole = trimTrailingPunct(groupPromotionMatch[2].trim());
+  }
 
   if (facilityInAtMatch) location = trimTrailingPunct(facilityInAtMatch[1].trim());
   else if (openingOfXLocationMatch) location = trimTrailingPunct(openingOfXLocationMatch[1].trim());
@@ -2203,7 +2230,7 @@ function extractFromOneField(t = '', companyNorm = '') {
   else if (productNameMatch) anchor = trimTrailingPunct(productNameMatch[1].trim());
   else if (rebrandNameMatch) anchor = trimTrailingPunct(rebrandNameMatch[1].trim());
 
-  return { subjectEntity, location, role, anchor };
+  return { subjectEntity, location, role, anchor, groupPromotionCount, groupPromotionRole };
 }
 
 // Runs extraction on each field SEPARATELY (never on a blind concatenation of
@@ -2213,16 +2240,20 @@ function extractFromOneField(t = '', companyNorm = '') {
 function extractEventEntities(title = '', snippet = '', rawContent = '', companyNorm = '') {
   const fields = [clean(title), clean(snippet), clean(rawContent)].filter(Boolean);
   let subjectEntity = null, location = null, role = null, anchor = null;
+  let groupPromotionCount = null, groupPromotionRole = null;
   for (const f of fields) {
     const r = extractFromOneField(f, companyNorm);
     if (!subjectEntity && r.subjectEntity) subjectEntity = r.subjectEntity;
     if (!location && r.location) location = r.location;
     if (!role && r.role) role = r.role;
     if (!anchor && r.anchor) anchor = r.anchor;
+    if (!groupPromotionCount && r.groupPromotionCount) { groupPromotionCount = r.groupPromotionCount; groupPromotionRole = r.groupPromotionRole; }
     if (subjectEntity && location && role && anchor) break;
   }
   if (!subjectEntity && location) subjectEntity = location;
   return {
+    groupPromotionCount,
+    groupPromotionRole: groupPromotionRole ? groupPromotionRole.slice(0, 40) : null,
     subjectEntity: subjectEntity ? subjectEntity.slice(0, 60) : null,
     location: location ? location.slice(0, 60) : null,
     role: role ? role.slice(0, 70) : null,
@@ -2488,7 +2519,17 @@ function generateCanonicalTitle(eventType, identity = {}, evidence = []) {
     LOCATION_REOPENING: subject ? `${subject} Branch Reopening` : null,
     RENOVATION_COMPLETION: subject ? `${subject} Renovation Completed` : null,
     FACILITY_EXPANSION: identity.location ? `${identity.location} Facility Expansion` : null,
-    LEADERSHIP_APPOINTMENT: identity.subjectEntity ? `${identity.subjectEntity} Appointed${identity.role ? ` ${identity.role}` : ''}` : null,
+    // Founder correction (BerryDunn Careers, live-QA trace): a genuine
+    // GROUP promotion ("BerryDunn promotes 10 to principal") names no
+    // single individual, so it can never win the subjectEntity branch --
+    // used only as a fallback when no named appointee was extracted, and
+    // built ONLY from the count/role the real evidence actually named
+    // (never a fabricated person).
+    LEADERSHIP_APPOINTMENT: identity.subjectEntity
+      ? `${identity.subjectEntity} Appointed${identity.role ? ` ${identity.role}` : ''}`
+      : (identity.groupPromotionCount && identity.groupPromotionRole && companyDisplay
+        ? `${companyDisplay} Promotes ${identity.groupPromotionCount} to ${identity.groupPromotionRole.replace(/\b[a-z]/g, ch => ch.toUpperCase())}`
+        : null),
     ACQUISITION: identity.subjectEntity ? `Acquisition of ${identity.subjectEntity}` : null,
     PRODUCT_LAUNCH: identity.subjectEntity ? `${identity.subjectEntity} Launch` : (companyDisplay ? `${companyDisplay} Product Launch` : null)
   };
@@ -2589,7 +2630,7 @@ function resolveEvents(candidates = []) {
     // over the company field itself, and would otherwise mask a genuinely
     // distinctive anchor (the award's own name) present later in the same
     // sentence.
-    const { subjectEntity, location, role, anchor } = extractEventEntities(
+    const { subjectEntity, location, role, anchor, groupPromotionCount, groupPromotionRole } = extractEventEntities(
       c.rawTitle || c.title || c.headline || '',
       c.rawSnippet || c.snippet || '',
       c.rawContent || c.pageContent || '',
@@ -2618,6 +2659,12 @@ function resolveEvents(candidates = []) {
       candidateTypes: typeInfo.candidateTypes,
       recurring: typeInfo.recurring,
       subjectEntity, location, role, anchor,
+      // Founder correction (BerryDunn Careers, live-QA trace): display-only,
+      // like `location` above -- never fed into the fingerprint
+      // discriminator/anchor, so this fix cannot change event identity for
+      // any already-persisted row, only what generateCanonicalTitle() below
+      // is allowed to render instead of a bare container-page title.
+      groupPromotionCount, groupPromotionRole,
       eventDate, dateConfidence, year,
       normalizedUrl: normalizeUrl(c.url || c.sourceUrl || ''),
       evidenceText: text
@@ -2801,10 +2848,24 @@ function resolveEvents(candidates = []) {
     // succeeded (titleSource === 'generated') -- when nothing was
     // extractable, the prior candidate-title-first behavior is unchanged.
     const preferGeneratedTitle = titleSource === 'generated';
+    // Founder correction (BerryDunn Careers, live-QA trace): "What changed"
+    // (dashboard/index.html's Research Results row) reads whatChanged, a
+    // SEPARATE field from title/headline above, and was left completely
+    // untouched by the title fix -- confirmed live production case:
+    // whatChanged had independently degenerated to the bare company name
+    // ("BerryDunn"), so "What changed" rendered literally "BerryDunn" even
+    // once title/headline were fixed. Only overridden when whatChanged is
+    // genuinely degenerate (empty, or exactly the company name and nothing
+    // else) AND a real extraction succeeded -- a normal, already-descriptive
+    // whatChanged (an AI-authored narrative, a real sentence) is never
+    // replaced by the shorter generated title.
+    const whatChangedIsDegenerate = !clean(primaryCandidate.whatChanged || '') || normalizeForMatch(primaryCandidate.whatChanged) === ev.identity.company;
+    const preferGeneratedWhatChanged = preferGeneratedTitle && whatChangedIsDegenerate;
     return {
       ...primaryCandidate,
       title: preferGeneratedTitle ? title : (primaryCandidate.title || primaryCandidate.headline || title),
       headline: preferGeneratedTitle ? title : (primaryCandidate.headline || primaryCandidate.title || title),
+      whatChanged: preferGeneratedWhatChanged ? title : primaryCandidate.whatChanged,
       url: bestEvidence?.url || primaryCandidate.url,
       sourceName: bestEvidence?.sourceName || primaryCandidate.sourceName,
       publishedAt: bestEvidence?.publishedDate || primaryCandidate.publishedAt || '',
