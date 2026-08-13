@@ -194,6 +194,53 @@ function mockSb(rows){
   assert(usage.totalMonitoredCompanies === 3, 'REQUIRED: active customer accounts (the population api/weekly-scan.js actually re-researches weekly) consume capacity (got ' + usage.totalMonitoredCompanies + ')');
 }
 
+// REQUIRED: an individually paused customer account does not consume
+// capacity, using the SAME canonical pause field (ha_accounts.raw_data.
+// monitoring_status) api/weekly-scan.js's accountPayload() now reads --
+// one pause definition, not two.
+{
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    uploads: [{ id: 'up1', stage: 'uploaded' }],
+    accounts: [
+      { account_name: 'Acme Inc', raw_data: {} },
+      { account_name: 'Nike', raw_data: { monitoring_status: 'paused' } },
+      { account_name: 'L.L.Bean', raw_data: {} }
+    ]
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
+  assert(usage.totalMonitoredCompanies === 2, `REQUIRED: an individually paused customer account (Nike) does not consume capacity -- 3 accounts, 1 paused, capacity usage is 2 (got ${usage.totalMonitoredCompanies})`);
+}
+
+// REQUIRED: a resumed account (monitoring_status explicitly set back to
+// "active") consumes capacity again.
+{
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    uploads: [{ id: 'up1', stage: 'uploaded' }],
+    accounts: [
+      { account_name: 'Acme Inc', raw_data: {} },
+      { account_name: 'Nike', raw_data: { monitoring_status: 'active' } }
+    ]
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
+  assert(usage.totalMonitoredCompanies === 2, `REQUIRED: a resumed account (monitoring_status explicitly "active") consumes capacity again (got ${usage.totalMonitoredCompanies})`);
+}
+
+// REQUIRED: upload-level pause/archive exclusion remains intact alongside
+// the new account-level exclusion -- an entire paused upload contributes
+// nothing, regardless of what any individual account's own
+// monitoring_status says.
+{
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    uploads: [{ id: 'up-active', stage: 'uploaded' }, { id: 'up-paused', stage: 'paused' }],
+    accounts: [{ account_name: 'Should Not Appear', raw_data: { monitoring_status: 'active' } }] // mock only serves this for the active upload's query; the paused upload is never queried at all
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
+  assert(usage.totalMonitoredCompanies === 1, `REQUIRED: upload-level pause/archive exclusion still works -- the paused upload's account query is never even issued (got ${usage.totalMonitoredCompanies})`);
+}
+
 // REQUIRED: prospect accounts do not consume capacity, even with zero
 // customer accounts at all.
 {

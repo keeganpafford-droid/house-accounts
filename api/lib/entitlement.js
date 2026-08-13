@@ -127,7 +127,15 @@ export async function usageFor(sb, user, org = null) {
       const activeUploadIds = uploads.filter(u => !['paused', 'archived'].includes(clean(u.stage).toLowerCase())).map(u => u.id).filter(Boolean);
       if (activeUploadIds.length) {
         const upFilter = `in.(${activeUploadIds.map(encodeURIComponent).join(',')})`;
-        customer = (await sb(`ha_accounts?upload_id=${upFilter}&select=account_name`)) || [];
+        // Correction: an individually-paused customer account (the
+        // per-account pause api/monitoring-lists.js's pause-account action
+        // sets, at ha_accounts.raw_data.monitoring_status -- distinct from
+        // the upload-level stage checked above) is not actively monitored,
+        // so it must not consume capacity either. Same canonical pause
+        // state api/weekly-scan.js now reads (see its own accountPayload()
+        // fix) -- one pause definition, not two.
+        const rows = (await sb(`ha_accounts?upload_id=${upFilter}&select=account_name,raw_data`)) || [];
+        customer = rows.filter(r => !['paused', 'archived'].includes(clean(r.raw_data?.monitoring_status || '').toLowerCase()));
       }
     } catch {}
     try {
