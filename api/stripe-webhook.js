@@ -75,7 +75,15 @@ async function handleCheckoutSessionCompleted(session){
     stripe_price_id:stripePriceIdForBand(band.key)||null,
     subscription_status:'active',
     plan:'paid',
-    account_capacity:band.maxAccounts
+    account_capacity:band.maxAccounts,
+    // A successful real paid conversion permanently retires any legacy
+    // 30-day self-service trial for this org. trial_end is deliberately
+    // preserved as a historical record; only trial_status moves out of
+    // 'active' so trialCurrentlyActive() can never treat this org as
+    // still-trialing again -- including after a later cancellation, when
+    // account_capacity()'s precedence order would otherwise fall through
+    // to whatever's left of the old trial window instead of Free.
+    trial_status:'inactive'
   });
 }
 

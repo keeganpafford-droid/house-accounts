@@ -40,18 +40,27 @@ export function trialCurrentlyActive(org = {}) {
 }
 
 // The org's effective monitored-account capacity right now. null means
-// unlimited. A currently-active trial takes priority over the stored
-// account_capacity column (preserving today's dynamic, self-expiring
-// trial behavior); only a genuinely paid/manual subscription reads the
-// stored column. Everything else (free, or a lapsed/never-converted
-// trial, or a canceled subscription) falls back to the free ceiling.
+// unlimited. Precedence, most authoritative first:
+//   1. a genuine active/paid/manual Stripe (or manually-granted) subscription
+//      -> the stored account_capacity column. A real purchase always wins,
+//      even if a legacy trial technically has time left on it.
+//   2. otherwise, a currently-active grandfathered legacy trial -> dynamic,
+//      self-expiring unlimited access (unchanged from before).
+//   3. otherwise (free, a lapsed/never-converted trial, or a canceled
+//      subscription) -> the free ceiling.
+// This order is what makes cancellation safe: once a paid subscription is
+// retired (subscription_status no longer active/paid/manual), capacity
+// falls through to step 2 -- which is why api/stripe-webhook.js also
+// retires trial_status on a successful checkout, so a canceled paid org
+// can never fall back into the remainder of an old trial it already
+// converted out of. See trialCurrentlyActive() above.
 export function accountCapacity(org = {}) {
-  if (trialCurrentlyActive(org)) return null;
   const sub = clean(org.subscription_status).toLowerCase();
   if (['active', 'paid', 'manual'].includes(sub)) {
     const raw = org.account_capacity;
     return raw === null || raw === undefined ? null : Number(raw);
   }
+  if (trialCurrentlyActive(org)) return null;
   return FREE_ACCOUNT_CAPACITY;
 }
 
@@ -60,9 +69,15 @@ export function entitlement(org = {}) {
   const sub = clean(org.subscription_status || '').toLowerCase();
   const trial = clean(org.trial_status || '').toLowerCase();
   const trialDays = daysRemaining(org.trial_end);
-  const trialActive = trialCurrentlyActive(org);
+  const paidActive = ['active', 'paid', 'manual'].includes(sub);
+  // Customer-facing trial framing is suppressed entirely once a genuine
+  // paid/manual subscription exists -- a paying customer is never
+  // described or treated as being on a trial (dashboard copy, "trial
+  // expired" messaging, day-count, etc.), even in the moment right after
+  // conversion before any separate trial-retirement write has run.
+  const trialActive = !paidActive && trialCurrentlyActive(org);
   const trialUsed = !!org.trial_used;
-  const isExpired = (sub === 'trialing' || trial === 'active') && trialDays === 0;
+  const isExpired = !paidActive && (sub === 'trialing' || trial === 'active') && trialDays === 0;
   const capacity = accountCapacity(org);
   const unlimited = capacity === null;
   return {
@@ -72,11 +87,11 @@ export function entitlement(org = {}) {
     trialStartedAt: org.trial_started_at || '',
     trialEnd: org.trial_end || '',
     trialUsed,
-    trialDaysRemaining: trialDays,
+    trialDaysRemaining: paidActive ? null : trialDays,
     trialActive,
     trialExpired: isExpired,
     trialAlreadyUsedExpired: trialUsed && isExpired,
-    paidActive: ['active', 'paid', 'manual'].includes(sub),
+    paidActive,
     unlimited,
     isLimitedPlan: !unlimited,
     isFreePlan: !unlimited,

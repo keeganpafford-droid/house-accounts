@@ -97,6 +97,33 @@ async function run(){
     assert(org.stripe_price_id === 'price_test_500', 'the org is stamped with the real Price ID resolved from the band, traced back through pricing-bands.js');
     assert(org.subscription_status === 'active' && org.plan === 'paid', 'the org becomes active/paid');
     assert(org.account_capacity === 500, 'the org\'s account_capacity is set to the purchased band\'s ceiling');
+    assert(org.trial_status === 'inactive', 'checkout.session.completed retires trial_status to inactive, even for an org with no prior trial at all');
+  }
+
+  // 1b. Correction round: the exact real-world sandbox shape -- an org
+  // already inside a grandfathered legacy trial (trial_status active,
+  // trial_end weeks out) completes a real Checkout. The legacy trial must
+  // be permanently retired, not merely superseded for the moment.
+  {
+    orgRows = [{
+      id: 'org-1b', stripe_customer_id: null, subscription_status: 'trialing',
+      plan: 'team', trial_status: 'active', trial_end: '2026-09-10T02:27:09.635Z',
+      trial_used: true, account_capacity: 10
+    }];
+    global.fetch = mockFetch();
+    const res = fakeRes();
+    await handler(fakeReq({
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_1b', customer: 'cus_1b', subscription: 'sub_1b', metadata: { organization_id: 'org-1b', band_key: 'band_100' } } }
+    }), res);
+    assert(res.statusCode === 200, 'checkout.session.completed for a mid-legacy-trial org returns 200');
+    const org = orgRows.find(o => o.id === 'org-1b');
+    assert(org.subscription_status === 'active' && org.plan === 'paid' && org.account_capacity === 100, 'the org converts to the purchased 100-account band');
+    assert(org.trial_status === 'inactive', 'REQUIRED: the legacy trial (trial_status was "active") is retired by a successful conversion');
+    assert(org.trial_end === '2026-09-10T02:27:09.635Z', 'trial_end is preserved as a historical record, not nulled out');
+    const { accountCapacity, entitlement } = await import('../api/lib/entitlement.js');
+    assert(accountCapacity(org) === 100, 'the real unified entitlement logic, run against the exact post-webhook row, reports the purchased capacity (100)');
+    assert(entitlement(org).trialActive === false, 'and no longer reports this org as being on a trial at all');
   }
 
   // 2. checkout.session.completed with no organization_id/band_key metadata
@@ -162,6 +189,34 @@ async function run(){
     const { accountCapacity } = await import('../api/lib/entitlement.js');
     const org = orgRows.find(o => o.id === 'org-5');
     assert(accountCapacity(org) === 10, 'after cancellation, the unified entitlement logic reports a capacity of 10 (Free) for this org, despite account_capacity=1500 still being stored');
+  }
+
+  // 5b. REQUIRED end-to-end lifecycle: legacy trial -> real paid Checkout
+  // -> later cancellation, driven through the two actual webhook handlers
+  // in sequence (not hand-constructed fixture state), proving the
+  // cancellation cannot resurrect the old trial precisely because the
+  // Checkout step already retired it.
+  {
+    orgRows = [{
+      id: 'org-5b', stripe_customer_id: null, subscription_status: 'trialing',
+      plan: 'team', trial_status: 'active', trial_end: '2026-09-10T02:27:09.635Z',
+      trial_used: true, account_capacity: 10
+    }];
+    global.fetch = mockFetch();
+    await handler(fakeReq({
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_5b', customer: 'cus_5b', subscription: 'sub_5b', metadata: { organization_id: 'org-5b', band_key: 'band_500' } } }
+    }), fakeRes());
+    let org = orgRows.find(o => o.id === 'org-5b');
+    assert(org.subscription_status === 'active' && org.trial_status === 'inactive', 'step 1: conversion succeeds and retires the legacy trial');
+
+    await handler(fakeReq({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_5b', customer: 'cus_5b' } } }), fakeRes());
+    org = orgRows.find(o => o.id === 'org-5b');
+    assert(org.subscription_status === 'canceled', 'step 2: the subscription is later canceled');
+
+    const { accountCapacity, trialCurrentlyActive } = await import('../api/lib/entitlement.js');
+    assert(trialCurrentlyActive(org) === false, 'REQUIRED: after cancellation, trialCurrentlyActive() is false -- the trial does not come back');
+    assert(accountCapacity(org) === 10, 'REQUIRED: after cancellation, effective capacity is Free (10), not a resurrected remainder of the original legacy trial (which still had time left on trial_end)');
   }
 
   // 6. An event type outside the three handled ones is acknowledged but

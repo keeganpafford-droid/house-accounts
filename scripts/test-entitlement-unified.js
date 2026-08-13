@@ -38,10 +38,63 @@ assert(accountCapacity({ subscription_status: 'canceled', account_capacity: 500 
 assert(accountCapacity({ subscription_status: 'past_due', account_capacity: 500 }) === 10, 'a subscription_status the webhook wrote verbatim from Stripe (e.g. past_due) that is not active/paid/manual falls back to 10');
 assert(accountCapacity({ plan: 'enterprise', subscription_status: 'inactive', account_capacity: null }) === 10, 'plan="enterprise" alone, with a subscription_status that is not active/paid/manual, does NOT bypass to unlimited -- subscription_status is the actual gate now, not the plan label');
 {
-  // A currently-active trial takes priority even for an org that also has
-  // a stale/irrelevant account_capacity value sitting in the column.
+  // A currently-active trial takes priority over a leftover finite
+  // account_capacity ONLY when there is no genuine paid subscription --
+  // subscription_status stays 'trialing' here, so this org has never
+  // actually converted.
   const org = { subscription_status: 'trialing', trial_status: 'active', trial_end: daysFromNow(15), account_capacity: 10 };
-  assert(accountCapacity(org) === null, 'an active trial is unlimited even if account_capacity happens to hold a finite leftover value');
+  assert(accountCapacity(org) === null, 'an active (unconverted) trial is unlimited even if account_capacity happens to hold a finite leftover value');
+}
+
+// --- Correction round: paid precedence over a still-open legacy trial --
+// This is the exact real-world shape traced from the sandbox test org:
+// an organization already inside a grandfathered legacy trial
+// (trial_status active, trial_end weeks out) that then completes a real
+// Stripe Checkout while that trial window is still technically open.
+{
+  const convertedOrg = {
+    plan: 'paid', subscription_status: 'active',
+    trial_status: 'active', trial_end: daysFromNow(28), trial_used: true,
+    account_capacity: 100
+  };
+  assert(accountCapacity(convertedOrg) === 100, 'REQUIRED: a genuine paid subscription wins immediately over a still-open legacy trial -- purchased capacity (100), not unlimited');
+  const ent = entitlement(convertedOrg);
+  assert(ent.companyLimit === 100, 'entitlement().companyLimit reflects the purchased capacity, not the leftover trial');
+  assert(ent.trialActive === false, 'REQUIRED: customer-facing entitlement no longer reports an active trial after conversion, even though trial_status/trial_end are still literally "active"/in the future in the row');
+  assert(ent.trialDaysRemaining === null, 'REQUIRED: trialDaysRemaining is suppressed once paid, so dashboard copy like "Paid trial · N days left" cannot be built from it');
+  assert(ent.unlimited === false, 'a converted org with a finite purchased band is correctly reported as NOT unlimited');
+}
+{
+  // Robustness: even if a converted org's trial_status was somehow never
+  // separately retired (defense in depth -- the webhook does retire it,
+  // but the entitlement layer must not depend on that alone), paid
+  // precedence still wins on its own via subscription_status.
+  const org = { subscription_status: 'manual', trial_status: 'active', trial_end: daysFromNow(10), account_capacity: 2500 };
+  assert(accountCapacity(org) === 2500, 'paid precedence holds for a manual grant too, regardless of a leftover active trial_status');
+}
+{
+  // THE CANCELLATION EDGE CASE: once trial_status has been retired to
+  // 'inactive' (as api/stripe-webhook.js's checkout.session.completed
+  // handler now does) and the subscription is later canceled, the org
+  // must fall through to Free -- NOT resurrect the remainder of its old
+  // trial window, even though trial_end is still technically in the
+  // future.
+  const canceledAfterConversion = {
+    plan: 'paid', subscription_status: 'canceled',
+    trial_status: 'inactive', trial_end: daysFromNow(15), trial_used: true,
+    account_capacity: 100
+  };
+  assert(accountCapacity(canceledAfterConversion) === 10, 'REQUIRED: a subscription canceled after conversion falls back to Free (10), not the leftover legacy trial, because trial_status was retired at conversion time');
+  assert(trialCurrentlyActive(canceledAfterConversion) === false, 'trialCurrentlyActive() is false for this org even though trial_end is still in the future -- trial_status is no longer "active"');
+}
+{
+  // If trial_status were NOT retired (hypothetical -- proves WHY the
+  // webhook retirement is required, not just the entitlement reordering):
+  // a canceled subscription with a still-"active" trial_status and a
+  // still-future trial_end WOULD incorrectly resurrect unlimited access.
+  // This documents the exact failure mode the webhook change prevents.
+  const hypotheticalUnretired = { subscription_status: 'canceled', trial_status: 'active', trial_end: daysFromNow(15), account_capacity: 100 };
+  assert(accountCapacity(hypotheticalUnretired) === null, 'documents why trial_status retirement at conversion time is required: without it, a canceled subscription with a leftover active trial_status would resurrect unlimited access via the trial branch');
 }
 
 // --- entitlement(): shape and derived fields ----------------------------
