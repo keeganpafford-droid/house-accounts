@@ -9031,9 +9031,17 @@ function getValueLabel(opp){
 // where the (single) terminal save now lives for each path.
 function refreshOpportunityViews(){
   const accounts = window.accountRadarAccounts || [];
-  const futureOpportunities = sortDailyReasons(dedupeOpportunities(accounts.flatMap(account => account.futureOpportunities || [])));
-  const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, accounts);
-  const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
+  // Beta cleanup sprint: an individually paused account must not continue
+  // presenting as actively monitored intelligence. activeAccounts feeds
+  // ONLY the Priorities feed and the "monitored account"/revenue totals
+  // below -- the full, unfiltered `accounts` list is still used for the
+  // account grid/detail views further down, so a paused account's
+  // historical data remains fully visible there; pausing stops it from
+  // being presented as active, it does not delete or hide its history.
+  const activeAccounts = accounts.filter(a => a.monitoringStatus !== 'paused');
+  const futureOpportunities = sortDailyReasons(dedupeOpportunities(activeAccounts.flatMap(account => account.futureOpportunities || [])));
+  const {displayedOpportunities} = renderWeeklyPrioritiesFeed(futureOpportunities, activeAccounts);
+  const revenueContext = calculateRevenueContext(activeAccounts, futureOpportunities);
   const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
   accounts.forEach(a => (a.futureOpportunities || []).forEach(o => assignOpportunityScore(o, a)));
   accounts.sort((a, b) => Math.max(0, ...(b.futureOpportunities || []).map(getOpportunityScore)) - Math.max(0, ...(a.futureOpportunities || []).map(getOpportunityScore)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.revenue || 0) - Number(a.revenue || 0));
@@ -9467,6 +9475,11 @@ function getRecentlyResearchedAccounts(){
   const accounts = window.accountRadarAccounts || [];
   const cutoff = Date.now() - RECENTLY_RESEARCHED_WINDOW_MS;
   return accounts
+    // Beta cleanup sprint: a paused account must not remain presented as
+    // active recent intelligence -- the underlying research/signal history
+    // is untouched, this only stops it from showing here as if still
+    // being actively monitored.
+    .filter(a => a.monitoringStatus !== 'paused')
     .filter(a => a.lastResearchedAt && a.uploadId && !isResearchResultDismissed(a.uploadId, a.name, a.lastResearchedAt))
     .map(a => ({
       uploadId: a.uploadId,
@@ -14041,7 +14054,16 @@ function escapeHtml(text){
          confirmLabel:'Delete Account Data'
        });
        if(!confirmed) return;
-       try{ await request('PATCH',{type:'account',id,action}); await load(); }
+       try{
+         await request('PATCH',{type:'account',id,action});
+         await load();
+         // Beta cleanup sprint: reuses the SAME refreshAggregateDashboard()
+         // pattern already used elsewhere in this modal (e.g. after research
+         // completes, above) so the main dashboard behind this modal --
+         // Priorities, Recently Researched, totals -- reflects the deletion
+         // immediately, without requiring an unrelated action or reload.
+         if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+       }
        catch(err){
          // ROUND 12, UX item 1: HA004 (this account's upload has research
          // history -- the server's identity lock rejects individual account
@@ -14070,8 +14092,17 @@ function escapeHtml(text){
      try{
        await request('PATCH',{type:'account',id,action});
        await load();
+       // Beta cleanup sprint: same refreshAggregateDashboard() reuse as the
+       // delete-account branch above -- pausing/resuming here must be
+       // reflected on the main dashboard (Priorities, Recently Researched,
+       // active totals) immediately, not only inside this modal.
+       if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
        showToast(resuming ? `Monitoring resumed for ${name}.` : `Monitoring paused for ${name}.`, async () => {
-         try{ await request('PATCH',{type:'account',id,action: resuming ? 'pause-account' : 'resume-account'}); await load(); }
+         try{
+           await request('PATCH',{type:'account',id,action: resuming ? 'pause-account' : 'resume-account'});
+           await load();
+           if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
+         }
          catch(err){ alert(err.message); }
        });
      }catch(err){ alert(err.message); }
