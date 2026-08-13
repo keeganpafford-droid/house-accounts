@@ -6615,10 +6615,10 @@ function renderVerifiedOpportunitySection(opp){
 // complete (up to 6) activation-ideas list, and the full expansion-
 // potential narrative + tags. Each row is independently hidden when empty,
 // same rule as the primary card's compact renderOpportunitySection()/
-// renderActivationIdeasSection()/renderWhyItCouldMatterSection() (which
-// this deliberately does not call, since those cap to 3 ideas and truncate
-// the narrative for card scannability -- Prepare for Call is the
-// destination for the full version, not a duplicate of the card).
+// renderActivationIdeasSection() (which this deliberately does not call,
+// since the card caps to 2 ideas and truncates the narrative for card
+// scannability -- Prepare for Call is the destination for the full
+// version, not a duplicate of the card).
 // QA correction 4 (Product Finding 2 -- UX simplification): previously one
 // combined card holding all three commercial-interpretation fields
 // together; the founder's flattened mental model treats them as three
@@ -6628,10 +6628,14 @@ function renderVerifiedOpportunitySection(opp){
 // already had. Same untruncated, full-detail data as before -- only the
 // grouping and labels changed. Kept as three small functions (not one
 // three-branch function) so each can be independently omitted from the
-// modal's group list, same pattern as the primary card's
-// renderOpportunitySection()/renderActivationIdeasSection()/
-// renderWhyItCouldMatterSection() (which stay separate for the same reason
-// and remain the card's own compact/truncated versions).
+// modal's group list.
+// Compact Business Signal / Opportunity Cards sprint: the primary card no
+// longer calls renderWhyItCouldMatterSection() at all (see
+// renderRepOpportunityCard()'s own comment) -- Why It Could Grow is now
+// exclusively a Prepare for Call detail, rendered here via
+// renderWhyItCouldGrowSection() below. renderWhyItCouldMatterSection()
+// itself is left in place, unused by any active render path, rather than
+// deleted.
 function renderThePlaySection(opp){
   const narrative = getCommercialPlayNarrative(opp);
   if(!narrative) return '';
@@ -6809,14 +6813,24 @@ function renderRepOpportunityCard(opp){
   //
   // product/commercial-opportunity-intelligence, QA correction 4 (Product
   // Finding 2 -- UX simplification): the card hierarchy is now Why Now ->
-  // The Play -> Ideas to Send -> Why It Could Grow -> recommended contact ->
-  // How to Approach. Previously "The Opportunity"/"Activation Ideas"/"Why
-  // It Could Matter"/"Best Next Question" -- same underlying fields, same
-  // policy gates (getSuggestedOpener()), renamed toward one consistent
-  // mental model shared with Prepare for Call (see createSalesPlayPanel()).
-  // renderOpportunitySection()/renderActivationIdeasSection()/
-  // renderWhyItCouldMatterSection() remain hidden entirely when their
-  // underlying field is empty -- no empty containers, no placeholder text.
+  // The Play -> Ideas to Send -> recommended contact -> How to Approach.
+  // Previously "The Opportunity"/"Activation Ideas"/"Why It Could
+  // Matter"/"Best Next Question" -- same underlying fields, same policy
+  // gates (getSuggestedOpener()), renamed toward one consistent mental
+  // model shared with Prepare for Call (see createSalesPlayPanel()).
+  // renderOpportunitySection()/renderActivationIdeasSection() remain
+  // hidden entirely when their underlying field is empty -- no empty
+  // containers, no placeholder text.
+  //
+  // Compact Business Signal / Opportunity Cards sprint: Why It Could Grow
+  // (renderWhyItCouldMatterSection()) removed from this scan path -- a
+  // second free-text commercial-angle narrative directly under The Play
+  // added a full extra section most reps don't need to decide whether to
+  // work the card. The function/data are untouched and still fully shown
+  // in Prepare for Call via renderWhyItCouldGrowSection() -- nothing is
+  // lost, only deferred to the fuller execution surface. Ideas to Send is
+  // also capped at 2 here (was 3) -- Prepare for Call still shows the full
+  // list via renderIdeasToSendSection() (no limit).
   const dateLine = signalDateAndActionabilityLine(opp);
   return `
     <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
@@ -6829,8 +6843,7 @@ function renderRepOpportunityCard(opp){
         </div>
         <div class="opp-section signal-date-line"><div class="opp-label">Status</div><div class="opp-content meta">${escapeHtml(dateLine)}</div></div>
         ${renderOpportunitySection(opp)}
-        ${renderActivationIdeasSection(opp, 3)}
-        ${renderWhyItCouldMatterSection(opp)}
+        ${renderActivationIdeasSection(opp, 2)}
       </div>
 
       ${opp.isVerifiedSignalOpportunity ? renderSuggestedContactCompact(opp) : ''}
