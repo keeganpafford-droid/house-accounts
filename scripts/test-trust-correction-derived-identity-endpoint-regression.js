@@ -60,6 +60,22 @@ function setBaseEnv() {
   delete process.env.BRAVE_SEARCH_API_KEY;
 }
 
+// Security correction sprint (pre-Beta): this no-uploadId path now requires
+// a validly authenticated caller. AUTH_REQ_HEADERS/mockAuthFetch() answer
+// the resulting auth-verification calls before each test's own
+// provider-specific mock runs, exactly like
+// scripts/test-research-batch-zero-candidate-policy.js.
+const AUTH_REQ_HEADERS = { authorization: 'Bearer valid-token' };
+function mockAuthFetch(url) {
+  const u = String(url);
+  if (u.includes('/auth/v1/user')) return { ok: true, status: 200, json: async () => ({ id: 'auth-1', email: 'seller@example.com' }) };
+  if (u.includes('/rest/v1/ha_users')) {
+    const row = [{ id: 'user-1', email: 'seller@example.com' }];
+    return { ok: true, status: 200, json: async () => row, text: async () => JSON.stringify(row) };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: the exact crash scenario -- a real discovered candidate, a real
 // synthesized signal resolving to that candidate, no Firecrawl configured
@@ -76,6 +92,8 @@ async function testMixedWarmPathNoReferenceErrorNoFirecrawl() {
   let serperQueries = 0;
   global.fetch = async (url) => {
     const u = String(url);
+    const authMock = mockAuthFetch(u);
+    if (authMock) return authMock;
     if (u.includes('google.serper.dev')) {
       serperQueries += 1;
       return {
@@ -106,7 +124,7 @@ async function testMixedWarmPathNoReferenceErrorNoFirecrawl() {
     }
     throw new Error(`unexpected fetch call in derived-identity endpoint regression test: ${u}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'Acme Test Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
+  const req = { method: 'POST', headers: AUTH_REQ_HEADERS, body: { accounts: [{ name: 'Acme Test Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
   const res = makeRes();
   let threw = null;
   try {
@@ -144,6 +162,8 @@ async function testDerivedIdentityReachesGroundingThroughRealHandler() {
   let firecrawlRequests = 0;
   global.fetch = async (url, opts) => {
     const u = String(url);
+    const authMock = mockAuthFetch(u);
+    if (authMock) return authMock;
     if (u.includes('google.serper.dev')) {
       return {
         ok: true, status: 200,
@@ -180,7 +200,7 @@ async function testDerivedIdentityReachesGroundingThroughRealHandler() {
     throw new Error(`unexpected fetch call in derived-identity-reaches-grounding test: ${u}`);
   };
   const req = {
-    method: 'POST', headers: {},
+    method: 'POST', headers: AUTH_REQ_HEADERS,
     body: {
       accounts: [{
         name: 'Dover Honda',
@@ -233,6 +253,8 @@ async function testLiveShapedAccountBlockReachesGroundingThroughRealHandler() {
   let firecrawlRequests = 0;
   global.fetch = async (url, opts) => {
     const u = String(url);
+    const authMock = mockAuthFetch(u);
+    if (authMock) return authMock;
     if (u.includes('google.serper.dev')) {
       return {
         ok: true, status: 200,
@@ -274,7 +296,7 @@ async function testLiveShapedAccountBlockReachesGroundingThroughRealHandler() {
     throw new Error(`unexpected fetch call in live-shaped account-block regression test: ${u}`);
   };
   const req = {
-    method: 'POST', headers: {},
+    method: 'POST', headers: AUTH_REQ_HEADERS,
     body: {
       accounts: [{
         name: 'Dover Honda',

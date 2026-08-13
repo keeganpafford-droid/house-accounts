@@ -2610,6 +2610,32 @@ async function resolveAuthenticatedUploadOwner(req, uploadId) {
   return { user, reason: null };
 }
 
+// Security correction sprint (pre-Beta): closes the previously-unauthenticated
+// no-uploadId path (the "anonymous prospecting" branch -- mode:
+// 'prospect-intelligence' / 'warm-account' / default 'ranked' -- which used to
+// run full paid-provider research for ANY caller). Verifies only that the
+// caller carries a valid Supabase Bearer token identifying a real ha_users
+// row -- no upload-ownership check, since there is no uploadId here. Does not
+// change RESEARCH_BATCH_MAX_ACCOUNTS or any other existing per-request cap,
+// and does not touch the uploadId-bound path (resolveAuthenticatedUploadOwner)
+// or the weekly-monitoring CRON_SECRET path above, both already authenticated.
+async function resolveAuthenticatedCaller(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+  try {
+    const { url, key } = rbEnv();
+    const authResp = await fetch(`${url}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
+    if (!authResp.ok) return null;
+    const authUser = await authResp.json();
+    if (!authUser?.id) return null;
+    const userRows = await rbSupabase(`ha_users?auth_user_id=eq.${encodeURIComponent(authUser.id)}&select=id,email&limit=1`);
+    const user = Array.isArray(userRows) ? userRows[0] : null;
+    return user?.id ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 // Duplicate-company research control (beta round). Cost/spend protection
 // only -- never merges, shares, or exposes account records across uploads or
 // organizations; only ever tells the caller "a matching company is already
@@ -2915,9 +2941,7 @@ export default async function handler(req, res) {
   // action (claim/complete/fail, below) or an actual research call -- must
   // resolve to an authenticated ha_users record that verifiably owns that
   // upload. There is no lead/email fallback: see
-  // resolveAuthenticatedUploadOwner() above. Requests with NO uploadId (the
-  // pre-existing anonymous prospecting flow -- prospect_script.js,
-  // prospects/index.html) never reach this check and are unaffected.
+  // resolveAuthenticatedUploadOwner() above.
   let uploadOwner = null;
   if (targetUploadId) {
     const resolved = await resolveAuthenticatedUploadOwner(req, targetUploadId);
@@ -2929,6 +2953,19 @@ export default async function handler(req, res) {
       return res.status(status).json({ error });
     }
     uploadOwner = resolved.user;
+  } else if (requestMode !== 'weekly-monitoring') {
+    // Security correction sprint (pre-Beta): the remaining no-uploadId
+    // branch (the former "anonymous prospecting" flow, e.g.
+    // prospect_script.js / prospects/index.html) previously ran unlimited,
+    // unauthenticated paid-provider research. It is now closed the same
+    // way as every other externally callable path: require a valid
+    // Supabase Bearer token identifying a real House Accounts user. The
+    // weekly-monitoring cron path is exempt here because it already passed
+    // the CRON_SECRET check above.
+    const caller = await resolveAuthenticatedCaller(req);
+    if (!caller) {
+      return res.status(401).json({ error: 'Login required to research accounts.' });
+    }
   }
 
   // Run-control actions never call OpenAI or any search provider -- they
@@ -3918,7 +3955,7 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
 // Named exports for testability (Phase 2A / B3 classification tests, and
 // Phase 2A implementation-review round 2's run-claim/lease tests).
 export {
-  makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, claimResearchRunAtomic,
+  makeSignal, resolveCanonicalEventType, resolveAuthenticatedUploadOwner, resolveAuthenticatedCaller, claimResearchRunAtomic,
   completeResearchRunAttempt, failResearchRunAttempt, heartbeatResearchRunAtomic, clampLeaseSeconds, safeSecretEqual,
   signalEventCategory, resolveSignalEventDate, computeActionability, oneHistoricalOrderFact,
   salesReadyOpener, salesReadyWhy, EVENT_LIKE_TYPES, compact,

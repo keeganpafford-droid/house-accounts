@@ -400,9 +400,12 @@ async function run(){
     assert(uploadOwnershipLookupCalls.length === 1 && accountsRpcCalls.length === 1, 'Auth 5: the ownership lookup ran, then the RPC ran');
   }
 
-  // Auth 6: anonymous new-upload request with NO uploadId -- the one
-  // remaining legitimate case for the legacy lead.email fallback. Still
-  // succeeds, exactly as before this round.
+  // Auth 6: security correction sprint (pre-Beta) -- the legacy lead.email
+  // fallback for a genuinely-new, no-uploadId anonymous upload is REMOVED,
+  // not preserved. A client-supplied email must never be treated as
+  // authenticated identity, even for creating a brand-new upload. This
+  // request must now be rejected 401 with nothing written, superseding the
+  // prior round's "still succeeds" expectation.
   {
     resetAll();
     const req = fakeReqNoAuth({
@@ -412,7 +415,8 @@ async function run(){
     });
     const res = fakeRes();
     await handler(req, res);
-    assert(res.statusCode === 200, 'Auth 6: an anonymous stage="uploaded" request with NO uploadId (genuinely new upload) still succeeds via the legacy lead.email fallback');
+    assert(res.statusCode === 401, 'REQUIRED: Auth 6: an anonymous stage="uploaded" request with NO uploadId is now rejected 401 -- the legacy lead.email anonymous-creation fallback is closed');
+    assert(accountsRpcCalls.length === 0, 'Auth 6: nothing was written for the rejected anonymous creation attempt');
   }
 
   // Auth 7: anonymous request that ATTEMPTS to provide an uploadId -- this

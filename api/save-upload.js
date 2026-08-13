@@ -370,7 +370,6 @@ export default async function handler(req, res){
   if(req.method !== 'POST') return json(res, 405, {error:'Method not allowed'});
   try{
     const body = req.body || {};
-    const lead = body.lead || {};
 
     // Phase 2A implementation-review ROUND 7, item 2 — stage and uploadId
     // are read BEFORE any identity is resolved, so identity resolution
@@ -382,56 +381,23 @@ export default async function handler(req, res){
       return json(res, 400, {error:`Unknown stage "${stage}".`});
     }
 
-    // ROUND 7, item 2 — identity rules:
-    //   - uploadId present, OR stage is anything other than "uploaded"
-    //     (i.e. accounts_updated / researched / research_updated, every one
-    //     of which either requires an existing upload or IS a write against
-    //     one): a real, verified Bearer token is mandatory, and the
-    //     resulting user must actually own p_upload_id. lead.email is NEVER
-    //     consulted for this branch, let alone trusted as identity — a
-    //     request-supplied email is not authentication, full stop.
-    //   - stage="uploaded" with NO uploadId: the one remaining legitimate
-    //     anonymous-creation case (a genuinely new, not-yet-owned-by-anyone
-    //     upload). A valid token is still preferred and used if present;
-    //     only in its absence does the legacy lead.email upsert apply, and
-    //     only here.
-    // Every one of these failures happens before ANY RPC call or mutation.
-    const requiresAuthenticatedOwner = !!uploadId || stage !== 'uploaded';
+    // Security correction sprint (pre-Beta): identity is ALWAYS resolved
+    // from a verified Supabase Bearer token, never from a client-supplied
+    // lead.email. The prior "stage=uploaded with no uploadId" branch used
+    // to fall back to an anonymous lead.email upsert, letting an
+    // unauthenticated caller create/attach an ha_users row by asserting an
+    // email it doesn't own. That legacy anonymous-creation path is
+    // intentionally removed rather than preserved -- fail closed.
     let user = await getUserFromAuth(req);
-    if(requiresAuthenticatedOwner){
-      if(!user?.id){
-        return json(res, 401, {error:'A valid session is required to modify an existing upload.'});
-      }
-      if(uploadId){
-        const ownedRows = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id&limit=1`, {method:'GET'});
-        if(!Array.isArray(ownedRows) || !ownedRows.length){
-          return json(res, 403, {error:'You do not have access to this upload.'});
-        }
-      }
-    } else if(!user){
-      // Legacy anonymous-creation flow: stage="uploaded", no uploadId, no
-      // token. lead.email is used ONLY to create/attach a NEW upload's
-      // owner -- it can never target an upload that already exists, because
-      // requiresAuthenticatedOwner is true the moment uploadId is present.
-      const email = clean(lead.email).toLowerCase();
-      if(!email) return json(res, 401, {error:'Login required'});
-      const users = await supabase('ha_users?on_conflict=email', {
-        method:'POST',
-        prefer:'resolution=merge-duplicates,return=representation',
-        body: JSON.stringify([{
-          email,
-          name: clean(lead.name),
-          company: clean(lead.company),
-          role: clean(lead.role),
-          house_accounts: clean(lead.houseAccounts || lead.house_accounts),
-          crm_erp: clean(lead.crmErp || lead.crm_erp),
-          source_page: clean(body.page || body.sourcePage),
-          updated_at: new Date().toISOString()
-        }])
-      });
-      user = Array.isArray(users) ? users[0] : users;
+    if(!user?.id){
+      return json(res, 401, {error:'A valid session is required to save an upload.'});
     }
-    if(!user?.id) throw new Error('User lookup did not return an id.');
+    if(uploadId){
+      const ownedRows = await supabase(`ha_uploads?id=eq.${encodeURIComponent(uploadId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id&limit=1`, {method:'GET'});
+      if(!Array.isArray(ownedRows) || !ownedRows.length){
+        return json(res, 403, {error:'You do not have access to this upload.'});
+      }
+    }
 
     const isResearchOutputStage = RESEARCH_OUTPUT_STAGES.has(stage);
     const summary = body.summary || {};

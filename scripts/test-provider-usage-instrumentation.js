@@ -82,9 +82,12 @@ function mockSerperCandidateFetch(url){
 
 // ---------------------------------------------------------------------------
 // Full handler: a successful run (no uploadId -- the anonymous/untracked
-// path, so no Supabase auth mocking is needed) returns a providerUsage
-// object with real OpenAI token counts, and the console log line contains
-// no secret material.
+// path) returns a providerUsage object with real OpenAI token counts, and
+// the console log line contains no secret material. Security correction
+// sprint (pre-Beta): this path now requires a validly authenticated caller,
+// so the request carries a Bearer token and the fetch mock resolves it via
+// the same auth verification + ha_users lookup api/research-batch.js's
+// resolveAuthenticatedCaller() performs.
 // ---------------------------------------------------------------------------
 async function testSuccessfulRun(){
   setBaseEnv();
@@ -95,6 +98,8 @@ async function testSuccessfulRun(){
   const loggedLines = [];
   console.log = (...args) => { loggedLines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); };
   global.fetch = async (url) => {
+    if(String(url).includes('/auth/v1/user')) return { ok: true, status: 200, json: async () => ({ id: 'auth-1', email: 'seller@example.com' }) };
+    if(String(url).includes('/rest/v1/ha_users')) return { ok: true, status: 200, json: async () => ([{ id: 'user-1', email: 'seller@example.com' }]), text: async () => JSON.stringify([{ id: 'user-1', email: 'seller@example.com' }]) };
     if(String(url).includes('google.serper.dev')) return mockSerperCandidateFetch(url);
     if(String(url).includes('api.openai.com')){
       return {
@@ -108,7 +113,7 @@ async function testSuccessfulRun(){
     }
     throw new Error(`unexpected fetch call in successful-run test: ${url}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'Acme Test Co' }], mode: 'ranked' } };
+  const req = { method: 'POST', headers: { authorization: 'Bearer valid-token' }, body: { accounts: [{ name: 'Acme Test Co' }], mode: 'ranked' } };
   const res = makeRes();
   try {
     await handler(req, res);
@@ -154,13 +159,15 @@ async function testFailedRun(){
   const loggedLines = [];
   console.log = (...args) => { loggedLines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); };
   global.fetch = async (url) => {
+    if(String(url).includes('/auth/v1/user')) return { ok: true, status: 200, json: async () => ({ id: 'auth-1', email: 'seller@example.com' }) };
+    if(String(url).includes('/rest/v1/ha_users')) return { ok: true, status: 200, json: async () => ([{ id: 'user-1', email: 'seller@example.com' }]), text: async () => JSON.stringify([{ id: 'user-1', email: 'seller@example.com' }]) };
     if(String(url).includes('google.serper.dev')) return mockSerperCandidateFetch(url);
     if(String(url).includes('api.openai.com')){
       return { ok: false, status: 500, text: async () => 'OpenAI is having a bad day' };
     }
     throw new Error(`unexpected fetch call in failed-run test: ${url}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'Acme Test Co' }], mode: 'ranked' } };
+  const req = { method: 'POST', headers: { authorization: 'Bearer valid-token' }, body: { accounts: [{ name: 'Acme Test Co' }], mode: 'ranked' } };
   const res = makeRes();
   try {
     await handler(req, res);

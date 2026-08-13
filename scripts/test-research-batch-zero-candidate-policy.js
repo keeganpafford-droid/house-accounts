@@ -47,6 +47,25 @@ function setBaseEnv(){
   delete process.env.BRAVE_SEARCH_API_KEY;
 }
 
+// Security correction sprint (pre-Beta): the no-uploadId path this whole
+// file exercises now requires a validly authenticated caller
+// (resolveAuthenticatedCaller()). AUTH_REQ_HEADERS supplies the Bearer
+// token every request below now needs, and mockAuthFetch() answers the
+// resulting auth-verification calls (/auth/v1/user, then a ha_users
+// lookup) BEFORE any test's own provider-specific mock runs -- returning
+// null for any URL it doesn't recognize so each test's mock still handles
+// its own provider traffic exactly as before this sprint.
+const AUTH_REQ_HEADERS = { authorization: 'Bearer valid-token' };
+function mockAuthFetch(url){
+  const u = String(url);
+  if(u.includes('/auth/v1/user')) return { ok: true, status: 200, json: async () => ({ id: 'auth-1', email: 'seller@example.com' }) };
+  if(u.includes('/rest/v1/ha_users')){
+    const row = [{ id: 'user-1', email: 'seller@example.com' }];
+    return { ok: true, status: 200, json: async () => row, text: async () => JSON.stringify(row) };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Case 1: Serper is configured and genuinely finds nothing usable for this
 // account (every organic result is empty/irrelevant, clearing no acceptance
@@ -59,6 +78,8 @@ async function testZeroCandidateSkipsWebSearchFallback(){
   let serperCalls = 0;
   global.fetch = async (url) => {
     const u = String(url);
+    const authMock = mockAuthFetch(u);
+    if(authMock) return authMock;
     if(u.includes('google.serper.dev')){
       serperCalls += 1;
       return { ok: true, status: 200, json: async () => ({ organic: [] }) };
@@ -69,7 +90,7 @@ async function testZeroCandidateSkipsWebSearchFallback(){
     }
     throw new Error(`unexpected fetch call in zero-candidate test: ${u}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'Sparse Obscure Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
+  const req = { method: 'POST', headers: AUTH_REQ_HEADERS, body: { accounts: [{ name: 'Sparse Obscure Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
   const res = makeRes();
   try {
     await handler(req, res);
@@ -102,12 +123,14 @@ async function testNoSearchProviderDiagnosticsAreTruthful(){
   setBaseEnv();
   delete process.env.SERPER_API_KEY;
   const realFetch = global.fetch;
-  let anyFetchCalled = false;
+  let nonAuthFetchCalled = false;
   global.fetch = async (url) => {
-    anyFetchCalled = true;
+    const authMock = mockAuthFetch(url);
+    if(authMock) return authMock;
+    nonAuthFetchCalled = true;
     throw new Error(`unexpected fetch call with no search provider configured: ${url}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'No Provider Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
+  const req = { method: 'POST', headers: AUTH_REQ_HEADERS, body: { accounts: [{ name: 'No Provider Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
   const res = makeRes();
   try {
     await handler(req, res);
@@ -115,7 +138,11 @@ async function testNoSearchProviderDiagnosticsAreTruthful(){
     global.fetch = realFetch;
   }
 
-  assert(anyFetchCalled === false, '1) zero fetch calls of any kind (including OpenAI) when no search provider is configured at all');
+  // Security correction sprint (pre-Beta): the two auth-verification calls
+  // (mockAuthFetch) now always happen first for this no-uploadId path --
+  // "zero fetch calls" now means zero PROVIDER calls (OpenAI/search), not
+  // literally zero fetch calls of any kind.
+  assert(nonAuthFetchCalled === false, '1) zero provider fetch calls of any kind (including OpenAI) when no search provider is configured at all');
   assert(res.statusCode === 200, `2) still the existing successful empty-result response, not an error (got ${res.statusCode})`);
   const diag = res.body?.diagnostics || {};
   assert(diag.providerMode !== 'openai-web-search', `2) diagnostics.providerMode no longer reports the stale 'openai-web-search' default (got ${diag.providerMode})`);
@@ -135,6 +162,8 @@ async function testCandidateBackedPathUnaffected(){
   let openaiCalls = 0;
   global.fetch = async (url) => {
     const u = String(url);
+    const authMock = mockAuthFetch(u);
+    if(authMock) return authMock;
     if(u.includes('google.serper.dev')){
       return {
         ok: true,
@@ -162,7 +191,7 @@ async function testCandidateBackedPathUnaffected(){
     }
     throw new Error(`unexpected fetch call in candidate-backed test: ${u}`);
   };
-  const req = { method: 'POST', headers: {}, body: { accounts: [{ name: 'Dense Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
+  const req = { method: 'POST', headers: AUTH_REQ_HEADERS, body: { accounts: [{ name: 'Dense Co', intelligenceMode: 'warm' }], mode: 'warm-account' } };
   const res = makeRes();
   try {
     await handler(req, res);
