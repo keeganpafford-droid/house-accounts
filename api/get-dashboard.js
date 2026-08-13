@@ -206,6 +206,13 @@ function rowToSignal(row){
   return {
     ...payload,
     isReal: true,
+    // Signal feedback / organizational-learning foundation: id/eventFingerprint
+    // were never previously exposed to the client at all -- every consumer of
+    // this function's output needs a stable identity to key an
+    // api/signal-events.js call on. eventFingerprint (not id) is the durable
+    // one; id is carried only as an optional/secondary hint.
+    id: row.id,
+    eventFingerprint: row.event_fingerprint || '',
     accountName: row.account_name,
     signalType: row.signal_type || payload.signalType || 'Business Activity',
     type: row.signal_type || payload.type || 'Business Activity',
@@ -253,6 +260,11 @@ function signalToOpportunity(row){
   const confidence = Number(s.confidenceScore || 0) || 70;
   return {
     account: row.account_name,
+    // Signal feedback / organizational-learning foundation: the durable
+    // identity a client-side api/signal-events.js call keys on. id is
+    // carried only as an optional/secondary hint alongside it.
+    id: s.id,
+    eventFingerprint: s.eventFingerprint || '',
     opportunity: s.promoOpportunity || s.opportunityCategory || s.signalType || 'Business Activity',
     opportunityCategory: s.opportunityCategory || s.signalType || 'Business Activity',
     // QA final round, item 1: carry the canonical classification (freshly

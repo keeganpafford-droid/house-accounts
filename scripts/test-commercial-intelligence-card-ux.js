@@ -49,6 +49,20 @@ const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
 const REASON_AND_STARTER_BLOCK = extractRange(DASHBOARD_SRC, 'function getReasonToReachOutTitle(opp){', 'function getConversationStarterText(');
+// Signal feedback / organizational-learning foundation: renderSingleVerifiedSignal()/
+// useSignalAsRepSelected()/createSalesPlayPanel() -- all inside
+// CARD_AND_MODAL_BLOCK/SALES_PLAY_BLOCK below -- now call these. Pure
+// fire-and-forget event logging / best-effort DOM hydration, with no
+// bearing on this file's card/modal markup assertions, so they're
+// stubbed exactly like isWarmAccount() above.
+const SIGNAL_EVENTS_STUB_SOURCE = `
+function logSignalEvent(){ return Promise.resolve(null); }
+function generateClientEventId(){ return 'test-client-event-id'; }
+function fetchSignalEventStates(){ return Promise.resolve({}); }
+function hydrateSignalFeedbackButtons(){}
+function wireOutreachRow(){}
+function hydrateOutreachRow(){ return Promise.resolve(); }
+`;
 
 function makeSandbox(){
   // QA correction 1: document.body.insertAdjacentHTML/lastElementChild are
@@ -87,7 +101,14 @@ function makeSandbox(){
     OPPORTUNITY_GENERATION_BLOCK,
     REASON_AND_STARTER_BLOCK,
     SALES_PLAY_BLOCK,
-    SCORING_AND_TIMEBOX_BLOCK
+    SCORING_AND_TIMEBOX_BLOCK,
+    // Placed LAST, deliberately: CARD_AND_MODAL_BLOCK/SALES_PLAY_BLOCK's
+    // wide contiguous ranges already include the REAL wireOutreachRow()/
+    // hydrateOutreachRow() declarations (they live immediately before
+    // createSalesPlayPanel() in the real file). A later `function name(){}`
+    // declaration in the same scope overwrites an earlier one of the same
+    // name, so this stub block must come after those ranges to take effect.
+    SIGNAL_EVENTS_STUB_SOURCE
   ].join('\n\n');
   new vm.Script(fullSource, { filename: 'commercial-intelligence-card-ux-extract.js' }).runInContext(sandbox);
   return sandbox;

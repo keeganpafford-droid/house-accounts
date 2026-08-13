@@ -167,6 +167,12 @@ const REAL_SOURCE = [
 // ===========================================================================
 const STUB_SOURCE = `
 function renderVerifiedSignals(signals){ return ''; }
+// Signal feedback / organizational-learning foundation: renderDetailedAccountViews()
+// now calls this unconditionally after rendering -- pure best-effort DOM
+// hydration with no bearing on save/heartbeat/claim invocation counts or
+// the markup-safety assertions this file checks, so it's stubbed exactly
+// like the other renderXxx()/hydrate-style helpers around it.
+function hydrateSignalFeedbackButtons(){}
 function renderResearchDiagnostics(){}
 // ROUND 12: refreshOpportunityViews() now also calls this (see the real
 // definition in dashboard/index.html) -- pure DOM rendering, no bearing on
