@@ -149,7 +149,19 @@ export async function usageFor(sb, user, org = null) {
   const customerNames = new Set(customer.map(r => normalizeCompanyName(r.account_name)).filter(Boolean));
   const prospectNames = new Set(prospect.map(r => normalizeCompanyName(r.company_name)).filter(Boolean));
   const legacyNames = new Set(legacy.map(r => normalizeCompanyName(r.company_name || r.name || r.account_name)).filter(Boolean));
-  const names = new Set([...customerNames, ...prospectNames, ...legacyNames]);
+  // Billing-count correction: monitored-account CAPACITY counts only
+  // customer accounts (ha_accounts, via active uploads) and legacy
+  // monitored companies -- both genuinely enrolled in api/weekly-scan.js's
+  // recurring weekly re-research. Traced directly: ha_prospect_accounts
+  // are researched exactly once at creation (the bulk prospect-upload
+  // flow or api/prospect-one-off.js) and are never re-scanned by
+  // weekly-scan.js or any other recurring job -- they are stored research
+  // snapshots, not monitored accounts, so they must not consume purchased
+  // capacity. prospectNames/prospectCompanyCount are still computed and
+  // returned below for display (e.g. the Monitoring Lists UI's own
+  // prospect tally) -- they are simply excluded from the capacity-facing
+  // total. No new prospect pricing/usage system is introduced here.
+  const capacityNames = new Set([...customerNames, ...legacyNames]);
   const ent = entitlement(org || {});
   return {
     ...ent,
@@ -157,8 +169,8 @@ export async function usageFor(sb, user, org = null) {
     existingCustomerCompanyCount: customerNames.size,
     prospectCompanyCount: prospectNames.size,
     legacyMonitoredCompanyCount: legacyNames.size,
-    totalMonitoredCompanies: names.size,
-    monitoredCompanyNames: [...names],
+    totalMonitoredCompanies: capacityNames.size,
+    monitoredCompanyNames: [...capacityNames],
     customerCompanyNames: [...customerNames],
     prospectCompanyNames: [...prospectNames],
     // Seats/users are unlimited at every pricing level. seatsUsed remains
@@ -167,6 +179,6 @@ export async function usageFor(sb, user, org = null) {
     // column, which is no longer read as a gate anywhere.
     seatsUsed: users.filter(u => clean(u.status || 'active') !== 'inactive').length,
     seatLimit: null,
-    usageLabel: ent.companyLimit != null ? `${names.size} / ${ent.companyLimit} companies monitored` : `${names.size} companies monitored`
+    usageLabel: ent.companyLimit != null ? `${capacityNames.size} / ${ent.companyLimit} companies monitored` : `${capacityNames.size} companies monitored`
   };
 }

@@ -143,10 +143,16 @@ function mockSb(rows){
   const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
   assert(usage.customerCompanyCount === 2, 'usageFor() counts customer accounts only from active (non-paused/archived) uploads (got ' + usage.customerCompanyCount + ')');
   assert(usage.legacyMonitoredCompanyCount === 1, 'usageFor() excludes archived legacy monitored companies (got ' + usage.legacyMonitoredCompanyCount + ')');
-  assert(usage.prospectCompanyCount === 1, 'usageFor() counts active prospect accounts');
-  assert(usage.totalMonitoredCompanies === 4, 'usageFor() reports one deduplicated total across customer + prospect + legacy (got ' + usage.totalMonitoredCompanies + ')');
+  assert(usage.prospectCompanyCount === 1, 'usageFor() still tracks active prospect accounts for display');
+  // Billing-count correction: capacity counts customer + legacy only (2 +
+  // 1 = 3) -- the 1 active prospect account is deliberately NOT part of
+  // totalMonitoredCompanies/usageLabel, since prospects are one-shot
+  // research snapshots, not recurring-monitored accounts (see
+  // usageFor()'s own comment). prospectCompanyCount above still reports
+  // it, just not toward capacity.
+  assert(usage.totalMonitoredCompanies === 3, 'REQUIRED: usageFor() excludes prospect accounts from the capacity total -- only customer + legacy count (got ' + usage.totalMonitoredCompanies + ')');
   assert(usage.companyLimit === 10, 'usageFor() carries the entitlement companyLimit through for a free org');
-  assert(usage.usageLabel === '4 / 10 companies monitored', 'usageFor() builds the correct usage label for a limited org (got "' + usage.usageLabel + '")');
+  assert(usage.usageLabel === '3 / 10 companies monitored', 'REQUIRED: the usage label reflects the capacity-only total (customer + legacy), not the prospect-inclusive one (got "' + usage.usageLabel + '")');
 }
 {
   // Seats are unlimited at every pricing level -- seatLimit is always
@@ -157,8 +163,11 @@ function mockSb(rows){
   assert(usage.seatsUsed === 2, 'usageFor() still reports the real seatsUsed count for display purposes');
 }
 {
-  // A duplicate company (same normalized name) monitored as both a
-  // customer account and a prospect account counts once, not twice.
+  // A company monitored as both a customer account and (separately)
+  // researched as a prospect still counts once toward capacity -- via the
+  // customer side alone, since the prospect side no longer contributes at
+  // all. Confirms the prospect record doesn't cause double-counting or
+  // any other capacity contribution once it overlaps a real customer.
   const sb = mockSb({
     users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
     uploads: [{ id: 'up1', stage: 'uploaded' }],
@@ -167,7 +176,54 @@ function mockSb(rows){
     prospectAccounts: [{ company_name: 'ACME, LLC', status: 'active' }]
   });
   const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
-  assert(usage.totalMonitoredCompanies === 1, 'the same company monitored as both a customer account and a prospect account is counted once, not twice (got ' + usage.totalMonitoredCompanies + ')');
+  assert(usage.totalMonitoredCompanies === 1, 'a company that is both a customer account and a researched prospect counts once toward capacity (got ' + usage.totalMonitoredCompanies + ')');
+}
+
+// ---------------------------------------------------------------------
+// Billing-count correction (founder QA): required regressions.
+// ---------------------------------------------------------------------
+
+// REQUIRED: active recurring customer accounts consume capacity.
+{
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    uploads: [{ id: 'up1', stage: 'uploaded' }],
+    accounts: [{ account_name: 'Acme Inc' }, { account_name: 'Nike' }, { account_name: 'L.L.Bean' }]
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
+  assert(usage.totalMonitoredCompanies === 3, 'REQUIRED: active customer accounts (the population api/weekly-scan.js actually re-researches weekly) consume capacity (got ' + usage.totalMonitoredCompanies + ')');
+}
+
+// REQUIRED: prospect accounts do not consume capacity, even with zero
+// customer accounts at all.
+{
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    prospectUploads: [{ id: 'pu1', status: 'active' }],
+    prospectAccounts: [{ company_name: 'Prospect A', status: 'active' }, { company_name: 'Prospect B', status: 'active' }, { company_name: 'Prospect C', status: 'active' }]
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
+  assert(usage.totalMonitoredCompanies === 0, 'REQUIRED: prospect accounts alone (zero customer accounts) contribute ZERO to capacity, even though 3 real prospect rows exist (got ' + usage.totalMonitoredCompanies + ')');
+  assert(usage.prospectCompanyCount === 3, 'prospect accounts are still tracked/counted for display, just not toward capacity');
+}
+
+// REQUIRED: the real traced shape (28 customer accounts across 3 uploads,
+// 22 prospect accounts, 0 legacy) resolves to 28 capacity usage, not 50.
+{
+  const customerNamesFixture = Array.from({ length: 28 }, (_, i) => ({ account_name: `Customer Account ${i + 1}` }));
+  const prospectNamesFixture = Array.from({ length: 22 }, (_, i) => ({ company_name: `Prospect Company ${i + 1}`, status: 'active' }));
+  const sb = mockSb({
+    users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],
+    uploads: [{ id: 'up1', stage: 'uploaded' }, { id: 'up2', stage: 'uploaded' }, { id: 'up3', stage: 'uploaded' }],
+    accounts: customerNamesFixture,
+    prospectUploads: [{ id: 'pu1', status: 'active' }],
+    prospectAccounts: prospectNamesFixture
+  });
+  const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'paid', subscription_status: 'active', account_capacity: 100 });
+  assert(usage.customerCompanyCount === 28, 'the fixture has exactly 28 distinct customer accounts (got ' + usage.customerCompanyCount + ')');
+  assert(usage.prospectCompanyCount === 22, 'the fixture has exactly 22 distinct prospect accounts (got ' + usage.prospectCompanyCount + ')');
+  assert(usage.totalMonitoredCompanies === 28, `REQUIRED: the real 28-customer + 22-prospect shape resolves to 28 capacity usage, not 50 (got ${usage.totalMonitoredCompanies})`);
+  assert(usage.usageLabel === '28 / 100 companies monitored', `REQUIRED: the usage label reads "28 / 100 companies monitored", not "50 / 100" (got "${usage.usageLabel}")`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
