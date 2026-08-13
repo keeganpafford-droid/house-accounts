@@ -286,7 +286,7 @@ async function handleGet(req, res, user) {
   const states = {};
   for (const k of capped) {
     const composite = readBackKey(k.eventFingerprint, k.accountName);
-    const state = { feedback: null, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
+    const state = { feedback: null, selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
     states[composite] = state;
     // Rows arrive newest-first; scoped to this exact (fingerprint,
     // account) pair so a different account sharing the same fingerprint
@@ -296,6 +296,13 @@ async function handleGet(req, res, user) {
       if (state.feedback === null && (row.event_type === 'signal_useful' || row.event_type === 'signal_not_useful')) {
         state.feedback = row.event_type === 'signal_useful' ? 'useful' : 'not_useful';
       }
+      // signal_selected is durable, historical-use acknowledgement, not a
+      // single "currently active" pointer -- the mere EXISTENCE of at
+      // least one such event for this rep on this exact signal/account
+      // context means "the rep has already chosen to work this," so a
+      // rep reopening it never has to re-select it (and never causes a
+      // second signal_selected write) merely to reopen Prepare for Call.
+      if (row.event_type === 'signal_selected') state.selected = true;
       if (!state.outreachLogged && row.event_type === 'outreach_made') {
         state.outreachLogged = true;
         state.latestOutreachEventId = row.id;

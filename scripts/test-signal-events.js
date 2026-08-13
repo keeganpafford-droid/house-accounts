@@ -549,6 +549,41 @@ async function run() {
     assert(missing && missing.feedback === null && missing.outreachLogged === false, 'a key with no history returns a clean, unanswered default state');
   }
   {
+    // signal_selected read-back: durable historical-use acknowledgement,
+    // not a single "currently active" pointer. A signal never selected
+    // reads selected:false; a signal selected even once (regardless of
+    // any later feedback/outreach activity) reads selected:true and stays
+    // true -- it is never un-set by anything else happening on the row.
+    const { states } = await withState(async () => {
+      await handler(makeReq({ token: 'valid-token-a1', body: { eventType: 'signal_selected', signalId: 'sig-a1', clientEventId: 'sel-a1' } }), makeRes());
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', token: 'valid-token-a1', query: getKeys(['fp-shared-account', 'Acme Co'], ['fp-teammate-only', 'Beta Inc']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const selected = states[readBackKey('fp-shared-account', 'Acme Co')];
+    const neverSelected = states[readBackKey('fp-teammate-only', 'Beta Inc')];
+    assert(selected.selected === true, `REQUIRED: a signal this rep has selected at least once reads selected:true in read-back (got ${JSON.stringify(selected)})`);
+    assert(neverSelected.selected === false, `REQUIRED: a signal this rep has never selected reads selected:false (got ${JSON.stringify(neverSelected)})`);
+  }
+  {
+    // Reopening (no additional signal_selected) does not create a second
+    // event, and the signal still reads selected:true -- the acknowledgement
+    // is durable existence-based, not dependent on the LATEST event type.
+    const { count, states } = await withState(async (state) => {
+      await handler(makeReq({ token: 'valid-token-a1', body: { eventType: 'signal_selected', signalId: 'sig-a1', clientEventId: 'sel-first' } }), makeRes());
+      // A later, unrelated judgment on the same signal -- selected must
+      // remain true even though the LATEST event for this signal is now
+      // signal_useful, not signal_selected.
+      await handler(makeReq({ token: 'valid-token-a1', body: { eventType: 'signal_useful', signalId: 'sig-a1', clientEventId: 'sel-then-useful' } }), makeRes());
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', token: 'valid-token-a1', query: getKeys(['fp-shared-account', 'Acme Co']) }), getRes);
+      return { count: state.haSignalEvents.length, states: getRes.body.states };
+    });
+    assert(count === 2, `sanity: exactly the two genuinely distinct events were written (got ${count})`);
+    const s = states[readBackKey('fp-shared-account', 'Acme Co')];
+    assert(s.selected === true && s.feedback === 'useful', `REQUIRED: selected stays true and reflects alongside the LATEST feedback judgment, independent of event recency (got ${JSON.stringify(s)})`);
+  }
+  {
     // Account-scoped read-back: the SAME fingerprint, two different
     // accounts -- feedback given under one account context must never
     // appear when reading back the OTHER account's state.

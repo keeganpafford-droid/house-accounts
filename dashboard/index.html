@@ -1730,7 +1730,13 @@
     margin-top:12px;
     display:flex;
     flex-wrap:wrap;
+    align-items:center;
     gap:8px;
+  }
+  .verified-signal-actions .signal-used-status{
+    color:#0F766E;
+    font-size:0.85rem;
+    font-weight:600;
   }
   .signal-feedback-btn.signal-feedback-active{
     border-color:#1FB7AE;
@@ -3072,18 +3078,23 @@ async function fetchSignalEventStates(keys){
   }
 }
 
-// Hydrates every Useful/Not-useful button currently in `root` (defaults to
-// the whole document) from this rep's own prior feedback, so reopening an
-// account card or Research Details does not feel like it forgot a
-// judgment already given. Safe to call repeatedly/redundantly -- it only
-// ever reads and reflects the rep's own current state, never mutates
-// anything.
+// Hydrates every Useful/Not-useful button AND every "Use This Signal"
+// button currently in `root` (defaults to the whole document) from this
+// rep's own prior events, so reopening an account card or Research
+// Results does not feel like it forgot a judgment already given, or make
+// the rep re-select a signal they already chose to work merely to reopen
+// Prepare for Call. One batched read-back covers both -- they key off the
+// same (eventFingerprint, accountName) composite identity. Safe to call
+// repeatedly/redundantly -- it only ever reads and reflects the rep's own
+// current state, never mutates anything.
 async function hydrateSignalFeedbackButtons(root){
   const scope = root || document;
-  const buttons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
-  if(!buttons.length) return;
-  const states = await fetchSignalEventStates(buttons.map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''})));
-  buttons.forEach(btn => {
+  const feedbackButtons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
+  const useSignalButtons = Array.from(scope.querySelectorAll('.use-signal-btn[data-event-fingerprint]')).filter(b => b.dataset.eventFingerprint);
+  if(!feedbackButtons.length && !useSignalButtons.length) return;
+  const keys = [...feedbackButtons, ...useSignalButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
+  const states = await fetchSignalEventStates(keys);
+  feedbackButtons.forEach(btn => {
     const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
     if(!state || !state.feedback) return;
     const isPressed = (btn.dataset.signalFeedback === 'useful' && state.feedback === 'useful')
@@ -3092,6 +3103,20 @@ async function hydrateSignalFeedbackButtons(root){
       btn.setAttribute('aria-pressed', 'true');
       btn.classList.add('signal-feedback-active');
     }
+  });
+  // signal_selected means the rep intentionally chose to work this signal
+  // -- once true, reopening Research Results must offer straight back into
+  // Prepare for Call ("Prepare for Call →") instead of asking the rep to
+  // click "Use This Signal" again, which would otherwise log a second,
+  // redundant signal_selected for the exact same decision.
+  useSignalButtons.forEach(btn => {
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
+    if(!state || !state.selected) return;
+    btn.textContent = 'Prepare for Call →';
+    btn.dataset.signalSelected = '1';
+    const actionsRow = btn.closest('.verified-signal-actions');
+    const statusEl = actionsRow ? actionsRow.querySelector('.signal-used-status') : null;
+    if(statusEl) statusEl.hidden = false;
   });
 }
 
@@ -7198,8 +7223,16 @@ function renderSingleVerifiedSignal(signal){
   // the customer) and for a signal already Priority-eligible (it already has
   // its own "Prepare for Call" entry point from the priorities feed).
   const alreadyPriorityEligible = typeof isPriorityEligibleOpportunity === 'function' && isPriorityEligibleOpportunity(signal);
+  // signal_selected read-back: hydrateSignalFeedbackButtons() relabels
+  // this button to "Prepare for Call →" and reveals .signal-used-status
+  // once this rep has already selected this signal at least once --
+  // reopening Research Results must never make a rep re-select something
+  // they already chose to work just to get back into Prepare for Call.
+  // Only possible when the signal carries a stable id/fingerprint to
+  // hydrate against; a signal without one (should not normally happen for
+  // a real persisted signal) simply never shows the "Used" state.
   const useSignalButton = (eligible && !possibleMatch && !identityRejected && !alreadyPriorityEligible)
-    ? `<button type="button" class="btn btn-ghost btn-mini use-signal-btn" data-use-signal="1" data-signal-source="${escapeHtml(signal.sourceUrl || '')}">Use This Signal →</button>`
+    ? `<span class="signal-used-status" hidden>Used ✓</span><button type="button" class="btn btn-ghost btn-mini use-signal-btn" data-use-signal="1" data-signal-source="${escapeHtml(signal.sourceUrl || '')}" data-signal-id="${escapeHtml(signal.id || '')}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint || '')}" data-account-name="${escapeHtml(signal.accountName || '')}">Use This Signal →</button>`
     : '';
   // Signal feedback / organizational-learning foundation: answers "was
   // this business signal a useful reason to reach out?" -- deliberately
@@ -9434,6 +9467,9 @@ function repSelectedOpportunityFromSignal(signal){
     opportunityType: signal.opportunityType || 'SIGNAL-DRIVEN'
   };
 }
+// First time this rep uses this signal: a real intentional choice, worth
+// its own durable signal_selected. Fire-and-forget, never blocks opening
+// the panel.
 function useSignalAsRepSelected(signal){
   if(!signal) return;
   const opp = repSelectedOpportunityFromSignal(signal);
@@ -9443,6 +9479,18 @@ function useSignalAsRepSelected(signal){
   if(opp.id){
     logSignalEvent('signal_selected', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
   }
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
+}
+
+// Live-QA correction: reopening a signal this rep already selected must
+// never write a second signal_selected -- that decision is already on
+// durable record (see hydrateSignalFeedbackButtons()'s "Used ✓" / Prepare
+// for Call relabel). This simply reopens the same rep-selected Prepare
+// for Call experience; prepare_call_opened still fires normally through
+// createSalesPlayPanel()'s own existing, unconditional open-event logic.
+function reopenRepSelectedSignal(signal){
+  if(!signal) return;
+  const opp = repSelectedOpportunityFromSignal(signal);
   if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
 }
 
@@ -12770,7 +12818,12 @@ document.addEventListener('click', (event) => {
     if(raw){
       try{
         const signal = JSON.parse(raw);
-        if(typeof useSignalAsRepSelected === 'function') useSignalAsRepSelected(signal);
+        // hydrateSignalFeedbackButtons() flags an already-selected signal
+        // with data-signal-selected -- reopening it must never write a
+        // second signal_selected, only reopen Prepare for Call.
+        if(useSignalBtn.dataset.signalSelected === '1'){
+          if(typeof reopenRepSelectedSignal === 'function') reopenRepSelectedSignal(signal);
+        }else if(typeof useSignalAsRepSelected === 'function') useSignalAsRepSelected(signal);
       }catch(err){ /* malformed payload -- nothing to recover, fail silently */ }
     }
     return;
