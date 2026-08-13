@@ -4,15 +4,17 @@
 // handler export (mocked Supabase + Resend fetch), same convention as
 // scripts/test-security-correction-anonymous-endpoints.js.
 //
-// Note on scope: api/auth.js's signup action ALSO performs the user's first
-// login as part of establishing their session (this is pre-existing,
-// unchanged behavior -- see recordLogin() being called from both the
-// signup and login branches). A genuinely new signup is therefore also,
-// correctly, that user's first login -- so the signup scenario below
-// expects BOTH a "new signup" email and a "user activated" email, one of
-// each. The standalone "first login" and "later login" scenarios exercise
-// the login action directly, for a user who already has an ha_users row
-// (e.g. from an invite) but has never logged in yet.
+// Note on scope: api/auth.js's signup action still calls recordLogin() to
+// establish the new user's session (pre-existing, unchanged behavior), so
+// login_count is incremented at signup time exactly as before -- but the
+// signup branch does NOT call notifyFounderOfActivation(). A genuine
+// self-signup therefore sends exactly one founder email (the signup one),
+// never a second "activated" email for the same request. The "activated"
+// notification is reserved for the login action -- fired the first time
+// login_count is observed falsy there, which covers both a returning user
+// logging back in after a session expiry and an invited teammate (whose
+// ha_users row is created by api/team.js's accept-invite action, which
+// never touches login_count) logging in for the first time.
 //
 // Usage: node scripts/test-founder-notifications.js
 import handler from '../api/auth.js';
@@ -68,12 +70,11 @@ async function withMockFetch(handlers, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: a genuine new signup -- exactly one "new signup" email AND exactly
-// one "user activated" email (signup performs the user's own first login,
-// see the header note above), both addressed to the founder, both from the
-// House Accounts sender address, and both grounded in the verified/created
-// identity (never raw request-body fields beyond what was legitimately used
-// to create the account).
+// Test 1: a genuine new signup -- exactly one "new signup" email and ZERO
+// "user activated" emails for the same request (see the header note above:
+// activation notifications are reserved for the login action). The one
+// email sent is addressed to the founder, from the House Accounts sender
+// address, and grounded in the verified/created identity.
 // ---------------------------------------------------------------------------
 async function testGenuineNewSignup() {
   setBaseEnv();
@@ -87,7 +88,7 @@ async function testGenuineNewSignup() {
       ? jsonResponse([{ id: 'org-1', name: 'Acme Inc' }])
       : undefined,
     (u, o) => (u.includes('/rest/v1/ha_users') && o.method === 'POST')
-      ? jsonResponse([{ ...JSON.parse(o.body)[0], id: 'user-1' }]) // no login_count key -> falsy -> first login
+      ? jsonResponse([{ ...JSON.parse(o.body)[0], id: 'user-1' }])
       : undefined,
     (u, o) => (u.includes('/auth/v1/token?grant_type=password') && o.method === 'POST')
       ? jsonResponse({ access_token: 'tok', refresh_token: 'rtok', expires_in: 3600, token_type: 'bearer', user: { id: 'auth-1', email: 'newuser@example.com' } })
@@ -107,18 +108,14 @@ async function testGenuineNewSignup() {
   const signupEmails = resendCalls.filter(c => String(c.subject || '').startsWith('New House Accounts signup'));
   const activationEmails = resendCalls.filter(c => String(c.subject || '').startsWith('House Accounts user activated'));
   assert(signupEmails.length === 1, `REQUIRED: exactly one "new signup" founder email is sent for a genuine new signup (got ${signupEmails.length})`);
-  assert(activationEmails.length === 1, `signup also performs the new user's first login, so exactly one "user activated" email is sent too (got ${activationEmails.length})`);
-  assert(resendCalls.length === 2, `no other founder emails are sent for a signup (got ${resendCalls.length} total)`);
+  assert(activationEmails.length === 0, `REQUIRED: no "user activated" email is sent during the same signup request (got ${activationEmails.length})`);
+  assert(resendCalls.length === 1, `REQUIRED: exactly one founder email total is sent for a genuine new signup (got ${resendCalls.length})`);
 
   const signupEmail = signupEmails[0];
   assert(signupEmail.subject === 'New House Accounts signup — newuser@example.com', `signup subject matches the required format (got ${JSON.stringify(signupEmail.subject)})`);
   assert(signupEmail.to === 'keegan@houseaccounts.ai', `REQUIRED: the signup notification is addressed to keegan@houseaccounts.ai (got ${JSON.stringify(signupEmail.to)})`);
   assert(signupEmail.from === 'House Accounts <hello@houseaccounts.ai>', `REQUIRED: the signup notification is sent from House Accounts <hello@houseaccounts.ai> (got ${JSON.stringify(signupEmail.from)})`);
   assert(signupEmail.html.includes('New User') && signupEmail.html.includes('newuser@example.com') && signupEmail.html.includes('Acme Inc'), 'signup notification includes name, email, and organization/company');
-
-  const activationEmail = activationEmails[0];
-  assert(activationEmail.subject === 'House Accounts user activated — newuser@example.com', `activation subject matches the required format (got ${JSON.stringify(activationEmail.subject)})`);
-  assert(activationEmail.to === 'keegan@houseaccounts.ai' && activationEmail.from === 'House Accounts <hello@houseaccounts.ai>', 'activation notification uses the same founder recipient/sender');
 }
 await testGenuineNewSignup();
 
@@ -153,6 +150,42 @@ async function testFirstStandaloneLogin() {
   assert(email.html.includes('Existing Member') && email.html.includes('member@example.com') && email.html.includes('Beta Co'), 'activation notification includes name, email, and organization/company');
 }
 await testFirstStandaloneLogin();
+
+// ---------------------------------------------------------------------------
+// Test 2b: an invited teammate -- an ha_users row created by
+// api/team.js's accept-invite action (which never touches login_count at
+// all, so the field is genuinely absent, not just 0) -- logging in via
+// api/auth.js's login action for the first time still sends exactly one
+// "user activated" email.
+// ---------------------------------------------------------------------------
+async function testInvitedTeammateFirstLogin() {
+  setBaseEnv();
+  // Mirrors the exact row shape api/team.js's accept-invite action inserts:
+  // no login_count key present at all.
+  const invitedRow = { id: 'user-6', email: 'teammate@example.com', name: 'Invited Teammate', company: 'Acme Inc', organization_id: 'org-1', auth_user_id: 'auth-6', app_role: 'member', role: 'member', status: 'active' };
+  const routes = [
+    (u, o) => (u.includes('/auth/v1/token?grant_type=password') && o.method === 'POST')
+      ? jsonResponse({ access_token: 'tok', refresh_token: 'rtok', expires_in: 3600, token_type: 'bearer', user: { id: 'auth-6', email: 'teammate@example.com' } })
+      : undefined,
+    (u) => (u.includes('/rest/v1/ha_users') && u.includes('auth_user_id=eq.')) ? jsonResponse([invitedRow]) : undefined,
+    (u, o) => (u.includes('/rest/v1/ha_users') && o.method === 'PATCH') ? jsonResponse([{ ...invitedRow, ...JSON.parse(o.body) }]) : undefined,
+    (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'POST') ? jsonResponse([]) : undefined,
+    (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'DELETE') ? jsonResponse([]) : undefined
+  ];
+  const { res, resendCalls } = await withMockFetch({ routes }, async () => {
+    const req = makeReq({ action: 'login', email: 'teammate@example.com', password: 'whatever-the-real-password-is' });
+    const res = makeRes();
+    await handler(req, res);
+    return { res };
+  });
+
+  assert(res.statusCode === 200, `REQUIRED: the invited teammate's first login succeeds (got ${res.statusCode}, body: ${JSON.stringify(res.body)})`);
+  assert(resendCalls.length === 1, `REQUIRED: an invited/newly provisioned user's first login sends exactly one founder email (got ${resendCalls.length})`);
+  const email = resendCalls[0];
+  assert(email.subject === 'House Accounts user activated — teammate@example.com', `activation subject matches the required format (got ${JSON.stringify(email.subject)})`);
+  assert(!resendCalls.some(c => String(c.subject || '').startsWith('New House Accounts signup')), 'REQUIRED: an invited teammate logging in never triggers a "new signup" email (they were provisioned via the team-invite flow, not api/auth.js signup)');
+}
+await testInvitedTeammateFirstLogin();
 
 // ---------------------------------------------------------------------------
 // Test 3: a later login (login_count already >= 1) sends NO additional
