@@ -426,8 +426,13 @@ assert(
   'pricing.html has no redundant "Need help choosing a plan?" contact prompt'
 );
 {
+  // Correction round: the bottom "All House Accounts features included..."
+  // note was removed entirely -- the same no-feature-tier message is
+  // already stated once, clearly, in the hero copy above the selector, so
+  // a second restatement at the bottom was redundant rather than useful.
   const featureClaimOccurrences = (pricingHtmlNoComments.match(/All House Accounts features included/g) || []).length;
-  assert(featureClaimOccurrences === 1, `pricing.html states "All House Accounts features included" exactly once, not restated redundantly (found ${featureClaimOccurrences})`);
+  assert(featureClaimOccurrences === 0, `pricing.html no longer restates "All House Accounts features included" at the bottom -- the hero copy already says it once (found ${featureClaimOccurrences})`);
+  assert(/no feature tiers/.test(pricingHtmlNoComments), 'the no-feature-tier message remains stated once, in the hero copy');
 }
 assert(
   /<footer><div>House Accounts helps promotional products reps/.test(pricingHtml),

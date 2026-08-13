@@ -16,6 +16,8 @@
 .selector-result[data-state="enterprise"] .selector-band-label{color:var(--signal)}
 .selector-result[data-state="enterprise"] .selector-price{color:#fff;font-size:1.7rem;line-height:1.3}
 .selector-result[data-state="enterprise"] .selector-detail{color:#cbd5e1}
+.pricing-selector .btn{display:block;width:100%;text-align:center;margin-top:22px;padding:17px 20px;font-size:.86rem;box-shadow:0 10px 24px rgba(20,184,166,.28);transition:transform .15s ease,box-shadow .15s ease;}
+.pricing-selector .btn:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(20,184,166,.34);}
 @media(max-width:640px){.selector-row{flex-direction:column;align-items:flex-start;gap:8px}.selector-number{width:100%;text-align:left}}
 .beta-top-banner{
   min-height:30px;
@@ -103,8 +105,8 @@
     <label class="selector-label" for="accountCountInput">Monitored accounts</label>
     <input type="number" id="accountCountInput" class="selector-number" min="1" step="1" inputmode="numeric" value="10">
   </div>
-  <input type="range" id="accountCountRange" class="selector-range" min="1" max="2600" step="1" value="10" aria-label="Monitored accounts">
-  <div class="selector-ticks"><span>1</span><span>500</span><span>1,000</span><span>1,500</span><span>2,000</span><span>2,500+</span></div>
+  <input type="range" id="accountCountRange" class="selector-range" min="0" max="8" step="1" value="0" aria-label="Monitored accounts">
+  <div class="selector-ticks" id="selectorTicks"></div>
   <div class="selector-result" id="selectorResult" data-state="free">
     <div class="selector-band-label" id="bandLabel">Free</div>
     <div class="selector-price" id="bandPrice">$0<span class="selector-price-suffix">/mo</span></div>
@@ -113,13 +115,13 @@
     <div id="checkoutError" class="note" style="display:none;border-left-color:#c0392b;"></div>
   </div>
 </section>
-<div class="note">All House Accounts features included at every level. Pricing changes only with how many accounts you're monitoring.</div>
 </main><footer><div>House Accounts helps promotional products reps know which customers deserve attention this week — and why.</div><div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Contact</a></div></footer><script src="/auth-client.js"></script>
 <script type="module">
-import { bandForAccountCount, formatPriceCents } from '/pricing-bands.js';
+import { PRICING_BANDS, bandForAccountCount, formatPriceCents } from '/pricing-bands.js';
 
 const range = document.getElementById('accountCountRange');
 const numberInput = document.getElementById('accountCountInput');
+const ticksEl = document.getElementById('selectorTicks');
 const result = document.getElementById('selectorResult');
 const bandLabelEl = document.getElementById('bandLabel');
 const bandPriceEl = document.getElementById('bandPrice');
@@ -128,6 +130,20 @@ const ctaEl = document.getElementById('selectorCta');
 const errorEl = document.getElementById('checkoutError');
 
 let checkingOut = false;
+
+// QA correction: the slider used to be geometrically linear from 1 to
+// 2,600, which crushed every lower (and more commonly chosen) price band
+// into a sliver at the left edge. It now moves across the commercially
+// meaningful capacity-band stops themselves -- one discrete position per
+// PRICING_BANDS entry, imported as-is (no second copy of the thresholds).
+// The numeric input is untouched: typing an exact count (e.g. 387) still
+// resolves through the same bandForAccountCount() the price/CTA use, and
+// the slider just snaps to reflect whichever band that count landed in.
+ticksEl.innerHTML = PRICING_BANDS.map(b => `<span>${b.contactSales ? 'Enterprise' : (b.key === 'free' ? 'Free' : b.maxAccounts.toLocaleString())}</span>`).join('');
+
+function bandIndexForCount(count){
+  return PRICING_BANDS.indexOf(bandForAccountCount(count));
+}
 
 function render(count){
   const band = bandForAccountCount(count);
@@ -153,17 +169,22 @@ function render(count){
     bandLabelEl.textContent = band.label;
     bandPriceEl.innerHTML = `${formatPriceCents(band.priceCents)}<span class="selector-price-suffix">/mo</span>`;
     bandDetailEl.textContent = 'Billed monthly through Stripe. Cancel anytime.';
-    ctaEl.textContent = 'Continue to Checkout';
+    ctaEl.textContent = `Subscribe — ${formatPriceCents(band.priceCents)}/mo`;
     ctaEl.href = '#';
     ctaEl.onclick = (e) => { e.preventDefault(); startCheckout(count); };
   }
 }
 
-function syncFromRange(){ numberInput.value = range.value; render(Number(range.value)); }
+function syncFromRange(){
+  const band = PRICING_BANDS[Number(range.value)];
+  const count = band.contactSales ? (PRICING_BANDS[PRICING_BANDS.length - 2].maxAccounts + 1) : band.maxAccounts;
+  numberInput.value = count;
+  render(count);
+}
 function syncFromNumber(){
   const v = Math.max(1, Math.round(Number(numberInput.value) || 1));
   numberInput.value = v;
-  range.value = Math.min(v, Number(range.max));
+  range.value = bandIndexForCount(v);
   render(v);
 }
 range.addEventListener('input', syncFromRange);
@@ -191,6 +212,6 @@ async function startCheckout(count){
   }
 }
 
-render(Number(range.value));
+syncFromRange();
 </script>
 </body></html>

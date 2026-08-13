@@ -2045,6 +2045,9 @@
 .dashboard-trial-status:empty{display:none;}
 .mvp-dashboard-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--line);border-left:4px solid var(--signal);background:#fff8e8;color:var(--ink);font-weight:700;}
 .mvp-dashboard-notice.active{display:block;}
+.checkout-success-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--radar);border-left:4px solid var(--radar);background:#E9FBF8;color:var(--ink);font-weight:700;align-items:center;justify-content:space-between;gap:12px;}
+.checkout-success-notice.active{display:flex;}
+.checkout-success-notice-dismiss{flex-shrink:0;background:transparent;border:0;color:var(--ink);font-size:18px;line-height:1;font-weight:900;cursor:pointer;padding:0 4px;}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){
@@ -2212,6 +2215,7 @@
     </div>
   </section>
   <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
+  <div class="checkout-success-notice" id="checkoutSuccessNotice" role="status"><span id="checkoutSuccessNoticeText"></span><button type="button" class="checkout-success-notice-dismiss" id="checkoutSuccessNoticeDismiss" aria-label="Dismiss">×</button></div>
 
   <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
     <div class="beta-modal">
@@ -2764,6 +2768,33 @@ function dashboardUsageInfo(){
   const used=Number(usage.totalMonitoredCompanies||names.size||0);
   return {plan,limit,names,isFree:limited,used,customerCount,prospectCount,trialDaysRemaining:usage.trialDaysRemaining,trialExpired:usage.trialExpired,trialUsed:usage.trialUsed};
 }
+// Post-Checkout success confirmation. Only fires once, only when the URL
+// actually carries ?checkout=success (set by api/create-checkout-session.js's
+// success_url), and the account-capacity number is read live from the same
+// usage/entitlement data the rest of the dashboard already uses -- never
+// hardcoded. The query param is stripped via replaceState immediately, so a
+// refresh or a later visit never re-shows it (same convention
+// handleMvpDashboardRoute() already uses for ?action=add-data).
+let checkoutSuccessNoticeShown = false;
+function maybeShowCheckoutSuccessNotice(usage){
+  if(checkoutSuccessNoticeShown) return;
+  const params = new URLSearchParams(window.location.search);
+  if(params.get('checkout') !== 'success') return;
+  checkoutSuccessNoticeShown = true;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('checkout');
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+  const el = document.getElementById('checkoutSuccessNotice');
+  const textEl = document.getElementById('checkoutSuccessNoticeText');
+  if(!el || !textEl) return;
+  const limit = usage && usage.companyLimit;
+  textEl.textContent = (limit === null || limit === undefined)
+    ? `You’re subscribed — House Accounts can now monitor unlimited accounts.`
+    : `You’re subscribed — House Accounts can now monitor up to ${limit} accounts.`;
+  el.classList.add('active');
+  const dismissBtn = document.getElementById('checkoutSuccessNoticeDismiss');
+  if(dismissBtn) dismissBtn.addEventListener('click', () => el.classList.remove('active'));
+}
 async function loadDashboardUsage(){
   try{
     if(!(window.HouseAuth&&HouseAuth.authHeadersAsync)) return null;
@@ -2771,7 +2802,7 @@ async function loadDashboardUsage(){
     if(!headers) return null; // authHeadersAsync() already redirected to login
     const res=await fetch('/api/usage',{headers,cache:'no-store'});
     const data=await res.json().catch(()=>({}));
-    if(res.ok){ dashboardUsage=data; if(!currentDashboardData){ dashboardViewMode = defaultDashboardView(); } renderDashboardUsage(); renderDashboardViewSwitcher(); return data; }
+    if(res.ok){ dashboardUsage=data; if(!currentDashboardData){ dashboardViewMode = defaultDashboardView(); } renderDashboardUsage(); renderDashboardViewSwitcher(); maybeShowCheckoutSuccessNotice(data.usage||{}); return data; }
   }catch(e){ console.warn('Usage load failed',e); }
   return null;
 }

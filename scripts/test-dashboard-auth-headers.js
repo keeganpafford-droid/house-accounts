@@ -185,6 +185,7 @@ var dashboardViewMode = 'team';
 function defaultDashboardView(){ return 'team'; }
 function renderDashboardUsage(){}
 function renderDashboardViewSwitcher(){}
+function maybeShowCheckoutSuccessNotice(){}
 ${REAL_DASHBOARD_SOURCE}
 `, sandbox, { filename: 'dashboard-extract.js' });
   return { sandbox, locationState };
