@@ -13,7 +13,17 @@ function appBaseUrl(req){
   return 'https://www.houseaccounts.ai';
 }
 function planConfig(planRaw){const plan=clean(planRaw||'free').toLowerCase();if(plan==='solo')return{plan:'solo',seat_limit:1};if(plan==='team')return{plan:'team',seat_limit:25};if(plan==='enterprise')return{plan:'enterprise',seat_limit:null};return{plan:'free',seat_limit:1}}
-function orgDefaults(planRaw){const cfg=planConfig(planRaw);const now=new Date();if(cfg.plan==='solo'||cfg.plan==='team'){return{...cfg,trial_status:'active',subscription_status:'trialing',trial_started_at:now.toISOString(),trial_end:new Date(now.getTime()+30*86400000).toISOString(),trial_used:true}}if(cfg.plan==='enterprise'){return{...cfg,trial_status:'inactive',subscription_status:'manual',trial_started_at:null,trial_end:null,trial_used:false}}return{...cfg,trial_status:'inactive',subscription_status:'inactive',trial_started_at:null,trial_end:null,trial_used:false}}
+// 2026-08-13 pricing decision: no new 30-day paid-capacity trials are
+// granted going forward. Free (up to 10 monitored accounts, no credit
+// card) is the only no-payment entry point now; paid capacity is
+// purchased through Stripe Checkout (api/create-checkout-session.js), not
+// a signup-time trial grant. A signup requesting plan 'solo'/'team' still
+// gets that plan value recorded (harmless, matches planConfig()'s
+// seat_limit for historical consistency) but no trial -- entitlement()
+// correctly treats it as free-limited until a real Stripe subscription
+// exists. Existing Beta orgs already mid-trial are unaffected: nothing
+// here touches an existing organization row, only new-org creation.
+function orgDefaults(planRaw){const cfg=planConfig(planRaw);if(cfg.plan==='enterprise'){return{...cfg,trial_status:'inactive',subscription_status:'manual',trial_started_at:null,trial_end:null,trial_used:false}}return{...cfg,trial_status:'inactive',subscription_status:'inactive',trial_started_at:null,trial_end:null,trial_used:false}}
 function env(){const rawUrl=process.env.SUPABASE_URL;const key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!rawUrl||!key)throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');const url=String(rawUrl).trim().replace(/\/+$/,'').replace(/\/rest\/v1$/i,'');return{url,key}}
 async function sb(path, options={}){const{url,key}=env();const resp=await fetch(`${url}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:options.prefer||'return=representation',...(options.headers||{})}});const text=await resp.text();let data=null;if(text){try{data=JSON.parse(text)}catch{data=text}}if(!resp.ok){const msg=typeof data==='string'?data:(data?.message||data?.hint||JSON.stringify(data));throw new Error(`Supabase ${resp.status}: ${msg}`)}return data}
 async function authFetch(path, options={}){const{url,key}=env();const resp=await fetch(`${url}/auth/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',...(options.headers||{})}});const text=await resp.text();let data={};if(text){try{data=JSON.parse(text)}catch{data={raw:text}}}if(!resp.ok){throw new Error(data.error_description||data.msg||data.error||data.message||`Supabase Auth ${resp.status}`)}return data}

@@ -406,27 +406,29 @@ assert(
 );
 
 // ---------------------------------------------------------------------------
-// Required test 19 & 20: the Pricing page bottom retains exactly the
-// required content (Free/Solo $99/Team $299, one >25-users contact route,
-// the shared footer) with the identified redundancy removed.
+// Required test 19 & 20, superseded by the 2026-08-13 pricing/billing
+// sprint: pricing.html no longer has separate Free/Solo/Team plan cards
+// or a seat-count-based "25 users" contact route (seats are unlimited at
+// every level now) -- it's a single account-capacity selector. The
+// underlying property this block originally checked -- no redundant
+// restatement of the same claim, one shared footer, no leftover dead CSS
+// -- is re-verified against the new page shape below.
 // ---------------------------------------------------------------------------
-// Strip HTML comments before checking for redundant content -- the
-// stabilization-round comment explaining what was removed necessarily
-// mentions the old class name/text, and must not itself count as a
-// leftover occurrence.
+// Strip HTML comments before checking for redundant content -- an
+// explanatory comment mentioning old class names/text must not itself
+// count as a leftover occurrence.
 const pricingHtmlNoComments = pricingHtml.replace(/<!--[\s\S]*?-->/g, '');
-assert(pricingHtml.includes('<div class="price">$0</div>'), 'pricing.html retains the Free ($0) plan card');
-assert(pricingHtml.includes('<div class="price">$99'), 'pricing.html retains the Solo $99/mo plan card');
-assert(pricingHtml.includes('<div class="price">$299'), 'pricing.html retains the Team $299/mo plan card');
-{
-  const contactRouteOccurrences = (pricingHtmlNoComments.match(/Need more than 25 users\?/g) || []).length;
-  assert(contactRouteOccurrences === 1, `pricing.html has exactly one "Need more than 25 users? Contact us." route (found ${contactRouteOccurrences})`);
-}
+assert(pricingHtml.includes('id="accountCountRange"') && pricingHtml.includes('id="accountCountInput"'), 'pricing.html retains the account-capacity slider/numeric input');
+assert(!/Need more than 25 users\?/.test(pricingHtmlNoComments), 'pricing.html no longer references the retired seat-count-based ">25 users" contact route -- seats are unlimited at every level');
 assert(!/class="pricing-trust"/.test(pricingHtml) && !/\.pricing-trust\{/.test(pricingHtml), 'pricing.html no longer has the redundant .pricing-trust callout box (its claim duplicated the hero lead and the Free card)');
 assert(
   (pricingHtmlNoComments.match(/Need help choosing a plan\?/g) || []).length === 0,
-  'pricing.html no longer has the second, redundant "Need help choosing a plan?" contact prompt directly beneath the required one'
+  'pricing.html has no redundant "Need help choosing a plan?" contact prompt'
 );
+{
+  const featureClaimOccurrences = (pricingHtmlNoComments.match(/All House Accounts features included/g) || []).length;
+  assert(featureClaimOccurrences === 1, `pricing.html states "All House Accounts features included" exactly once, not restated redundantly (found ${featureClaimOccurrences})`);
+}
 assert(
   /<footer><div>House Accounts helps promotional products reps/.test(pricingHtml),
   'pricing.html retains its shared closing footer, unduplicated, directly after the single closing CTA'

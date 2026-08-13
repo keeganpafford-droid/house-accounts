@@ -1,39 +1,39 @@
-import { normalizeCompanyName } from './company-identity.js';
+import { entitlement, usageFor as sharedUsageFor } from './lib/entitlement.js';
 
 function json(res,status,body){res.setHeader('Cache-Control','no-store, max-age=0');return res.status(status).json(body)}
 function clean(v=''){return String(v||'').trim()}
 function env(){const rawUrl=process.env.SUPABASE_URL;const key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!rawUrl||!key)throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');const url=String(rawUrl).trim().replace(/\/+$/,'').replace(/\/rest\/v1$/i,'');return{url,key}}
 async function sb(path, options={}){const{url,key}=env();const resp=await fetch(`${url}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:options.prefer||'return=representation',...(options.headers||{})}});const text=await resp.text();let data=null;if(text){try{data=JSON.parse(text)}catch{data=text}}if(!resp.ok){const msg=typeof data==='string'?data:(data?.message||data?.hint||JSON.stringify(data));throw new Error(`Supabase ${resp.status}: ${msg}`)}return {data,headers:resp.headers}}
+// Thin adapter so api/lib/entitlement.js's shared usageFor() (written
+// against a plain sb(path)=>data contract) can reuse this file's own
+// {data,headers}-returning sb() unchanged.
+async function sbData(path, options={}){return (await sb(path, options)).data}
 async function authUser(req){const token=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const resp=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});if(!resp.ok)return null;return resp.json()}
 async function haUser(req){const au=await authUser(req);if(!au?.id)return null;const {data}=await sb(`ha_users?auth_user_id=eq.${encodeURIComponent(au.id)}&select=*&limit=1`);return Array.isArray(data)?data[0]:null}
 async function loadOrg(user){if(!user?.organization_id)return null;const {data}=await sb(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}&select=*&limit=1`);return Array.isArray(data)?data[0]:null}
-// FR: duplicate-company-research-control round -- normalizeName() now
-// delegates to the shared api/company-identity.js implementation
-// (byte-identical regex to what lived here before), also used by
-// api/save-upload.js and api/research-batch.js's duplicate-company research
-// check, instead of each file hand-maintaining its own copy.
-const normalizeName = normalizeCompanyName;
-// Phase 2A / A1: the only plan values a client is allowed to request through
-// this public endpoint. 'enterprise' and 'manual' are deliberately absent —
-// planConfig()/planPatch() below still know how to build an enterprise patch
-// (kept for any future internal/admin-only caller), but this allowlist is
-// the actual gate: a request for anything outside this list is rejected
-// before planPatch() is ever called, so there is no client-reachable path to
-// self-assign enterprise or manual entitlement. See settings.audit log for
-// every accepted and rejected attempt.
-const CLIENT_REQUESTABLE_PLANS = ['free','solo','team'];
+// Phase 2A / A1, narrowed 2026-08-13: the only plan value a client is
+// allowed to request through this public endpoint is 'free'. 'solo' and
+// 'team' were removed from this allowlist because we no longer grant new
+// 30-day paid-capacity trials -- paid capacity is purchased through
+// Stripe Checkout (api/create-checkout-session.js) instead. This endpoint
+// now only serves self-service downgrade-to-free; planConfig()/
+// planPatch() below still know how to build solo/team/enterprise patches
+// (kept for any future internal/admin-only caller, e.g. the manual beta
+// billing process in BETA_OPERATIONS.md), but this allowlist is the
+// actual gate: a request for anything outside this list is rejected
+// before planPatch() is ever called. See settings.audit log for every
+// accepted and rejected attempt.
+const CLIENT_REQUESTABLE_PLANS = ['free'];
 function auditLog(entry){
   try{ console.log('[settings.audit]', JSON.stringify({ ts:new Date().toISOString(), ...entry })); }
   catch{ console.log('[settings.audit] (unserializable entry)'); }
 }
+// planConfig()/orgDefaults() still assign the legacy seat_limit value on
+// plan changes for historical-data consistency, but seat_limit is no
+// longer read as a gate anywhere (see api/team.js) -- every organization
+// has unlimited seats regardless of plan.
 function planConfig(planRaw){const plan=clean(planRaw||'free').toLowerCase();if(plan==='solo')return{plan:'solo',seat_limit:1};if(plan==='team')return{plan:'team',seat_limit:25};if(plan==='enterprise')return{plan:'enterprise',seat_limit:null};return{plan:'free',seat_limit:1}}
-function daysRemaining(date){const t=new Date(date||0).getTime();if(!Number.isFinite(t)||t<=0)return null;return Math.max(0,Math.ceil((t-Date.now())/86400000))}
-function entitlement(org={}){const plan=clean(org.plan||'free').toLowerCase();const sub=clean(org.subscription_status||'').toLowerCase();const trial=clean(org.trial_status||'').toLowerCase();const trialDays=daysRemaining(org.trial_end);const trialUsed=!!org.trial_used;const trialStartedAt=org.trial_started_at||'';const trialActive=(trial==='active'||sub==='trialing')&&trialDays!==null&&trialDays>0;const paidActive=['active','paid','manual'].includes(sub);const isExpired=(sub==='trialing'||trial==='active')&&trialDays===0;const trialAlreadyUsedExpired=trialUsed&&isExpired;const unlimited=(plan!=='free')&&(trialActive||paidActive||plan==='enterprise');return{plan,subscriptionStatus:sub||'',trialStatus:trial||'',trialStartedAt,trialEnd:org.trial_end||'',trialUsed,trialDaysRemaining:trialDays,trialActive,trialExpired:isExpired,trialAlreadyUsedExpired,paidActive,unlimited,isLimitedPlan:!unlimited,companyLimit:unlimited?null:10,freeCompanyLimit:10}}
-async function orgUsers(orgId,userId){if(orgId){const {data}=await sb(`ha_users?organization_id=eq.${encodeURIComponent(orgId)}&select=id,email,status,last_login,login_count,last_ip,user_agent`);return (data||[]).filter(Boolean)}return [{id:userId}].filter(u=>u.id)}
-async function usageFor(user, org=null){const users=await orgUsers(user.organization_id,user.id);const ids=users.map(u=>u.id).filter(Boolean);const emails=users.map(u=>clean(u.email).toLowerCase()).filter(Boolean);let customer=[],prospect=[],legacy=[];
- if(ids.length){const inFilter=`in.(${ids.map(encodeURIComponent).join(',')})`;try{const uploads=(await sb(`ha_uploads?user_id=${inFilter}&select=id,stage`)).data||[];const activeUploadIds=uploads.filter(u=>!['paused','archived'].includes(clean(u.stage).toLowerCase())).map(u=>u.id).filter(Boolean);if(activeUploadIds.length){const upFilter=`in.(${activeUploadIds.map(encodeURIComponent).join(',')})`;customer=(await sb(`ha_accounts?upload_id=${upFilter}&select=account_name`)).data||[]}}catch{}try{legacy=(await sb(`ha_monitored_companies?user_id=${inFilter}&select=company_name,name,account_name,status`)).data||[];legacy=legacy.filter(r=>!['paused','archived'].includes(clean(r.status).toLowerCase()))}catch{}}
- for(const email of emails){try{const uploads=(await sb(`ha_prospect_uploads?user_email=eq.${encodeURIComponent(email)}&select=id,status`)).data||[];const uploadIds=uploads.filter(u=>!['paused','archived'].includes(clean(u.status).toLowerCase())).map(u=>u.id).filter(Boolean);if(uploadIds.length){const inUploads=`in.(${uploadIds.map(encodeURIComponent).join(',')})`;const rows=(await sb(`ha_prospect_accounts?upload_id=${inUploads}&select=company_name,status`)).data||[];prospect.push(...rows.filter(r=>!['paused','archived'].includes(clean(r.status).toLowerCase())))}}catch{}}
- const customerNames=new Set(customer.map(r=>normalizeName(r.account_name)).filter(Boolean));const prospectNames=new Set(prospect.map(r=>normalizeName(r.company_name)).filter(Boolean));const legacyNames=new Set(legacy.map(r=>normalizeName(r.company_name||r.name||r.account_name)).filter(Boolean));const names=new Set([...customerNames,...prospectNames,...legacyNames]);const ent=entitlement(org||{});return{...ent,customerCompanyCount:customerNames.size,existingCustomerCompanyCount:customerNames.size,prospectCompanyCount:prospectNames.size,legacyMonitoredCompanyCount:legacyNames.size,totalMonitoredCompanies:names.size,monitoredCompanyNames:[...names],customerCompanyNames:[...customerNames],prospectCompanyNames:[...prospectNames],seatsUsed:users.filter(u=>clean(u.status||'active')!=='inactive').length,seatLimit:org?.seat_limit??1,usageLabel:ent.companyLimit?`${names.size} / ${ent.companyLimit} companies monitored`:`${names.size} companies monitored`}}
+async function usageFor(user, org=null){return sharedUsageFor(sbData, user, org)}
 function planPatch(planRaw, org={}){const cfg=planConfig(planRaw);const now=new Date();const patch={plan:cfg.plan,seat_limit:cfg.seat_limit,updated_at:now.toISOString()};const ent=entitlement(org);if(cfg.plan==='free'){Object.assign(patch,{trial_status:'inactive',subscription_status:'inactive',trial_end:null,seat_limit:1});return patch;}if(cfg.plan==='solo'||cfg.plan==='team'){if(ent.trialActive){Object.assign(patch,{trial_status:'active',subscription_status:'trialing'});return patch;}if(!ent.trialUsed){const started=now.toISOString();const end=new Date(now.getTime()+30*86400000).toISOString();Object.assign(patch,{trial_status:'active',subscription_status:'trialing',trial_started_at:started,trial_end:end,trial_used:true});return patch;}const err=new Error('Your 30-day trial has already been used. Upgrade will be available soon.');err.status=403;throw err;}if(cfg.plan==='enterprise'){Object.assign(patch,{trial_status:'inactive',subscription_status:'manual',trial_end:null});return patch;}return patch}
 export default async function handler(req,res){try{const user=await haUser(req);if(!user)return json(res,401,{error:'Not authenticated'});if(req.method==='GET'){const org=await loadOrg(user);const usage=await usageFor(user, org);return json(res,200,{user,organization:org,usage,entitlement:usage})}if(req.method==='POST'){const action=clean(req.body?.action||'');if(action!=='update-plan')return json(res,400,{error:'Unknown settings action.'});if(!user.organization_id)return json(res,400,{error:'User is not linked to an organization.'});
     const requestedPlan=clean(req.body?.plan||'').toLowerCase();
