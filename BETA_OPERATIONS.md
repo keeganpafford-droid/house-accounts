@@ -50,7 +50,10 @@ paid path: `pricing.html`'s slider → `POST /api/create-checkout-session`
 back onto `ha_organizations`. Pricing is per monitored-account capacity
 band only — see `pricing-bands.js` for the one canonical band list (same
 prices, same bands, used by the page, checkout, and the webhook). There
-are no feature tiers; every band gets the same product.
+are no feature tiers; every band unlocks the same product, just at a
+different monitored-account ceiling. Each band is its own Stripe Product
+(one Product, one recurring Price, per band) — see the live-catalog note
+under "One-time manual Stripe dashboard setup" below for why.
 
 **Required environment variables (Production):**
 - `STRIPE_SECRET_KEY` — the account's secret API key.
@@ -64,16 +67,36 @@ are no feature tiers; every band gets the same product.
   contact-sales state, also no Price ID.
 
 **One-time manual Stripe dashboard setup:**
-1. Create one Stripe Product ("House Accounts").
-2. Create seven recurring **monthly** Prices under it, matching the
-   `pricing-bands.js` amounts exactly, and set each Price ID into its
-   `STRIPE_PRICE_ID_*` variable above.
+1. Create **seven separate Stripe Products**, one per capacity band (e.g.
+   "House Accounts — Up to 100 accounts" ... "House Accounts — Up to
+   2,500 accounts"). One Product per band is required, not optional: the
+   Stripe Customer Portal rejects adding a second Price to its
+   plan-switching list when two Prices share the same Product + billing
+   interval + currency ("This pricing plan can't be added"), so a single
+   shared Product cannot support Portal-driven upgrade/downgrade across
+   bands. (An earlier version of this doc had all seven Prices under one
+   shared Product; that structure hit exactly this Portal limitation and
+   was migrated away from.)
+2. Under each Product, create exactly one recurring **monthly** Price
+   matching that band's amount in `pricing-bands.js` exactly, and set each
+   Price ID into its `STRIPE_PRICE_ID_*` variable above. Nothing in this
+   codebase reads or stores a Stripe Product ID anywhere — `pricing-bands.js`,
+   `api/create-checkout-session.js`, and `api/stripe-webhook.js` all resolve
+   everything from the Price ID alone, so which Product a Price lives under
+   has no effect on checkout, entitlement, or webhook handling.
 3. Add a webhook endpoint pointed at `https://<domain>/api/stripe-webhook`,
    subscribed to `checkout.session.completed`,
    `customer.subscription.updated`, and `customer.subscription.deleted`
    (the only three events this codebase understands). Copy the generated
    signing secret into `STRIPE_WEBHOOK_SECRET`.
-4. Do all of the above in **test mode** first and run a real test-mode
+4. In the Stripe Dashboard's Customer Portal settings, add all seven
+   per-band Prices to the "Products customers can switch to" list, with
+   plan switching enabled and prorations enabled. Leave quantity changes
+   disabled — capacity is selected by choosing a band/Price, not by
+   changing a Price's quantity. Set `trial_update_behavior` to
+   `continue_trial` so a Portal-driven plan change never resets an
+   in-progress grandfathered legacy trial.
+5. Do all of the above in **test mode** first and run a real test-mode
    checkout before switching any of these variables to live-mode values.
 
 **What the webhook does and does not do:** it keeps
