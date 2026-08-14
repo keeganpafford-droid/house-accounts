@@ -254,6 +254,11 @@ function createFetchMock(){
     if(url.includes('/rest/v1/ha_weekly_runs')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_accounts')) return jsonResponse([]);
+    // Organizational Learning V1B: get-dashboard.js now fetches this rep's
+    // active account-history opportunity refs alongside accounts/signals --
+    // this file isn't exercising V1B itself, just needs it to not be an
+    // unhandled URL.
+    if(url.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
 
     throw new Error(`unexpected fetch in test-get-dashboard-authentication: ${url}`);
   };

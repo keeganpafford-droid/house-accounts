@@ -10180,6 +10180,12 @@ function createRepeatPatternOpportunities(account){
     opp.purchaseMonthLabel = pattern.monthLabel || '';
     opp.planningWindow = classifyMonthWindow(opp.purchaseMonth);
     opp.years = pattern.years;
+    // Organizational Learning V1B: the exact, unambiguous category string
+    // (matches api/lib/account-opportunities.js's own pattern.category) --
+    // the key api/get-dashboard.js uses to stamp this opportunity with its
+    // durable, server-issued ha_account_opportunities id/fingerprint on
+    // reload. Additive only; nothing else reads or depends on this field.
+    opp.category = pattern.category;
     // Commercial-readiness correction round, item 6: an overdue pattern
     // (reorderWindowStatus() -- grounded in the real last-order date, not
     // guessed) is never described as merely "coming up" or "happening
@@ -10205,6 +10211,16 @@ function createRepeatPatternOpportunities(account){
     opp.likelyConversations = products;
     opp.department = departmentFromText(contactTitle) || likelyDepartmentFromOpportunity(opp);
     opp.buyingCategory = primaryCategoryFromOpportunity(opp);
+    // Organizational Learning V1B: copy the durable, server-issued ref for
+    // THIS EXACT category, when the server has already exposed one (a
+    // reload of a previously-saved account -- see api/get-dashboard.js).
+    // Never fabricated client-side; a brand-new upload with nothing
+    // persisted yet simply has no ref to copy.
+    const repeatPatternRef = account.accountHistoryOpportunityRefs?.repeatPattern?.[pattern.category];
+    if(repeatPatternRef){
+      opp.accountOpportunityId = repeatPatternRef.id;
+      opp.accountOpportunityFingerprint = repeatPatternRef.fingerprint;
+    }
     assignOpportunityScore(opp, account);
     return opp;
   });
@@ -10369,6 +10385,26 @@ function generateFutureOpportunities(account){
       ['Event / Giveaway','Print / Stationery'],
       54
     ));
+  }
+
+  // Organizational Learning V1B: every generic industry-template
+  // opportunity here (opportunityType !== 'REPEAT PATTERN' -- genuine
+  // patterns already stamped their own category-specific ref inside
+  // createRepeatPatternOpportunities() above) normalizes to the SAME
+  // account-level follow_up family, per the design doc -- they are the
+  // same generation mechanism regardless of which template currently wins
+  // scoring, so they all get the one persisted follow_up ref for this
+  // account. Never fabricates a ref when the server hasn't issued one yet
+  // (a brand-new, never-saved upload has no persisted opportunities at all
+  // -- see api/get-dashboard.js's own comment on this same boundary).
+  const followUpRef = account.accountHistoryOpportunityRefs?.followUp;
+  if(followUpRef){
+    opps.forEach(opp => {
+      if(opp.opportunityType !== 'REPEAT PATTERN'){
+        opp.accountOpportunityId = followUpRef.id;
+        opp.accountOpportunityFingerprint = followUpRef.fingerprint;
+      }
+    });
   }
 
   // Remove duplicate opportunity names and keep best 4 per account

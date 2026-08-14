@@ -312,6 +312,9 @@ function assert(condition, message) {
       const attempted = (body.p_signals || []).length;
       return jsonResponse({ accountsPersisted: 2, signalsAttempted: attempted, signalsPersisted: 0, signalsConflictIgnored: attempted, status: 'completed', completedAt: new Date().toISOString(), attemptId: body.p_attempt_id });
     }
+    // Organizational Learning V1B: post-snapshot reconciliation hook -- see
+    // scripts/test-save-upload-persistence.js's identical comment.
+    if (u.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
     throw new Error(`Unhandled mock fetch URL in batching test: ${u}`);
   };
 

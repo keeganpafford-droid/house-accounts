@@ -267,6 +267,15 @@ function mockFetch(){
       }
       return jsonResponse(toReturn.map((r, i) => ({ ...r, id: `sig-${i}`, first_seen_at: new Date().toISOString() })));
     }
+    // Organizational Learning V1B: the post-snapshot reconciliation hook
+    // queries/writes ha_account_opportunities for every account in a save.
+    // None of these fixtures carry purchase history (rawData), so
+    // reconciliation always computes zero opportunities and only ever
+    // issues the one unconditional "existing active rows for this account"
+    // GET -- this test file isn't exercising that reconciliation itself
+    // (see scripts/test-account-opportunity-reconciliation.js for that),
+    // just needs it to not be an unhandled URL.
+    if(u.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
     throw new Error(`Unhandled mock fetch URL in test: ${u}`);
   };
 }

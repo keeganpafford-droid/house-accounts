@@ -545,8 +545,46 @@ function canonicalizeAccountOpportunities(account){
 // scoping (see api/get-dashboard.js's uploadId= branch and
 // researchAccountFromManageModal() in dashboard/index.html) can verify it
 // account-by-account, not just via the top-level upload field.
-function buildAccountsFromRows(accountRows, signalRows){
+// Organizational Learning V1B: groups ACTIVE ha_account_opportunities rows
+// (the caller queries status=eq.active before calling this) by account_name
+// into the shape createRepeatPatternOpportunities()/generateFutureOpportunities()
+// (dashboard/index.html) read as account.accountHistoryOpportunityRefs and
+// copy onto whatever opportunity objects they build. The browser never
+// constructs this identity itself -- only ever copies what the server
+// already issued via reconcileAccountOpportunities() (api/save-upload.js).
+function buildAccountHistoryOpportunityRefs(rows){
+  const byAccountName = new Map();
+  for(const row of rows || []){
+    if(!byAccountName.has(row.account_name)) byAccountName.set(row.account_name, { followUp: null, repeatPattern: {} });
+    const bucket = byAccountName.get(row.account_name);
+    const ref = { id: row.id, fingerprint: row.fingerprint };
+    if(row.opportunity_type === 'follow_up') bucket.followUp = ref;
+    else if(row.opportunity_type === 'repeat_pattern' && row.category) bucket.repeatPattern[row.category] = ref;
+  }
+  return byAccountName;
+}
+// Stamps the SAME refs directly onto already-stored repeatPatterns entries
+// (raw_data.repeatPatterns, written by a prior save's serializeAccountForStorage())
+// -- the reload path never re-runs generateFutureOpportunities() client-side,
+// it renders these stored objects as-is, so this is the one place that
+// path gets its refs. opportunityType === 'REPEAT PATTERN' entries match by
+// their own opp.category (see createRepeatPatternOpportunities()'s own
+// comment on that field); every other stored entry -- the generic
+// industry-template family -- normalizes to the account's one follow_up ref.
+function stampAccountHistoryOpportunityRefs(storedOpps, refs){
+  if(!refs) return storedOpps;
+  return storedOpps.map(opp => {
+    const ref = opp.opportunityType === 'REPEAT PATTERN'
+      ? (opp.category ? refs.repeatPattern[opp.category] : null)
+      : refs.followUp;
+    if(!ref) return opp;
+    return { ...opp, accountOpportunityId: ref.id, accountOpportunityFingerprint: ref.fingerprint };
+  });
+}
+
+function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows){
   const byAccount = new Map();
+  const opportunityRefsByAccountName = buildAccountHistoryOpportunityRefs(accountOpportunityRows);
   for(const a of accountRows || []){
     const raw = a.raw_data || {};
     const historicalProjects = Array.isArray(raw.historicalProjects) ? raw.historicalProjects : [];
@@ -575,13 +613,21 @@ function buildAccountsFromRows(accountRows, signalRows){
     // shape -- a legacy business signal with neither sourceUrl nor flags --
     // that slips past this filter and is instead reconciled forward into a
     // later merge with its live ha_signals duplicate.)
+    const accountOpportunityRefs = opportunityRefsByAccountName.get(a.account_name) || null;
     const storedOpps = [
       ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.filter(o => !isWebResearchSignal(o)).map(reconcileStoredOpportunity) : []),
-      ...(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [])
+      ...stampAccountHistoryOpportunityRefs(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [], accountOpportunityRefs)
     ];
     byAccount.set(a.account_name, {
       name: a.account_name,
       uploadId: a.upload_id,
+      // Organizational Learning V1B: the authoritative, server-issued refs
+      // (never a client-computed fingerprint) createRepeatPatternOpportunities()/
+      // generateFutureOpportunities() copy onto any FRESH opportunity object
+      // they build (see dashboard/index.html) -- null when this account has
+      // no persisted account-history opportunities yet (a brand-new,
+      // never-reconciled account).
+      accountHistoryOpportunityRefs: accountOpportunityRefs,
       monitoringStatus: lower(raw.monitoring_status || 'active'),
       lastResearchedAt: raw.last_researched_at || '',
       industry: a.industry || 'Saved Account',
@@ -697,7 +743,12 @@ export default async function handler(req, res){
 
       const scopedAccountRows = await supabase(`ha_accounts?select=*&upload_id=eq.${encodeURIComponent(requestedUploadId)}&order=account_name.asc&limit=2500`);
       const scopedSignalRows = await supabase(`ha_signals?select=*&upload_id=eq.${encodeURIComponent(requestedUploadId)}&order=first_seen_at.desc&limit=1000`);
-      const {accountList: scopedAccountList, uniqueSignals: scopedUniqueSignals} = buildAccountsFromRows(scopedAccountRows, scopedSignalRows);
+      // Organizational Learning V1B: scoped by the upload's own owner, not
+      // upload_id -- an account-history opportunity attaches to (user,
+      // account_name), the same durable pair its own fingerprint uses, not
+      // to whichever upload_id most recently reconciled it.
+      const scopedAccountOpportunities = await supabase(`ha_account_opportunities?select=id,account_name,opportunity_type,category,fingerprint&status=eq.active&user_id=eq.${encodeURIComponent(scopedUpload.user_id)}&limit=5000`);
+      const {accountList: scopedAccountList, uniqueSignals: scopedUniqueSignals} = buildAccountsFromRows(scopedAccountRows, scopedSignalRows, scopedAccountOpportunities);
 
       return json(res, 200, {
         ok:true,
@@ -757,6 +808,12 @@ export default async function handler(req, res){
     }
 
     const accounts = uniqueAccountRows(allAccounts || []);
+    // Organizational Learning V1B: the authoritative, currently-active
+    // account-history opportunity refs for every account this view
+    // includes -- scoped the same way accounts/signals already are
+    // (usersFilter covers both the team and upload-owner cases above).
+    // Never derived from anything the client submits.
+    const accountOpportunities = await supabase(`ha_account_opportunities?select=id,account_name,opportunity_type,category,fingerprint&status=eq.active&user_id=${usersFilter}&limit=5000`);
 
     let teamCustomerCount = accounts.length;
     let teamProspectCount = 0;
@@ -801,7 +858,7 @@ export default async function handler(req, res){
       return json(res, 404, {error:'No existing customer dashboard data found yet.'});
     }
 
-    const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals);
+    const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals, accountOpportunities);
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
     // Reconciliation item 1 / QA round 2 item 1: "Newly Detected" is an
@@ -852,5 +909,6 @@ export default async function handler(req, res){
 
 export {
   rowToSignal, signalToOpportunity, uniqueSignalRows, uniqueAccountRows,
-  buildAccountsFromRows, canonicalizeAccountOpportunities, isWebResearchSignal
+  buildAccountsFromRows, canonicalizeAccountOpportunities, isWebResearchSignal,
+  buildAccountHistoryOpportunityRefs, stampAccountHistoryOpportunityRefs
 };

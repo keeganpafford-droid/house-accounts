@@ -66,6 +66,7 @@ function fakeRes(){
     if(url.includes('/rest/v1/ha_weekly_runs')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_accounts')) return jsonResponse([]);
+    if(url.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
     throw new Error(`unexpected fetch (scenario 1): ${url}`);
   };
   const originalFetch = global.fetch;
@@ -131,6 +132,7 @@ function fakeRes(){
     if(url.includes('/rest/v1/ha_weekly_runs')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_accounts')) return jsonResponse([]);
+    if(url.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
     throw new Error(`unexpected fetch (scenario 2): ${url}`);
   };
   const originalFetch = global.fetch;
@@ -169,6 +171,7 @@ function fakeRes(){
     if(url.includes('/rest/v1/ha_weekly_runs')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_uploads')) return jsonResponse([]);
     if(url.includes('/rest/v1/ha_prospect_accounts')) return jsonResponse([]);
+    if(url.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
     throw new Error(`unexpected fetch (scenario 3): ${url}`);
   };
   const originalFetch = global.fetch;
