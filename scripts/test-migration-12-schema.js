@@ -9,6 +9,25 @@
 // to actually implement the intended exclusivity rules, ported to JS
 // line-for-line so a future edit to one is checked against the other.
 //
+// Production correction (migration 14): migration 12's own file text below
+// is left untouched as the historical record of what was originally
+// applied, but the LIVE constraint no longer matches it exactly --
+// migration 14 supersedes the prepare_call_opened branch. Root cause:
+// signal_id/opportunity_id both use ON DELETE SET NULL specifically so a
+// historical event survives its source row being deleted later (this
+// exact file's own header, restated below) -- but the ORIGINAL strict-XOR
+// prepare_call_opened branch required exactly one to stay non-null
+// forever, which a real customer-list deletion violates the instant it
+// nulls out signal_id for a prepare_call_opened row that (correctly) never
+// had opportunity_id set. Reproduced live via a rolled-back transaction
+// against Supabase project zodtymrckbtbiomakupf: 23514 check_violation on
+// ha_signal_events_target_family_check, surfaced by PostgREST as a 400 on
+// deleteList()'s very first statement (DELETE FROM ha_signals) -- before
+// the request ever reached ha_accounts or ha_uploads. targetFamilyCheck()
+// below mirrors the CORRECTED (migration 14) logic, not migration 12's
+// original text, so this file stays the single live behavioral proof
+// rather than going stale the moment a later migration supersedes it.
+//
 // Usage: node scripts/test-migration-12-schema.js
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +43,15 @@ function assert(condition, message) {
 }
 
 const sql = readFileSync(join(REPO_ROOT, 'supabase-schema-migration-12-account-opportunities.sql'), 'utf8');
+const migration14Sql = readFileSync(join(REPO_ROOT, 'supabase-schema-migration-14-prepare-call-opened-orphan-fix.sql'), 'utf8');
+
+// ---------------------------------------------------------------------
+// Migration 14's actual SQL text says what targetFamilyCheck() below
+// proves is correct -- not the strict XOR migration 12 originally shipped.
+// ---------------------------------------------------------------------
+assert(/alter table public\.ha_signal_events drop constraint if exists ha_signal_events_target_family_check/.test(migration14Sql), 'migration 14 drops the original constraint before redefining it');
+assert(/when event_type = 'prepare_call_opened' then\s*\n\s*not \(signal_id is not null and opportunity_id is not null\)/.test(migration14Sql), 'REQUIRED: migration 14\'s prepare_call_opened branch forbids only "both set", not "neither set" -- matches targetFamilyCheck() below');
+assert(!(/\(signal_id is not null\) <> \(opportunity_id is not null\)/.test(migration14Sql.split('check (')[1] || '')), 'REQUIRED: migration 14\'s actual CHECK expression (not its explanatory comment, which quotes the old bug verbatim) does not reintroduce the old strict-XOR');
 
 // ---------------------------------------------------------------------
 // ha_account_opportunities shape.
@@ -52,9 +80,10 @@ console.log(`\n${failures === 0 ? 'ALL SQL-TEXT TESTS PASSED' : `${failures} SQL
 
 // ---------------------------------------------------------------------
 // Pure-JS mirror of ha_signal_events_target_family_check's CASE logic --
-// ported line-for-line from the migration SQL above. Exhaustively proves
-// the intended exclusivity rules for every event_type, before this
-// constraint is ever applied to a real database.
+// ported line-for-line from supabase-schema-migration-14-prepare-call-
+// opened-orphan-fix.sql (the LIVE definition; see the header comment
+// above for why this is no longer migration 12's own text). Exhaustively
+// proves the intended exclusivity rules for every event_type.
 // ---------------------------------------------------------------------
 function targetFamilyCheck({ eventType, signalId, opportunityId, parentEventId }) {
   const hasSignal = signalId != null;
@@ -62,7 +91,11 @@ function targetFamilyCheck({ eventType, signalId, opportunityId, parentEventId }
   const hasParent = parentEventId != null;
   switch (true) {
     case eventType === 'prepare_call_opened':
-      return hasSignal !== hasOpportunity; // XOR: exactly one target family
+      // NOT XOR: forbids only the structurally-invalid "both set" state.
+      // "Neither set" is a valid, expected terminal state once ON DELETE
+      // SET NULL has nulled out signal_id (or, symmetrically,
+      // opportunity_id) for a historical row -- migration 14's fix.
+      return !(hasSignal && hasOpportunity);
     case ['signal_selected', 'signal_useful', 'signal_not_useful', 'outreach_made'].includes(eventType):
       return !hasOpportunity;
     case eventType === 'approach_shared':
@@ -97,8 +130,9 @@ const CASES = [
   ['opportunity_approach_shared with signal_id -- structurally invalid, wrong family', { eventType: 'opportunity_approach_shared', signalId: SIG, parentEventId: PARENT }, false],
   ['prepare_call_opened targeting a signal only -- valid', { eventType: 'prepare_call_opened', signalId: SIG }, true],
   ['prepare_call_opened targeting an opportunity only -- valid', { eventType: 'prepare_call_opened', opportunityId: OPP }, true],
-  ['prepare_call_opened targeting BOTH -- REQUIRED invalid (exactly one family)', { eventType: 'prepare_call_opened', signalId: SIG, opportunityId: OPP }, false],
-  ['prepare_call_opened targeting NEITHER -- REQUIRED invalid (exactly one family)', { eventType: 'prepare_call_opened' }, false],
+  ['prepare_call_opened targeting BOTH -- REQUIRED invalid (an event can never target both families at once)', { eventType: 'prepare_call_opened', signalId: SIG, opportunityId: OPP }, false],
+  ['prepare_call_opened targeting NEITHER at INSERT time -- structurally allowed by the schema (the API is responsible for rejecting this at creation time, same trust model as every other branch here), but this is also NOT the historical-orphan case below', { eventType: 'prepare_call_opened' }, true],
+  ['REQUIRED (migration 14 fix): prepare_call_opened whose signal_id was later nulled by ON DELETE SET NULL (its ha_signals row was deleted, e.g. by a customer-list delete) -- valid, opportunity_id correctly stays null since this was always a signal-family event. This is the exact production reproduction: deleting a list violated this constraint under the pre-migration-14 strict XOR.', { eventType: 'prepare_call_opened', signalId: null, opportunityId: null }, true],
   ['outcome_reported -- unconstrained/reserved', { eventType: 'outcome_reported' }, true]
 ];
 

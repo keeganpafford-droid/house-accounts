@@ -50,14 +50,29 @@ function fakeRes(){
 function fakeReq(method, token, body){
   return { method, headers: token ? { authorization: `Bearer ${token}` } : {}, body };
 }
+// Real WHATWG URL/URLSearchParams parsing -- NOT a regex over the raw
+// string -- deliberately, so this mock actually simulates what a real HTTP
+// request line does to an unescaped '&' embedded inside a filter value
+// (see inFilter()'s own comment in api/monitoring-lists.js): URLSearchParams
+// splits on '&' before this code ever sees the value, exactly like a real
+// server would. A regex scanning for `col=in\.\(([^)]*)\)` would NOT catch
+// that corruption (it just finds SOME parenthesized substring), which is
+// why this file switched off regex-based query parsing for these two
+// helpers -- the multi-account regression test below depends on this mock
+// being unable to "successfully" parse a corrupted filter.
 function qp(url, col){
-  const m = url.match(new RegExp(`[?&]${col}=eq\\.([^&]+)`));
-  return m ? decodeURIComponent(m[1]) : null;
+  const raw = new URL(url).searchParams.get(col);
+  if(raw == null) return null;
+  const m = raw.match(/^eq\.(.*)$/);
+  return m ? m[1] : null;
 }
 function parseInFilter(url, col){
-  const m = url.match(new RegExp(`[?&]${col}=in\\.\\(([^)]*)\\)`));
+  const raw = new URL(url).searchParams.get(col);
+  if(raw == null) return null;
+  const m = raw.match(/^in\.\((.*)\)$/);
   if(!m) return null;
-  return m[1].split(',').map(s => decodeURIComponent(s.replace(/^"|"$/g, '')));
+  if(!m[1]) return [];
+  return m[1].split(',').map(s => s.replace(/^"|"$/g, ''));
 }
 
 const AUTH_USERS = { 'token-a': { id: 'auth-a', email: 'a@example.com' } };
@@ -220,6 +235,67 @@ async function run(){
     // nothing in ha_account_opportunities actually changes, not that the
     // call itself is skipped.
     assert(haAccountOpportunities.length === 0, 'sanity: still zero opportunity rows after the delete -- nothing was fabricated or left behind');
+  }
+
+  // ---------------------------------------------------------------------
+  // REQUIRED, second production bug found via founder QA after the fix
+  // above shipped: "A downstream data request failed" persisted for a real
+  // 25-account customer list even though a single-account list (Northern
+  // Pool) deleted cleanly. Root cause was NOT the schema-level 23503 fix
+  // above (already live) -- it was inFilter() (this file's own helper,
+  // used by inactivateOrphanedAccountOpportunities() above) embedding raw,
+  // un-percent-encoded account names into the request URL. Northern Pool's
+  // single account never exercised inFilter() at all with a problem name;
+  // this real list's 25 accounts include several with literal '&'
+  // (reproduced verbatim below, from the actual failing upload), and an
+  // unescaped '&' inside a query-string value is itself a parameter
+  // delimiter -- it splits the ONE batched in.() request for all 25 names
+  // into garbage, silently corrupting the lookup for the entire batch, not
+  // just the offending name. This was never visible to the caller (both
+  // inFilter() call sites in inactivateOrphanedAccountOpportunities() run
+  // inside deleteList()'s own best-effort try/catch), which is exactly why
+  // it shipped undetected: the list still deleted "successfully", but its
+  // orphaned opportunities silently stayed 'active' forever.
+  //
+  // This mock deliberately parses URLs with the real WHATWG URL/
+  // URLSearchParams API (see qp()/parseInFilter() above), not a permissive
+  // regex -- so it actually reproduces the corruption an un-encoded '&'
+  // causes in a real HTTP request line. Without the encodeURIComponent()
+  // fix in inFilter(), this block fails: the corrupted in.() filter matches
+  // the wrong (typically zero) rows, so accounts after the first '&'-name
+  // never receive their inactivation PATCH and stay 'active'.
+  // ---------------------------------------------------------------------
+  {
+    const QA_ACCOUNT_NAMES = [
+      'Albany International', "Aroma Joe's", 'Bangor Savings Bank', 'BerryDunn',
+      'C&J Bus Lines', 'Casella Waste Systems', 'Cianbro', 'ConvenientMD', 'Covetrus',
+      'DEKA Research & Development', 'Eastern Propane & Oil', 'Hypertherm Associates',
+      'IDEXX Laboratories', 'L.L.Bean', "Martin's Point Health Care", 'Planet Fitness',
+      'Service Credit Union', 'Stonewall Kitchen', 'Stonyfield Organic', 'Tilson',
+      'Timberland', 'Unitil', 'Velcro Companies', 'WEX Inc.', "Wyman's"
+    ];
+    assert(QA_ACCOUNT_NAMES.length === 25, 'sanity: fixture matches the real failing list\'s 25-account size');
+    assert(QA_ACCOUNT_NAMES.filter(n => n.includes('&')).length === 3, 'sanity: fixture reproduces the real list\'s 3 "&"-bearing account names');
+
+    resetAll({
+      haUploads: [{ id: 'upload-qa25', user_id: 'user-a', upload_name: 'house-accounts-qa-customers-25 - house-accounts-qa-customers-25.csv', stage: 'researched', updated_at: '2026-08-13' }],
+      haAccounts: QA_ACCOUNT_NAMES.map((name, i) => ({ id: `acct-${i}`, upload_id: 'upload-qa25', user_id: 'user-a', account_name: name })),
+      haAccountOpportunities: QA_ACCOUNT_NAMES.map((name, i) => ({
+        id: `opp-${i}`, user_id: 'user-a', upload_id: 'upload-qa25', account_name: name,
+        opportunity_type: 'follow_up', category: null,
+        fingerprint: `opp:follow_up:v1:${name.toLowerCase()}|last:2026-01-01`, status: 'active'
+      }))
+    });
+    const res = fakeRes();
+    await handler(fakeReq('DELETE', 'token-a', { type: 'customer', id: 'upload-qa25' }), res);
+    assert(res.statusCode === 200 && res.body?.ok === true, 'REQUIRED: the real 25-account list, reproduced verbatim, deletes successfully (200)');
+    const stillActive = haAccountOpportunities.filter(o => o.status === 'active');
+    assert(stillActive.length === 0, `REQUIRED: all 25 opportunities are inactivated, none left incorrectly active (${stillActive.length} still active: ${stillActive.map(o => o.account_name).join(', ')})`);
+    assert(haAccountOpportunities.length === 25, 'REQUIRED: all 25 rows still exist -- append-only history preserved, nothing deleted');
+    for(const name of QA_ACCOUNT_NAMES){
+      const opp = haAccountOpportunities.find(o => o.account_name === name);
+      assert(opp && opp.status === 'inactive', `REQUIRED: "${name}" was correctly inactivated (this fails pre-fix for names after the first "&" in the batch)`);
+    }
   }
 
   global.fetch = originalFetch;

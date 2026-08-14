@@ -24,7 +24,24 @@ async function sb(path,opt={}){const{url,key}=env();const r=await fetch(`${url}/
   throw err}return d}
 async function authUser(req){const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const r=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});if(!r.ok)return null;return r.json()}
 async function context(req){const au=await authUser(req);if(!au?.id)return null;let rows=await sb(`ha_users?auth_user_id=eq.${encodeURIComponent(au.id)}&select=*&limit=1`);let user=Array.isArray(rows)?rows[0]:null;if(!user&&au.email){rows=await sb(`ha_users?email=eq.${encodeURIComponent(lower(au.email))}&select=*&limit=1`);user=Array.isArray(rows)?rows[0]:null}if(!user)return null;const role=lower(user.app_role||user.role||'member');const canViewTeam=role==='owner'||role==='admin';let visibleUsers=[user];if(canViewTeam&&user.organization_id){const users=await sb(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id,email,status,app_role,role`);visibleUsers=(Array.isArray(users)?users:[]).filter(x=>lower(x.status||'active')!=='inactive')}return{user,role,canViewTeam,userIds:visibleUsers.map(x=>x.id).filter(Boolean),emails:visibleUsers.map(x=>lower(x.email)).filter(Boolean)}}
-function inFilter(vals){return `in.(${vals.map(v=>`\"${String(v).replace(/\"/g,'')}\"`).join(',')})`}
+// PostgREST list-filter syntax (`in.("a","b")`) is embedded directly into
+// the request URL by sb()/fetch() -- never itself URL-encoded end-to-end
+// (see sb()'s own comment: `path` is concatenated straight into the fetch
+// URL). Every value here MUST therefore be percent-encoded individually
+// before being quoted, exactly like every other raw value this file drops
+// into a URL (encodeURIComponent(userId)/encodeURIComponent(uploadId)
+// elsewhere in this file). Values here have so far always been UUIDs/
+// emails, which happen to round-trip through encodeURIComponent as a
+// no-op -- but inactivateOrphanedAccountOpportunities() calls this with
+// real, arbitrary ACCOUNT NAMES. An unescaped '&' in a name (e.g. "C&J Bus
+// Lines") is a literal query-string delimiter: it splits the URL into
+// bogus extra parameters, silently corrupting the whole in.() filter (all
+// names in that one batched call, not just the offending one) for both of
+// this function's callers below. That failure was invisible in production
+// because both call sites live inside deleteList()'s own best-effort
+// try/catch -- it never surfaces as a client-visible error, it just leaves
+// the orphaned opportunities stuck 'active' after their list is deleted.
+function inFilter(vals){return `in.(${vals.map(v=>`\"${encodeURIComponent(String(v).replace(/\"/g,''))}\"`).join(',')})`}
 function isPaused(v){return ['paused','archived'].includes(lower(v))}
 // Read-only, no-migration server-state signal for the Manage Customer
 // Accounts modal's run-state reattachment: the LATEST ha_research_runs row
