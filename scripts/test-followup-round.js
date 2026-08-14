@@ -208,7 +208,7 @@ assert(
   'temporal-integrity/follow-up round: every one of the account\'s persisted opportunities is deduped/merged (dedupeOpportunities(collapseDuplicateAccountHistorySignals(...))) and ranked by score through the SAME canonical pipeline accountOpportunityCluster() uses, then passed through the SAME centralized priorityEligibleOpportunities() actionability gate -- this path can no longer open a stale/expired/"no longer current" opportunity as an active Verified Opportunity merely because it scored highest, and can no longer select from a different (unmerged) representation than Additional Opportunities uses'
 );
 assert(
-  /if\(typeof createSalesPlayPanel === 'function'\) createSalesPlayPanel\(opportunities\[0\]\);/.test(openResearchedSrc),
+  /if\(typeof createSalesPlayPanel === 'function'\) createSalesPlayPanel\(opportunities\[0\], \{isFirstOpportunitySelection\}\);/.test(openResearchedSrc),
   'required test 7: the highest-ranked opportunity opens through the existing, real Prepare for Call experience (createSalesPlayPanel), not a bespoke summary'
 );
 assert(

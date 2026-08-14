@@ -3112,6 +3112,38 @@ function logOpportunityAwareEvent(baseEventType, opp, extra = {}){
   });
 }
 
+// Organizational Learning V1B: the shared "is this the first-ever open of
+// this account-history opportunity instance?" check, for the two entry
+// points that can open Prepare for Call for a persisted Follow-Up/Repeat-
+// Pattern opportunity WITHOUT a pre-hydrated DOM flag already available --
+// the Additional Opportunities "Prep this call ->" swap link and the
+// post-research "View opportunities" handoff (openResearchedAccountOpportunities())
+// both build/replace their target opportunity dynamically, unlike
+// renderPrepareForCallButton()'s own button, which hydrateSignalFeedbackButtons()
+// already flags ahead of time. Reuses the exact same
+// resolveSignalEventTarget()/fetchSignalEventStates()/signalStateKey() this
+// file already uses everywhere else for this -- never a second, parallel
+// feedback implementation.
+//
+// Returns false for anything that is NOT a genuine account-history
+// opportunity (a signal-driven opp, or one with no durable identity at
+// all) -- this gate exists ONLY to govern opportunity_selected/"Used ✓" on
+// the account-history family; it must never be able to fire signal_selected
+// merely because a rep swapped to preview a different signal-driven
+// opportunity inside an already-open panel. Also returns false (never
+// true) once the server already has a record of this opportunity being
+// selected -- "merely rendered, listed, or swapped into view" must never
+// itself count as intentional use; only the actual open, past this check,
+// does.
+async function shouldMarkFirstOpportunitySelection(opp){
+  const target = resolveSignalEventTarget(opp);
+  if(!target || !target.isOpportunity) return false;
+  const accountName = opp.account || opp.accountName || '';
+  const states = await fetchSignalEventStates([{eventFingerprint: target.eventFingerprint, accountName}]);
+  const state = states[signalStateKey(target.eventFingerprint, accountName)];
+  return !(state && state.selected);
+}
+
 // Batched current-rep-only read-back, matching api/signal-events.js's GET
 // contract. Never throws -- a failure here just means feedback controls
 // render in their default (unanswered) state, exactly as if this rep had
@@ -7123,8 +7155,21 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
     // Investment from Santa Cruz Ventures" was silently discarded in favor
     // of a generic classification-bucket label the instant the SAME real
     // opportunity was displayed here instead of as the primary.
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(item.signalTitle || opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(item.signalTitle || opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();prepAdditionalOpportunityCall(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
+}
+
+// Organizational Learning V1B: "Prep this call ->" is a genuine intentional-
+// use gesture -- the rep is explicitly choosing to switch focus and prepare
+// THIS other opportunity for the call, exactly like the primary card's own
+// "Prepare for Call ->" -- so it must carry the same first-use
+// opportunity_selected/"Used ✓" invariant for an account-history
+// opportunity. Wrapped in its own tiny async function (rather than inlined
+// in the onclick attribute above) purely so the await reads cleanly; it
+// changes nothing else about the swap (isSwap:true is preserved).
+async function prepAdditionalOpportunityCall(opp){
+  const isFirstOpportunitySelection = await shouldMarkFirstOpportunitySelection(opp);
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {isSwap:true, isFirstOpportunitySelection});
 }
 
 // ROUND 13 fix: data-upload-id alongside data-account on every rendered
@@ -9748,7 +9793,15 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   // section (accountOpportunityCluster() -> additionalOpportunitiesFor()),
   // which reads the SAME window.accountRadarAccounts this refresh just
   // populated -- no separate list is threaded through here.
-  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0]);
+  // Organizational Learning V1B: this handoff is itself the rep's
+  // intentional "go work these results" gesture (the toast click or the
+  // Recently Researched row's "View opportunities" button) -- if
+  // opportunities[0] resolves to an account-history opportunity, opening
+  // Prepare for Call here must carry the same first-use
+  // opportunity_selected/"Used ✓" invariant every other entry point does.
+  // No-op (false) for a signal-driven top result, unchanged from before.
+  const isFirstOpportunitySelection = await shouldMarkFirstOpportunitySelection(opportunities[0]);
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0], {isFirstOpportunitySelection});
 }
 
 // Recently Researched -- compact, temporary, ADDITIVE section above This
