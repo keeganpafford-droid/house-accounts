@@ -10186,6 +10186,12 @@ function createRepeatPatternOpportunities(account){
     // durable, server-issued ha_account_opportunities id/fingerprint on
     // reload. Additive only; nothing else reads or depends on this field.
     opp.category = pattern.category;
+    // Organizational Learning V1B, Correction 2: identifies this as a
+    // genuine Repeat/Pattern presentation to api/lib/account-opportunity-
+    // templates.js's server-side recommendation-snapshot reconstruction --
+    // opp.category (above) supplies the category, this constant identifies
+    // the family. Never combined with a FOLLOW_UP_TEMPLATES key.
+    opp.templateKey = 'repeat_pattern';
     // Commercial-readiness correction round, item 6: an overdue pattern
     // (reorderWindowStatus() -- grounded in the real last-order date, not
     // guessed) is never described as merely "coming up" or "happening
@@ -10245,146 +10251,158 @@ function generateFutureOpportunities(account){
   const industry = account.industry;
   const opps = createRepeatPatternOpportunities(account);
 
+  // Organizational Learning V1B, Correction 2: templateKey is a stable
+  // identifier for exactly which literal template below produced this
+  // opportunity -- carried on the object so api/signal-events.js can
+  // validate it against api/lib/account-opportunity-templates.js's known
+  // registry and reconstruct a trusted "what HA actually recommended"
+  // snapshot server-side, rather than trusting recommendation prose the
+  // browser supplies directly. Purely additive; nothing else reads it.
+  function pushTemplated(templateKey, ...createOpportunityArgs){
+    const opp = createOpportunity(...createOpportunityArgs);
+    opp.templateKey = templateKey;
+    opps.push(opp);
+  }
   if(industry === 'Automotive / Dealership'){
     if(cats.has('Apparel') || cats.has('Headwear')){
-      opps.push(createOpportunity(
+      pushTemplated('auto_service_apparel',
         account,
         'Service Department Apparel Program',
         'Service Director',
         ['Technician shirts', 'outerwear', 'service hats', 'name-badge ready apparel'],
         ['Apparel','Headwear'],
         64
-      ));
-      opps.push(createOpportunity(
+      );
+      pushTemplated('auto_tech_onboarding',
         account,
         'Technician Onboarding Kits',
         'Service Director / HR Manager',
         ['welcome kit', 'branded backpack', 'drinkware', 'uniform starter pack'],
         ['Apparel','Headwear'],
         62
-      ));
+      );
     }
     if(cats.has('Event / Giveaway')){
-      opps.push(createOpportunity(
+      pushTemplated('auto_event_campaign_kit',
         account,
         'Customer Event / Campaign Kit',
         'Marketing Manager / General Manager',
         ['event giveaways', 'sales team apparel', 'customer gifts', 'signage'],
         ['Event / Giveaway','Print / Stationery','Apparel'],
         66
-      ));
+      );
     }
-    opps.push(createOpportunity(
+    pushTemplated('auto_customer_appreciation',
       account,
       'Customer Appreciation Program',
       'Marketing Manager',
       ['thank-you gifts', 'test-drive giveaways', 'service customer gifts'],
       ['Event / Giveaway','Drinkware'],
       56
-    ));
+    );
   } else if(industry === 'Manufacturing / Industrial'){
-    opps.push(createOpportunity(
+    pushTemplated('mfg_safety_recognition',
       account,
       'Safety Recognition Program',
       'Safety Manager / HR Manager',
       ['safety awards', 'hi-vis apparel', 'milestone gifts', 'team incentives'],
       ['Safety','Recognition / Awards','Apparel'],
       64
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('mfg_trade_show_event',
       account,
       'Trade Show / Event Program',
       'Marketing Manager / Sales Manager',
       ['booth giveaways', 'table throws', 'staff apparel', 'lead-gen gifts'],
       ['Event / Giveaway','Print / Stationery','Apparel'],
       58
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('mfg_new_hire_kits',
       account,
       'New Hire Welcome Kits',
       'HR Manager',
       ['welcome box', 'branded apparel', 'drinkware', 'notebooks'],
       ['Apparel','Onboarding / Recruiting'],
       55
-    ));
+    );
   } else if(industry === 'Healthcare'){
-    opps.push(createOpportunity(
+    pushTemplated('health_employee_recognition',
       account,
       'Employee Recognition Program',
       'HR Manager / Practice Manager',
       ['staff appreciation gifts', 'apparel', 'drinkware', 'milestone awards'],
       ['Recognition / Awards','Apparel','Drinkware'],
       62
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('health_new_provider_onboarding',
       account,
       'New Provider Onboarding Kits',
       'Practice Manager / HR Manager',
       ['welcome kits', 'branded apparel', 'desk items', 'drinkware'],
       ['Onboarding / Recruiting','Apparel'],
       56
-    ));
+    );
   } else if(industry === 'Financial Services'){
-    opps.push(createOpportunity(
+    pushTemplated('fin_client_appreciation',
       account,
       'Client Appreciation Program',
       'Marketing Director / Client Experience Lead',
       ['premium gifts', 'event kits', 'notebooks', 'drinkware'],
       ['Event / Giveaway','Print / Stationery'],
       60
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('fin_investor_alumni_event',
       account,
       'Investor / Alumni Event Kit',
       'Events Manager / Marketing Director',
       ['attendee gifts', 'premium apparel', 'event signage', 'notebooks'],
       ['Event / Giveaway','Print / Stationery','Apparel'],
       58
-    ));
+    );
   } else if(industry === 'Food & Beverage'){
-    opps.push(createOpportunity(
+    pushTemplated('food_retail_giveaway',
       account,
       'Retail / Customer Giveaway Program',
       'Marketing Manager',
       ['coozies', 'drinkware', 'caps', 'event merch'],
       ['Drinkware','Headwear','Event / Giveaway'],
       60
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('food_staff_apparel_refresh',
       account,
       'Staff Apparel Refresh',
       'Operations Manager',
       ['staff shirts', 'hats', 'outerwear', 'aprons'],
       ['Apparel','Headwear'],
       56
-    ));
+    );
   } else {
     if(account.categoryTypes.size >= 3 || account.orderCount >= 3){
-      opps.push(createOpportunity(
+      pushTemplated('generic_multi_department_expansion',
         account,
         'Multi-Department Expansion',
         'Marketing Manager / HR Manager',
         ['employee apparel', 'recognition gifts', 'event kits', 'onboarding items'],
         [...account.categoryTypes],
         62
-      ));
+      );
     }
-    opps.push(createOpportunity(
+    pushTemplated('generic_employee_recognition',
       account,
       'Employee Recognition Program',
       'HR Manager',
       ['appreciation gifts', 'milestone awards', 'apparel', 'drinkware'],
       ['Recognition / Awards','Apparel','Drinkware'],
       54
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('generic_event_campaign_merch',
       account,
       'Event / Campaign Merch Program',
       'Marketing Manager',
       ['giveaways', 'event apparel', 'signage', 'premium gifts'],
       ['Event / Giveaway','Print / Stationery'],
       54
-    ));
+    );
   }
 
   // Organizational Learning V1B: every generic industry-template
