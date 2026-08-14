@@ -116,6 +116,21 @@ const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
 
+// Signal feedback / organizational-learning foundation: renderSingleVerifiedSignal()/
+// useSignalAsRepSelected()/createSalesPlayPanel() -- all inside
+// CARD_MODAL_AND_SALES_PLAY_BLOCK below -- now call these. Pure
+// fire-and-forget event logging / best-effort DOM hydration, with no
+// bearing on this file's card/modal/scoring assertions, so they're
+// stubbed exactly like isWarmAccount() above.
+const SIGNAL_EVENTS_STUB_SOURCE = `
+function logSignalEvent(){ return Promise.resolve(null); }
+function generateClientEventId(){ return 'test-client-event-id'; }
+function fetchSignalEventStates(){ return Promise.resolve({}); }
+function hydrateSignalFeedbackButtons(){}
+function wireOutreachRow(){}
+function hydrateOutreachRow(){ return Promise.resolve(); }
+`;
+
 function makeSandbox(){
   const fakeModal = { querySelector: () => ({ focus(){} }), querySelectorAll: () => [] };
   const sandbox = {
@@ -142,7 +157,15 @@ function makeSandbox(){
     // against the shared global object. Aliasing it here after extraction
     // reproduces that same resolution inside this vm context, without
     // changing a single line of the extracted source itself.
-    `this.createSalesPlayPanel = window.createSalesPlayPanel;`
+    `this.createSalesPlayPanel = window.createSalesPlayPanel;`,
+    // Placed LAST, deliberately: CARD_MODAL_AND_SALES_PLAY_BLOCK's wide
+    // contiguous range (confidenceLabel() through renderPipelineTable())
+    // already includes the REAL wireOutreachRow()/hydrateOutreachRow()
+    // declarations (they live immediately before createSalesPlayPanel() in
+    // the real file). A later `function name(){}` declaration in the same
+    // scope overwrites an earlier one of the same name, so this stub block
+    // must come after that range to actually take effect.
+    SIGNAL_EVENTS_STUB_SOURCE
   ].join('\n\n');
   new vm.Script(fullSource, { filename: 'final-beta-correction-extract.js' }).runInContext(sandbox);
   return sandbox;

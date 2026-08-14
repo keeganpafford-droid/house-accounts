@@ -1318,6 +1318,68 @@
     color:#7A5B00;
     font-size:0.85rem;
   }
+  .sales-play-outreach-row{
+    margin:0 28px 14px;
+    padding:12px 14px;
+    border-radius:8px;
+    background:#F7FBFA;
+    border:1px solid #D8DEE9;
+  }
+  .sales-play-outreach-row .outreach-log-btn.outreach-logged{
+    border-color:#1FB7AE;
+    color:#0F766E;
+    background:#EAFBF9;
+  }
+  .sales-play-outreach-row .outreach-status{
+    display:inline-block;
+    margin-right:8px;
+    color:#0F766E;
+    font-size:0.85rem;
+    font-weight:600;
+  }
+  .approach-note-wrap{
+    margin-top:10px;
+  }
+  .approach-note-readonly{
+    margin-top:10px;
+    padding:8px 10px;
+    border:1px solid #D8DEE9;
+    border-radius:8px;
+    background:#FFFFFF;
+    font-size:0.85rem;
+    color:#17375E;
+    white-space:pre-wrap;
+  }
+  .approach-note-label{
+    display:block;
+    font-weight:700;
+    font-size:0.85rem;
+    color:#17375E;
+    margin-bottom:2px;
+  }
+  .approach-note-helper{
+    font-size:0.78rem;
+    color:var(--muted);
+    margin-bottom:6px;
+  }
+  .approach-note-input{
+    width:100%;
+    min-height:64px;
+    border:1px solid #D8DEE9;
+    border-radius:8px;
+    padding:8px 10px;
+    font-family:inherit;
+    font-size:0.85rem;
+    resize:vertical;
+    box-sizing:border-box;
+  }
+  .approach-note-save{
+    margin-top:8px;
+  }
+  .approach-note-cancel{
+    margin-top:8px;
+    margin-left:6px;
+  }
   .relationship-badge{
     display:inline-flex;
     align-items:center;
@@ -1666,6 +1728,20 @@
   }
   .verified-signal-actions{
     margin-top:12px;
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
+  }
+  .verified-signal-actions .signal-used-status{
+    color:#0F766E;
+    font-size:0.85rem;
+    font-weight:600;
+  }
+  .signal-feedback-btn.signal-feedback-active{
+    border-color:#1FB7AE;
+    color:#0F766E;
+    background:#EAFBF9;
   }
   .likely-conversation-list{
     margin:6px 0 0 18px;
@@ -2915,6 +2991,133 @@ async function captureLead(stage, payload){
     all.push(body);
     localStorage.setItem('houseAccountsLeadEvents', JSON.stringify(all.slice(-25)));
   }catch(e){}
+}
+
+// Signal feedback / organizational-learning foundation.
+//
+// generateClientEventId() mints a fresh id at the moment of each distinct
+// user gesture (a click, a note save) -- callers reuse the SAME id only
+// while single-flighting a retry of that exact gesture (see
+// createSalesPlayPanel()'s outreach button below); a genuinely new gesture
+// always calls this again. api/signal-events.js enforces uniqueness on
+// (user_id, clientEventId) server-side, so a replayed id is a safe no-op,
+// never a duplicate learning event.
+function generateClientEventId(){
+  try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch(e){}
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// Post-verification-pass correction: signalId (the exact ha_signals row
+// the rep saw/acted on) and eventFingerprint (the durable business-event
+// identity) are different identities -- api/signal-events.js now resolves
+// every write by signalId, never by eventFingerprint alone, since a
+// fingerprint is not guaranteed to identify one account (see that file's
+// own header comment). eventFingerprint is still sent/stored for
+// longitudinal learning, just never trusted for write resolution.
+//
+// signalStateKey() mirrors api/signal-events.js's own readBackKey() --
+// GET read-back is keyed by (eventFingerprint, accountName) together, the
+// smallest pairing that stays correct across a refreshed ha_signals row
+// while still keeping two different accounts that share a fingerprint
+// from bleeding into each other's feedback state.
+function signalStateKey(eventFingerprint, accountName){
+  return `${eventFingerprint}::${accountName || ''}`;
+}
+
+// Fire-and-forget, matching captureLead()'s own contract above: a failure
+// here must never block or fail the user-visible action that triggered
+// it. Returns the parsed response body (so a caller needing the new
+// event's id -- e.g. outreach_made, before an approach note can reference
+// it as parentEventId -- can use it), or null on any failure.
+async function logSignalEvent(eventType, {signalId, eventFingerprint, accountName, clientEventId, parentEventId, note} = {}){
+  try{
+    const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
+    if(!headers) return null;
+    const res = await fetch('/api/signal-events', {
+      method:'POST',
+      headers,
+      body: JSON.stringify({eventType, signalId, eventFingerprint, accountName, clientEventId, parentEventId, note})
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok) return null;
+    return data;
+  }catch(err){
+    console.warn('[signal-events] logSignalEvent failed; not blocking the UI action.', err);
+    return null;
+  }
+}
+
+// Batched current-rep-only read-back, matching api/signal-events.js's GET
+// contract. Never throws -- a failure here just means feedback controls
+// render in their default (unanswered) state, exactly as if this rep had
+// never given feedback yet; it never blocks rendering.
+async function fetchSignalEventStates(keys){
+  const seen = new Set();
+  const list = [];
+  for(const k of (keys || [])){
+    if(!k || !k.eventFingerprint) continue;
+    const composite = signalStateKey(k.eventFingerprint, k.accountName || '');
+    if(seen.has(composite)) continue;
+    seen.add(composite);
+    list.push({eventFingerprint: k.eventFingerprint, accountName: k.accountName || ''});
+  }
+  if(!list.length) return {};
+  try{
+    const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : {};
+    if(!headers) return {};
+    const res = await fetch(`/api/signal-events?keys=${encodeURIComponent(JSON.stringify(list))}`, {headers});
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok) return {};
+    return data.states || {};
+  }catch(err){
+    console.warn('[signal-events] fetchSignalEventStates failed; feedback state defaults to unanswered.', err);
+    return {};
+  }
+}
+
+// Hydrates every Useful/Not-useful button AND every "Use This Signal"
+// button currently in `root` (defaults to the whole document) from this
+// rep's own prior events, so reopening an account card or Research
+// Results does not feel like it forgot a judgment already given, or make
+// the rep re-select a signal they already chose to work merely to reopen
+// Prepare for Call. One batched read-back covers both -- they key off the
+// same (eventFingerprint, accountName) composite identity. Safe to call
+// repeatedly/redundantly -- it only ever reads and reflects the rep's own
+// current state, never mutates anything.
+async function hydrateSignalFeedbackButtons(root){
+  const scope = root || document;
+  const feedbackButtons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
+  const useSignalButtons = Array.from(scope.querySelectorAll('.use-signal-btn[data-event-fingerprint]')).filter(b => b.dataset.eventFingerprint);
+  if(!feedbackButtons.length && !useSignalButtons.length) return;
+  const keys = [...feedbackButtons, ...useSignalButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
+  const states = await fetchSignalEventStates(keys);
+  feedbackButtons.forEach(btn => {
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
+    if(!state || !state.feedback) return;
+    const isPressed = (btn.dataset.signalFeedback === 'useful' && state.feedback === 'useful')
+      || (btn.dataset.signalFeedback === 'not_useful' && state.feedback === 'not_useful');
+    if(isPressed){
+      btn.setAttribute('aria-pressed', 'true');
+      btn.classList.add('signal-feedback-active');
+    }
+  });
+  // signal_selected means the rep intentionally chose to work this signal
+  // -- once true, reopening Research Results must offer straight back into
+  // Prepare for Call ("Prepare for Call →") instead of asking the rep to
+  // click "Use This Signal" again, which would otherwise log a second,
+  // redundant signal_selected for the exact same decision.
+  useSignalButtons.forEach(btn => {
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
+    if(!state || !state.selected) return;
+    btn.textContent = 'Prepare for Call →';
+    btn.dataset.signalSelected = '1';
+    const actionsRow = btn.closest('.verified-signal-actions');
+    const statusEl = actionsRow ? actionsRow.querySelector('.signal-used-status') : null;
+    if(statusEl) statusEl.hidden = false;
+  });
 }
 
 
@@ -7020,9 +7223,30 @@ function renderSingleVerifiedSignal(signal){
   // the customer) and for a signal already Priority-eligible (it already has
   // its own "Prepare for Call" entry point from the priorities feed).
   const alreadyPriorityEligible = typeof isPriorityEligibleOpportunity === 'function' && isPriorityEligibleOpportunity(signal);
+  // signal_selected read-back: hydrateSignalFeedbackButtons() relabels
+  // this button to "Prepare for Call →" and reveals .signal-used-status
+  // once this rep has already selected this signal at least once --
+  // reopening Research Results must never make a rep re-select something
+  // they already chose to work just to get back into Prepare for Call.
+  // Only possible when the signal carries a stable id/fingerprint to
+  // hydrate against; a signal without one (should not normally happen for
+  // a real persisted signal) simply never shows the "Used" state.
   const useSignalButton = (eligible && !possibleMatch && !identityRejected && !alreadyPriorityEligible)
-    ? `<button type="button" class="btn btn-ghost btn-mini use-signal-btn" data-use-signal="1" data-signal-source="${escapeHtml(signal.sourceUrl || '')}">Use This Signal →</button>`
+    ? `<span class="signal-used-status" hidden>Used ✓</span><button type="button" class="btn btn-ghost btn-mini use-signal-btn" data-use-signal="1" data-signal-source="${escapeHtml(signal.sourceUrl || '')}" data-signal-id="${escapeHtml(signal.id || '')}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint || '')}" data-account-name="${escapeHtml(signal.accountName || '')}">Use This Signal →</button>`
     : '';
+  // Signal feedback / organizational-learning foundation: answers "was
+  // this business signal a useful reason to reach out?" -- deliberately
+  // NOT a judgment of HA's commercial play/recommendation (that stays a
+  // separate, future recommendation_* dataset). Shown for every signal
+  // that has a stable event identity to log against, independent of
+  // useSignalButton's own (narrower) eligibility gate -- a rep can
+  // correctly flag even a Possible Match or historical signal as not
+  // useful. Placed here, not on the Priority card or inside Prepare for
+  // Call, so a rep can judge a signal without first opening either.
+  const signalFeedbackButtons = (signal.id && signal.eventFingerprint) ? `
+    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="useful" data-signal-id="${escapeHtml(signal.id)}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👍 Useful</button>
+    <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="not_useful" data-signal-id="${escapeHtml(signal.id)}" data-event-fingerprint="${escapeHtml(signal.eventFingerprint)}" data-account-name="${escapeHtml(signal.accountName || '')}" aria-pressed="false">👎 Not useful</button>
+  ` : '';
   // Bug fix (paid-beta-sprint "root cause 2" regression): the payload used
   // to embed the signal's raw conversationStarter verbatim via
   // JSON.stringify(signal) -- an ungated legacy phrase (e.g. "Can we chat
@@ -7045,7 +7269,7 @@ function renderSingleVerifiedSignal(signal){
       ${(!possibleMatch && signal?.identityConfidence === 'unconfirmed') ? `<div class="verified-signal-meta verified-signal-business-signal">Business signal — identity not independently corroborated</div>` : ''}
       <div class="verified-signal-row"><strong>What changed:</strong> ${escapeHtml(signal.whatChanged || signal.signalDetail || signal.title || 'Public business activity detected.')}</div>
       ${outreachRows}
-      ${useSignalButton ? `<div class="verified-signal-actions">${useSignalButton}</div>` : ''}
+      ${(useSignalButton || signalFeedbackButtons) ? `<div class="verified-signal-actions">${useSignalButton}${signalFeedbackButtons}</div>` : ''}
     </div>`;
 }
 
@@ -8176,7 +8400,7 @@ async function researchAccountByName(accountName, options = {}){
     if(existingDiagIndex >= 0) diagnostics[existingDiagIndex] = nextDiag;
     else diagnostics.push(nextDiag);
     addSignalDerivedOpportunities(account, account.signals);
-    if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
+    if(panel){ panel.innerHTML = renderVerifiedSignals(account.signals); hydrateSignalFeedbackButtons(panel); }
     renderResearchDiagnostics();
     // Phase 2A / A2: when called from the concurrent research-fallback loop
     // (researchTopAccounts()), skipSave is true — that loop now does exactly
@@ -8395,7 +8619,7 @@ async function researchAccountsBatch(accounts, options = {}){
         addSignalDerivedOpportunities(account, account.signals);
         applyBusinessSignalAccountBoost(account);
         const panel = accountSignalsPanel(account.name);
-        if(panel) panel.innerHTML = renderVerifiedSignals(account.signals);
+        if(panel){ panel.innerHTML = renderVerifiedSignals(account.signals); hydrateSignalFeedbackButtons(panel); }
       }
     });
     refreshOpportunityViews();
@@ -9139,7 +9363,7 @@ async function researchAccountFromCard(accountName, uploadId){
     return;
   }
   const fresh = result.account;
-  if(panel) panel.innerHTML = renderVerifiedSignals(fresh.signals || []);
+  if(panel){ panel.innerHTML = renderVerifiedSignals(fresh.signals || []); hydrateSignalFeedbackButtons(panel); }
   applyModalResearchResultToDashboard(fresh, uploadId);
   if(typeof refreshAggregateDashboard === 'function') await refreshAggregateDashboard();
   const signalCount = Array.isArray(fresh.signals) ? fresh.signals.length : 0;
@@ -9243,7 +9467,28 @@ function repSelectedOpportunityFromSignal(signal){
     opportunityType: signal.opportunityType || 'SIGNAL-DRIVEN'
   };
 }
+// First time this rep uses this signal: a real intentional choice, worth
+// its own durable signal_selected. Fire-and-forget, never blocks opening
+// the panel.
 function useSignalAsRepSelected(signal){
+  if(!signal) return;
+  const opp = repSelectedOpportunityFromSignal(signal);
+  // Signal feedback / organizational-learning foundation: implicit
+  // engagement event -- the rep chose to act on THIS signal over other
+  // options presented. Fire-and-forget, never blocks opening the panel.
+  if(opp.id){
+    logSignalEvent('signal_selected', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
+  }
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
+}
+
+// Live-QA correction: reopening a signal this rep already selected must
+// never write a second signal_selected -- that decision is already on
+// durable record (see hydrateSignalFeedbackButtons()'s "Used ✓" / Prepare
+// for Call relabel). This simply reopens the same rep-selected Prepare
+// for Call experience; prepare_call_opened still fires normally through
+// createSalesPlayPanel()'s own existing, unconditional open-event logic.
+function reopenRepSelectedSignal(signal){
   if(!signal) return;
   const opp = repSelectedOpportunityFromSignal(signal);
   if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {repSelected:true});
@@ -10252,6 +10497,152 @@ window.closeSalesPlayModal = function(el){
   if(window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 };
 
+// Signal feedback / organizational-learning foundation, live-QA final
+// correction: opening the outreach form must never itself be evidence
+// that an outreach occurred -- outreach_made is written ONLY when the rep
+// explicitly clicks "Save outreach," never merely by clicking "I reached
+// out"/"Log another outreach" (those two just open a blank draft form,
+// synchronously, with no network call at all). This row is always in
+// exactly one of three states, never a blend of two:
+//   INITIAL -- nothing saved yet: just the "I reached out" button.
+//   DRAFT   -- a form is open (first attempt or a later one): blank
+//     textarea, "Save outreach," "Cancel." Nothing is persisted while
+//     here; Cancel (or closing/navigating away) discards the draft with
+//     zero writes.
+//   SAVED   -- the latest outreach attempt is on record: "Reached out ✓,"
+//     its approach note as read-only text (if one exists), "Log another
+//     outreach." A saved outreach with no note is a valid, permanent
+//     state -- the note stays genuinely optional.
+// "Save outreach" is the one single-flighted action that writes anything:
+// one outreach_made, then (only if the trimmed textarea has text) one
+// approach_shared linked to that exact new outreach's id via
+// parent_event_id -- the same two-event shape already implemented,
+// simply triggered together by one explicit confirmation instead of two
+// separate clicks.
+function wireOutreachRow(rowEl){
+  const logBtn = rowEl.querySelector('.outreach-log-btn');
+  const statusEl = rowEl.querySelector('.outreach-status');
+  const noteWrap = rowEl.querySelector('.approach-note-wrap');
+  const noteInput = rowEl.querySelector('.approach-note-input');
+  const noteSaveBtn = rowEl.querySelector('.approach-note-save');
+  const noteCancelBtn = rowEl.querySelector('.approach-note-cancel');
+  const noteReadonly = rowEl.querySelector('.approach-note-readonly');
+  if(!logBtn) return;
+  let latestOutreachEventId = null;
+  let latestNoteText = null;
+  let saveInFlight = false;
+
+  function renderInitial(){
+    logBtn.hidden = false;
+    logBtn.textContent = 'I reached out';
+    logBtn.disabled = false;
+    if(statusEl) statusEl.hidden = true;
+    if(noteReadonly) noteReadonly.hidden = true;
+    if(noteWrap) noteWrap.hidden = true;
+  }
+
+  function renderSaved(){
+    logBtn.hidden = false;
+    logBtn.textContent = 'Log another outreach';
+    logBtn.classList.add('outreach-logged');
+    logBtn.disabled = false;
+    if(statusEl) statusEl.hidden = false;
+    if(noteReadonly){
+      if(latestNoteText){ noteReadonly.textContent = latestNoteText; noteReadonly.hidden = false; }
+      else noteReadonly.hidden = true;
+    }
+    if(noteWrap) noteWrap.hidden = true;
+  }
+
+  // The draft form is the ONLY place a note can be typed, and it is
+  // always blank on open -- a prior attempt's note is history, never a
+  // starting point for a new one. The "I reached out"/"Log another
+  // outreach" button is hidden while drafting so only one action (Save
+  // outreach or Cancel) is ever on screen at a time.
+  function renderDraft(){
+    logBtn.hidden = true;
+    if(statusEl) statusEl.hidden = true;
+    if(noteReadonly) noteReadonly.hidden = true;
+    if(noteWrap) noteWrap.hidden = false;
+    if(noteInput) noteInput.value = '';
+    if(noteSaveBtn){ noteSaveBtn.disabled = false; noteSaveBtn.textContent = 'Save outreach'; }
+    if(noteCancelBtn) noteCancelBtn.disabled = false;
+  }
+
+  // hydrateOutreachRow() restores server-known SAVED state on reopen --
+  // exposed the same way the prior round's hooks were.
+  rowEl.__houseAccountsHydrateOutreach = function(eventId, noteText){
+    latestOutreachEventId = eventId;
+    latestNoteText = noteText || null;
+    renderSaved();
+  };
+
+  logBtn.addEventListener('click', renderDraft);
+
+  if(noteCancelBtn){
+    noteCancelBtn.addEventListener('click', () => {
+      if(latestOutreachEventId) renderSaved(); else renderInitial();
+    });
+  }
+
+  if(noteInput && noteSaveBtn){
+    noteSaveBtn.addEventListener('click', async () => {
+      if(saveInFlight) return;
+      saveInFlight = true;
+      noteSaveBtn.disabled = true;
+      if(noteCancelBtn) noteCancelBtn.disabled = true;
+      const originalLabel = noteSaveBtn.textContent;
+      noteSaveBtn.textContent = 'Saving…';
+      const note = noteInput.value.trim();
+      const outreachResult = await logSignalEvent('outreach_made', {
+        signalId: rowEl.dataset.outreachSignalId,
+        eventFingerprint: rowEl.dataset.outreachFingerprint,
+        accountName: rowEl.dataset.accountName,
+        clientEventId: generateClientEventId()
+      });
+      if(!outreachResult || !outreachResult.id){
+        saveInFlight = false;
+        noteSaveBtn.disabled = false;
+        if(noteCancelBtn) noteCancelBtn.disabled = false;
+        noteSaveBtn.textContent = originalLabel;
+        return;
+      }
+      latestOutreachEventId = outreachResult.id;
+      latestNoteText = null;
+      // The note is genuinely optional -- an empty textarea means exactly
+      // one outreach_made and zero approach_shared, a fully valid saved
+      // state, not an error or an incomplete save.
+      if(note){
+        const noteResult = await logSignalEvent('approach_shared', {
+          parentEventId: outreachResult.id,
+          note,
+          clientEventId: generateClientEventId()
+        });
+        if(noteResult && noteResult.id) latestNoteText = note;
+      }
+      saveInFlight = false;
+      renderSaved();
+    });
+  }
+
+  renderInitial();
+}
+
+// Reflects this rep's prior outreach/approach-note state for THIS signal
+// on panel reopen, so it never feels forgotten. Best-effort -- if the
+// lookup fails, the row simply stays in its default "not yet logged"
+// state, which is safe (never blocks logging a real new attempt).
+async function hydrateOutreachRow(rowEl){
+  const eventFingerprint = rowEl.dataset.outreachFingerprint;
+  if(!eventFingerprint) return;
+  const accountName = rowEl.dataset.accountName || '';
+  const states = await fetchSignalEventStates([{eventFingerprint, accountName}]);
+  const state = states[signalStateKey(eventFingerprint, accountName)];
+  if(state && state.outreachLogged && state.latestOutreachEventId && typeof rowEl.__houseAccountsHydrateOutreach === 'function'){
+    rowEl.__houseAccountsHydrateOutreach(state.latestOutreachEventId, state.approachNote);
+  }
+}
+
 // Sales Play Generator - concise rep coaching card, reply-first promo outreach
 window.createSalesPlayPanel = function(opp, opts){
   opts = opts || {};
@@ -10263,6 +10654,13 @@ window.createSalesPlayPanel = function(opp, opts){
   // is never absent from the DOM in between.
   if(!opts.isSwap && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.beginOverlay === 'function'){
     window.HouseAccountsHeader.beginOverlay();
+  }
+  // Signal feedback / organizational-learning foundation: implicit
+  // ENGAGEMENT event, not positive feedback -- the rep looked at this in
+  // more depth, nothing more. Fire-and-forget, never delays the panel
+  // opening.
+  if(opp.id){
+    logSignalEvent('prepare_call_opened', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
   }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
@@ -10368,6 +10766,19 @@ window.createSalesPlayPanel = function(opp, opts){
           <button class="sales-play-close" onclick="closeSalesPlayModal(this)">×</button>
         </div>
         ${opts.repSelected ? `<div class="rep-selected-banner"><strong>REP-SELECTED SIGNAL</strong> — House Accounts found this signal but did not recommend it as a Priority. You chose to work it.</div>` : ''}
+        ${(opp.id && opp.eventFingerprint) ? `
+        <div class="sales-play-outreach-row" data-outreach-signal-id="${escapeHtml(opp.id)}" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
+          <span class="outreach-status" hidden>Reached out ✓</span>
+          <div class="approach-note-readonly" hidden></div>
+          <div class="approach-note-wrap" hidden>
+            <label class="approach-note-label">How did you approach this outreach?</label>
+            <div class="approach-note-helper">Optional — a sentence or two helps House Accounts learn what works for your team.</div>
+            <textarea class="approach-note-input" maxlength="500" placeholder="Called the marketing director and referenced their new location. Pitched employee welcome kits instead of grand-opening merch. She asked me to send ideas."></textarea>
+            <button type="button" class="btn btn-ghost btn-mini approach-note-save" data-approach-save="1">Save outreach</button>
+            <button type="button" class="btn btn-ghost btn-mini approach-note-cancel" data-approach-cancel="1">Cancel</button>
+          </div>
+          <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
+        </div>` : ''}
         <div class="sales-play-output">
 
           <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
@@ -10481,6 +10892,11 @@ window.createSalesPlayPanel = function(opp, opts){
       copySalesPlayField(btn, text);
     });
   });
+  const outreachRow = modal.querySelector('.sales-play-outreach-row');
+  if(outreachRow){
+    wireOutreachRow(outreachRow);
+    hydrateOutreachRow(outreachRow);
+  }
   if(opts.focus === 'additional'){
     const target = modal.querySelector('#additionalOpportunitiesSection');
     if(target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block:'start'});
@@ -11998,6 +12414,7 @@ function renderDetailedAccountViews(accounts){
       </div>
     </div>
   `).join('');
+  hydrateSignalFeedbackButtons(accountList);
 }
 
 
@@ -12401,9 +12818,45 @@ document.addEventListener('click', (event) => {
     if(raw){
       try{
         const signal = JSON.parse(raw);
-        if(typeof useSignalAsRepSelected === 'function') useSignalAsRepSelected(signal);
+        // hydrateSignalFeedbackButtons() flags an already-selected signal
+        // with data-signal-selected -- reopening it must never write a
+        // second signal_selected, only reopen Prepare for Call.
+        if(useSignalBtn.dataset.signalSelected === '1'){
+          if(typeof reopenRepSelectedSignal === 'function') reopenRepSelectedSignal(signal);
+        }else if(typeof useSignalAsRepSelected === 'function') useSignalAsRepSelected(signal);
       }catch(err){ /* malformed payload -- nothing to recover, fail silently */ }
     }
+    return;
+  }
+  // Signal feedback / organizational-learning foundation: same delegation
+  // convention as use-signal-btn immediately above -- one handler for
+  // renderSingleVerifiedSignal()'s Useful/Not-useful buttons, wherever
+  // that row renders. Optimistic UI (the click's own button is marked
+  // pressed immediately, its sibling un-pressed) -- logSignalEvent() is
+  // fire-and-forget, matching this file's existing convention, so a
+  // network failure never blocks or reverts the rep's own judgment from
+  // being reflected on screen; the next hydration (e.g. next reopen)
+  // reconciles from the server's durable record regardless.
+  const feedbackBtn = event.target.closest('.signal-feedback-btn');
+  if(feedbackBtn){
+    const feedback = feedbackBtn.dataset.signalFeedback;
+    const signalId = feedbackBtn.dataset.signalId;
+    const eventFingerprint = feedbackBtn.dataset.eventFingerprint;
+    if(!feedback || !signalId || !eventFingerprint) return;
+    const actionsRow = feedbackBtn.closest('.verified-signal-actions');
+    const siblingBtn = actionsRow ? Array.from(actionsRow.querySelectorAll('.signal-feedback-btn')).find(b => b !== feedbackBtn && b.dataset.signalId === signalId) : null;
+    feedbackBtn.setAttribute('aria-pressed', 'true');
+    feedbackBtn.classList.add('signal-feedback-active');
+    if(siblingBtn){
+      siblingBtn.setAttribute('aria-pressed', 'false');
+      siblingBtn.classList.remove('signal-feedback-active');
+    }
+    logSignalEvent(feedback === 'useful' ? 'signal_useful' : 'signal_not_useful', {
+      signalId,
+      eventFingerprint,
+      accountName: feedbackBtn.dataset.accountName || '',
+      clientEventId: generateClientEventId()
+    });
     return;
   }
 });
@@ -13946,6 +14399,15 @@ function escapeHtml(text){
          </div>
        </div>`;
      document.body.appendChild(backdrop);
+     // Point 4, Signal Feedback verification pass: showResearchResultsDialog()
+     // below reuses this same dialog shell to render renderVerifiedSignals()'s
+     // real signal cards (Manage Customer Accounts' "Research Results" view) --
+     // those cards carry the same Useful/Not-useful controls as the main
+     // dashboard and must reflect this rep's own prior feedback the same way.
+     // Safe to call unconditionally for every other (plain-text) use of this
+     // dialog too -- hydrateSignalFeedbackButtons() is a no-op when there are
+     // no .signal-feedback-btn elements to hydrate.
+     if(typeof hydrateSignalFeedbackButtons === 'function') hydrateSignalFeedbackButtons(backdrop);
      const okBtn = backdrop.querySelector('.ha-info-ok');
 
      function close(){
