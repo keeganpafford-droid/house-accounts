@@ -813,6 +813,24 @@ export default async function handler(req, res){
     const signalsPersisted = Number(rpcResult?.signalsPersisted || 0);
     const conflictIgnoredCount = Number(rpcResult?.signalsConflictIgnored || 0);
 
+    // Organizational Learning V1B: persist_ha_research_output() is the
+    // OTHER writer of ha_accounts.raw_data.purchases -- a tracked research
+    // save (this branch) can update account purchase history exactly like
+    // the untracked replace_ha_accounts_snapshot() path above, so it needs
+    // the same reconciliation hook. Same non-blocking, self-healing posture
+    // as that path's own hook: never fails or delays the save response.
+    if(accountPayload.length){
+      try{
+        for(const account of accountPayload){
+          await reconcileAccountOpportunities(supabase, {
+            userId: user.id, uploadId, accountName: account.account_name, rawData: account.raw_data
+          });
+        }
+      }catch(reconcileErr){
+        console.warn('[save-upload] account-opportunity reconciliation failed (tracked save); will self-correct on next save', { message: reconcileErr && reconcileErr.message, uploadId });
+      }
+    }
+
     console.log('[save-upload.instrumentation]', JSON.stringify({
       ts: new Date().toISOString(),
       researchRunId: rawResearchRunId,

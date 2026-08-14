@@ -67,6 +67,7 @@ let persistRpcCalls = [];
 let signalsInsertCalls = [];
 let uploadPatchCalls = [];
 let uploadOwnershipLookupCalls = [];
+let accountOpportunitiesCalls = [];
 let simulateConflictOnSecondSignal = false;
 // ROUND 7, item 3: simulates a generic/unexpected failure reaching
 // replace_ha_accounts_snapshot (a network error, a dropped connection) --
@@ -275,7 +276,7 @@ function mockFetch(){
     // GET -- this test file isn't exercising that reconciliation itself
     // (see scripts/test-account-opportunity-reconciliation.js for that),
     // just needs it to not be an unhandled URL.
-    if(u.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
+    if(u.includes('/rest/v1/ha_account_opportunities')){ accountOpportunitiesCalls.push({ url: u, method: options.method || 'GET' }); return jsonResponse([]); }
     throw new Error(`Unhandled mock fetch URL in test: ${u}`);
   };
 }
@@ -293,7 +294,7 @@ function fakeReqNoAuth(body){
 }
 
 function resetAll(){
-  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; uploadOwnershipLookupCalls = [];
+  accountsRpcCalls = []; persistRpcCalls = []; signalsInsertCalls = []; uploadPatchCalls = []; uploadOwnershipLookupCalls = []; accountOpportunitiesCalls = [];
   uploadOwnerMap = { [UPLOAD_ID]: USER_ID };
   researchRuns = []; fakeAccounts = []; fakeSignals = []; fakeUploadState = { stage: 'uploaded', summary: {} };
   simulateConflictOnSecondSignal = false; simulateAccountsRpcNetworkFailure = false; logLines = [];
@@ -762,6 +763,13 @@ async function run(){
     const row = researchRuns[0];
     assert(row.status === 'completed' && !!row.completed_at, 'ITEM 1 TEST 1: persistence succeeds and the run becomes completed in the SAME transaction (one mock call)');
     assert(row.result_summary && row.result_summary.accountsPersisted === 1 && row.result_summary.signalsPersisted === 1, 'result_summary reflects the actual persisted counts');
+    // Organizational Learning V1B: persist_ha_research_output() (the
+    // TRACKED path) is the other writer of ha_accounts.raw_data.purchases,
+    // alongside replace_ha_accounts_snapshot() -- it must run the SAME
+    // post-save account-opportunity reconciliation hook, not just the
+    // untracked path. Confirmed here by the mock's own call log, not
+    // inferred from the 200 status alone.
+    assert(accountOpportunitiesCalls.length >= 1, `REQUIRED: a successful tracked research-output save also triggers account-opportunity reconciliation for its account(s) (got ${accountOpportunitiesCalls.length} calls)`);
   }
 
   // 7b. attemptId without researchRunId is rejected as malformed.
