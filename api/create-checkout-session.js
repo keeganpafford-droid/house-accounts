@@ -9,6 +9,7 @@
 // never trusted from the client as a band key -- this is what the actual
 // Stripe Price charged traces back to, so it must be server-computed.
 import { bandForAccountCount, stripePriceIdForBand } from '../pricing-bands.js';
+import { entitlement } from './lib/entitlement.js';
 
 function json(res,status,body){res.setHeader('Cache-Control','no-store, max-age=0');return res.status(status).json(body)}
 function clean(v=''){return String(v??'').trim()}
@@ -50,6 +51,20 @@ async function stripeFetch(path, params){
   if(!resp.ok){const err=new Error(data?.error?.message||`Stripe ${resp.status}`);err.status=resp.status;throw err}
   return data;
 }
+// GET counterpart to stripeFetch() -- used only to VALIDATE that a stored
+// Stripe object (customer or subscription id) still resolves in whichever
+// Stripe environment STRIPE_SECRET_KEY currently points at, before ever
+// reusing it. Returns {ok:false} instead of throwing on a 404/any error --
+// a stale id (deleted, or minted under a different test/live key than is
+// configured now) is an expected, handleable case here, never a crash.
+async function stripeGet(path){
+  const key=process.env.STRIPE_SECRET_KEY;
+  if(!key)throw new Error('Missing STRIPE_SECRET_KEY');
+  const resp=await fetch(`https://api.stripe.com/v1/${path}`,{headers:{Authorization:`Bearer ${key}`}});
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok)return{ok:false,error:data?.error};
+  return{ok:true,data};
+}
 
 export default async function handler(req,res){
   try{
@@ -65,20 +80,72 @@ export default async function handler(req,res){
     const band=bandForAccountCount(requestedAccountCount);
     if(band.key==='free')return json(res,400,{error:'This account count is covered by the Free plan -- no checkout required. Sign up for free instead.'});
     if(band.contactSales)return json(res,400,{error:'This account count requires an Enterprise plan. Contact sales instead of checkout.'});
-    const priceId=stripePriceIdForBand(band.key);
-    if(!priceId)return json(res,500,{error:`Stripe is not configured for the ${band.label} band yet.`});
 
     let org=await loadOrg(user.organization_id);
     if(!org)return json(res,404,{error:'Organization not found.'});
 
+    const base=appBaseUrl(req);
+
+    // Production incident (founder QA): an org whose subscription_status is
+    // already active/paid/manual clicking Subscribe (same tier or a
+    // different one) used to fall straight through to creating ANOTHER
+    // Checkout Session against its existing Stripe customer -- Stripe does
+    // not itself prevent a customer from ending up with two simultaneous
+    // subscriptions, so this could silently create a second, parallel one.
+    // entitlement().paidActive is the SAME authoritative check
+    // api/lib/entitlement.js uses everywhere else -- a real Stripe
+    // Checkout is never offered again once an org is genuinely paid; a
+    // paid org changes tier or cancels through Stripe's own Billing Portal
+    // instead, which handles proration/upgrade/downgrade correctly rather
+    // than this app reimplementing that logic by hand.
+    if(entitlement(org).paidActive){
+      const existingSubscriptionId=clean(org.stripe_subscription_id);
+      const existingCustomerId=clean(org.stripe_customer_id);
+      if(existingSubscriptionId&&existingCustomerId){
+        const subCheck=await stripeGet(`subscriptions/${encodeURIComponent(existingSubscriptionId)}`);
+        if(subCheck.ok&&['active','trialing','past_due'].includes(subCheck.data.status)){
+          const portal=await stripeFetch('billing_portal/sessions',{customer:existingCustomerId,return_url:`${base}/pricing.html`});
+          return json(res,200,{ok:true,url:portal.url,portal:true});
+        }
+      }
+      // The org's own record says it is already paying, but the Stripe
+      // subscription/customer that would back that up cannot be confirmed
+      // (missing, or does not resolve in whatever Stripe environment
+      // STRIPE_SECRET_KEY currently points at -- e.g. a test-mode id left
+      // over from before switching to live-mode keys, or a manually
+      // granted plan with no real Stripe object at all). Never silently
+      // create a fresh Stripe customer/subscription here -- that is exactly
+      // the "accidentally create a second parallel subscription" case this
+      // guard exists to prevent. A clean, actionable message instead of a
+      // raw Stripe error string; resolving it is an operator action
+      // (reconcile or clear this org's stored Stripe fields once the real
+      // state is confirmed in the Stripe dashboard).
+      console.error('[create-checkout-session] paid org has no verifiable Stripe subscription -- refusing to start a new checkout',{organizationId:user.organization_id,stripeCustomerId:existingCustomerId||null,stripeSubscriptionId:existingSubscriptionId||null});
+      return json(res,409,{error:'Your account already shows an active subscription, but we could not verify it with our billing provider right now. Please contact support so we can fix your billing record before making any changes.'});
+    }
+
+    // Only reached for an org that is NOT already paid -- the price id is
+    // irrelevant to the Billing Portal path above (a portal session takes
+    // no price at all), so this check is deliberately AFTER that branch,
+    // not before it.
+    const priceId=stripePriceIdForBand(band.key);
+    if(!priceId)return json(res,500,{error:`Stripe is not configured for the ${band.label} band yet.`});
+
     let stripeCustomerId=clean(org.stripe_customer_id);
+    if(stripeCustomerId){
+      // Stale/deleted/wrong-environment customer id -- safe to replace
+      // outright here: the org is NOT currently paid (the branch above
+      // already handled that case), so there is no existing paid
+      // relationship a fresh customer could collide with.
+      const customerCheck=await stripeGet(`customers/${encodeURIComponent(stripeCustomerId)}`);
+      if(!customerCheck.ok||customerCheck.data?.deleted)stripeCustomerId='';
+    }
     if(!stripeCustomerId){
       const customer=await stripeFetch('customers',{email:clean(user.email),name:clean(org.name),metadata:{organization_id:user.organization_id}});
       stripeCustomerId=customer.id;
       await sb(`ha_organizations?id=eq.${encodeURIComponent(user.organization_id)}`,{method:'PATCH',body:JSON.stringify({stripe_customer_id:stripeCustomerId,updated_at:new Date().toISOString()})});
     }
 
-    const base=appBaseUrl(req);
     const session=await stripeFetch('checkout/sessions',{
       mode:'subscription',
       customer:stripeCustomerId,
