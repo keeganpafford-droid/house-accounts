@@ -96,13 +96,6 @@ function makeSandbox(){
     document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [] },
     isWarmAccount: () => false,
     refreshAggregateDashboard: async () => ({ ok: true }),
-    // Organizational Learning V1B: openResearchedAccountOpportunities() now
-    // awaits this before its final createSalesPlayPanel() call -- stubbed
-    // here since this file's own focus (signal-vs-priority eligibility) is
-    // unrelated to opportunity_selected semantics, which
-    // scripts/test-opportunity-selected-semantics.js covers directly
-    // against the real function.
-    shouldMarkFirstOpportunitySelection: async () => false,
     URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON, Promise
   };
   vm.createContext(sandbox);

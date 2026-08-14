@@ -9793,15 +9793,23 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   // section (accountOpportunityCluster() -> additionalOpportunitiesFor()),
   // which reads the SAME window.accountRadarAccounts this refresh just
   // populated -- no separate list is threaded through here.
-  // Organizational Learning V1B: this handoff is itself the rep's
-  // intentional "go work these results" gesture (the toast click or the
-  // Recently Researched row's "View opportunities" button) -- if
-  // opportunities[0] resolves to an account-history opportunity, opening
-  // Prepare for Call here must carry the same first-use
-  // opportunity_selected/"Used ✓" invariant every other entry point does.
-  // No-op (false) for a signal-driven top result, unchanged from before.
-  const isFirstOpportunitySelection = await shouldMarkFirstOpportunitySelection(opportunities[0]);
-  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0], {isFirstOpportunitySelection});
+  // Organizational Learning V1B, founder correction: "View opportunities"
+  // is a GENERIC handoff (the toast click, or the Recently Researched
+  // row's own button) -- it opens whichever opportunity HA automatically
+  // ranks first, not one the rep specifically picked out. Deliberately
+  // does NOT pass isFirstOpportunitySelection here (an earlier round of
+  // this sprint wired it, incorrectly treating "HA auto-opened this" as
+  // equivalent to "the rep chose to work this"): createSalesPlayPanel()'s
+  // own unconditional prepare_call_opened still fires -- this opportunity
+  // WAS presented -- but opportunity_selected must wait for an unambiguous
+  // selection gesture, exactly the same "exposure is not endorsement"
+  // doctrine V1A already applies to a signal auto-surfaced onto the
+  // Priority feed (no signal_selected fires merely by rendering there
+  // either -- only "Use This Signal"/an explicit choice logs one). If the
+  // rep goes on to use the primary card's "Prepare for Call ->" or the
+  // Additional Opportunities "Prep this call ->" on this SAME opportunity,
+  // THAT click is the real first-use signal, and is recorded there.
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0]);
 }
 
 // Recently Researched -- compact, temporary, ADDITIVE section above This

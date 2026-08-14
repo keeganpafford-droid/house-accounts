@@ -174,6 +174,22 @@ async function run(){
     assert(!types.includes('opportunity_selected'), 'REQUIRED: reopening an already-selected opportunity (isFirstOpportunitySelection:false) never logs a second opportunity_selected');
   }
   {
+    // Founder correction: the generic "View opportunities"/post-research
+    // handoff (openResearchedAccountOpportunities()) never passes
+    // isFirstOpportunitySelection at all -- exactly this call shape (no
+    // opts object). Auto-opening an opportunity is exposure, not an
+    // explicit selection gesture, so opportunity_selected must never fire
+    // here even for a never-selected account-history opportunity;
+    // prepare_call_opened still fires unconditionally -- the opportunity
+    // WAS genuinely presented to the rep.
+    const { sandbox, calls } = makeSandbox();
+    const opp = baseOpp({ accountOpportunityId: 'opp-1', accountOpportunityFingerprint: 'opp:follow_up:v1:acme|last:2025-06-01' });
+    sandbox.createSalesPlayPanel(opp);
+    const types = calls.logSignalEvent.map(c => c.eventType);
+    assert(types.includes('prepare_call_opened'), 'REQUIRED: an auto-opened (no opts) account-history opportunity still fires prepare_call_opened -- it was genuinely presented');
+    assert(!types.includes('opportunity_selected'), `REQUIRED: an auto-opened account-history opportunity NEVER fires opportunity_selected merely for being presented (got ${JSON.stringify(types)})`);
+  }
+  {
     // Signal-driven opportunities are entirely unaffected: no
     // isFirstOpportunitySelection is ever passed for them (every real call
     // site omits it), so opportunity_selected never fires, and

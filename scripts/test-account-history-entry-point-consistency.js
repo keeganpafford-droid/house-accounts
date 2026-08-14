@@ -1,35 +1,35 @@
-// Organizational Learning V1B, founder verification round (item 3): closes
-// the entry-point consistency gap flagged in the prior report --
-// opportunity_selected/"Used ✓" first-use semantics were only wired for
-// the primary opportunity card. This proves the SAME invariant now holds
-// for the two other real entry points a rep can use to intentionally open/
-// work a persisted Follow-Up/Repeat-Pattern account-history opportunity:
-//   - the Additional Opportunities "Prep this call ->" swap link
-//     (prepAdditionalOpportunityCall()), and
-//   - the post-research "View opportunities" handoff
-//     (openResearchedAccountOpportunities()), which auto-opens the
-//     top-ranked opportunity for an account.
+// Organizational Learning V1B, founder verification round (item 3,
+// corrected): the locked semantics are prepare_call_opened = "this
+// opportunity was presented/opened to the rep," opportunity_selected =
+// "the rep intentionally chose THIS opportunity to work." An earlier round
+// of this fix wired isFirstOpportunitySelection into
+// openResearchedAccountOpportunities() (the generic post-research "View
+// opportunities" handoff) -- WRONG: that handoff auto-opens whichever
+// opportunity HA ranks first, which is exposure, not an explicit
+// selection, exactly the same "presented is not endorsed" doctrine V1A
+// already applies to a signal auto-surfaced onto the Priority feed. This
+// file proves the corrected, three-way split:
+//   - the primary opportunity card's "Prepare for Call ->" (proved
+//     directly in scripts/test-opportunity-selected-semantics.js) and the
+//     Additional Opportunities "Prep this call ->" swap link
+//     (prepAdditionalOpportunityCall(), proved below) are both genuine,
+//     explicit selection gestures -- first-ever use of either creates
+//     opportunity_selected.
+//   - openResearchedAccountOpportunities() (proved below) NEVER creates
+//     opportunity_selected, regardless of whether the auto-opened
+//     opportunity is account-history or signal-driven, or whether the
+//     server already has a prior selection on record -- it simply never
+//     passes isFirstOpportunitySelection at all. prepare_call_opened still
+//     fires unconditionally either way (createSalesPlayPanel()'s own
+//     behavior, proved in scripts/test-opportunity-selected-semantics.js).
 //
-// Both are proved against the REAL, verbatim source (extracted via
+// All proved against the REAL, verbatim source (extracted via
 // dashboard-extract.js) -- resolveSignalEventTarget()/
 // shouldMarkFirstOpportunitySelection()/logOpportunityAwareEvent() are
 // real, not stubbed, so this is the actual decision logic, not a
 // reimplementation. Only the network transport (logSignalEvent) and
 // batched read-back (fetchSignalEventStates) are stubbed, matching this
 // codebase's established convention.
-//
-// Contract being proved (same invariant as
-// scripts/test-opportunity-selected-semantics.js, now for these two entry
-// points):
-//   - first-ever intentional use of an account-history opportunity through
-//     either entry point creates exactly one opportunity_selected AND a
-//     prepare_call_opened.
-//   - reopening an already-selected instance through either entry point
-//     creates only prepare_call_opened, never a second opportunity_selected.
-//   - neither entry point ever fires opportunity_selected (or
-//     signal_selected) for a signal-driven opportunity -- merely rendering,
-//     listing, or swapping a signal-driven item into view is never treated
-//     as intentional use of an account-history opportunity.
 //
 // Usage: node scripts/test-account-history-entry-point-consistency.js
 import vm from 'vm';
@@ -153,8 +153,20 @@ async function run(){
   }
 
   // ---------------------------------------------------------------------
-  // openResearchedAccountOpportunities() -- the post-research
-  // "View opportunities" handoff, auto-opening the top-ranked opportunity.
+  // openResearchedAccountOpportunities() -- the GENERIC post-research
+  // "View opportunities" handoff (fresh-research toast, and the Recently
+  // Researched row's own button), auto-opening whichever opportunity HA
+  // ranks first. Founder correction: this is exposure, not endorsement --
+  // "View opportunities" is a generic go-look-at-results click, not the rep
+  // specifically choosing THIS opportunity, so it must never mark
+  // isFirstOpportunitySelection. createSalesPlayPanel()'s own unconditional
+  // prepare_call_opened still fires regardless (proven directly against
+  // the real createSalesPlayPanel() in
+  // scripts/test-opportunity-selected-semantics.js) -- this opportunity
+  // WAS presented; the point is only that "presented" must never also mean
+  // "selected." True first-use selection can still be recorded afterward,
+  // via the primary card's own "Prepare for Call ->" or the Additional
+  // Opportunities swap -- both proved above to record it correctly.
   // ---------------------------------------------------------------------
   {
     const { sandbox, calls } = makeSandbox({ fetchStatesImpl: () => ({}) });
@@ -163,9 +175,12 @@ async function run(){
     await sandbox.openResearchedAccountOpportunities(uploadId, accountName);
     const call = calls.createSalesPlayPanel[0];
     assert(!!call, 'sanity: the top-ranked opportunity opens through createSalesPlayPanel');
-    assert(call.opts.isFirstOpportunitySelection === true, 'REQUIRED: the View opportunities handoff marks isFirstOpportunitySelection:true for a never-selected account-history opportunity');
+    assert(call.opts === undefined, `REQUIRED: the generic View opportunities handoff never passes isFirstOpportunitySelection at all, even for a never-selected account-history opportunity -- auto-opening is exposure, not an explicit selection gesture (got opts=${JSON.stringify(call.opts)})`);
   }
   {
+    // Same proof, but for an opportunity the server already knows was
+    // previously selected -- confirms the omission is unconditional, not
+    // merely coincidental with an empty read-back.
     const { sandbox, calls } = makeSandbox({
       fetchStatesImpl: () => ({ 'opp:repeat_pattern:v1:acme|apparel|last:2025-03-15::Acme Co': { feedback: null, selected: true, outreachLogged: false, latestOutreachEventId: null, approachNote: null } })
     });
@@ -173,7 +188,7 @@ async function run(){
     sandbox.window.accountRadarAccounts = [{ name: accountName, uploadId, signals: [], futureOpportunities: [accountHistoryOpp({ account: accountName, uploadId })] }];
     await sandbox.openResearchedAccountOpportunities(uploadId, accountName);
     const call = calls.createSalesPlayPanel[0];
-    assert(call.opts.isFirstOpportunitySelection === false, 'REQUIRED: the View opportunities handoff never re-marks an already-selected account-history opportunity');
+    assert(call.opts === undefined, `REQUIRED: the handoff still never passes isFirstOpportunitySelection even when the opportunity was already selected before (got opts=${JSON.stringify(call.opts)})`);
   }
   {
     const { sandbox, calls } = makeSandbox({ fetchStatesImpl: () => ({}) });
@@ -182,7 +197,7 @@ async function run(){
     await sandbox.openResearchedAccountOpportunities(uploadId, accountName);
     const call = calls.createSalesPlayPanel[0];
     assert(!!call, 'sanity: a signal-driven top result still opens through createSalesPlayPanel, unaffected');
-    assert(call.opts.isFirstOpportunitySelection === false, 'REQUIRED: the View opportunities handoff never fabricates isFirstOpportunitySelection for a signal-driven top result');
+    assert(call.opts === undefined, 'sanity: a signal-driven top result carries no opts either -- unchanged from V1A');
   }
 
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
