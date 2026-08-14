@@ -3153,8 +3153,13 @@ async function hydrateSignalFeedbackButtons(root){
   const scope = root || document;
   const feedbackButtons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
   const useSignalButtons = Array.from(scope.querySelectorAll('.use-signal-btn[data-event-fingerprint]')).filter(b => b.dataset.eventFingerprint);
-  if(!feedbackButtons.length && !useSignalButtons.length) return;
-  const keys = [...feedbackButtons, ...useSignalButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
+  // Organizational Learning V1B: renderPrepareForCallButton()'s
+  // account-history variant -- reuses `selected` from the exact same
+  // batched read-back (opportunity_selected is recognized server-side
+  // identically to signal_selected; see api/signal-events.js's handleGet).
+  const prepareForCallButtons = Array.from(scope.querySelectorAll('.account-history-prepare-btn[data-event-fingerprint]'));
+  if(!feedbackButtons.length && !useSignalButtons.length && !prepareForCallButtons.length) return;
+  const keys = [...feedbackButtons, ...useSignalButtons, ...prepareForCallButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
   const states = await fetchSignalEventStates(keys);
   feedbackButtons.forEach(btn => {
     const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
@@ -3178,6 +3183,18 @@ async function hydrateSignalFeedbackButtons(root){
     btn.dataset.signalSelected = '1';
     const actionsRow = btn.closest('.verified-signal-actions');
     const statusEl = actionsRow ? actionsRow.querySelector('.signal-used-status') : null;
+    if(statusEl) statusEl.hidden = false;
+  });
+  // Organizational Learning V1B: the account-history equivalent -- once
+  // state.selected is true (an opportunity_selected already exists for this
+  // rep on this exact instance), flag the button so the delegated click
+  // handler passes isFirstOpportunitySelection:false and never logs a
+  // second one, and reveal the "Used ✓" badge rendered alongside it.
+  prepareForCallButtons.forEach(btn => {
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
+    if(!state || !state.selected) return;
+    btn.dataset.opportunitySelected = '1';
+    const statusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-used-status') : null;
     if(statusEl) statusEl.hidden = false;
   });
 }
@@ -7185,10 +7202,40 @@ function renderRepOpportunityCard(opp){
       ${renderAccountHistoryOpportunityFeedback(opp)}
 
       <div class="opp-card-actions">
-        ${opp._locked ? `<div class="lock-message">${lockedAccountMessageHtml()}</div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
+        ${opp._locked ? `<div class="lock-message">${lockedAccountMessageHtml()}</div>` : renderPrepareForCallButton(opp)}
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
       </div>
     </div>`;
+}
+
+// Organizational Learning V1B, Correction on opportunity_selected semantics:
+// for a signal-driven opportunity, "Prepare for Call →" is unchanged --
+// still the plain, inline-onclick button V1A always used (prepare_call_opened
+// fires every open; signal_selected is a SEPARATE, earlier gesture --
+// "Use This Signal" -- for the one class of signal that has that
+// intermediate step; a Priority-tier signal-driven card never had one).
+//
+// For a Follow-Up/Repeat-Pattern account-history opportunity there is no
+// separate select step -- "Prepare for Call →" IS the rep's one and only
+// gesture that means "I'm choosing to work this," so it must be the one
+// that fires opportunity_selected -- but only the FIRST time ever for this
+// exact opportunity instance; reopening it must never log a second one.
+// Since inline onclick embeds a JSON snapshot of `opp` frozen at RENDER
+// time, it cannot reflect hydration state that resolves moments later
+// (hydrateSignalFeedbackButtons() runs async, after the initial render) --
+// so this variant instead renders a delegated-click button carrying its
+// payload in a data attribute, gated on having a durable server-issued ref
+// (accountOpportunityId/accountOpportunityFingerprint -- items 6/7), with a
+// hidden "Used ✓" badge revealed the same way hydrateSignalFeedbackButtons()
+// already reveals it for "Use This Signal." The click handler (delegated,
+// alongside .use-signal-btn/.signal-feedback-btn) reads whether hydration
+// already marked data-opportunity-selected="1" and passes that through to
+// createSalesPlayPanel() as opts.isFirstOpportunitySelection.
+function renderPrepareForCallButton(opp){
+  if(opp.accountOpportunityId && opp.accountOpportunityFingerprint){
+    return `<span class="opportunity-used-status" hidden>Used ✓</span><button type="button" class="btn btn-generate-play account-history-prepare-btn" data-opportunity-id="${escapeHtml(opp.accountOpportunityId)}" data-event-fingerprint="${escapeHtml(opp.accountOpportunityFingerprint)}" data-account-name="${escapeHtml(opp.account || '')}" data-opportunity-payload="${escapeHtml(JSON.stringify(opp))}">Prepare for Call →</button>`;
+  }
+  return `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`;
 }
 
 // Organizational Learning V1B, item 10: the Follow-Up/Repeat-Pattern
@@ -10814,6 +10861,20 @@ window.createSalesPlayPanel = function(opp, opts){
   // Repeat-Pattern account-history opportunities -- logOpportunityAwareEvent()
   // resolves which durable identity/eventType this exact opp carries.
   logOpportunityAwareEvent('prepare_call_opened', opp);
+  // Organizational Learning V1B: opportunity_selected is the ONE event that
+  // means "the rep intentionally chose to work this opportunity" for a
+  // Follow-Up/Repeat-Pattern account-history card -- distinct from
+  // prepare_call_opened (fires on EVERY open, above). It fires exactly
+  // once ever per opportunity instance: opts.isFirstOpportunitySelection is
+  // only ever set by renderPrepareForCallButton()'s delegated click handler,
+  // which already knows -- from prior hydration -- whether this rep has
+  // opened this exact instance before. Every other call site (signal-driven
+  // cards, the repSelected/"Use This Signal" flow, the Additional
+  // Opportunities swap) never passes this flag, so it never fires there --
+  // unaffected, by construction.
+  if(opts.isFirstOpportunitySelection){
+    logOpportunityAwareEvent('signal_selected', opp);
+  }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
   // opp.contact/opp.contactTitle are often a department/role placeholder
@@ -12971,6 +13032,22 @@ document.addEventListener('click', (event) => {
     const card = saveBtn.closest('.account-card');
     const accountName = card ? card.dataset.accountName : null;
     if(uiKey != null && accountName) saveAccountMetadataEdit(uiKey, accountName);
+    return;
+  }
+  // Organizational Learning V1B: renderPrepareForCallButton()'s
+  // account-history variant -- delegated so a hydrated data-opportunity-selected
+  // flag (set by hydrateSignalFeedbackButtons() below) can be read at click
+  // time, which an inline onclick's frozen JSON snapshot cannot reflect.
+  const prepareForCallBtn = event.target.closest('.account-history-prepare-btn');
+  if(prepareForCallBtn){
+    const raw = prepareForCallBtn.dataset.opportunityPayload;
+    if(raw){
+      try{
+        const opp = JSON.parse(raw);
+        const isFirstOpportunitySelection = prepareForCallBtn.dataset.opportunitySelected !== '1';
+        if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {isFirstOpportunitySelection});
+      }catch(err){ /* malformed payload -- nothing to recover, fail silently */ }
+    }
     return;
   }
   // Final Beta Signal Intelligence Correction sprint, "USE THIS SIGNAL":

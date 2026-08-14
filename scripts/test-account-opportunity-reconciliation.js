@@ -59,6 +59,45 @@ function makeMockSb(table) {
   };
 }
 
+// Founder verification request: the existing mock above proves the FINAL
+// table state is correct after a supersession, but does not itself model
+// migration 12's partial unique index (`ha_account_opportunities_one_active_per_family`
+// on (user_id, family_fingerprint) WHERE status='active') -- so it cannot,
+// by itself, prove the ordering of awaited calls never TRANSIENTLY
+// violates that constraint. This variant enforces it directly: a POST that
+// would insert a second row with status='active' for a (user_id,
+// family_fingerprint) that already has one throws, exactly like a real
+// Postgres partial unique index would reject the statement. If
+// reconcileAccountOpportunities() ever inserted the new active row BEFORE
+// superseding the old one, this mock would throw and fail the test below.
+function makeConstraintEnforcingMockSb(table) {
+  let nextId = 1;
+  return async (path, options = {}) => {
+    const method = options.method || 'GET';
+    const filters = parseQuery(path);
+    if (method === 'POST') {
+      const body = JSON.parse(options.body);
+      const inserted = body.map(row => {
+        if (row.status === 'active') {
+          const conflict = table.find(r => r.user_id === row.user_id && r.family_fingerprint === row.family_fingerprint && r.status === 'active');
+          if (conflict) throw new Error(`ha_account_opportunities_one_active_per_family violated: (${row.user_id}, ${row.family_fingerprint}) already has active row ${conflict.id}`);
+        }
+        const full = { id: `opp-${nextId++}`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), superseded_at: null, superseded_by_id: null, ...row };
+        table.push(full);
+        return full;
+      });
+      return inserted;
+    }
+    if (method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      const matches = table.filter(row => Object.entries(filters).every(([k, v]) => matchValue(row[k], v)));
+      matches.forEach(row => Object.assign(row, body));
+      return matches;
+    }
+    return table.filter(row => Object.entries(filters).every(([k, v]) => matchValue(row[k], v)));
+  };
+}
+
 async function run() {
   // ---------------------------------------------------------------------
   // Fresh account: nothing persisted yet -- inserts new active rows.
@@ -125,6 +164,37 @@ async function run() {
     assert(activeRepeatPatternRows.length === 1, `REQUIRED: exactly one active repeat_pattern row for this family at any time (got ${activeRepeatPatternRows.length})`);
     assert(original.family_fingerprint === newInstance.family_fingerprint, 'sanity: both instances share the same evergreen family');
     assert(original.fingerprint !== newInstance.fingerprint, 'sanity: the two instances have different fingerprints');
+  }
+
+  // ---------------------------------------------------------------------
+  // Supersession ordering, against migration 12's ACTUAL partial unique
+  // index, enforced (not merely modeled) by the mock: proves the old
+  // active row is superseded BEFORE the new one is inserted as active --
+  // never the reverse -- by making a same-family double-active insert
+  // throw, exactly like the real constraint would reject it.
+  // ---------------------------------------------------------------------
+  {
+    const table = [];
+    const sb = makeConstraintEnforcingMockSb(table);
+    const cycle2026 = { purchases: [
+      { category: 'Apparel', revenue: 2000, dateStr: '2024-03-10' },
+      { category: 'Apparel', revenue: 2400, dateStr: '2025-03-15' }
+    ] };
+    const cycle2027 = { purchases: [
+      ...cycle2026.purchases,
+      { category: 'Apparel', revenue: 2600, dateStr: '2026-04-02' }
+    ] };
+    await reconcileAccountOpportunities(sb, { userId: 'user-1', uploadId: 'upload-1', accountName: 'Acme Co', rawData: cycle2026 });
+    let threw = false;
+    let second;
+    try {
+      second = await reconcileAccountOpportunities(sb, { userId: 'user-1', uploadId: 'upload-1', accountName: 'Acme Co', rawData: cycle2027 });
+    } catch (err) {
+      threw = true;
+      console.error('  unexpected constraint violation:', err.message);
+    }
+    assert(threw === false, 'REQUIRED: superseding an active instance and inserting its replacement never transiently violates the partial unique index (ha_account_opportunities_one_active_per_family) -- the old row is superseded before the new one is inserted');
+    assert(!threw && second && second.find(r => r.opportunity_type === 'repeat_pattern').status === 'active', 'sanity: the run still completes successfully and the new instance is active');
   }
 
   // ---------------------------------------------------------------------
