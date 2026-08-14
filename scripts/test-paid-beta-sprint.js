@@ -520,6 +520,12 @@ function makeSandbox(){
     // exercise (each gives the account real order history) -- stubbed
     // defensively rather than left undefined.
     isWarmAccount: () => false,
+    // Founder QA fix: renderWeeklyPrioritiesFeed() now calls
+    // hydrateSignalFeedbackButtons(grid) after building the grid --
+    // irrelevant to this file's own assertions (static render/paid-beta
+    // gating, not hydration; see scripts/test-dashboard-card-outreach-hydration.js
+    // for the real hydration path), so a plain no-op stub is correct.
+    hydrateSignalFeedbackButtons: () => {},
     URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON
   };
   vm.createContext(sandbox);

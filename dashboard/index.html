@@ -12686,6 +12686,20 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
     grid.innerHTML = (actionButton ? `<div class="weekly-priority-actions">${actionButton}</div>` : '') + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+    // Founder QA: "Reached out ✓" (and "Used ✓") never hydrated on the
+    // primary card, even after a full page refresh, despite the modal
+    // correctly hydrating the SAME persisted opportunity_outreach_made/
+    // opportunity_selected events. Root cause -- hydrateSignalFeedbackButtons()
+    // (the one function that reads /api/signal-events and reveals those
+    // badges) was called for the research-signal panel, the "Your Accounts"
+    // detail section, and a modal backdrop, but never for this grid; nothing
+    // downstream of grid.innerHTML ever hydrated it, unlike
+    // createSalesPlayPanel()'s explicit wireOutreachRow()/hydrateOutreachRow()
+    // call at modal-open time. Called here (the one place that builds this
+    // grid) so both real callers -- refreshOpportunityViews() on every
+    // dashboard load/refresh, and processData()'s own direct pre-aggregate
+    // render -- are covered without duplicating the call at each site.
+    hydrateSignalFeedbackButtons(grid);
   }
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }

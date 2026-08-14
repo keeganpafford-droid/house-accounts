@@ -179,6 +179,12 @@ function renderDetailedAccountViews(){}
 function applyFreeCompanyLocksToCustomerAccounts(accounts){ return accounts; }
 function calculateRevenueContext(){ return {historicalRevenue:0, historicalOpps:0, newBusinessOpps:0, totalReasons:0}; }
 function renderResearchDiagnostics(){}
+// Founder QA fix: renderWeeklyPrioritiesFeed() now calls
+// hydrateSignalFeedbackButtons(grid) after building the grid -- irrelevant
+// to this file's own assertions (server-side ref stamping and client
+// dedupe, not hydration; see scripts/test-dashboard-card-outreach-hydration.js
+// for the real hydration path), so a plain no-op stub is correct.
+function hydrateSignalFeedbackButtons(){}
 function renderRecentlyResearchedSection(){}
 function recommendationBadgeMeta(o){ return {label:'Reach Out', cls:'', icon:''}; }
 function mailtoHref(email){ return email ? ('mailto:' + email) : ''; }
