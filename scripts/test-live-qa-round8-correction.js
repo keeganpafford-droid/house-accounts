@@ -95,7 +95,7 @@ function buildScenario(dashboardSrc){
     currentUploadId: 'upload-deleted', currentUploadName: 'fixture.csv', currentLead: { email:'owner@example.com' },
     localStorage: { setItem(){}, getItem(){ return null; } },
     renderCustomerDashboard: () => {}, refreshOpportunityViews: () => {},
-    aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: false,
+    aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: false, dashboardFetchGeneration: 0,
     escapeHtml: s => String(s || ''),
     // The founder's own role: owner/admin, team-capable.
     canCurrentUserViewTeam: () => true
@@ -178,7 +178,7 @@ function buildScenario(dashboardSrc){
     currentUploadId: 'upload-deleted', currentUploadName: 'fixture.csv', currentLead: { email:'member@example.com' },
     localStorage: { setItem(){}, getItem(){ return null; } },
     renderCustomerDashboard: () => {}, refreshOpportunityViews: () => {},
-    aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: true,
+    aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: true, dashboardFetchGeneration: 0,
     escapeHtml: s => String(s || ''), canCurrentUserViewTeam: () => false
   };
   vm.createContext(sandbox);

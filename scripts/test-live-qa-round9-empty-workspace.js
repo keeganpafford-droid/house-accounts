@@ -221,7 +221,7 @@ function fakeRes(){
       currentUploadId: 'stale-upload', currentUploadName: 'Stale.csv', currentLead: { email:'rep@example.com' },
       localStorage: { setItem(){}, getItem(){ return null; } },
       renderCustomerDashboard: () => {}, refreshOpportunityViews: () => {},
-      aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: false,
+      aggregateDashboardEverLoaded: true, freshUploadRenderedThisSession: false, dashboardFetchGeneration: 0,
       escapeHtml: s => String(s || ''), canCurrentUserViewTeam: () => true
     };
     vm.createContext(sandbox);

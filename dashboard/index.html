@@ -4123,6 +4123,27 @@ let freshUploadRenderedThisSession = false;
 // instead of fabricated single-upload numbers).
 let aggregateDashboardEverLoaded = false;
 
+// Fresh-upload-feedback-rendering incident: fetchAndRenderAggregateDashboard()
+// has THREE+ genuinely independent, uncoordinated callers that can all be in
+// flight at once -- the 250ms post-DOMContentLoaded auto-load (page load),
+// refreshAggregateDashboard() right after a fresh upload's save resolves,
+// manualDashboardRefresh(), and setDashboardView(). None of them cancelled or
+// even knew about one another; whichever network response happened to land
+// LAST simply overwrote window.accountRadarAccounts/the whole opportunities
+// grid, even when it was actually the OLDER of the two requests. Confirmed
+// live (founder QA, Quantum Materials): the 250ms page-load fetch was still
+// in flight when a fresh upload's post-save refresh resolved first and
+// correctly rendered ref-stamped Follow-Up/Repeat-Pattern cards (Useful/Not
+// useful controls, ref-aware "Used" Prepare for Call); the page-load
+// request then resolved afterward and silently re-rendered over it with its
+// own (earlier, non-authoritative) snapshot -- which is why the DOM's opp
+// payload doesn't match what /api/get-dashboard actually returns for that
+// account, and why the feedback controls disappear despite the API response
+// being correct. dashboardFetchGeneration makes "only the most recently
+// INITIATED call may ever touch the DOM" an actual invariant instead of an
+// accident of network timing.
+let dashboardFetchGeneration = 0;
+
 function showBuildingDashboardPanelPlaceholder(){
   const panel = document.getElementById('customerDashboard');
   if(!panel) return;
@@ -4313,6 +4334,11 @@ else wireEmptyWorkspaceStateControls();
 async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
   const e = String(email || '').trim().toLowerCase();
   if(!e) return {ok:false, error:'Missing email'};
+  // Captured BEFORE the fetch/await below -- so a concurrent caller that
+  // starts (and finishes) after this one bumps dashboardFetchGeneration
+  // first, and this call can recognize itself as stale once its own
+  // response finally lands. See dashboardFetchGeneration's own comment.
+  const myGeneration = ++dashboardFetchGeneration;
   const banner = silent ? null : document.getElementById('savedDashboardBanner');
   const skeleton = silent ? null : document.getElementById('dashboardLoadingSkeleton');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
@@ -4323,6 +4349,14 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
+    if(myGeneration !== dashboardFetchGeneration){
+      // A more recently INITIATED call already won (and, if successful,
+      // already rendered) -- applying this older response now would
+      // silently clobber it regardless of which one the network happened to
+      // resolve last. Drop it.
+      if(skeleton) skeleton.classList.remove('active');
+      return {ok:true, stale:true};
+    }
     currentDashboardData = data;
     dashboardCanViewTeam = !!data.canViewTeam;
     dashboardViewMode = data.viewMode || dashboardViewMode || defaultDashboardView();
@@ -4372,6 +4406,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     return {ok:true, data, accounts};
   }catch(err){
     if(skeleton) skeleton.classList.remove('active');
+    if(myGeneration !== dashboardFetchGeneration) return {ok:true, stale:true};
     // Live QA round 8: a confirmed "no existing customer dashboard data"
     // 404 is unambiguous regardless of role -- this used to be gated on
     // `!canCurrentUserViewTeam()` (a plain member), which meant a team-

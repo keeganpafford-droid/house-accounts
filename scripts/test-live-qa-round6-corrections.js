@@ -121,6 +121,7 @@ const DASHBOARD_SRC = loadDashboardSource();
       refreshOpportunityViews: () => { calls.refreshOpportunityViews++; },
       aggregateDashboardEverLoaded: true,
       freshUploadRenderedThisSession: false,
+      dashboardFetchGeneration: 0,
       escapeHtml: s => String(s || ''),
       canCurrentUserViewTeam: () => true
     };
