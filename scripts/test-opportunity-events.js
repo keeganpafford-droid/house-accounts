@@ -22,7 +22,7 @@
 //     resolved opportunity_outreach_made parent.
 //
 // Usage: node scripts/test-opportunity-events.js
-import handler from '../api/signal-events.js';
+import handler, { readBackKey } from '../api/signal-events.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -42,6 +42,9 @@ function makeRes() {
 }
 function makeReq({ method = 'POST', token = 'valid-token-a1', body, query } = {}) {
   return { method, headers: token ? { authorization: `Bearer ${token}` } : {}, body, query };
+}
+function getKeys(...pairs) {
+  return { keys: JSON.stringify(pairs.map(([eventFingerprint, accountName]) => ({ eventFingerprint, accountName }))) };
 }
 
 function parseQuery(url) {
@@ -398,6 +401,69 @@ async function run() {
       return { res };
     });
     assert(res.statusCode === 404, `REQUIRED: a rep cannot attach an opportunity approach note to a DIFFERENT rep's outreach attempt, even within the same organization (got ${res.statusCode})`);
+  }
+
+  // ---------------------------------------------------------------------
+  // prepare_call_opened is genuinely SHARED between both families (per
+  // migration 12's target-family check): supplying opportunityId targets
+  // ha_account_opportunities exactly like the opportunity_* types above,
+  // with an empty payload (it is pure engagement, not a judgment/snapshot
+  // event) and no dedupe.
+  // ---------------------------------------------------------------------
+  {
+    const { ev } = await withState(async (state) => {
+      const req = makeReq({ body: { eventType: 'prepare_call_opened', opportunityId: 'opp-a1-followup', clientEventId: 'c-prepare-call' } });
+      const res = makeRes();
+      await handler(req, res);
+      return { ev: state.haSignalEvents[0] };
+    });
+    assert(ev.event_type === 'prepare_call_opened', 'REQUIRED: prepare_call_opened resolves against ha_account_opportunities when opportunityId is supplied');
+    assert(ev.opportunity_id === 'opp-a1-followup' && (ev.signal_id === undefined || ev.signal_id === null), 'REQUIRED: the shared prepare_call_opened event carries opportunity_id, never signal_id, for an account-history opportunity');
+    assert(Object.keys(ev.payload).length === 0, 'prepare_call_opened carries an empty payload for an opportunity target too -- pure engagement, not a snapshot event');
+  }
+
+  // ---------------------------------------------------------------------
+  // Item 11: GET read-back recognizes the opportunity_* vocabulary exactly
+  // like its signal_* equivalents -- feedback, selected, outreachLogged,
+  // and approach-note scoping all work identically, keyed by
+  // (eventFingerprint, accountName) as usual (the opp:*:v1: namespace
+  // already keeps this from ever colliding with an unprefixed signal
+  // fingerprint).
+  // ---------------------------------------------------------------------
+  {
+    const { states } = await withState(async () => {
+      await handler(makeReq({ body: { eventType: 'opportunity_selected', opportunityId: 'opp-a1-followup', clientEventId: 'r-opp-select' } }), makeRes());
+      await handler(makeReq({ body: { eventType: 'opportunity_useful', opportunityId: 'opp-a1-followup', clientEventId: 'r-opp-useful' } }), makeRes());
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'opportunity_outreach_made', opportunityId: 'opp-a1-followup', clientEventId: 'r-opp-outreach' } }), outreachRes);
+      await handler(makeReq({ body: { eventType: 'opportunity_approach_shared', parentEventId: outreachRes.body.id, note: 'Checked in about the recent order.', clientEventId: 'r-opp-note' } }), makeRes());
+
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', query: getKeys(['opp:follow_up:v1:acme|last:2025-06-01', 'Acme Co']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const s = states[readBackKey('opp:follow_up:v1:acme|last:2025-06-01', 'Acme Co')];
+    assert(!!s, 'sanity: the requested key has a state entry');
+    assert(s.selected === true, 'REQUIRED: read-back reflects opportunity_selected the same way it reflects signal_selected');
+    assert(s.feedback === 'useful', 'REQUIRED: read-back reflects opportunity_useful the same way it reflects signal_useful');
+    assert(s.outreachLogged === true && !!s.latestOutreachEventId, 'REQUIRED: read-back reflects opportunity_outreach_made the same way it reflects outreach_made');
+    assert(s.approachNote === 'Checked in about the recent order.', 'REQUIRED: read-back returns the opportunity_approach_shared note, scoped to the latest outreach attempt, exactly like the signal-side note');
+  }
+  {
+    // Cross-family isolation, explicit: a signal_useful event under a
+    // DIFFERENT fingerprint namespace must never be read back under an
+    // opportunity fingerprint's key, and vice versa -- proven here simply
+    // by confirming a fresh opportunity fingerprint with no opportunity_*
+    // history of its own reads back clean, even in a state object that
+    // also contains real signal-side history elsewhere (the two never
+    // share a composite key by construction: opp:*:v1: vs unprefixed).
+    const { states } = await withState(async () => {
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', query: getKeys(['opp:repeat_pattern:v1:beta|apparel|last:2025-03-15', 'Beta Inc']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const s = states[readBackKey('opp:repeat_pattern:v1:beta|apparel|last:2025-03-15', 'Beta Inc')];
+    assert(s.feedback === null && s.selected === false && s.outreachLogged === false, 'a key with no opportunity_* history returns a clean, unanswered default state, same as the signal-side default');
   }
 
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);

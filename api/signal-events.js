@@ -231,8 +231,15 @@ async function handlePost(req, res, user, organizationId) {
   // opportunityId -- resolved and organization-scoped the same way
   // signalId is resolved below, never trusted from the browser beyond the
   // id itself. event_fingerprint/account_name/category are then derived
-  // from that exact resolved row.
-  if (OPPORTUNITY_EVENT_TYPES.has(eventType)) {
+  // from that exact resolved row. prepare_call_opened is the one event
+  // type genuinely SHARED between both families (migration 12's
+  // ha_signal_events_target_family_check enforces the XOR directly) --
+  // when the caller supplies opportunityId, it resolves through this same
+  // branch and naturally gets an empty payload (SNAPSHOT_EVENT_TYPES does
+  // not include prepare_call_opened) and skips the useful/not_useful
+  // dedupe below (neither applies to it); a prepare_call_opened with only
+  // a signalId still falls through to the signal branch, unchanged.
+  if (OPPORTUNITY_EVENT_TYPES.has(eventType) || (eventType === 'prepare_call_opened' && clean(body.opportunityId))) {
     const opportunityId = clean(body.opportunityId);
     if (!opportunityId) return json(res, 400, { error: 'opportunityId is required.' });
 
@@ -385,31 +392,40 @@ async function handleGet(req, res, user) {
     // account) pair so a different account sharing the same fingerprint
     // can never contribute to this state.
     const relevant = allRows.filter(row => row.event_fingerprint === k.eventFingerprint && clean(row.account_name) === clean(k.accountName));
+    // Organizational Learning V1B, item 11: read-back is source-agnostic by
+    // design -- a fingerprint's namespace alone (unprefixed for ha_signals,
+    // opp:*:v1: for ha_account_opportunities) already keeps the two
+    // families from ever colliding on the same (eventFingerprint,
+    // accountName) key, so this loop simply recognizes both the signal_*
+    // and opportunity_* spellings of the same underlying judgment/action
+    // rather than needing to know in advance which family `k` belongs to.
     for (const row of relevant) {
-      if (state.feedback === null && (row.event_type === 'signal_useful' || row.event_type === 'signal_not_useful')) {
-        state.feedback = row.event_type === 'signal_useful' ? 'useful' : 'not_useful';
+      if (state.feedback === null && (row.event_type === 'signal_useful' || row.event_type === 'opportunity_useful' || row.event_type === 'signal_not_useful' || row.event_type === 'opportunity_not_useful')) {
+        state.feedback = (row.event_type === 'signal_useful' || row.event_type === 'opportunity_useful') ? 'useful' : 'not_useful';
       }
-      // signal_selected is durable, historical-use acknowledgement, not a
-      // single "currently active" pointer -- the mere EXISTENCE of at
-      // least one such event for this rep on this exact signal/account
-      // context means "the rep has already chosen to work this," so a
-      // rep reopening it never has to re-select it (and never causes a
-      // second signal_selected write) merely to reopen Prepare for Call.
-      if (row.event_type === 'signal_selected') state.selected = true;
-      if (!state.outreachLogged && row.event_type === 'outreach_made') {
+      // signal_selected/opportunity_selected is durable, historical-use
+      // acknowledgement, not a single "currently active" pointer -- the
+      // mere EXISTENCE of at least one such event for this rep on this
+      // exact signal/opportunity+account context means "the rep has
+      // already chosen to work this," so a rep reopening it never has to
+      // re-select it (and never causes a second selected event) merely to
+      // reopen Prepare for Call.
+      if (row.event_type === 'signal_selected' || row.event_type === 'opportunity_selected') state.selected = true;
+      if (!state.outreachLogged && (row.event_type === 'outreach_made' || row.event_type === 'opportunity_outreach_made')) {
         state.outreachLogged = true;
         state.latestOutreachEventId = row.id;
       }
     }
-    // approach_shared is created AFTER its parent outreach_made, so it
-    // sorts BEFORE its own parent in this newest-first list -- the note
-    // for THIS state must only ever come from the approach_shared row
-    // whose parent_event_id is the latest outreach attempt just resolved
-    // above, never merely the most recent approach_shared row seen for
-    // this fingerprint/account. An older outreach attempt's leftover note
-    // must never appear to belong to a newer attempt that has none yet.
+    // approach_shared/opportunity_approach_shared is created AFTER its
+    // parent outreach event, so it sorts BEFORE its own parent in this
+    // newest-first list -- the note for THIS state must only ever come
+    // from the approach-note row whose parent_event_id is the latest
+    // outreach attempt just resolved above, never merely the most recent
+    // approach-note row seen for this fingerprint/account. An older
+    // outreach attempt's leftover note must never appear to belong to a
+    // newer attempt that has none yet.
     if (state.latestOutreachEventId) {
-      const note = relevant.find(row => row.event_type === 'approach_shared' && row.parent_event_id === state.latestOutreachEventId);
+      const note = relevant.find(row => (row.event_type === 'approach_shared' || row.event_type === 'opportunity_approach_shared') && row.parent_event_id === state.latestOutreachEventId);
       if (note) state.approachNote = note.payload?.approachNote || null;
     }
   }

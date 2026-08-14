@@ -62,6 +62,8 @@ function fetchSignalEventStates(){ return Promise.resolve({}); }
 function hydrateSignalFeedbackButtons(){}
 function wireOutreachRow(){}
 function hydrateOutreachRow(){ return Promise.resolve(); }
+function resolveSignalEventTarget(){ return null; }
+function logOpportunityAwareEvent(){ return Promise.resolve(null); }
 `;
 
 function makeSandbox(){
