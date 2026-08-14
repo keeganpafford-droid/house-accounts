@@ -148,6 +148,7 @@ async function run(){
     assert(withRef.includes('data-opportunity-id="opp-1"') && withRef.includes('data-event-fingerprint="opp:follow_up:v1:acme|last:2025-06-01"'), 'the delegated button carries the exact durable ref');
     assert(withRef.includes('data-opportunity-payload='), 'the delegated button carries a full opportunity payload for createSalesPlayPanel() to consume at click time');
     assert(withRef.includes('class="opportunity-used-status" hidden'), 'REQUIRED: the "Used ✓" badge renders hidden by default -- only hydration reveals it');
+    assert(withRef.includes('class="opportunity-outreach-status" hidden'), 'REQUIRED (founder QA item 3): the "Reached out ✓" card badge renders hidden by default -- only hydration reveals it');
   }
 
   // ---------------------------------------------------------------------
@@ -219,31 +220,63 @@ async function run(){
   // server's OWN `selected` state -- this is what makes the gate durable
   // across a reload, not client-side session memory.
   // ---------------------------------------------------------------------
+  function makePrepareForCallFixture(fingerprint, accountName){
+    const statusEl = { hidden: true };
+    const outreachStatusEl = { hidden: true };
+    const btn = {
+      dataset: { eventFingerprint: fingerprint, accountName },
+      parentElement: {
+        querySelector: (sel) => sel === '.opportunity-used-status' ? statusEl : (sel === '.opportunity-outreach-status' ? outreachStatusEl : null)
+      }
+    };
+    const root = { querySelectorAll: (sel) => sel === '.account-history-prepare-btn[data-event-fingerprint]' ? [btn] : [] };
+    return { statusEl, outreachStatusEl, btn, root };
+  }
+
   {
+    // opportunity_selected exists, but NO outreach has ever been logged --
+    // this is the exact founder-reported shape (prepare_call_opened +
+    // opportunity_selected fired on first open, no opportunity_outreach_made
+    // yet). "Used ✓" reveals; "Reached out ✓" must NOT.
     const { sandbox } = makeSandbox({
       fetchStatesImpl: () => ({ 'opp:follow_up:v1:acme|last:2025-06-01::Acme Co': { feedback: null, selected: true, outreachLogged: false, latestOutreachEventId: null, approachNote: null } })
     });
-    const statusEl = { hidden: true };
-    const btn = {
-      dataset: { eventFingerprint: 'opp:follow_up:v1:acme|last:2025-06-01', accountName: 'Acme Co' },
-      parentElement: { querySelector: (sel) => sel === '.opportunity-used-status' ? statusEl : null }
-    };
-    const root = { querySelectorAll: (sel) => sel === '.account-history-prepare-btn[data-event-fingerprint]' ? [btn] : [] };
+    const { statusEl, outreachStatusEl, btn, root } = makePrepareForCallFixture('opp:follow_up:v1:acme|last:2025-06-01', 'Acme Co');
     await sandbox.hydrateSignalFeedbackButtons(root);
     assert(btn.dataset.opportunitySelected === '1', 'REQUIRED: hydration flags the button data-opportunity-selected="1" from the server\'s prior opportunity_selected record');
     assert(statusEl.hidden === false, 'REQUIRED: hydration reveals the "Used ✓" badge for a previously-selected opportunity');
+    assert(outreachStatusEl.hidden === true, 'REQUIRED (founder QA item 1/3): opportunity_selected alone must NEVER reveal "Reached out ✓" -- no opportunity_outreach_made event exists yet');
   }
   {
     const { sandbox } = makeSandbox({ fetchStatesImpl: () => ({}) });
-    const statusEl = { hidden: true };
-    const btn = {
-      dataset: { eventFingerprint: 'opp:follow_up:v1:beta|apparel|last:2025-03-15', accountName: 'Beta Inc' },
-      parentElement: { querySelector: (sel) => sel === '.opportunity-used-status' ? statusEl : null }
-    };
-    const root = { querySelectorAll: (sel) => sel === '.account-history-prepare-btn[data-event-fingerprint]' ? [btn] : [] };
+    const { statusEl, outreachStatusEl, btn, root } = makePrepareForCallFixture('opp:follow_up:v1:beta|apparel|last:2025-03-15', 'Beta Inc');
     await sandbox.hydrateSignalFeedbackButtons(root);
     assert(btn.dataset.opportunitySelected === undefined, 'REQUIRED: a never-selected opportunity is never flagged as selected');
     assert(statusEl.hidden === true, 'REQUIRED: the "Used ✓" badge stays hidden for a never-selected opportunity');
+    assert(outreachStatusEl.hidden === true, 'REQUIRED: a never-opened opportunity (no server state at all) never reveals "Reached out ✓" -- a future opportunity instance starts clean');
+  }
+  {
+    // Useful/Not-useful feedback alone (no selected, no outreach) must never
+    // reveal either badge.
+    const { sandbox } = makeSandbox({
+      fetchStatesImpl: () => ({ 'opp:follow_up:v1:gamma|last:2025-06-01::Gamma Co': { feedback: 'useful', selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null } })
+    });
+    const { statusEl, outreachStatusEl, btn, root } = makePrepareForCallFixture('opp:follow_up:v1:gamma|last:2025-06-01', 'Gamma Co');
+    await sandbox.hydrateSignalFeedbackButtons(root);
+    assert(btn.dataset.opportunitySelected === undefined, 'sanity: Useful feedback alone never flags opportunity_selected');
+    assert(statusEl.hidden === true, 'sanity: Useful feedback alone never reveals "Used ✓"');
+    assert(outreachStatusEl.hidden === true, 'REQUIRED: Useful/Not-useful feedback alone must NEVER reveal "Reached out ✓"');
+  }
+  {
+    // A real, saved opportunity_outreach_made event for this exact
+    // opportunity instance -- founder QA item 3's actual positive case.
+    const { sandbox } = makeSandbox({
+      fetchStatesImpl: () => ({ 'opp:repeat_pattern:v1:brightpath learning|apparel|last:2025-08-16::BrightPath Learning': { feedback: null, selected: true, outreachLogged: true, latestOutreachEventId: 'evt-outreach-1', approachNote: null } })
+    });
+    const { statusEl, outreachStatusEl, btn, root } = makePrepareForCallFixture('opp:repeat_pattern:v1:brightpath learning|apparel|last:2025-08-16', 'BrightPath Learning');
+    await sandbox.hydrateSignalFeedbackButtons(root);
+    assert(statusEl.hidden === false, 'sanity: "Used ✓" also reveals, since a real opportunity_selected exists alongside the outreach');
+    assert(outreachStatusEl.hidden === false, 'REQUIRED (founder QA item 3): a real opportunity_outreach_made event reveals "Reached out ✓" on the primary card');
   }
 
   console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);

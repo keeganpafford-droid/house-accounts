@@ -1337,6 +1337,22 @@
     font-size:0.85rem;
     font-weight:600;
   }
+  /* Outreach-state hydration bugs (founder QA): [hidden] is a UA-stylesheet
+     rule with specificity 0-1-0 ([hidden]{display:none}). Both rules above
+     set display:inline-block at the SAME specificity via a class selector
+     (.outreach-status here; .btn -- shared by .outreach-log-btn -- above),
+     and an author rule beats a UA rule at equal specificity regardless of
+     source order -- so wireOutreachRow()'s statusEl.hidden/logBtn.hidden
+     were being silently ignored: the "Reached out check" span always
+     rendered regardless of state (bug 1: it showed on the very first open,
+     before any outreach_made event existed), and the "I reached out" button
+     never actually hid itself while the draft form was open (bug 2: a
+     duplicate CTA sat visible under the draft). Scoped to these two exact
+     elements -- not a change to .btn or [hidden] generally. */
+  .sales-play-outreach-row .outreach-status[hidden],
+  .sales-play-outreach-row .outreach-log-btn[hidden]{
+    display:none;
+  }
   .approach-note-wrap{
     margin-top:10px;
   }
@@ -3223,12 +3239,28 @@ async function hydrateSignalFeedbackButtons(root){
   // rep on this exact instance), flag the button so the delegated click
   // handler passes isFirstOpportunitySelection:false and never logs a
   // second one, and reveal the "Used ✓" badge rendered alongside it.
+  //
+  // Founder QA item 3: the "Reached out ✓" card badge is derived
+  // independently of `selected` -- from state.outreachLogged alone, which
+  // api/signal-events.js's handleGet() only ever sets true for a real
+  // outreach_made/opportunity_outreach_made row. prepare_call_opened,
+  // opportunity_selected, and Useful/Not-useful never touch outreachLogged,
+  // and opening the outreach draft in Prepare for Call is a pure client-side
+  // state change with no network write at all (see wireOutreachRow()'s own
+  // header comment) -- so none of those can ever produce this badge, and a
+  // new opportunity instance (a different fingerprint) always starts clean.
   prepareForCallButtons.forEach(btn => {
     const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
-    if(!state || !state.selected) return;
-    btn.dataset.opportunitySelected = '1';
-    const statusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-used-status') : null;
-    if(statusEl) statusEl.hidden = false;
+    if(!state) return;
+    if(state.selected){
+      btn.dataset.opportunitySelected = '1';
+      const statusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-used-status') : null;
+      if(statusEl) statusEl.hidden = false;
+    }
+    if(state.outreachLogged){
+      const outreachStatusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-outreach-status') : null;
+      if(outreachStatusEl) outreachStatusEl.hidden = false;
+    }
   });
 }
 
@@ -7314,7 +7346,19 @@ function renderRepOpportunityCard(opp){
 // createSalesPlayPanel() as opts.isFirstOpportunitySelection.
 function renderPrepareForCallButton(opp){
   if(opp.accountOpportunityId && opp.accountOpportunityFingerprint){
-    return `<span class="opportunity-used-status" hidden>Used ✓</span><button type="button" class="btn btn-generate-play account-history-prepare-btn" data-opportunity-id="${escapeHtml(opp.accountOpportunityId)}" data-event-fingerprint="${escapeHtml(opp.accountOpportunityFingerprint)}" data-account-name="${escapeHtml(opp.account || '')}" data-opportunity-payload="${escapeHtml(JSON.stringify(opp))}">Prepare for Call →</button>`;
+    // Founder QA item 3: a minimal, instance-specific "Reached out check"
+    // badge on the primary card itself, distinct from "Used check" above --
+    // Used means the rep chose to work this opportunity (opportunity_selected);
+    // Reached out means a real opportunity_outreach_made event exists for
+    // THIS exact opportunity instance (hydrated in
+    // hydrateSignalFeedbackButtons() from the same batched read-back already
+    // used for Used check, off state.outreachLogged alone -- never
+    // state.selected/feedback). Deliberately no dedicated CSS rule here,
+    // matching .opportunity-used-status's own (correctly) unstyled plain
+    // span -- see the .sales-play-outreach-row .outreach-status[hidden] fix
+    // above for why an explicit `display` declaration on a [hidden] element
+    // is exactly the trap to avoid.
+    return `<span class="opportunity-used-status" hidden>Used ✓</span><span class="opportunity-outreach-status" hidden>Reached out ✓</span><button type="button" class="btn btn-generate-play account-history-prepare-btn" data-opportunity-id="${escapeHtml(opp.accountOpportunityId)}" data-event-fingerprint="${escapeHtml(opp.accountOpportunityFingerprint)}" data-account-name="${escapeHtml(opp.account || '')}" data-opportunity-payload="${escapeHtml(JSON.stringify(opp))}">Prepare for Call →</button>`;
   }
   return `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`;
 }
