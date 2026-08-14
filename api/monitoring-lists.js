@@ -24,7 +24,24 @@ async function sb(path,opt={}){const{url,key}=env();const r=await fetch(`${url}/
   throw err}return d}
 async function authUser(req){const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return null;const{url,key}=env();const r=await fetch(`${url}/auth/v1/user`,{headers:{apikey:key,Authorization:`Bearer ${token}`}});if(!r.ok)return null;return r.json()}
 async function context(req){const au=await authUser(req);if(!au?.id)return null;let rows=await sb(`ha_users?auth_user_id=eq.${encodeURIComponent(au.id)}&select=*&limit=1`);let user=Array.isArray(rows)?rows[0]:null;if(!user&&au.email){rows=await sb(`ha_users?email=eq.${encodeURIComponent(lower(au.email))}&select=*&limit=1`);user=Array.isArray(rows)?rows[0]:null}if(!user)return null;const role=lower(user.app_role||user.role||'member');const canViewTeam=role==='owner'||role==='admin';let visibleUsers=[user];if(canViewTeam&&user.organization_id){const users=await sb(`ha_users?organization_id=eq.${encodeURIComponent(user.organization_id)}&select=id,email,status,app_role,role`);visibleUsers=(Array.isArray(users)?users:[]).filter(x=>lower(x.status||'active')!=='inactive')}return{user,role,canViewTeam,userIds:visibleUsers.map(x=>x.id).filter(Boolean),emails:visibleUsers.map(x=>lower(x.email)).filter(Boolean)}}
-function inFilter(vals){return `in.(${vals.map(v=>`\"${String(v).replace(/\"/g,'')}\"`).join(',')})`}
+// PostgREST list-filter syntax (`in.("a","b")`) is embedded directly into
+// the request URL by sb()/fetch() -- never itself URL-encoded end-to-end
+// (see sb()'s own comment: `path` is concatenated straight into the fetch
+// URL). Every value here MUST therefore be percent-encoded individually
+// before being quoted, exactly like every other raw value this file drops
+// into a URL (encodeURIComponent(userId)/encodeURIComponent(uploadId)
+// elsewhere in this file). Values here have so far always been UUIDs/
+// emails, which happen to round-trip through encodeURIComponent as a
+// no-op -- but inactivateOrphanedAccountOpportunities() calls this with
+// real, arbitrary ACCOUNT NAMES. An unescaped '&' in a name (e.g. "C&J Bus
+// Lines") is a literal query-string delimiter: it splits the URL into
+// bogus extra parameters, silently corrupting the whole in.() filter (all
+// names in that one batched call, not just the offending one) for both of
+// this function's callers below. That failure was invisible in production
+// because both call sites live inside deleteList()'s own best-effort
+// try/catch -- it never surfaces as a client-visible error, it just leaves
+// the orphaned opportunities stuck 'active' after their list is deleted.
+function inFilter(vals){return `in.(${vals.map(v=>`\"${encodeURIComponent(String(v).replace(/\"/g,''))}\"`).join(',')})`}
 function isPaused(v){return ['paused','archived'].includes(lower(v))}
 // Read-only, no-migration server-state signal for the Manage Customer
 // Accounts modal's run-state reattachment: the LATEST ha_research_runs row
@@ -288,11 +305,59 @@ async function deleteCustomerAccountViaSnapshot(account){
   await sb(`ha_signals?upload_id=eq.${encodeURIComponent(account.upload_id)}&user_id=eq.${encodeURIComponent(account.user_id)}&account_name=eq.${encodeURIComponent(targetName)}`,{method:'DELETE',prefer:'return=minimal'}).catch(()=>{});
 }
 
+// Organizational Learning V1B, production bug fix: ha_account_opportunities
+// is a DURABLE, cross-upload identity (keyed by user_id + fingerprint, not
+// by upload_id -- see migration 12's own header comment; upload_id there is
+// purely informational, "which upload most recently confirmed this
+// instance"). Deleting a customer list's ha_accounts rows does not, by
+// itself, mean those opportunities should vanish or stay "active" forever
+// -- they should transition to 'inactive' (append-only history preserved,
+// same lifecycle model reconcileAccountOpportunities() already uses when
+// an account's evidence disappears), UNLESS the same account_name is still
+// represented by a DIFFERENT, still-live upload for this same user
+// (account names are unique only WITHIN one upload, never globally per
+// user -- see loadAccountPage()'s own Round-13 comment above), in which
+// case that account's opportunities must be left completely untouched.
+// Never destroys the ha_account_opportunities rows themselves (that would
+// discard real longitudinal history), and never touches ha_signal_events
+// (migration 12's opportunity_id/signal_id FKs already use ON DELETE SET
+// NULL there, independent of this).
+async function inactivateOrphanedAccountOpportunities(userId,accountNames){
+  if(!userId||!accountNames.length)return;
+  const stillPresent=await sb(`ha_accounts?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter(accountNames)}&select=account_name`);
+  const stillPresentNames=new Set((Array.isArray(stillPresent)?stillPresent:[]).map(r=>r.account_name));
+  const orphaned=accountNames.filter(n=>!stillPresentNames.has(n));
+  if(!orphaned.length)return;
+  await sb(`ha_account_opportunities?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter(orphaned)}&status=eq.active`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({status:'inactive',updated_at:new Date().toISOString()})});
+}
 // Ownership of the parent list is established BEFORE any child mutation
 // begins -- assertOwned{Upload,ProspectUpload}() throws (no DB write of any
 // kind attempted yet) if `id` doesn't belong to this ctx, so an unauthorized
 // delete request performs zero child mutations and zero parent mutation.
-async function deleteList(ctx,type,id){if(type==='customer'){await assertOwnedUpload(ctx,id);await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});return}await assertOwnedProspectUpload(ctx,id);await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
+async function deleteList(ctx,type,id){if(type==='customer'){await assertOwnedUpload(ctx,id);
+  // Captured BEFORE the deletes below so the accounts this upload actually
+  // owned are still known afterward -- see inactivateOrphanedAccountOpportunities()'s
+  // own comment for why this matters and how it stays scoped.
+  const ownedAccounts=await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}&select=user_id,account_name`);
+  await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});
+  // Best-effort, fire-after-commit cleanup -- never blocks or fails the
+  // list delete itself (which has already fully succeeded by this point).
+  // A failure here just means the orphaned rows stay 'active' until the
+  // next reconciliation pass or a future cleanup retry -- self-healing,
+  // same non-critical-side-effect posture api/save-upload.js's own
+  // reconciliation hook already uses.
+  try{
+    const byUser=new Map();
+    for(const a of(Array.isArray(ownedAccounts)?ownedAccounts:[])){
+      if(!a.user_id||!a.account_name)continue;
+      if(!byUser.has(a.user_id))byUser.set(a.user_id,new Set());
+      byUser.get(a.user_id).add(a.account_name);
+    }
+    await Promise.all([...byUser.entries()].map(([uid,names])=>inactivateOrphanedAccountOpportunities(uid,[...names])));
+  }catch(err){
+    console.warn('[Monitoring Lists] account-opportunity cleanup after list delete failed; self-heals on next reconciliation',{message:err&&err.message,uploadId:id});
+  }
+  return}await assertOwnedProspectUpload(ctx,id);await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
 export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){
   // Scaling round: a GET carrying ?uploadId= is a request for one bounded,
   // keyset-paginated (optionally search-scoped) page of that upload's

@@ -70,10 +70,10 @@ const HA_USERS = [
   { id: 'user-d', auth_user_id: 'auth-d', email: 'd@example.com', app_role: 'member', organization_id: 'org-1', status: 'active' }
 ];
 
-let haUploads, haProspectUploads, haAccounts, haProspectAccounts, haSignals, haProspectSignals;
+let haUploads, haProspectUploads, haAccounts, haProspectAccounts, haSignals, haProspectSignals, haAccountOpportunities;
 let uploadsPatchCalls, uploadsDeleteCalls, prospectUploadsPatchCalls, prospectUploadsDeleteCalls;
 let accountsDeleteCalls, prospectAccountsPatchCalls, prospectAccountsDeleteCalls;
-let signalsDeleteCalls, prospectSignalsDeleteCalls;
+let signalsDeleteCalls, prospectSignalsDeleteCalls, accountOpportunitiesPatchCalls;
 
 function resetAll(){
   haUploads = [
@@ -86,10 +86,12 @@ function resetAll(){
     { id: 'plist-b', user_email: 'b@example.com', filename: 'Prospects B', status: 'active' }
   ];
   haAccounts = [
-    { id: 'acct-a1', upload_id: 'upload-a', account_name: 'A Co' },
-    { id: 'acct-b1', upload_id: 'upload-b', account_name: 'B Co' },
-    { id: 'acct-d1', upload_id: 'upload-d', account_name: 'D Co' }
+    { id: 'acct-a1', upload_id: 'upload-a', user_id: 'user-a', account_name: 'A Co' },
+    { id: 'acct-b1', upload_id: 'upload-b', user_id: 'user-b', account_name: 'B Co' },
+    { id: 'acct-d1', upload_id: 'upload-d', user_id: 'user-d', account_name: 'D Co' }
   ];
+  haAccountOpportunities = [];
+  accountOpportunitiesPatchCalls = [];
   haProspectAccounts = [
     { id: 'pacct-a1', upload_id: 'plist-a', company_name: 'A Prospect Co' },
     { id: 'pacct-b1', upload_id: 'plist-b', company_name: 'B Prospect Co' }
@@ -198,10 +200,35 @@ function mockFetch(){
       haProspectAccounts = haProspectAccounts.filter(a => a.upload_id !== uploadId);
       return jsonResponse([]);
     }
+    // Organizational Learning V1B fix: deleteList() now GETs the upload's
+    // own accounts (user_id, account_name) BEFORE deleting them, so the
+    // account-opportunity cleanup pass afterward knows which account_names
+    // to consider -- and separately GETs by (user_id, account_name=in.())
+    // to check whether any of those names are still represented by a
+    // DIFFERENT, still-live upload (see inactivateOrphanedAccountOpportunities()).
+    // Both are plain GETs against ha_accounts; distinguished by which
+    // filter combination is present.
+    if(u.includes('/rest/v1/ha_accounts') && method === 'GET' && u.includes('upload_id=eq.')){
+      const uploadId = qp(u, 'upload_id');
+      return jsonResponse(haAccounts.filter(a => a.upload_id === uploadId).map(a => ({ user_id: a.user_id, account_name: a.account_name })));
+    }
+    if(u.includes('/rest/v1/ha_accounts') && method === 'GET' && u.includes('user_id=eq.') && u.includes('account_name=in.')){
+      const userId = qp(u, 'user_id');
+      const names = parseInFilter(u, 'account_name') || [];
+      return jsonResponse(haAccounts.filter(a => a.user_id === userId && names.includes(a.account_name)).map(a => ({ account_name: a.account_name })));
+    }
     if(u.includes('/rest/v1/ha_accounts') && method === 'DELETE'){
       const uploadId = qp(u, 'upload_id');
       accountsDeleteCalls.push(uploadId);
       haAccounts = haAccounts.filter(a => a.upload_id !== uploadId);
+      return jsonResponse([]);
+    }
+    if(u.includes('/rest/v1/ha_account_opportunities') && method === 'PATCH'){
+      const userId = qp(u, 'user_id');
+      const names = parseInFilter(u, 'account_name') || [];
+      const body = JSON.parse(options.body);
+      accountOpportunitiesPatchCalls.push({ userId, names, body });
+      haAccountOpportunities = haAccountOpportunities.map(o => (o.user_id === userId && names.includes(o.account_name) && o.status === 'active') ? { ...o, ...body } : o);
       return jsonResponse([]);
     }
     if(u.includes('/rest/v1/ha_signals') && method === 'DELETE'){

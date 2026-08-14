@@ -88,7 +88,7 @@ function buildClientScenario({ startEmpty } = {}){
     currentUploadId: null, currentUploadName: null, currentLead: { email:'rep@example.com' },
     localStorage: { setItem(){}, getItem(){ return null; } },
     renderCustomerDashboard: (data) => { renderCalls.push(data); }, refreshOpportunityViews: () => {},
-    aggregateDashboardEverLoaded: !startEmpty, freshUploadRenderedThisSession: false,
+    aggregateDashboardEverLoaded: !startEmpty, freshUploadRenderedThisSession: false, dashboardFetchGeneration: 0,
     escapeHtml: s => String(s || ''), canCurrentUserViewTeam: () => true
   };
   vm.createContext(sandbox);

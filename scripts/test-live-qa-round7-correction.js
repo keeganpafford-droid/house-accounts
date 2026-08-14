@@ -108,7 +108,7 @@ const DASHBOARD_SRC = loadDashboardSource();
       currentUploadId: null, currentUploadName: '', currentLead: { email:'rep@example.com' },
       localStorage: { setItem(){}, getItem(){ return null; } },
       renderCustomerDashboard: () => {}, refreshOpportunityViews: () => { calls.refreshOpportunityViews++; },
-      aggregateDashboardEverLoaded: false, freshUploadRenderedThisSession: false,
+      aggregateDashboardEverLoaded: false, freshUploadRenderedThisSession: false, dashboardFetchGeneration: 0,
       escapeHtml: s => String(s || ''), canCurrentUserViewTeam: () => true
     };
     vm.createContext(sandbox);

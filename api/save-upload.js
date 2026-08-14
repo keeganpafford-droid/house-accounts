@@ -4,6 +4,7 @@
 import { resolveOpportunityEvents, dedupeByEventFingerprint, displayLabelForEventType, materiallyRepeats } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { usageFor as sharedUsageFor } from './lib/entitlement.js';
+import { reconcileAccountOpportunities } from './lib/account-opportunity-reconciliation.js';
 import { createHash } from 'crypto';
 
 // Phase 2A implementation-review item 5 — same instrumentation-privacy
@@ -524,6 +525,28 @@ export default async function handler(req, res){
           body: JSON.stringify({ p_upload_id: uploadId, p_user_id: user.id, p_accounts: accountPayload, p_mode: accountWriteMode })
         });
         persistedAccountCount = Array.isArray(snapshotResult) ? snapshotResult.length : 0;
+        // Organizational Learning V1B: this is the one point purchase
+        // history is known to have just changed (replace_ha_accounts_snapshot()
+        // is the only writer of ha_accounts.raw_data.purchases -- research/
+        // weekly-scan runs never touch it), so it's the one hook point
+        // reconciliation needs. Runs for every account in THIS save, not
+        // just changed ones -- reconcileAccountOpportunities() is already
+        // idempotent for an unchanged account (same fingerprint -> same
+        // row, evidence refreshed in place). Never blocks or fails the
+        // upload save itself: a reconciliation hiccup here is self-healing
+        // (the next save for this account recomputes and corrects it), so
+        // it is logged, not thrown -- exactly the same non-critical-side-
+        // effect posture the rest of this file already gives signal
+        // persistence below.
+        try{
+          for(const account of accountPayload){
+            await reconcileAccountOpportunities(supabase, {
+              userId: user.id, uploadId, accountName: account.account_name, rawData: account.raw_data
+            });
+          }
+        }catch(reconcileErr){
+          console.warn('[save-upload] account-opportunity reconciliation failed; will self-correct on next save', { message: reconcileErr && reconcileErr.message, uploadId });
+        }
       }catch(err){
         if(err.code === 'HA003'){
           return json(res, 400, {error:'stage="uploaded" cannot be reused for an upload that already has research history; use stage="accounts_updated" for a post-research account edit.'});
@@ -789,6 +812,24 @@ export default async function handler(req, res){
     const signalsAttempted = Number(rpcResult?.signalsAttempted || 0);
     const signalsPersisted = Number(rpcResult?.signalsPersisted || 0);
     const conflictIgnoredCount = Number(rpcResult?.signalsConflictIgnored || 0);
+
+    // Organizational Learning V1B: persist_ha_research_output() is the
+    // OTHER writer of ha_accounts.raw_data.purchases -- a tracked research
+    // save (this branch) can update account purchase history exactly like
+    // the untracked replace_ha_accounts_snapshot() path above, so it needs
+    // the same reconciliation hook. Same non-blocking, self-healing posture
+    // as that path's own hook: never fails or delays the save response.
+    if(accountPayload.length){
+      try{
+        for(const account of accountPayload){
+          await reconcileAccountOpportunities(supabase, {
+            userId: user.id, uploadId, accountName: account.account_name, rawData: account.raw_data
+          });
+        }
+      }catch(reconcileErr){
+        console.warn('[save-upload] account-opportunity reconciliation failed (tracked save); will self-correct on next save', { message: reconcileErr && reconcileErr.message, uploadId });
+      }
+    }
 
     console.log('[save-upload.instrumentation]', JSON.stringify({
       ts: new Date().toISOString(),

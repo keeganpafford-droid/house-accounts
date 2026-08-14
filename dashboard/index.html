@@ -1337,6 +1337,22 @@
     font-size:0.85rem;
     font-weight:600;
   }
+  /* Outreach-state hydration bugs (founder QA): [hidden] is a UA-stylesheet
+     rule with specificity 0-1-0 ([hidden]{display:none}). Both rules above
+     set display:inline-block at the SAME specificity via a class selector
+     (.outreach-status here; .btn -- shared by .outreach-log-btn -- above),
+     and an author rule beats a UA rule at equal specificity regardless of
+     source order -- so wireOutreachRow()'s statusEl.hidden/logBtn.hidden
+     were being silently ignored: the "Reached out check" span always
+     rendered regardless of state (bug 1: it showed on the very first open,
+     before any outreach_made event existed), and the "I reached out" button
+     never actually hid itself while the draft form was open (bug 2: a
+     duplicate CTA sat visible under the draft). Scoped to these two exact
+     elements -- not a change to .btn or [hidden] generally. */
+  .sales-play-outreach-row .outreach-status[hidden],
+  .sales-play-outreach-row .outreach-log-btn[hidden]{
+    display:none;
+  }
   .approach-note-wrap{
     margin-top:10px;
   }
@@ -1543,7 +1559,8 @@
     border:1px solid transparent;
     opacity:0.82;
   }
-  .recommendation-badge.reorder-due{background:#e6f7f5;color:#0f766e;border-color:#99f6e4;}
+  .recommendation-badge.reorder-due,
+  .recommendation-badge.repeat-buying-pattern{background:#e6f7f5;color:#0f766e;border-color:#99f6e4;}
   .recommendation-badge.annual-buying-pattern{background:#fff8e8;color:#92400e;border-color:#fde68a;}
   .recommendation-badge.business-trigger{background:#eef6ff;color:#1d4ed8;border-color:#bfdbfe;}
   .recommendation-badge.category-expansion,
@@ -3032,14 +3049,21 @@ function signalStateKey(eventFingerprint, accountName){
 // it. Returns the parsed response body (so a caller needing the new
 // event's id -- e.g. outreach_made, before an approach note can reference
 // it as parentEventId -- can use it), or null on any failure.
-async function logSignalEvent(eventType, {signalId, eventFingerprint, accountName, clientEventId, parentEventId, note} = {}){
+//
+// Organizational Learning V1B: opportunityId/templateKey are additive --
+// api/signal-events.js resolves a write by signalId (ha_signals) OR
+// opportunityId (ha_account_opportunities) depending on eventType, never
+// both. templateKey is only meaningful (and only ever read server-side)
+// for a follow_up opportunity_* event with SNAPSHOT_EVENT_TYPES coverage;
+// it is harmless to send undefined otherwise.
+async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey} = {}){
   try{
     const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) return null;
     const res = await fetch('/api/signal-events', {
       method:'POST',
       headers,
-      body: JSON.stringify({eventType, signalId, eventFingerprint, accountName, clientEventId, parentEventId, note})
+      body: JSON.stringify({eventType, signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey})
     });
     const data = await res.json().catch(() => ({}));
     if(!res.ok) return null;
@@ -3048,6 +3072,93 @@ async function logSignalEvent(eventType, {signalId, eventFingerprint, accountNam
     console.warn('[signal-events] logSignalEvent failed; not blocking the UI action.', err);
     return null;
   }
+}
+
+// Organizational Learning V1B, Correction 1: chooses which durable target
+// an opportunity object should log events against -- the account-history
+// ha_account_opportunities ref (opp.accountOpportunityId/
+// accountOpportunityFingerprint, copied server-side per items 6/7) when
+// one has already been reconciled and issued, or the ha_signals identity
+// (opp.id/opp.eventFingerprint) otherwise. Deliberately keyed on which id
+// is ACTUALLY present, not on isAccountHistoryOpportunity(opp) alone -- a
+// brand-new CSV upload's Follow-Up/Repeat-Pattern opportunities have no
+// server-issued ref yet (nothing has been saved/reconciled), and must log
+// nothing rather than fabricate an identity that doesn't exist yet.
+// Returns null when neither identity is available.
+function resolveSignalEventTarget(opp){
+  if(opp && opp.accountOpportunityId && opp.accountOpportunityFingerprint){
+    return { isOpportunity:true, opportunityId: opp.accountOpportunityId, eventFingerprint: opp.accountOpportunityFingerprint, templateKey: opp.templateKey || '' };
+  }
+  if(opp && opp.id && opp.eventFingerprint){
+    return { isOpportunity:false, signalId: opp.id, eventFingerprint: opp.eventFingerprint };
+  }
+  return null;
+}
+
+// Maps a base (signal_*) event type to its opportunity_* counterpart.
+// prepare_call_opened is intentionally absent -- it is the one event type
+// genuinely SHARED between both families (see api/signal-events.js and
+// migration 12's target-family check), so it is sent unchanged either way.
+const OPPORTUNITY_EVENT_TYPE_MAP = {
+  signal_selected: 'opportunity_selected',
+  signal_useful: 'opportunity_useful',
+  signal_not_useful: 'opportunity_not_useful',
+  outreach_made: 'opportunity_outreach_made',
+  approach_shared: 'opportunity_approach_shared'
+};
+
+// One call site for "log this base event type against whichever family
+// `opp` actually resolves to" -- used by createSalesPlayPanel's implicit
+// prepare_call_opened so the SAME Prepare for Call surface logs correctly
+// for both a signal-driven opportunity and a Follow-Up/Repeat-Pattern
+// account-history one, with zero per-caller branching. Resolves to a
+// no-op (never throws, never fabricates) when `opp` has no durable
+// identity yet in either family.
+function logOpportunityAwareEvent(baseEventType, opp, extra = {}){
+  const target = resolveSignalEventTarget(opp);
+  if(!target) return Promise.resolve(null);
+  const eventType = target.isOpportunity ? (OPPORTUNITY_EVENT_TYPE_MAP[baseEventType] || baseEventType) : baseEventType;
+  return logSignalEvent(eventType, {
+    signalId: target.signalId,
+    opportunityId: target.opportunityId,
+    eventFingerprint: target.eventFingerprint,
+    accountName: opp.account || opp.accountName || '',
+    templateKey: target.templateKey,
+    clientEventId: generateClientEventId(),
+    ...extra
+  });
+}
+
+// Organizational Learning V1B: the shared "is this the first-ever open of
+// this account-history opportunity instance?" check, for the two entry
+// points that can open Prepare for Call for a persisted Follow-Up/Repeat-
+// Pattern opportunity WITHOUT a pre-hydrated DOM flag already available --
+// the Additional Opportunities "Prep this call ->" swap link and the
+// post-research "View opportunities" handoff (openResearchedAccountOpportunities())
+// both build/replace their target opportunity dynamically, unlike
+// renderPrepareForCallButton()'s own button, which hydrateSignalFeedbackButtons()
+// already flags ahead of time. Reuses the exact same
+// resolveSignalEventTarget()/fetchSignalEventStates()/signalStateKey() this
+// file already uses everywhere else for this -- never a second, parallel
+// feedback implementation.
+//
+// Returns false for anything that is NOT a genuine account-history
+// opportunity (a signal-driven opp, or one with no durable identity at
+// all) -- this gate exists ONLY to govern opportunity_selected/"Used ✓" on
+// the account-history family; it must never be able to fire signal_selected
+// merely because a rep swapped to preview a different signal-driven
+// opportunity inside an already-open panel. Also returns false (never
+// true) once the server already has a record of this opportunity being
+// selected -- "merely rendered, listed, or swapped into view" must never
+// itself count as intentional use; only the actual open, past this check,
+// does.
+async function shouldMarkFirstOpportunitySelection(opp){
+  const target = resolveSignalEventTarget(opp);
+  if(!target || !target.isOpportunity) return false;
+  const accountName = opp.account || opp.accountName || '';
+  const states = await fetchSignalEventStates([{eventFingerprint: target.eventFingerprint, accountName}]);
+  const state = states[signalStateKey(target.eventFingerprint, accountName)];
+  return !(state && state.selected);
 }
 
 // Batched current-rep-only read-back, matching api/signal-events.js's GET
@@ -3091,8 +3202,13 @@ async function hydrateSignalFeedbackButtons(root){
   const scope = root || document;
   const feedbackButtons = Array.from(scope.querySelectorAll('.signal-feedback-btn[data-event-fingerprint]'));
   const useSignalButtons = Array.from(scope.querySelectorAll('.use-signal-btn[data-event-fingerprint]')).filter(b => b.dataset.eventFingerprint);
-  if(!feedbackButtons.length && !useSignalButtons.length) return;
-  const keys = [...feedbackButtons, ...useSignalButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
+  // Organizational Learning V1B: renderPrepareForCallButton()'s
+  // account-history variant -- reuses `selected` from the exact same
+  // batched read-back (opportunity_selected is recognized server-side
+  // identically to signal_selected; see api/signal-events.js's handleGet).
+  const prepareForCallButtons = Array.from(scope.querySelectorAll('.account-history-prepare-btn[data-event-fingerprint]'));
+  if(!feedbackButtons.length && !useSignalButtons.length && !prepareForCallButtons.length) return;
+  const keys = [...feedbackButtons, ...useSignalButtons, ...prepareForCallButtons].map(b => ({eventFingerprint: b.dataset.eventFingerprint, accountName: b.dataset.accountName || ''}));
   const states = await fetchSignalEventStates(keys);
   feedbackButtons.forEach(btn => {
     const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
@@ -3117,6 +3233,34 @@ async function hydrateSignalFeedbackButtons(root){
     const actionsRow = btn.closest('.verified-signal-actions');
     const statusEl = actionsRow ? actionsRow.querySelector('.signal-used-status') : null;
     if(statusEl) statusEl.hidden = false;
+  });
+  // Organizational Learning V1B: the account-history equivalent -- once
+  // state.selected is true (an opportunity_selected already exists for this
+  // rep on this exact instance), flag the button so the delegated click
+  // handler passes isFirstOpportunitySelection:false and never logs a
+  // second one, and reveal the "Used ✓" badge rendered alongside it.
+  //
+  // Founder QA item 3: the "Reached out ✓" card badge is derived
+  // independently of `selected` -- from state.outreachLogged alone, which
+  // api/signal-events.js's handleGet() only ever sets true for a real
+  // outreach_made/opportunity_outreach_made row. prepare_call_opened,
+  // opportunity_selected, and Useful/Not-useful never touch outreachLogged,
+  // and opening the outreach draft in Prepare for Call is a pure client-side
+  // state change with no network write at all (see wireOutreachRow()'s own
+  // header comment) -- so none of those can ever produce this badge, and a
+  // new opportunity instance (a different fingerprint) always starts clean.
+  prepareForCallButtons.forEach(btn => {
+    const state = states[signalStateKey(btn.dataset.eventFingerprint, btn.dataset.accountName || '')];
+    if(!state) return;
+    if(state.selected){
+      btn.dataset.opportunitySelected = '1';
+      const statusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-used-status') : null;
+      if(statusEl) statusEl.hidden = false;
+    }
+    if(state.outreachLogged){
+      const outreachStatusEl = btn.parentElement ? btn.parentElement.querySelector('.opportunity-outreach-status') : null;
+      if(outreachStatusEl) outreachStatusEl.hidden = false;
+    }
   });
 }
 
@@ -4012,6 +4156,27 @@ let freshUploadRenderedThisSession = false;
 // instead of fabricated single-upload numbers).
 let aggregateDashboardEverLoaded = false;
 
+// Fresh-upload-feedback-rendering incident: fetchAndRenderAggregateDashboard()
+// has THREE+ genuinely independent, uncoordinated callers that can all be in
+// flight at once -- the 250ms post-DOMContentLoaded auto-load (page load),
+// refreshAggregateDashboard() right after a fresh upload's save resolves,
+// manualDashboardRefresh(), and setDashboardView(). None of them cancelled or
+// even knew about one another; whichever network response happened to land
+// LAST simply overwrote window.accountRadarAccounts/the whole opportunities
+// grid, even when it was actually the OLDER of the two requests. Confirmed
+// live (founder QA, Quantum Materials): the 250ms page-load fetch was still
+// in flight when a fresh upload's post-save refresh resolved first and
+// correctly rendered ref-stamped Follow-Up/Repeat-Pattern cards (Useful/Not
+// useful controls, ref-aware "Used" Prepare for Call); the page-load
+// request then resolved afterward and silently re-rendered over it with its
+// own (earlier, non-authoritative) snapshot -- which is why the DOM's opp
+// payload doesn't match what /api/get-dashboard actually returns for that
+// account, and why the feedback controls disappear despite the API response
+// being correct. dashboardFetchGeneration makes "only the most recently
+// INITIATED call may ever touch the DOM" an actual invariant instead of an
+// accident of network timing.
+let dashboardFetchGeneration = 0;
+
 function showBuildingDashboardPanelPlaceholder(){
   const panel = document.getElementById('customerDashboard');
   if(!panel) return;
@@ -4202,6 +4367,11 @@ else wireEmptyWorkspaceStateControls();
 async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
   const e = String(email || '').trim().toLowerCase();
   if(!e) return {ok:false, error:'Missing email'};
+  // Captured BEFORE the fetch/await below -- so a concurrent caller that
+  // starts (and finishes) after this one bumps dashboardFetchGeneration
+  // first, and this call can recognize itself as stale once its own
+  // response finally lands. See dashboardFetchGeneration's own comment.
+  const myGeneration = ++dashboardFetchGeneration;
   const banner = silent ? null : document.getElementById('savedDashboardBanner');
   const skeleton = silent ? null : document.getElementById('dashboardLoadingSkeleton');
   if(banner){ banner.style.display = 'block'; banner.textContent = 'Loading saved dashboard...'; }
@@ -4212,6 +4382,14 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(e)}&view=${encodeURIComponent(dashboardViewMode || defaultDashboardView())}`, {headers, cache:'no-store'});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Could not load dashboard');
+    if(myGeneration !== dashboardFetchGeneration){
+      // A more recently INITIATED call already won (and, if successful,
+      // already rendered) -- applying this older response now would
+      // silently clobber it regardless of which one the network happened to
+      // resolve last. Drop it.
+      if(skeleton) skeleton.classList.remove('active');
+      return {ok:true, stale:true};
+    }
     currentDashboardData = data;
     dashboardCanViewTeam = !!data.canViewTeam;
     dashboardViewMode = data.viewMode || dashboardViewMode || defaultDashboardView();
@@ -4261,6 +4439,7 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
     return {ok:true, data, accounts};
   }catch(err){
     if(skeleton) skeleton.classList.remove('active');
+    if(myGeneration !== dashboardFetchGeneration) return {ok:true, stale:true};
     // Live QA round 8: a confirmed "no existing customer dashboard data"
     // 404 is unambiguous regardless of role -- this used to be gated on
     // `!canCurrentUserViewTeam()` (a plain member), which meant a team-
@@ -7044,8 +7223,21 @@ function renderAdditionalOpportunitiesForSalesPlay(opp){
     // Investment from Santa Cruz Ventures" was silently discarded in favor
     // of a generic classification-bucket label the instant the SAME real
     // opportunity was displayed here instead of as the primary.
-    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(item.signalTitle || opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();createSalesPlayPanel(${JSON.stringify(item).replace(/'/g, "&#39;")}, {isSwap:true})'>Prep this call →</button></div>`;
+    return `<div class="additional-opportunity-item"><div><div class="additional-opportunity-meta">${escapeHtml(signalLayerLabel(item))} · ${escapeHtml(opportunityTimingLabel(item))}</div><div class="additional-opportunity-title">${escapeHtml(item.signalTitle || opportunityHeadline(item))}</div><div class="additional-opportunity-summary">${escapeHtml(recommendationOneLine(item))}</div><div class="additional-opportunity-meta">${escapeHtml(source)}${date?` · ${escapeHtml(date)}`:''}</div></div><button class="btn btn-ghost btn-mini" type="button" onclick='this.closest(".sales-play-modal").remove();prepAdditionalOpportunityCall(${JSON.stringify(item).replace(/'/g, "&#39;")})'>Prep this call →</button></div>`;
   }).join('')}</div></div>`;
+}
+
+// Organizational Learning V1B: "Prep this call ->" is a genuine intentional-
+// use gesture -- the rep is explicitly choosing to switch focus and prepare
+// THIS other opportunity for the call, exactly like the primary card's own
+// "Prepare for Call ->" -- so it must carry the same first-use
+// opportunity_selected/"Used ✓" invariant for an account-history
+// opportunity. Wrapped in its own tiny async function (rather than inlined
+// in the onclick attribute above) purely so the await reads cleanly; it
+// changes nothing else about the swap (isSwap:true is preserved).
+async function prepAdditionalOpportunityCall(opp){
+  const isFirstOpportunitySelection = await shouldMarkFirstOpportunitySelection(opp);
+  if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {isSwap:true, isFirstOpportunitySelection});
 }
 
 // ROUND 13 fix: data-upload-id alongside data-account on every rendered
@@ -7120,11 +7312,78 @@ function renderRepOpportunityCard(opp){
         <div class="opp-content suggested-opener">“${escapeHtml(getSuggestedOpener(opp))}”</div>
       </div>
 
+      ${renderAccountHistoryOpportunityFeedback(opp)}
+
       <div class="opp-card-actions">
-        ${opp._locked ? `<div class="lock-message">${lockedAccountMessageHtml()}</div>` : `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`}
+        ${opp._locked ? `<div class="lock-message">${lockedAccountMessageHtml()}</div>` : renderPrepareForCallButton(opp)}
         ${emailLink ? `<a class="email-contact-link" href="${escapeHtml(emailLink)}">Email Contact</a>` : `<div class="email-contact-missing">No contact email in upload</div>`}
       </div>
     </div>`;
+}
+
+// Organizational Learning V1B, Correction on opportunity_selected semantics:
+// for a signal-driven opportunity, "Prepare for Call →" is unchanged --
+// still the plain, inline-onclick button V1A always used (prepare_call_opened
+// fires every open; signal_selected is a SEPARATE, earlier gesture --
+// "Use This Signal" -- for the one class of signal that has that
+// intermediate step; a Priority-tier signal-driven card never had one).
+//
+// For a Follow-Up/Repeat-Pattern account-history opportunity there is no
+// separate select step -- "Prepare for Call →" IS the rep's one and only
+// gesture that means "I'm choosing to work this," so it must be the one
+// that fires opportunity_selected -- but only the FIRST time ever for this
+// exact opportunity instance; reopening it must never log a second one.
+// Since inline onclick embeds a JSON snapshot of `opp` frozen at RENDER
+// time, it cannot reflect hydration state that resolves moments later
+// (hydrateSignalFeedbackButtons() runs async, after the initial render) --
+// so this variant instead renders a delegated-click button carrying its
+// payload in a data attribute, gated on having a durable server-issued ref
+// (accountOpportunityId/accountOpportunityFingerprint -- items 6/7), with a
+// hidden "Used ✓" badge revealed the same way hydrateSignalFeedbackButtons()
+// already reveals it for "Use This Signal." The click handler (delegated,
+// alongside .use-signal-btn/.signal-feedback-btn) reads whether hydration
+// already marked data-opportunity-selected="1" and passes that through to
+// createSalesPlayPanel() as opts.isFirstOpportunitySelection.
+function renderPrepareForCallButton(opp){
+  if(opp.accountOpportunityId && opp.accountOpportunityFingerprint){
+    // Founder QA item 3: a minimal, instance-specific "Reached out check"
+    // badge on the primary card itself, distinct from "Used check" above --
+    // Used means the rep chose to work this opportunity (opportunity_selected);
+    // Reached out means a real opportunity_outreach_made event exists for
+    // THIS exact opportunity instance (hydrated in
+    // hydrateSignalFeedbackButtons() from the same batched read-back already
+    // used for Used check, off state.outreachLogged alone -- never
+    // state.selected/feedback). Deliberately no dedicated CSS rule here,
+    // matching .opportunity-used-status's own (correctly) unstyled plain
+    // span -- see the .sales-play-outreach-row .outreach-status[hidden] fix
+    // above for why an explicit `display` declaration on a [hidden] element
+    // is exactly the trap to avoid.
+    return `<span class="opportunity-used-status" hidden>Used ✓</span><span class="opportunity-outreach-status" hidden>Reached out ✓</span><button type="button" class="btn btn-generate-play account-history-prepare-btn" data-opportunity-id="${escapeHtml(opp.accountOpportunityId)}" data-event-fingerprint="${escapeHtml(opp.accountOpportunityFingerprint)}" data-account-name="${escapeHtml(opp.account || '')}" data-opportunity-payload="${escapeHtml(JSON.stringify(opp))}">Prepare for Call →</button>`;
+  }
+  return `<button class="btn btn-generate-play" onclick='createSalesPlayPanel(${JSON.stringify(opp).replace(/'/g, "&#39;")})'>Prepare for Call →</button>`;
+}
+
+// Organizational Learning V1B, item 10: the Follow-Up/Repeat-Pattern
+// equivalent of renderSingleVerifiedSignal()'s signal-feedback-btn pair --
+// same markup/classes/hydration path (hydrateSignalFeedbackButtons() reads
+// by data-event-fingerprint/data-account-name alone, so it already covers
+// this without change), scoped to data-opportunity-id instead of
+// data-signal-id. Rendered ONLY when the server has already issued a
+// durable ref for this exact opportunity instance (items 6/7) -- a
+// brand-new upload's opportunities, not yet saved/reconciled, show no
+// feedback controls rather than a control that would silently fail or
+// fabricate identity.
+function renderAccountHistoryOpportunityFeedback(opp){
+  if(!opp.accountOpportunityId || !opp.accountOpportunityFingerprint) return '';
+  const acct = escapeHtml(opp.account || '');
+  const fp = escapeHtml(opp.accountOpportunityFingerprint);
+  const oppId = escapeHtml(opp.accountOpportunityId);
+  const templateKey = escapeHtml(opp.templateKey || '');
+  return `
+      <div class="verified-signal-actions opportunity-feedback-row">
+        <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="useful" data-opportunity-id="${oppId}" data-event-fingerprint="${fp}" data-account-name="${acct}" data-template-key="${templateKey}" aria-pressed="false">👍 Useful</button>
+        <button type="button" class="btn btn-ghost btn-mini signal-feedback-btn" data-signal-feedback="not_useful" data-opportunity-id="${oppId}" data-event-fingerprint="${fp}" data-account-name="${acct}" data-template-key="${templateKey}" aria-pressed="false">👎 Not useful</button>
+      </div>`;
 }
 
 function renderSingleVerifiedSignal(signal){
@@ -9614,6 +9873,22 @@ async function openResearchedAccountOpportunities(uploadId, accountName){
   // section (accountOpportunityCluster() -> additionalOpportunitiesFor()),
   // which reads the SAME window.accountRadarAccounts this refresh just
   // populated -- no separate list is threaded through here.
+  // Organizational Learning V1B, founder correction: "View opportunities"
+  // is a GENERIC handoff (the toast click, or the Recently Researched
+  // row's own button) -- it opens whichever opportunity HA automatically
+  // ranks first, not one the rep specifically picked out. Deliberately
+  // does NOT pass isFirstOpportunitySelection here (an earlier round of
+  // this sprint wired it, incorrectly treating "HA auto-opened this" as
+  // equivalent to "the rep chose to work this"): createSalesPlayPanel()'s
+  // own unconditional prepare_call_opened still fires -- this opportunity
+  // WAS presented -- but opportunity_selected must wait for an unambiguous
+  // selection gesture, exactly the same "exposure is not endorsement"
+  // doctrine V1A already applies to a signal auto-surfaced onto the
+  // Priority feed (no signal_selected fires merely by rendering there
+  // either -- only "Use This Signal"/an explicit choice logs one). If the
+  // rep goes on to use the primary card's "Prepare for Call ->" or the
+  // Additional Opportunities "Prep this call ->" on this SAME opportunity,
+  // THAT click is the real first-use signal, and is recorded there.
   if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opportunities[0]);
 }
 
@@ -10180,6 +10455,18 @@ function createRepeatPatternOpportunities(account){
     opp.purchaseMonthLabel = pattern.monthLabel || '';
     opp.planningWindow = classifyMonthWindow(opp.purchaseMonth);
     opp.years = pattern.years;
+    // Organizational Learning V1B: the exact, unambiguous category string
+    // (matches api/lib/account-opportunities.js's own pattern.category) --
+    // the key api/get-dashboard.js uses to stamp this opportunity with its
+    // durable, server-issued ha_account_opportunities id/fingerprint on
+    // reload. Additive only; nothing else reads or depends on this field.
+    opp.category = pattern.category;
+    // Organizational Learning V1B, Correction 2: identifies this as a
+    // genuine Repeat/Pattern presentation to api/lib/account-opportunity-
+    // templates.js's server-side recommendation-snapshot reconstruction --
+    // opp.category (above) supplies the category, this constant identifies
+    // the family. Never combined with a FOLLOW_UP_TEMPLATES key.
+    opp.templateKey = 'repeat_pattern';
     // Commercial-readiness correction round, item 6: an overdue pattern
     // (reorderWindowStatus() -- grounded in the real last-order date, not
     // guessed) is never described as merely "coming up" or "happening
@@ -10205,6 +10492,16 @@ function createRepeatPatternOpportunities(account){
     opp.likelyConversations = products;
     opp.department = departmentFromText(contactTitle) || likelyDepartmentFromOpportunity(opp);
     opp.buyingCategory = primaryCategoryFromOpportunity(opp);
+    // Organizational Learning V1B: copy the durable, server-issued ref for
+    // THIS EXACT category, when the server has already exposed one (a
+    // reload of a previously-saved account -- see api/get-dashboard.js).
+    // Never fabricated client-side; a brand-new upload with nothing
+    // persisted yet simply has no ref to copy.
+    const repeatPatternRef = account.accountHistoryOpportunityRefs?.repeatPattern?.[pattern.category];
+    if(repeatPatternRef){
+      opp.accountOpportunityId = repeatPatternRef.id;
+      opp.accountOpportunityFingerprint = repeatPatternRef.fingerprint;
+    }
     assignOpportunityScore(opp, account);
     return opp;
   });
@@ -10229,146 +10526,178 @@ function generateFutureOpportunities(account){
   const industry = account.industry;
   const opps = createRepeatPatternOpportunities(account);
 
+  // Organizational Learning V1B, Correction 2: templateKey is a stable
+  // identifier for exactly which literal template below produced this
+  // opportunity -- carried on the object so api/signal-events.js can
+  // validate it against api/lib/account-opportunity-templates.js's known
+  // registry and reconstruct a trusted "what HA actually recommended"
+  // snapshot server-side, rather than trusting recommendation prose the
+  // browser supplies directly. Purely additive; nothing else reads it.
+  function pushTemplated(templateKey, ...createOpportunityArgs){
+    const opp = createOpportunity(...createOpportunityArgs);
+    opp.templateKey = templateKey;
+    opps.push(opp);
+  }
   if(industry === 'Automotive / Dealership'){
     if(cats.has('Apparel') || cats.has('Headwear')){
-      opps.push(createOpportunity(
+      pushTemplated('auto_service_apparel',
         account,
         'Service Department Apparel Program',
         'Service Director',
         ['Technician shirts', 'outerwear', 'service hats', 'name-badge ready apparel'],
         ['Apparel','Headwear'],
         64
-      ));
-      opps.push(createOpportunity(
+      );
+      pushTemplated('auto_tech_onboarding',
         account,
         'Technician Onboarding Kits',
         'Service Director / HR Manager',
         ['welcome kit', 'branded backpack', 'drinkware', 'uniform starter pack'],
         ['Apparel','Headwear'],
         62
-      ));
+      );
     }
     if(cats.has('Event / Giveaway')){
-      opps.push(createOpportunity(
+      pushTemplated('auto_event_campaign_kit',
         account,
         'Customer Event / Campaign Kit',
         'Marketing Manager / General Manager',
         ['event giveaways', 'sales team apparel', 'customer gifts', 'signage'],
         ['Event / Giveaway','Print / Stationery','Apparel'],
         66
-      ));
+      );
     }
-    opps.push(createOpportunity(
+    pushTemplated('auto_customer_appreciation',
       account,
       'Customer Appreciation Program',
       'Marketing Manager',
       ['thank-you gifts', 'test-drive giveaways', 'service customer gifts'],
       ['Event / Giveaway','Drinkware'],
       56
-    ));
+    );
   } else if(industry === 'Manufacturing / Industrial'){
-    opps.push(createOpportunity(
+    pushTemplated('mfg_safety_recognition',
       account,
       'Safety Recognition Program',
       'Safety Manager / HR Manager',
       ['safety awards', 'hi-vis apparel', 'milestone gifts', 'team incentives'],
       ['Safety','Recognition / Awards','Apparel'],
       64
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('mfg_trade_show_event',
       account,
       'Trade Show / Event Program',
       'Marketing Manager / Sales Manager',
       ['booth giveaways', 'table throws', 'staff apparel', 'lead-gen gifts'],
       ['Event / Giveaway','Print / Stationery','Apparel'],
       58
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('mfg_new_hire_kits',
       account,
       'New Hire Welcome Kits',
       'HR Manager',
       ['welcome box', 'branded apparel', 'drinkware', 'notebooks'],
       ['Apparel','Onboarding / Recruiting'],
       55
-    ));
+    );
   } else if(industry === 'Healthcare'){
-    opps.push(createOpportunity(
+    pushTemplated('health_employee_recognition',
       account,
       'Employee Recognition Program',
       'HR Manager / Practice Manager',
       ['staff appreciation gifts', 'apparel', 'drinkware', 'milestone awards'],
       ['Recognition / Awards','Apparel','Drinkware'],
       62
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('health_new_provider_onboarding',
       account,
       'New Provider Onboarding Kits',
       'Practice Manager / HR Manager',
       ['welcome kits', 'branded apparel', 'desk items', 'drinkware'],
       ['Onboarding / Recruiting','Apparel'],
       56
-    ));
+    );
   } else if(industry === 'Financial Services'){
-    opps.push(createOpportunity(
+    pushTemplated('fin_client_appreciation',
       account,
       'Client Appreciation Program',
       'Marketing Director / Client Experience Lead',
       ['premium gifts', 'event kits', 'notebooks', 'drinkware'],
       ['Event / Giveaway','Print / Stationery'],
       60
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('fin_investor_alumni_event',
       account,
       'Investor / Alumni Event Kit',
       'Events Manager / Marketing Director',
       ['attendee gifts', 'premium apparel', 'event signage', 'notebooks'],
       ['Event / Giveaway','Print / Stationery','Apparel'],
       58
-    ));
+    );
   } else if(industry === 'Food & Beverage'){
-    opps.push(createOpportunity(
+    pushTemplated('food_retail_giveaway',
       account,
       'Retail / Customer Giveaway Program',
       'Marketing Manager',
       ['coozies', 'drinkware', 'caps', 'event merch'],
       ['Drinkware','Headwear','Event / Giveaway'],
       60
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('food_staff_apparel_refresh',
       account,
       'Staff Apparel Refresh',
       'Operations Manager',
       ['staff shirts', 'hats', 'outerwear', 'aprons'],
       ['Apparel','Headwear'],
       56
-    ));
+    );
   } else {
     if(account.categoryTypes.size >= 3 || account.orderCount >= 3){
-      opps.push(createOpportunity(
+      pushTemplated('generic_multi_department_expansion',
         account,
         'Multi-Department Expansion',
         'Marketing Manager / HR Manager',
         ['employee apparel', 'recognition gifts', 'event kits', 'onboarding items'],
         [...account.categoryTypes],
         62
-      ));
+      );
     }
-    opps.push(createOpportunity(
+    pushTemplated('generic_employee_recognition',
       account,
       'Employee Recognition Program',
       'HR Manager',
       ['appreciation gifts', 'milestone awards', 'apparel', 'drinkware'],
       ['Recognition / Awards','Apparel','Drinkware'],
       54
-    ));
-    opps.push(createOpportunity(
+    );
+    pushTemplated('generic_event_campaign_merch',
       account,
       'Event / Campaign Merch Program',
       'Marketing Manager',
       ['giveaways', 'event apparel', 'signage', 'premium gifts'],
       ['Event / Giveaway','Print / Stationery'],
       54
-    ));
+    );
+  }
+
+  // Organizational Learning V1B: every generic industry-template
+  // opportunity here (opportunityType !== 'REPEAT PATTERN' -- genuine
+  // patterns already stamped their own category-specific ref inside
+  // createRepeatPatternOpportunities() above) normalizes to the SAME
+  // account-level follow_up family, per the design doc -- they are the
+  // same generation mechanism regardless of which template currently wins
+  // scoring, so they all get the one persisted follow_up ref for this
+  // account. Never fabricates a ref when the server hasn't issued one yet
+  // (a brand-new, never-saved upload has no persisted opportunities at all
+  // -- see api/get-dashboard.js's own comment on this same boundary).
+  const followUpRef = account.accountHistoryOpportunityRefs?.followUp;
+  if(followUpRef){
+    opps.forEach(opp => {
+      if(opp.opportunityType !== 'REPEAT PATTERN'){
+        opp.accountOpportunityId = followUpRef.id;
+        opp.accountOpportunityFingerprint = followUpRef.fingerprint;
+      }
+    });
   }
 
   // Remove duplicate opportunity names and keep best 4 per account
@@ -10594,10 +10923,20 @@ function wireOutreachRow(rowEl){
       const originalLabel = noteSaveBtn.textContent;
       noteSaveBtn.textContent = 'Saving…';
       const note = noteInput.value.trim();
-      const outreachResult = await logSignalEvent('outreach_made', {
-        signalId: rowEl.dataset.outreachSignalId,
+      // Organizational Learning V1B: this row now serves both families --
+      // data-outreach-opportunity-id is only ever present for a reconciled
+      // account-history opportunity (see the rendering gate above), so its
+      // mere presence is what selects the opportunity_* event types/target
+      // instead of the signal_* ones. templateKey is only meaningful (and
+      // ignored server-side otherwise) for the opportunity_outreach_made
+      // recommendation snapshot.
+      const isOpportunity = !!rowEl.dataset.outreachOpportunityId;
+      const outreachResult = await logSignalEvent(isOpportunity ? 'opportunity_outreach_made' : 'outreach_made', {
+        signalId: isOpportunity ? undefined : rowEl.dataset.outreachSignalId,
+        opportunityId: isOpportunity ? rowEl.dataset.outreachOpportunityId : undefined,
         eventFingerprint: rowEl.dataset.outreachFingerprint,
         accountName: rowEl.dataset.accountName,
+        templateKey: isOpportunity ? rowEl.dataset.outreachTemplateKey : undefined,
         clientEventId: generateClientEventId()
       });
       if(!outreachResult || !outreachResult.id){
@@ -10613,7 +10952,7 @@ function wireOutreachRow(rowEl){
       // one outreach_made and zero approach_shared, a fully valid saved
       // state, not an error or an incomplete save.
       if(note){
-        const noteResult = await logSignalEvent('approach_shared', {
+        const noteResult = await logSignalEvent(isOpportunity ? 'opportunity_approach_shared' : 'approach_shared', {
           parentEventId: outreachResult.id,
           note,
           clientEventId: generateClientEventId()
@@ -10658,9 +10997,24 @@ window.createSalesPlayPanel = function(opp, opts){
   // Signal feedback / organizational-learning foundation: implicit
   // ENGAGEMENT event, not positive feedback -- the rep looked at this in
   // more depth, nothing more. Fire-and-forget, never delays the panel
-  // opening.
-  if(opp.id){
-    logSignalEvent('prepare_call_opened', {signalId: opp.id, eventFingerprint: opp.eventFingerprint, accountName: opp.account || '', clientEventId: generateClientEventId()});
+  // opening. Organizational Learning V1B: this is the SAME "Prepare for
+  // Call" surface for both signal-driven opportunities and Follow-Up/
+  // Repeat-Pattern account-history opportunities -- logOpportunityAwareEvent()
+  // resolves which durable identity/eventType this exact opp carries.
+  logOpportunityAwareEvent('prepare_call_opened', opp);
+  // Organizational Learning V1B: opportunity_selected is the ONE event that
+  // means "the rep intentionally chose to work this opportunity" for a
+  // Follow-Up/Repeat-Pattern account-history card -- distinct from
+  // prepare_call_opened (fires on EVERY open, above). It fires exactly
+  // once ever per opportunity instance: opts.isFirstOpportunitySelection is
+  // only ever set by renderPrepareForCallButton()'s delegated click handler,
+  // which already knows -- from prior hydration -- whether this rep has
+  // opened this exact instance before. Every other call site (signal-driven
+  // cards, the repSelected/"Use This Signal" flow, the Additional
+  // Opportunities swap) never passes this flag, so it never fires there --
+  // unaffected, by construction.
+  if(opts.isFirstOpportunitySelection){
+    logOpportunityAwareEvent('signal_selected', opp);
   }
   const account = cleanSalesPlayText(opp.account || 'this account');
   // QA round 3, item 5: greeting must use a verified PERSON name only --
@@ -10766,8 +11120,22 @@ window.createSalesPlayPanel = function(opp, opts){
           <button class="sales-play-close" onclick="closeSalesPlayModal(this)">×</button>
         </div>
         ${opts.repSelected ? `<div class="rep-selected-banner"><strong>REP-SELECTED SIGNAL</strong> — House Accounts found this signal but did not recommend it as a Priority. You chose to work it.</div>` : ''}
-        ${(opp.id && opp.eventFingerprint) ? `
-        <div class="sales-play-outreach-row" data-outreach-signal-id="${escapeHtml(opp.id)}" data-outreach-fingerprint="${escapeHtml(opp.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
+        ${(() => {
+          // Organizational Learning V1B: the SAME outreach row now serves
+          // both a signal-driven opportunity (opp.id/opp.eventFingerprint)
+          // and a reconciled Follow-Up/Repeat-Pattern account-history
+          // opportunity (opp.accountOpportunityId/accountOpportunityFingerprint,
+          // copied server-side per items 6/7) -- resolveSignalEventTarget()
+          // is the single source of truth for which identity applies, so
+          // this rendering gate can never drift from wireOutreachRow()'s own
+          // resolution logic below.
+          const target = resolveSignalEventTarget(opp);
+          if(!target) return '';
+          const outreachAttrs = target.isOpportunity
+            ? `data-outreach-opportunity-id="${escapeHtml(target.opportunityId)}" data-outreach-template-key="${escapeHtml(target.templateKey || '')}"`
+            : `data-outreach-signal-id="${escapeHtml(target.signalId)}"`;
+          return `
+        <div class="sales-play-outreach-row" ${outreachAttrs} data-outreach-fingerprint="${escapeHtml(target.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
           <span class="outreach-status" hidden>Reached out ✓</span>
           <div class="approach-note-readonly" hidden></div>
           <div class="approach-note-wrap" hidden>
@@ -10778,7 +11146,8 @@ window.createSalesPlayPanel = function(opp, opts){
             <button type="button" class="btn btn-ghost btn-mini approach-note-cancel" data-approach-cancel="1">Cancel</button>
           </div>
           <button type="button" class="btn btn-ghost btn-mini outreach-log-btn" data-outreach-log="1">I reached out</button>
-        </div>` : ''}
+        </div>`;
+        })()}
         <div class="sales-play-output">
 
           <!-- 1. Verified Signal / Evidence -- exact signal, event/publication date, actionability, source. -->
@@ -12317,6 +12686,20 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
     grid.innerHTML = (actionButton ? `<div class="weekly-priority-actions">${actionButton}</div>` : '') + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
+    // Founder QA: "Reached out ✓" (and "Used ✓") never hydrated on the
+    // primary card, even after a full page refresh, despite the modal
+    // correctly hydrating the SAME persisted opportunity_outreach_made/
+    // opportunity_selected events. Root cause -- hydrateSignalFeedbackButtons()
+    // (the one function that reads /api/signal-events and reveals those
+    // badges) was called for the research-signal panel, the "Your Accounts"
+    // detail section, and a modal backdrop, but never for this grid; nothing
+    // downstream of grid.innerHTML ever hydrated it, unlike
+    // createSalesPlayPanel()'s explicit wireOutreachRow()/hydrateOutreachRow()
+    // call at modal-open time. Called here (the one place that builds this
+    // grid) so both real callers -- refreshOpportunityViews() on every
+    // dashboard load/refresh, and processData()'s own direct pre-aggregate
+    // render -- are covered without duplicating the call at each site.
+    hydrateSignalFeedbackButtons(grid);
   }
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }
@@ -12806,6 +13189,22 @@ document.addEventListener('click', (event) => {
     if(uiKey != null && accountName) saveAccountMetadataEdit(uiKey, accountName);
     return;
   }
+  // Organizational Learning V1B: renderPrepareForCallButton()'s
+  // account-history variant -- delegated so a hydrated data-opportunity-selected
+  // flag (set by hydrateSignalFeedbackButtons() below) can be read at click
+  // time, which an inline onclick's frozen JSON snapshot cannot reflect.
+  const prepareForCallBtn = event.target.closest('.account-history-prepare-btn');
+  if(prepareForCallBtn){
+    const raw = prepareForCallBtn.dataset.opportunityPayload;
+    if(raw){
+      try{
+        const opp = JSON.parse(raw);
+        const isFirstOpportunitySelection = prepareForCallBtn.dataset.opportunitySelected !== '1';
+        if(typeof createSalesPlayPanel === 'function') createSalesPlayPanel(opp, {isFirstOpportunitySelection});
+      }catch(err){ /* malformed payload -- nothing to recover, fail silently */ }
+    }
+    return;
+  }
   // Final Beta Signal Intelligence Correction sprint, "USE THIS SIGNAL":
   // delegated from renderSingleVerifiedSignal()'s button, wherever that
   // renders (Research Details, Manage Customer Accounts, View Research) --
@@ -12829,32 +13228,40 @@ document.addEventListener('click', (event) => {
     return;
   }
   // Signal feedback / organizational-learning foundation: same delegation
-  // convention as use-signal-btn immediately above -- one handler for
-  // renderSingleVerifiedSignal()'s Useful/Not-useful buttons, wherever
-  // that row renders. Optimistic UI (the click's own button is marked
-  // pressed immediately, its sibling un-pressed) -- logSignalEvent() is
-  // fire-and-forget, matching this file's existing convention, so a
-  // network failure never blocks or reverts the rep's own judgment from
-  // being reflected on screen; the next hydration (e.g. next reopen)
-  // reconciles from the server's durable record regardless.
+  // convention as use-signal-btn immediately above -- one handler for both
+  // renderSingleVerifiedSignal()'s Useful/Not-useful buttons AND (V1B,
+  // item 10) renderAccountHistoryOpportunityFeedback()'s equivalent pair
+  // on a Follow-Up/Repeat-Pattern account-history opportunity, wherever
+  // either renders -- distinguished by which id attribute is present
+  // (data-opportunity-id vs data-signal-id), never both. Optimistic UI
+  // (the click's own button is marked pressed immediately, its sibling
+  // un-pressed) -- logSignalEvent() is fire-and-forget, matching this
+  // file's existing convention, so a network failure never blocks or
+  // reverts the rep's own judgment from being reflected on screen; the
+  // next hydration (e.g. next reopen) reconciles from the server's
+  // durable record regardless.
   const feedbackBtn = event.target.closest('.signal-feedback-btn');
   if(feedbackBtn){
     const feedback = feedbackBtn.dataset.signalFeedback;
     const signalId = feedbackBtn.dataset.signalId;
+    const opportunityId = feedbackBtn.dataset.opportunityId;
     const eventFingerprint = feedbackBtn.dataset.eventFingerprint;
-    if(!feedback || !signalId || !eventFingerprint) return;
+    if(!feedback || !eventFingerprint || (!signalId && !opportunityId)) return;
     const actionsRow = feedbackBtn.closest('.verified-signal-actions');
-    const siblingBtn = actionsRow ? Array.from(actionsRow.querySelectorAll('.signal-feedback-btn')).find(b => b !== feedbackBtn && b.dataset.signalId === signalId) : null;
+    const siblingBtn = actionsRow ? Array.from(actionsRow.querySelectorAll('.signal-feedback-btn')).find(b => b !== feedbackBtn && (opportunityId ? b.dataset.opportunityId === opportunityId : b.dataset.signalId === signalId)) : null;
     feedbackBtn.setAttribute('aria-pressed', 'true');
     feedbackBtn.classList.add('signal-feedback-active');
     if(siblingBtn){
       siblingBtn.setAttribute('aria-pressed', 'false');
       siblingBtn.classList.remove('signal-feedback-active');
     }
-    logSignalEvent(feedback === 'useful' ? 'signal_useful' : 'signal_not_useful', {
-      signalId,
+    const baseEventType = feedback === 'useful' ? 'signal_useful' : 'signal_not_useful';
+    logSignalEvent(opportunityId ? OPPORTUNITY_EVENT_TYPE_MAP[baseEventType] : baseEventType, {
+      signalId: opportunityId ? undefined : signalId,
+      opportunityId: opportunityId || undefined,
       eventFingerprint,
       accountName: feedbackBtn.dataset.accountName || '',
+      templateKey: opportunityId ? (feedbackBtn.dataset.templateKey || '') : undefined,
       clientEventId: generateClientEventId()
     });
     return;
