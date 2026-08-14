@@ -614,8 +614,33 @@ function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows){
     // that slips past this filter and is instead reconciled forward into a
     // later merge with its live ha_signals duplicate.)
     const accountOpportunityRefs = opportunityRefsByAccountName.get(a.account_name) || null;
+    // Fresh-upload V1B feedback-controls fix: raw_data.existingSignals and
+    // raw_data.repeatPatterns overlap by design (serializeAccountForStorage()'s
+    // own comment calls this "harmlessly redundant") -- existingSignals holds
+    // every non-web-research opportunity (Follow-Up Signal entries, which
+    // exist ONLY here, PLUS a second copy of every Repeat/Pattern Signal
+    // entry already in repeatPatterns), while repeatPatterns holds only the
+    // Repeat/Pattern Signal ones. Only the repeatPatterns copy used to be run
+    // through stampAccountHistoryOpportunityRefs() -- so a Follow-Up
+    // opportunity (which never appears in repeatPatterns at all) could never
+    // receive its ref, and a genuine Repeat/Pattern opportunity's ref could
+    // be lost anyway: both the stamped (repeatPatterns) and unstamped
+    // (existingSignals) copies reach the client with an identical
+    // opportunityDedupeKey() and an identical getOpportunityScore() (scoring
+    // never looks at the ref fields), so dedupeOpportunities()'s strict `>`
+    // tie-break keeps whichever copy was inserted first -- the unstamped
+    // existingSignals one, since it's concatenated before repeatPatterns
+    // below. Stamping existingSignals the same way repeatPatterns already is
+    // fixes both: a Follow-Up entry now gets refs.followUp directly, and a
+    // genuine Repeat/Pattern entry's two copies both carry the same correct
+    // ref, so whichever one the client's dedupe keeps is stamped either way.
+    // Dedupe ordering, scoring, taxonomy, fingerprinting, and identity are
+    // all untouched -- this only adds the ref fields already used elsewhere.
     const storedOpps = [
-      ...(Array.isArray(raw.existingSignals) ? raw.existingSignals.filter(o => !isWebResearchSignal(o)).map(reconcileStoredOpportunity) : []),
+      ...stampAccountHistoryOpportunityRefs(
+        Array.isArray(raw.existingSignals) ? raw.existingSignals.filter(o => !isWebResearchSignal(o)).map(reconcileStoredOpportunity) : [],
+        accountOpportunityRefs
+      ),
       ...stampAccountHistoryOpportunityRefs(Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [], accountOpportunityRefs)
     ];
     byAccount.set(a.account_name, {
