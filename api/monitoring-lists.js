@@ -288,11 +288,59 @@ async function deleteCustomerAccountViaSnapshot(account){
   await sb(`ha_signals?upload_id=eq.${encodeURIComponent(account.upload_id)}&user_id=eq.${encodeURIComponent(account.user_id)}&account_name=eq.${encodeURIComponent(targetName)}`,{method:'DELETE',prefer:'return=minimal'}).catch(()=>{});
 }
 
+// Organizational Learning V1B, production bug fix: ha_account_opportunities
+// is a DURABLE, cross-upload identity (keyed by user_id + fingerprint, not
+// by upload_id -- see migration 12's own header comment; upload_id there is
+// purely informational, "which upload most recently confirmed this
+// instance"). Deleting a customer list's ha_accounts rows does not, by
+// itself, mean those opportunities should vanish or stay "active" forever
+// -- they should transition to 'inactive' (append-only history preserved,
+// same lifecycle model reconcileAccountOpportunities() already uses when
+// an account's evidence disappears), UNLESS the same account_name is still
+// represented by a DIFFERENT, still-live upload for this same user
+// (account names are unique only WITHIN one upload, never globally per
+// user -- see loadAccountPage()'s own Round-13 comment above), in which
+// case that account's opportunities must be left completely untouched.
+// Never destroys the ha_account_opportunities rows themselves (that would
+// discard real longitudinal history), and never touches ha_signal_events
+// (migration 12's opportunity_id/signal_id FKs already use ON DELETE SET
+// NULL there, independent of this).
+async function inactivateOrphanedAccountOpportunities(userId,accountNames){
+  if(!userId||!accountNames.length)return;
+  const stillPresent=await sb(`ha_accounts?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter(accountNames)}&select=account_name`);
+  const stillPresentNames=new Set((Array.isArray(stillPresent)?stillPresent:[]).map(r=>r.account_name));
+  const orphaned=accountNames.filter(n=>!stillPresentNames.has(n));
+  if(!orphaned.length)return;
+  await sb(`ha_account_opportunities?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter(orphaned)}&status=eq.active`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({status:'inactive',updated_at:new Date().toISOString()})});
+}
 // Ownership of the parent list is established BEFORE any child mutation
 // begins -- assertOwned{Upload,ProspectUpload}() throws (no DB write of any
 // kind attempted yet) if `id` doesn't belong to this ctx, so an unauthorized
 // delete request performs zero child mutations and zero parent mutation.
-async function deleteList(ctx,type,id){if(type==='customer'){await assertOwnedUpload(ctx,id);await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});return}await assertOwnedProspectUpload(ctx,id);await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
+async function deleteList(ctx,type,id){if(type==='customer'){await assertOwnedUpload(ctx,id);
+  // Captured BEFORE the deletes below so the accounts this upload actually
+  // owned are still known afterward -- see inactivateOrphanedAccountOpportunities()'s
+  // own comment for why this matters and how it stays scoped.
+  const ownedAccounts=await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}&select=user_id,account_name`);
+  await sb(`ha_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});
+  // Best-effort, fire-after-commit cleanup -- never blocks or fails the
+  // list delete itself (which has already fully succeeded by this point).
+  // A failure here just means the orphaned rows stay 'active' until the
+  // next reconciliation pass or a future cleanup retry -- self-healing,
+  // same non-critical-side-effect posture api/save-upload.js's own
+  // reconciliation hook already uses.
+  try{
+    const byUser=new Map();
+    for(const a of(Array.isArray(ownedAccounts)?ownedAccounts:[])){
+      if(!a.user_id||!a.account_name)continue;
+      if(!byUser.has(a.user_id))byUser.set(a.user_id,new Set());
+      byUser.get(a.user_id).add(a.account_name);
+    }
+    await Promise.all([...byUser.entries()].map(([uid,names])=>inactivateOrphanedAccountOpportunities(uid,[...names])));
+  }catch(err){
+    console.warn('[Monitoring Lists] account-opportunity cleanup after list delete failed; self-heals on next reconciliation',{message:err&&err.message,uploadId:id});
+  }
+  return}await assertOwnedProspectUpload(ctx,id);await sb(`ha_prospect_signals?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_accounts?upload_id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'});await sb(`ha_prospect_uploads?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',prefer:'return=minimal'})}
 export default async function handler(req,res){try{const ctx=await context(req);if(!ctx)return json(res,401,{error:'Authentication required'});if(req.method==='GET'){
   // Scaling round: a GET carrying ?uploadId= is a request for one bounded,
   // keyset-paginated (optionally search-scoped) page of that upload's
