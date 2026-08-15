@@ -29,6 +29,14 @@ import {
 } from './signal-intelligence.js';
 import { normalizeCompanyName } from './company-identity.js';
 import { createHash, timingSafeEqual } from 'crypto';
+// Phase 1 monitoring-architecture foundation: the budget-gated synthesis
+// call, extracted so its budget is caller-provided rather than hardcoded
+// to this endpoint's own ~58s platform ceiling -- see that module's header
+// comment for the full extraction-scope rationale (deliberately narrow;
+// discoverCandidatesForAccounts/accountPromptContext/pairedPurchases/
+// callOpenAIJson stay exported directly from this file rather than being
+// physically moved, to avoid a circular import between the two modules).
+import { runBudgetedSynthesis } from './lib/research-pipeline.js';
 
 // Phase 2A implementation-review item 5 — instrumentation privacy. Normal
 // production logs use counts and hashed identifiers only; raw customer/
@@ -3554,20 +3562,20 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
         });
       }
       try {
-        // Reliability fix (scale/research-runtime-benchmark): if too little
-        // of REQUEST_DEADLINE_MS remains to give this call a realistic
-        // chance (measured normal-case synthesis alone already takes
-        // ~22-30s), fail now rather than starting a call almost certain to
-        // be aborted for nothing -- this throw is caught by the SAME block
-        // as a real OpenAI failure, so it is logged/accounted identically
-        // and reaches the client as the same kind of ordinary, truthful
-        // "failed, retryable" error safeParseResearchResponse() already
-        // converts into reportResearchRunOutcome('fail', ...) today.
-        const remainingMs = REQUEST_DEADLINE_MS - (Date.now() - startedAt);
-        if (remainingMs < MIN_USEFUL_OPENAI_MS) {
-          throw new Error(`Research incomplete: only ${Math.max(0, Math.round(remainingMs))}ms of budget remained before signal synthesis -- not enough to run reliably. Please try again.`);
-        }
-        const result = await callOpenAIJson({ apiKey, model, prompt: synthesisPrompt, timeoutMs: Math.min(remainingMs, OPENAI_CALL_MAX_MS) });
+        // Phase 1 monitoring-architecture foundation: the deadline-check-
+        // then-call decision itself now lives in runBudgetedSynthesis()
+        // (api/lib/research-pipeline.js), parameterized rather than reading
+        // the module constants directly -- byte-identical logic, same
+        // constants passed explicitly, so this call site's behavior is
+        // unchanged. This is what lets a future background worker request
+        // its own, independently larger budget without touching this file.
+        const result = await runBudgetedSynthesis({
+          prompt: synthesisPrompt, apiKey, model, startedAt,
+          requestDeadlineMs: REQUEST_DEADLINE_MS,
+          minUsefulOpenAiMs: MIN_USEFUL_OPENAI_MS,
+          openAiCallMaxMs: OPENAI_CALL_MAX_MS,
+          callOpenAIJson
+        });
         rawText = result.text;
         openaiUsage.calls += 1;
         openaiUsage.inputTokens += result.usage.inputTokens;
@@ -3966,5 +3974,17 @@ export {
   sanitizeTargetCompanyKeys, persistRunTargetCompanyKeys,
   queryTemplates, domainFromContactEmail, priorityOwnedPages,
   buildDerivedIdentity, prioritizeIdentityBootstrapCandidates,
-  pairedPurchases, accountPromptContext
+  pairedPurchases, accountPromptContext,
+  // Phase 1 monitoring-architecture foundation: exported so a future
+  // background Queue worker can import these directly (in-process, no HTTP
+  // self-call into this endpoint) -- discoverCandidatesForAccounts,
+  // callOpenAIJson, and mapLimit were already standalone/request-response-
+  // free; only their export was missing. The budget constants are exported
+  // so the interactive endpoint's own current values are the single source
+  // of truth a worker's own (larger) budget is explicitly compared against
+  // in tests, rather than a second, potentially-drifting hardcoded copy.
+  // See api/lib/research-pipeline.js for the one piece that needed actual
+  // new logic (runBudgetedSynthesis), not just an export.
+  discoverCandidatesForAccounts, callOpenAIJson, mapLimit,
+  REQUEST_DEADLINE_MS, MIN_USEFUL_OPENAI_MS, OPENAI_CALL_MAX_MS
 };
