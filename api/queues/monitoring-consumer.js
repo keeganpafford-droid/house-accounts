@@ -33,6 +33,12 @@ import {
 // -- not a second implementation. uploadId/weeklyRunId are null for every
 // monitoring call (this path is not upload-driven).
 import { persistValidatedSignals } from '../lib/signal-persistence.js';
+// Monitoring Identity V1: resolves/persists the target's durable identity
+// anchor from account-side evidence ONLY (never a research candidate --
+// see resolveTargetIdentity()'s own circularity-guard comment), and brings
+// this Queue path to parity with the interactive endpoint's existing
+// contact-email-domain derivation.
+import { resolveTargetIdentity } from '../lib/monitoring-identity.js';
 
 function env() {
   const rawUrl = process.env.SUPABASE_URL;
@@ -88,6 +94,37 @@ async function completeAttempt({ targetId, attemptId, coverage, cadenceDays, err
   });
 }
 
+// Resolves/persists the target's durable Monitoring Identity V1 anchor
+// (see api/lib/monitoring-identity.js) from account-side evidence found on
+// the CURRENT ha_accounts row -- the uploaded website and every contact's
+// email domain. Deliberately called with ONLY account-side data, never
+// anything from a research candidate -- resolveTargetIdentity()'s own
+// circularity guard depends on that. A no-op (`null`) result means nothing
+// changed and nothing is written -- most cycles, once a target is resolved
+// or durably unresolved, touch nothing here.
+async function resolveAndPersistTargetIdentity(target, accountRow) {
+  const current = {
+    status: target.identity_status || 'unresolved',
+    domain: target.identity_domain || null,
+    source: target.identity_domain_source || null
+  };
+  const uploadedWebsite = accountRow?.raw_data?.website || '';
+  const contacts = Array.isArray(accountRow?.raw_data?.contacts) ? accountRow.raw_data.contacts : [];
+  const next = resolveTargetIdentity({ current, uploadedWebsite, contacts });
+  if (!next) return current;
+
+  await supabase(`ha_monitoring_targets?id=eq.${encodeURIComponent(target.id)}`, {
+    method: 'PATCH', prefer: 'return=minimal',
+    body: JSON.stringify({
+      identity_status: next.status,
+      identity_domain: next.domain,
+      identity_domain_source: next.source,
+      identity_resolved_at: new Date().toISOString()
+    })
+  });
+  return next;
+}
+
 // Resolves the CURRENT ha_accounts row for a target's durable identity
 // (user_id + normalized_company_name) -- never a snapshot carried in the
 // Queue message, so churn between enqueue and delivery (reupload, edit) is
@@ -99,6 +136,15 @@ async function completeAttempt({ targetId, attemptId, coverage, cadenceDays, err
 // persistSignals(), but the projected accountContext itself stays exactly
 // the bounded shape runPipeline()/the OpenAI prompt-builder already expect,
 // never polluted with an extra raw id field.
+//
+// Monitoring Identity V1 parity: also resolves/persists the target's
+// durable identity anchor (see resolveAndPersistTargetIdentity() above),
+// and -- when one is on file -- projects it onto accountContext.website,
+// matching the SAME contact-email-domain-derivation benefit
+// api/research-batch.js's interactive safeAccounts construction already
+// gives the weekly-scan path. Only ever overrides accountContext.website
+// with a domain resolved from ACCOUNT-side evidence, never from a
+// candidate discovered this cycle.
 async function resolveAccountContext(targetId) {
   const [target] = await supabase(`ha_monitoring_targets?id=eq.${encodeURIComponent(targetId)}&select=*&limit=1`);
   if (!target) throw new Error(`resolveAccountContext: no monitoring target ${targetId} exists`);
@@ -111,7 +157,11 @@ async function resolveAccountContext(targetId) {
     row = (candidates || []).find(a => normalizeCompanyName(a.account_name) === target.normalized_company_name);
   }
   if (!row) throw new Error(`resolveAccountContext: no current ha_accounts row found for target ${targetId} (identity may have been deleted)`);
-  return { userId: target.user_id, accountContext: projectAccountContext(row) };
+
+  const identity = await resolveAndPersistTargetIdentity(target, row);
+  const accountContext = projectAccountContext(row);
+  if (identity.domain) accountContext.website = identity.domain;
+  return { userId: target.user_id, accountContext };
 }
 
 async function runPipeline(accountContext, options) {

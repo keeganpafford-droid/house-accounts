@@ -111,7 +111,7 @@ function makeSandbox() {
     source_domain: 'dovernh.org', confidence: 66,
     published_at: '2026-07-23T00:00:00Z',
     payload: {
-      isReal: true, identityConfidence: 'confirmed',
+      isReal: true, identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'],
       whatChanged: 'Dover Honda will be the lead sponsor of the 2026 Dover Holiday Parade.',
       signalDetail: 'Dover Honda will be the lead sponsor of the 2026 Dover Holiday Parade.',
       eventDate: '2026-07-23', event_date: '2026-07-23',
@@ -197,7 +197,7 @@ function makeSandbox() {
     source_domain: 'Example Wire', confidence: 85,
     published_at: '2026-07-01T00:00:00Z',
     payload: {
-      isReal: true, identityConfidence: 'confirmed',
+      isReal: true, identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'],
       whatChanged: 'Mixed Co opened a new distribution facility.',
       eventDate: '2026-07-01', event_date: '2026-07-01',
       publicationDate: '2026-07-01T00:00:00Z', publishedDate: '2026-07-01T00:00:00Z',

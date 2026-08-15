@@ -12,6 +12,12 @@
 // it never mutates the stored row, and it returns fresh signals' own
 // metadata unchanged.
 import { classifyLegacySignalActionability } from './research-batch.js';
+// Monitoring Identity V1: the ONE centralized priority/secondary/hidden
+// policy -- see api/lib/monitoring-identity.js's own header comment. Every
+// consumer of identity-gated signal visibility (this file, the weekly
+// digest, and the live-research dashboard client) must call this same
+// function, not invent its own trust rule.
+import { classifyMonitoringSignalEligibility } from './lib/monitoring-identity.js';
 // Follow-up temporal-integrity round (Preview QA): buildAccountsFromRows()
 // below assembles each account's futureOpportunities from TWO independent
 // sources -- the already-canonicalized snapshot stored on the account row
@@ -289,6 +295,11 @@ function signalToOpportunity(row){
     // and must never collapse into the same value a newly-graded
     // 'unconfirmed'/'confirmed' row carries, or the reverse.
     identityConfidence: s.identityConfidence,
+    // Monitoring Identity V1: carried through for the same reason
+    // identityConfidence above is -- an explicit-list object literal drops
+    // anything not named here, and classifyMonitoringSignalEligibility()
+    // needs the actual corroborator reasons, not just the confidence label.
+    identityCorroboratorReasons: s.identityCorroboratorReasons,
     signalLayerType: 'Business Activity Signal',
     isVerifiedSignalOpportunity: true,
     signalType: s.signalType || 'Business Activity',
@@ -692,15 +703,19 @@ function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows){
     const acct = byAccount.get(row.account_name);
     const signal = rowToSignal(row);
     acct.signals.push(signal);
-    // Final Beta Signal Intelligence Correction sprint: a Possible Match
-    // (identityConfidence 'possible' -- see api/signal-intelligence.js's
-    // verifyCandidateCompanyGrounding()) never becomes an opportunity object
-    // on reload, mirroring addSignalDerivedOpportunities()'s identical
-    // exclusion on the live-research path (dashboard/index.html) -- it stays
-    // visible only in acct.signals (rendered transparently in Research
-    // Details), never in futureOpportunities, so it can never reach the
-    // Priority feed or Additional Opportunities after a page reload either.
-    if(signal.identityConfidence !== 'possible'){
+    // Monitoring Identity V1: only a `priority`-eligible signal (name match
+    // PLUS a STRONG account-side corroborator -- see
+    // classifyMonitoringSignalEligibility()) becomes an opportunity object
+    // on reload. A `secondary` signal (possible/unconfirmed, or only
+    // weakly/inferentially corroborated) stays visible in acct.signals
+    // (rendered transparently in Research Details), never in
+    // futureOpportunities, so it can never reach the Priority feed or
+    // Additional Opportunities after a page reload -- mirrors
+    // addSignalDerivedOpportunities()'s identical gate on the live-research
+    // path (dashboard/index.html). A row with no identityConfidence at all
+    // (legacy, predates the tri-state grounding model) is grandfathered as
+    // eligible, unchanged from today.
+    if(classifyMonitoringSignalEligibility({ identityConfidence: signal.identityConfidence, reasons: signal.identityCorroboratorReasons }) === 'priority'){
       acct.futureOpportunities.push(signalToOpportunity(row));
     }
   }
@@ -898,11 +913,11 @@ export default async function handler(req, res){
     const newThisWeek = (uniqueSignals || []).filter(s => {
       const t = new Date(s.first_seen_at || s.created_at || 0).getTime();
       if(!Number.isFinite(t) || t < sevenDaysAgo) return false;
-      // Final Beta Signal Intelligence Correction sprint: a Possible Match
-      // (identityConfidence 'possible') must not inflate "Newly Detected"
-      // either -- same principle as futureOpportunities' exclusion above,
-      // applied to this separate discovery-recency badge.
-      if((s.payload || {}).identityConfidence === 'possible') return false;
+      // Monitoring Identity V1: a `secondary`-tier signal (possible/
+      // unconfirmed, or only weakly corroborated) must not inflate "Newly
+      // Detected" either -- same principle as futureOpportunities'
+      // exclusion above, applied to this separate discovery-recency badge.
+      if(classifyMonitoringSignalEligibility({ identityConfidence: (s.payload || {}).identityConfidence, reasons: (s.payload || {}).identityCorroboratorReasons }) !== 'priority') return false;
       const { actionabilityStatus } = classifyLegacySignalActionability(s.payload || {});
       return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);

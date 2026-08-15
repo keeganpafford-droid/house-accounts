@@ -93,25 +93,40 @@ assert(
   Boolean(doverAccount),
   '5) buildAccountsFromRows() produces a Dover Honda account from the raw signal row'
 );
-const doverOpp = (doverAccount?.futureOpportunities || [])[0];
+// Monitoring Identity V1: an 'unconfirmed' signal with no strong
+// account-side corroborator is now correctly `secondary`-tier -- it stays
+// visible in acct.signals (Research Details), but no longer reaches
+// futureOpportunities (see classifyMonitoringSignalEligibility()). This
+// test's own purpose (does the identityConfidence label survive intact
+// through rowToSignal() -> buildAccountsFromRows()) is unaffected by that
+// -- checked here against acct.signals, the surface an uncorroborated
+// signal legitimately still reaches, instead of futureOpportunities.
+const doverSignal = (doverAccount?.signals || [])[0];
 assert(
-  doverOpp?.identityConfidence === 'unconfirmed',
-  '6) after buildAccountsFromRows() -> canonicalizeAccountOpportunities()\'s resolveOpportunityEvents() merge pass, the SAME account.futureOpportunities entry accountOpportunityCluster()/isPriorityEligibleOpportunity() actually consume still carries identityConfidence -- the fix survives the merge step, not just signalToOpportunity() in isolation'
+  doverSignal?.identityConfidence === 'unconfirmed',
+  '6) after buildAccountsFromRows(), the account.signals entry (Research Details -- this row has no strong corroborator, so it is correctly secondary-tier, not in futureOpportunities) still carries identityConfidence -- the label survives the pipeline, not just signalToOpportunity() in isolation'
 );
 
 // A confirmed candidate merged alongside an unconfirmed one for what
 // resolveOpportunityEvents() considers the same event must keep 'confirmed'
 // (mirrors the identityConfidence-merge fix already proven against
 // signal-intelligence.js's resolveEvents() directly -- this proves it also
-// holds through get-dashboard.js's own call site).
-const confirmedVariant = doverRow('confirmed', { source_url: 'https://doverhonda.com/news/parade', source_domain: 'doverhonda.com' });
+// holds through get-dashboard.js's own call site). The confirmed variant
+// carries a real strong corroborator reason (a verified company domain) --
+// consistent with what verifyCandidateCompanyGrounding() actually requires
+// to reach 'confirmed' -- so the merged result is priority-eligible and
+// reaches futureOpportunities, where the label-survival proof happens.
+const confirmedVariant = doverRow('confirmed', {
+  source_url: 'https://doverhonda.com/news/parade', source_domain: 'doverhonda.com',
+  payload: { identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'], signalTitle: 'Dover Honda Signs On as Dover Holiday Parade Sponsor', whatChanged: 'Dover Honda will be the lead sponsor of this year\'s parade.', sourceUrl: 'https://doverhonda.com/news/parade', actionabilityStatus: { status: 'recent-past', isPriorityEligible: true } }
+});
 const unconfirmedVariant = doverRow('unconfirmed');
 const { accountList: mergedList } = buildAccountsFromRows([], [confirmedVariant, unconfirmedVariant]);
 const mergedDover = mergedList.find(a => a.name === 'Dover Honda');
 const mergedOpp = (mergedDover?.futureOpportunities || [])[0];
 assert(
   mergedOpp?.identityConfidence === 'confirmed',
-  '7) two representations of the same event (one confirmed, one unconfirmed) merged through the real get-dashboard.js pipeline keep identityConfidence=confirmed'
+  '7) two representations of the same event (one confirmed with a real strong corroborator, one unconfirmed) merged through the real get-dashboard.js pipeline keep identityConfidence=confirmed'
 );
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

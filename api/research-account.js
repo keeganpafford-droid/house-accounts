@@ -1307,7 +1307,13 @@ export default async function handler(req, res) {
       // Trust correction: stamp the tri-state identity verdict for
       // dashboard-side primary/Verified-Opportunity gating (see the parallel
       // stamp in api/research-batch.js's madeSignalsRaw mapping).
-      return { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
+      // Monitoring Identity V1: also stamp the underlying corroborator
+      // reasons (see the parallel comment in api/research-batch.js).
+      return {
+        ...normalized,
+        identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed',
+        identityCorroboratorReasons: grounding ? grounding.reasons : []
+      };
     }).filter(Boolean);
 
     const signals = dedupeOpportunities(dedupeSignals(normalizedSignals)).slice(0, 4);

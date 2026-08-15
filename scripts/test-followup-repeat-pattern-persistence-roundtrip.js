@@ -94,7 +94,7 @@ function makeSandbox() {
     source_domain: 'example.com', confidence: 85,
     published_at: '2026-07-01T00:00:00Z',
     payload: {
-      isReal: true, identityConfidence: 'confirmed',
+      isReal: true, identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'],
       whatChanged: 'Roundtrip Co opened a new distribution facility.',
       eventDate: '2026-07-01', event_date: '2026-07-01',
       actionabilityStatus: { status: 'recent-past', tense: 'past', isPriorityEligible: true },

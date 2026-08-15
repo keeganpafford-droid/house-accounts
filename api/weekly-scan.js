@@ -37,6 +37,14 @@ import { clean, persistValidatedSignals, refreshableSignalRow } from './lib/sign
 // never by trusting a persisted row's actionabilityStatus.isPriorityEligible
 // directly.
 import { classifyLegacySignalActionability } from './research-batch.js';
+// Monitoring Identity V1: the ONE centralized priority/secondary/hidden
+// policy (api/lib/monitoring-identity.js). Applied here so the weekly
+// digest -- previously the one recurring-monitoring surface with ZERO
+// identity-tier awareness at all -- can no longer notify a rep about a
+// signal whose identity is only possible/unconfirmed or weakly
+// corroborated, exactly the same bar the dashboard reload path now
+// enforces (api/get-dashboard.js).
+import { classifyMonitoringSignalEligibility } from './lib/monitoring-identity.js';
 // Phase 2B founder Queue dark-run: see the call site below for why this
 // legacy sweep must exclude Queue-managed organizations.
 import { isQueueManagedOrganization } from './lib/monitoring-queue.js';
@@ -880,7 +888,17 @@ export default async function handler(req, res){
         // upload's follow-up/reorder opportunities in the SAME digest
         // bucket, updating accountsMonitored exactly once per upload either
         // way.
-        const digestEligibleRows = newSignalRows.filter(row => classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false);
+        // Monitoring Identity V1: a digest-eligible row must clear BOTH
+        // gates -- the existing actionability boundary (is this timely/
+        // relevant), and the identity-eligibility boundary (is the account
+        // identity strong enough to recommend, not just plausible). A row
+        // with no identityConfidence at all (legacy, predates the
+        // tri-state grounding model) is grandfathered exactly as before --
+        // see classifyMonitoringSignalEligibility()'s own comment.
+        const digestEligibleRows = newSignalRows.filter(row =>
+          classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false
+          && classifyMonitoringSignalEligibility({ identityConfidence: row.payload?.identityConfidence, reasons: row.payload?.identityCorroboratorReasons }) === 'priority'
+        );
         const allDigestRowsForUpload = [...digestEligibleRows, ...accountHistoryDigestRows];
         if(allDigestRowsForUpload.length){
           const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };

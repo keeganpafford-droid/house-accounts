@@ -3119,7 +3119,18 @@ function mapSignalsFromModelOutput({ parsed, mode, startedAt, providerMode, cand
     // groundingReasons, so `grounding` is always set by the time this line
     // runs; the fallback exists only so this can never silently default to
     // a truthy/confirmed value if that invariant ever changes.)
-    normalized = { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
+    //
+    // Monitoring Identity V1: also stamp the underlying corroborator
+    // reasons, not just the identityConfidence label -- classifyMonitoring
+    // SignalEligibility() (api/lib/monitoring-identity.js) needs the ACTUAL
+    // corroborator (domain match vs. a location/publisher-geo/self-domain-
+    // inference match) to tell strong from weak evidence; identityConfidence
+    // alone conflates all six of today's corroborators as equivalent.
+    normalized = {
+      ...normalized,
+      identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed',
+      identityCorroboratorReasons: grounding ? grounding.reasons : []
+    };
     return normalized;
   });
   const mappedSignals = madeSignalsRaw.filter(Boolean);
