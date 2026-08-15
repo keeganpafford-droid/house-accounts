@@ -39,6 +39,9 @@ import { fetchLegacySignalsForAccounts, applyLegacyFingerprintBridge } from './s
 // never by trusting a persisted row's actionabilityStatus.isPriorityEligible
 // directly.
 import { classifyLegacySignalActionability } from './research-batch.js';
+// Phase 2B founder Queue dark-run: see the call site below for why this
+// legacy sweep must exclude Queue-managed organizations.
+import { isQueueManagedOrganization } from './lib/monitoring-queue.js';
 
 // Constant-time-ish secret comparison: equal-length secrets are compared via
 // crypto.timingSafeEqual (no early-exit on byte mismatch); a length mismatch
@@ -628,7 +631,7 @@ export default async function handler(req, res){
       uploads = [targetedUpload];
     } else {
       const limit = Math.min(Number(req.query?.limit || 25), 100);
-      uploads = await supabase(`ha_uploads?select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company)&order=updated_at.desc&limit=${limit}`);
+      uploads = await supabase(`ha_uploads?select=id,user_id,upload_name,summary,created_at,ha_users(id,email,name,company,organization_id)&order=updated_at.desc&limit=${limit}`);
     }
     const baseUrl = getBaseUrl(req);
     const runSummary = [];
@@ -656,6 +659,16 @@ export default async function handler(req, res){
     for(const upload of uploads || []){
       const user = upload.ha_users;
       if(!user?.email) continue;
+      // Phase 2B founder Queue dark-run: an organization explicitly listed in
+      // QUEUE_MANAGED_ORGANIZATION_IDS is being monitored by the new
+      // scheduler/Queue/worker path instead (see api/monitoring-scheduler.js
+      // and api/lib/monitoring-queue.js) -- this legacy sweep must not also
+      // research it, or the same account would be researched (and billed for)
+      // twice and could produce duplicate digest emails. Empty/unset by
+      // default, so this is a no-op for every organization until the founder
+      // deliberately opts one in for the dark run -- no existing Beta
+      // organization's monitoring is affected by this change alone.
+      if(isQueueManagedOrganization(user.organization_id, process.env.QUEUE_MANAGED_ORGANIZATION_IDS)) continue;
 
       // Settle any prior run for this upload that never reached a completion
       // PATCH (killed by a platform timeout, crash, etc.) before doing
