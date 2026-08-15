@@ -25,6 +25,9 @@
     "research:all": "node scripts/run-live-research.js --all",
     "benchmark:research-batch-mechanics": "node scripts/benchmark-research-batch-mechanics.js"
   },
+  "dependencies": {
+    "@vercel/queue": "^0.1.0"
+  },
   "devDependencies": {
     "playwright": "^1.62.1"
   }
