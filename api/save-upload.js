@@ -92,7 +92,13 @@ function chooseRetainedLegacyRow(rows){
 // accounts that actually have resolved signals in this save -- never the
 // full table, never per-signal, never per-account. Mirrors the same
 // account-scoped query shape find-duplicate-signals.js already uses.
-async function fetchLegacySignalsForAccounts(userId, accountNames){
+// supabaseFn: optional injected fetch helper, defaulting to this module's
+// own real supabase() -- additive, backward-compatible with both existing
+// call sites below. Lets api/lib/signal-persistence.js's
+// persistValidatedSignals() (the shared monitoring-Queue/weekly-scan
+// persistence boundary) thread its own injected supabase through here too,
+// so it stays fully testable without any real Supabase/env dependency.
+async function fetchLegacySignalsForAccounts(userId, accountNames, supabaseFn = supabase){
   const names = [...new Set((accountNames || []).map(n => clean(n)).filter(Boolean))];
   if(!names.length) return [];
   const chunkSize = 100;
@@ -100,7 +106,7 @@ async function fetchLegacySignalsForAccounts(userId, accountNames){
   for(let i=0;i<names.length;i+=chunkSize){
     const chunk = names.slice(i, i+chunkSize);
     const inFilter = `in.(${chunk.map(n => encodeURIComponent(`"${n.replace(/"/g,'\\"')}"`)).join(',')})`;
-    const page = await supabase(`ha_signals?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter}&select=id,account_name,event_fingerprint,confidence,first_seen_at,payload,source_url,source_domain,title`, {method:'GET'}).catch(() => []);
+    const page = await supabaseFn(`ha_signals?user_id=eq.${encodeURIComponent(userId)}&account_name=${inFilter}&select=id,account_name,event_fingerprint,confidence,first_seen_at,payload,source_url,source_domain,title`, {method:'GET'}).catch(() => []);
     if(Array.isArray(page)) rows.push(...page);
   }
   return rows;

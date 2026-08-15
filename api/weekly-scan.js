@@ -23,17 +23,15 @@
 //                    before this parameter existed.
 
 import { timingSafeEqual } from 'crypto';
-import { resolveOpportunityEvents, dedupeByEventFingerprint, isCommercialIntelligenceSignal } from './signal-intelligence.js';
-// Foundation freeze, Phase 1B -- weekly scan writes through the identical
-// resolveOpportunityEvents() -> event_fingerprint -> ha_signals insert path
-// api/save-upload.js uses, but previously had no legacy compatibility
-// bridge at all, meaning an unattended weekly rediscovery of an event that
-// already has a legacy-format row could reinsert exactly the v1->v2
-// duplicate the bridge exists to prevent. Reusing save-upload.js's own
-// tested primitives here (rather than a second, divergent implementation)
-// is deliberate -- see that file's header comment on the bridge for the
-// full rationale.
-import { fetchLegacySignalsForAccounts, applyLegacyFingerprintBridge } from './save-upload.js';
+import { isCommercialIntelligenceSignal } from './signal-intelligence.js';
+// Phase 2C: weekly scan's resolveOpportunityEvents() -> event_fingerprint
+// -> ha_signals insert path (including the legacy v1->v2 compatibility
+// bridge, and the QA-correction-4 refresh-upsert) is now the single shared
+// persistValidatedSignals() boundary in api/lib/signal-persistence.js --
+// the Queue monitoring worker calls the exact same function, not a second,
+// divergent implementation. See that module's header comment for the full
+// behavior contract.
+import { clean, persistValidatedSignals, refreshableSignalRow } from './lib/signal-persistence.js';
 // QA round 3, item 1/6: digest eligibility is validated through the SAME
 // canonical actionability boundary as every other reader (get-dashboard.js),
 // never by trusting a persisted row's actionabilityStatus.isPriorityEligible
@@ -194,13 +192,6 @@ function decideFinalStatus({ accountsProcessed, accountsFailed, totalAccounts, s
 }
 
 function json(res, status, body){ return res.status(status).json(body); }
-function clean(v=''){ return String(v || '').trim(); }
-function hashString(input=''){
-  let h = 2166136261;
-  const s = String(input || '');
-  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return (h >>> 0).toString(16);
-}
 function env(){
   const rawUrl = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -240,30 +231,6 @@ async function supabase(path, options={}){
     throw httpErr;
   }
   return data;
-}
-function signalHash(userId, uploadId, accountName, s){
-  return hashString([userId, uploadId, accountName, s.signalType || s.type || '', s.signalTitle || s.title || s.whatChanged || '', s.sourceUrl || s.source || ''].join('|').toLowerCase());
-}
-// product/commercial-opportunity-intelligence, QA correction 4 (re-research
-// persistence) -- same allowlist and rationale as api/save-upload.js's own
-// refreshableSignalRow(): never event_fingerprint/user_id (identity, must
-// stay stable) and never first_seen_at (when we first learned about it),
-// but every column that represents our CURRENT interpretation of the event.
-function refreshableSignalRow(row){
-  return {
-    user_id: row.user_id,
-    event_fingerprint: row.event_fingerprint,
-    signal_hash: row.signal_hash,
-    signal_type: row.signal_type,
-    title: row.title,
-    why_reach_out: row.why_reach_out,
-    confidence: row.confidence,
-    source_url: row.source_url,
-    source_domain: row.source_domain,
-    published_at: row.published_at,
-    payload: row.payload,
-    last_seen_at: row.last_seen_at
-  };
 }
 function getBaseUrl(req){
   if(process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, '');
@@ -858,77 +825,26 @@ export default async function handler(req, res){
           signals: researchChunks.flatMap(chunk => Array.isArray(chunk.signals) ? chunk.signals : []),
           diagnostics: { chunks: researchChunks.map(chunk => chunk.diagnostics || {}) }
         };
-        // Global event-resolution boundary: merge across ALL chunks for this
-        // upload before persisting, not per-HTTP-chunk. This is what stops the
-        // same real-world event — produced by two chunks, two sources, or two
-        // differently phrased AI generations — from being written as two rows.
-        const resolvedSignals = resolveOpportunityEvents(research.signals);
-        // Foundation freeze, Phase 1B -- same batched pre-flight + bridge
-        // api/save-upload.js runs before every write, reused verbatim here.
-        // One query, scoped to the accounts actually touched in this
-        // upload's chunk, never per-signal/per-account.
-        const legacyRowsForBridge = await fetchLegacySignalsForAccounts(user.id, resolvedSignals.map(s => s.accountName));
-        const bridgeStats = applyLegacyFingerprintBridge(legacyRowsForBridge, resolvedSignals);
-        const candidateRows = resolvedSignals.map(s => ({
-          user_id:user.id,
-          upload_id:upload.id,
-          weekly_run_id:run?.id || null,
-          account_name: clean(s.accountName),
-          event_fingerprint: s.eventFingerprint,
-          signal_hash: signalHash(user.id, upload.id, s.accountName, s),
-          signal_type: clean(s.signalType || 'Business Activity'),
-          title: clean(s.signalTitle || s.whatChanged || ''),
-          why_reach_out: clean(s.whyItMattersForPromo || s.suggestedOpener || ''),
-          confidence: Number(s.confidenceScore || s.confidence || 0) || null,
-          source_url: clean(s.sourceUrl || ''),
-          source_domain: clean(s.cleanSourceName || s.sourceName || ''),
-          published_at: clean(s.publicationDate || '') || null,
-          payload:s,
-          first_seen_at:new Date().toISOString(),
-          last_seen_at:new Date().toISOString()
-        })).filter(row => row.event_fingerprint);
-        // Defensive in-memory dedup immediately before the bulk write. The
-        // database's composite unique constraint (user_id, event_fingerprint)
-        // is the final safety net here, not the only guard. Deliberately NOT
-        // scoped by upload_id: the product monitors companies, not uploads,
-        // so the same real-world event for the same company must resolve to
-        // one row regardless of which upload/list/intake source produced it
-        // (including a re-upload of the same list, which mints a new
-        // upload_id today, or a retried/timed-out run being re-run later).
-        const rowsToInsert = dedupeByEventFingerprint(candidateRows, {
-          keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
-          scoreOf: row => Number(row.confidence || 0)
+        // Global event-resolution + durable persistence boundary: merges
+        // across ALL chunks for this upload before persisting, not
+        // per-HTTP-chunk (what stops the same real-world event -- produced
+        // by two chunks, two sources, or two differently phrased AI
+        // generations -- from being written as two rows), runs the legacy
+        // v1->v2 fingerprint bridge, and performs the ignore-duplicates
+        // insert + merge-duplicates refresh-upsert. Phase 2C: this is now
+        // persistValidatedSignals() in api/lib/signal-persistence.js -- the
+        // SAME shared function the Queue monitoring worker calls, not a
+        // second, divergent implementation. See that module for the full
+        // behavior contract (event_fingerprint generation, dedup, on_conflict
+        // semantics, zero-signal short-circuit).
+        const { newSignalRows: persistedRows, bridgeStats } = await persistValidatedSignals({
+          userId: user.id,
+          uploadId: upload.id,
+          weeklyRunId: run?.id || null,
+          signals: research.signals,
+          supabase
         });
-        if(rowsToInsert.length){
-          const inserted = await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
-            method:'POST',
-            prefer:'resolution=ignore-duplicates,return=representation',
-            body: JSON.stringify(rowsToInsert)
-          });
-          // With ignore-duplicates, rows that collide with an already-stored
-          // event for this account are silently skipped by Postgres and are
-          // not returned here — so newSignalRows reflects genuinely new
-          // events, and re-running a timed-out/partial run never re-emails
-          // or re-inserts an event it already persisted.
-          newSignalRows = Array.isArray(inserted) ? inserted : [];
-          // QA correction 4 (re-research persistence): a weekly re-scan can
-          // regenerate materially better commercialPlay/activationIdeas/
-          // expansionPotential/conversationStarter for an event it already
-          // knows about -- the ignore-duplicates insert above never lets
-          // that reach the stored row. This second upsert refreshes exactly
-          // that interpretation (never identity, never first_seen_at, never
-          // newSignalRows/digest-notification behavior, which stays keyed
-          // off the ignore-duplicates result above only).
-          const refreshRows = rowsToInsert.map(refreshableSignalRow);
-          const chunkSize = 200;
-          for(let i=0;i<refreshRows.length;i+=chunkSize){
-            await supabase('ha_signals?on_conflict=user_id,event_fingerprint', {
-              method:'POST',
-              prefer:'resolution=merge-duplicates',
-              body: JSON.stringify(refreshRows.slice(i, i+chunkSize))
-            });
-          }
-        }
+        newSignalRows = persistedRows;
         if(bridgeStats.bridged || bridgeStats.multiMatch){
           console.log('[weekly-scan.instrumentation] legacy fingerprint bridge', JSON.stringify({ uploadId: upload.id, legacyFingerprintsBridged: bridgeStats.bridged, legacyMultiMatchCount: bridgeStats.multiMatch }));
         }

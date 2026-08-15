@@ -91,8 +91,9 @@ function makeDeps(overrides = {}) {
   return {
     claimTarget: async () => ({ ok: true, outcome: 'claimed', attemptId: 'attempt-1' }),
     completeAttempt: async () => ({ ok: true }),
-    resolveAccountContext: async () => ({ name: 'Test Co' }),
+    resolveAccountContext: async () => ({ userId: 'user-1', accountContext: { name: 'Test Co' } }),
     runPipeline: async () => ({ coverage: 'complete', signals: [], providerUsage: { elapsedMs: 10 }, error: null }),
+    persistSignals: async () => ({ newSignalRows: [] }),
     apiKey: 'sk-test', model: 'gpt-4o-mini',
     ...overrides
   };
@@ -199,32 +200,127 @@ function makeDeps(overrides = {}) {
 }
 
 {
-  // Successful claim -> full flow -> correct dependency call sequence and arguments.
+  // Successful claim -> full flow -> correct dependency call sequence and
+  // arguments, INCLUDING the new persistSignals step (Phase 2C: research ->
+  // validate/ground -> persist -> completion), which must run strictly
+  // between the pipeline and completeAttempt, with the real userId
+  // resolveAccountContext returned.
   const calls = [];
   const deps = makeDeps({
     claimTarget: async (id, lease) => { calls.push(['claim', id, lease]); return { ok: true, outcome: 'claimed', attemptId: 'attempt-42' }; },
-    resolveAccountContext: async (id) => { calls.push(['resolve', id]); return { name: 'Real Co' }; },
+    resolveAccountContext: async (id) => { calls.push(['resolve', id]); return { userId: 'user-real', accountContext: { name: 'Real Co' } }; },
     runPipeline: async (ctx) => { calls.push(['pipeline', ctx.name]); return { coverage: 'complete', signals: [{ accountName: 'Real Co' }], providerUsage: { elapsedMs: 500, openaiCalls: 1 }, error: null }; },
-    completeAttempt: async (args) => { calls.push(['complete', args.targetId, args.attemptId, args.coverage, args.cadenceDays]); return { ok: true }; }
+    persistSignals: async ({ userId, signals }) => { calls.push(['persist', userId, signals.length]); return { newSignalRows: [{ id: 'row-1' }] }; },
+    completeAttempt: async (args) => { calls.push(['complete', args.targetId, args.attemptId, args.coverage, args.cadenceDays, args.error]); return { ok: true }; }
   });
   const decision = await processMonitoringJob({ targetId: 'target-real' }, { deliveryCount: 1 }, deps);
   assert(calls[0][0] === 'claim' && calls[0][1] === 'target-real' && calls[0][2] === DB_LEASE_SECONDS, 'claim is called first, with the target id and the coherent DB lease duration');
   assert(calls[1][0] === 'resolve' && calls[1][1] === 'target-real', 'account context is resolved for the same target, only after a successful claim');
   assert(calls[2][0] === 'pipeline' && calls[2][1] === 'Real Co', 'the research pipeline runs against the resolved account context, only after claim + resolve');
-  assert(calls[3][0] === 'complete' && calls[3][1] === 'target-real' && calls[3][2] === 'attempt-42' && calls[3][3] === 'complete' && calls[3][4] === CADENCE_DAYS, `completion is called with the SAME attempt id the claim returned, the real coverage, and the locked cadence (got ${JSON.stringify(calls[3])})`);
-  assert(decision.action === 'ack', 'a successful complete-coverage attempt is acked');
+  assert(calls[3][0] === 'persist' && calls[3][1] === 'user-real' && calls[3][2] === 1, `REQUIRED (Phase 2C): persistSignals runs with the REAL userId from resolveAccountContext and the pipeline's own signals, strictly after the pipeline and before completion (got ${JSON.stringify(calls[3])})`);
+  assert(calls[4][0] === 'complete' && calls[4][1] === 'target-real' && calls[4][2] === 'attempt-42' && calls[4][3] === 'complete' && calls[4][4] === CADENCE_DAYS && !calls[4][5], `completion is called with the SAME attempt id the claim returned, the UNCHANGED real coverage (persistence succeeded), and the locked cadence (got ${JSON.stringify(calls[4])})`);
+  assert(decision.action === 'ack', 'a successful complete-coverage attempt whose signals durably persisted is acked');
+}
+
+{
+  // REQUIRED (Phase 2C): 0 accepted signals -> persistSignals still runs
+  // (with an empty array), succeeds trivially, coverage is unchanged, and
+  // the attempt still completes/advances cadence normally -- a legitimate
+  // zero-signal result is a pass, not treated as a persistence problem.
+  let persistCalledWith = null;
+  const deps = makeDeps({
+    runPipeline: async () => ({ coverage: 'complete', signals: [], providerUsage: { elapsedMs: 10 }, error: null }),
+    persistSignals: async ({ signals }) => { persistCalledWith = signals; return { newSignalRows: [] }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(Array.isArray(persistCalledWith) && persistCalledWith.length === 0, 'persistSignals is called with an empty array for a zero-signal result, not skipped entirely');
+  assert(decision.action === 'ack' && decision.reason === 'completed', 'a zero-signal complete attempt still acks and advances cadence -- a legitimate zero-signal result is a pass');
+}
+
+{
+  // REQUIRED (Phase 2C): multiple accepted signals -> all handed to
+  // persistSignals together, all reflected in newSignalRows.
+  let persistCalledWith = null;
+  const deps = makeDeps({
+    runPipeline: async () => ({ coverage: 'complete', signals: [{ accountName: 'A' }, { accountName: 'A' }, { accountName: 'A' }], providerUsage: {}, error: null }),
+    persistSignals: async ({ signals }) => { persistCalledWith = signals; return { newSignalRows: signals.map((_, i) => ({ id: `row-${i}` })) }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(persistCalledWith && persistCalledWith.length === 3, 'REQUIRED: all validated signals from one attempt are handed to persistSignals in a single call, not split/dropped');
+  assert(decision.action === 'ack', 'multiple persisted signals still acks normally');
+}
+
+{
+  // REQUIRED (Phase 2C): persistence failure must NOT be treated as a
+  // successful monitoring cycle -- coverage is downgraded to 'insufficient'
+  // (reusing the existing, proven no-cadence-advance path, not a new
+  // state), the real error is visible on the completion call, and the
+  // Queue outcome is a bounded retry, never an ack.
+  let completeArgs = null;
+  const deps = makeDeps({
+    runPipeline: async () => ({ coverage: 'complete', signals: [{ accountName: 'A' }], providerUsage: { elapsedMs: 10 }, error: null }),
+    persistSignals: async () => { throw new Error('Supabase 500: internal error'); },
+    completeAttempt: async (args) => { completeArgs = args; return { ok: true }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(completeArgs && completeArgs.coverage === 'insufficient', `REQUIRED: a persistence failure downgrades the completed coverage to insufficient, never lets a validated-but-unpersisted result complete as 'complete'/'degraded_trustworthy' (got ${JSON.stringify(completeArgs)})`);
+  assert(completeArgs.error && completeArgs.error.includes('signal persistence failed') && completeArgs.error.includes('Supabase 500'), 'REQUIRED: the persisted error is honest about WHY this failed (persistence, not research), not a generic message');
+  assert(decision.action === 'retry', 'REQUIRED: a persistence failure is retried, never acked -- cadence must not advance on an unpersisted result');
+}
+
+{
+  // REQUIRED (Phase 2C): retry after persistence uncertainty cannot create
+  // duplicate signals -- a first attempt whose persistence fails correctly
+  // retries (proven above); a LATER attempt (this test) that reaches
+  // persistSignals again and succeeds completes normally. The no-duplicate
+  // guarantee itself lives in persistValidatedSignals()'s ignore-duplicates
+  // on_conflict semantics (see scripts/test-signal-persistence-
+  // characterization.js) -- this test only proves processMonitoringJob's
+  // own contract: a later successful persistence attempt is not blocked or
+  // double-counted by an earlier failed one (each call is independent, no
+  // hidden retry-count state carried between processMonitoringJob calls).
+  const deps = makeDeps({
+    runPipeline: async () => ({ coverage: 'complete', signals: [{ accountName: 'A' }], providerUsage: {}, error: null }),
+    persistSignals: async () => ({ newSignalRows: [{ id: 'row-1' }] })
+  });
+  const first = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 3 }, deps);
+  assert(first.action === 'ack' && first.reason === 'completed', 'a later attempt whose persistence now succeeds completes and acks normally, independent of any earlier failed attempt');
+}
+
+{
+  // REQUIRED (Phase 2C): different targets/signals remain isolated -- two
+  // independent processMonitoringJob() calls for two different targets,
+  // sharing the same deps object, never bleed userId/signals across each
+  // other.
+  const persistCalls = [];
+  const deps = makeDeps({
+    resolveAccountContext: async (id) => ({ userId: `user-${id}`, accountContext: { name: `Account ${id}` } }),
+    runPipeline: async (ctx) => ({ coverage: 'complete', signals: [{ accountName: ctx.name }], providerUsage: {}, error: null }),
+    persistSignals: async ({ userId, signals }) => { persistCalls.push({ userId, accountNames: signals.map(s => s.accountName) }); return { newSignalRows: [] }; }
+  });
+  await processMonitoringJob({ targetId: 'target-A' }, { deliveryCount: 1 }, deps);
+  await processMonitoringJob({ targetId: 'target-B' }, { deliveryCount: 1 }, deps);
+  assert(persistCalls.length === 2, 'two independent targets each trigger their own persistSignals call');
+  assert(persistCalls[0].userId === 'user-target-A' && persistCalls[0].accountNames[0] === 'Account target-A', 'REQUIRED: target A\'s persistence call carries only target A\'s userId/account, never target B\'s');
+  assert(persistCalls[1].userId === 'user-target-B' && persistCalls[1].accountNames[0] === 'Account target-B', 'REQUIRED: target B\'s persistence call carries only target B\'s userId/account, never target A\'s');
 }
 
 {
   // Insufficient coverage, low delivery count -> retry; completeAttempt still called (telemetry persisted even on failure).
+  // Also confirms persistSignals is NEVER called for insufficient coverage
+  // -- there is nothing validated worth persisting, and cadence already
+  // never advances for this coverage regardless.
   let completeArgs = null;
+  let persistCalled = false;
   const deps = makeDeps({
     runPipeline: async () => ({ coverage: 'insufficient', signals: [], providerUsage: { elapsedMs: 50 }, error: 'budget exhausted' }),
+    persistSignals: async () => { persistCalled = true; return { newSignalRows: [] }; },
     completeAttempt: async (args) => { completeArgs = args; return { ok: true }; }
   });
   const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
   assert(decision.action === 'retry', 'insufficient coverage below the poison threshold is retried');
   assert(completeArgs && completeArgs.coverage === 'insufficient' && completeArgs.error === 'budget exhausted', 'REQUIRED: attempt telemetry/error is persisted via completeAttempt even though the Queue outcome is retry -- a failed attempt is not invisible');
+  assert(!persistCalled, 'REQUIRED: persistSignals is never called for insufficient coverage -- nothing validated exists to persist');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

@@ -257,14 +257,42 @@ export class MonitoringRetryError extends Error {
 }
 
 // The consumer body. Deliberately dependency-injected (claimTarget/
-// completeAttempt/resolveAccountContext/runPipeline) rather than importing
-// Supabase/research-pipeline calls directly, so it is testable with plain
-// mocks (see scripts/test-monitoring-queue-adapter.js) without any real
-// Queue, database, or provider call. api/queues/monitoring-consumer.js is
-// the thin route file that supplies the real implementations and hands
-// this function to @vercel/queue's handleNodeCallback().
+// completeAttempt/resolveAccountContext/runPipeline/persistSignals) rather
+// than importing Supabase/research-pipeline calls directly, so it is
+// testable with plain mocks (see scripts/test-monitoring-queue-adapter.js)
+// without any real Queue, database, or provider call.
+// api/queues/monitoring-consumer.js is the thin route file that supplies
+// the real implementations and hands this function to @vercel/queue's
+// handleNodeCallback().
+//
+// Phase 2C: the intended architecture is research -> validate/ground ->
+// PERSIST -> downstream notification -- the pipeline's own validation
+// (validateOpportunity()/verifyCandidateCompanyGrounding(), inside
+// runPipeline itself) is unchanged, but a validated result.signals is no
+// longer trustworthy just because runPipeline() returned it: it must
+// actually land durably in ha_signals before this attempt is allowed to
+// report success. persistSignals() (the real implementation calls the
+// shared persistValidatedSignals() boundary in
+// api/lib/signal-persistence.js -- the SAME function api/weekly-scan.js
+// calls, not a second implementation) is only invoked for a coverage that
+// would otherwise advance cadence (complete/degraded_trustworthy); an
+// 'insufficient' result never had anything worth persisting and already
+// never advances cadence regardless.
+//
+// If persistence throws, this attempt's outcome is deliberately downgraded
+// to 'insufficient' before calling completeAttempt() -- reusing the
+// EXISTING, already-proven "coverage=insufficient -> cadence does not
+// advance, lease clears, retry up to the poison threshold" path
+// (migration 16 / decideQueueOutcome()) rather than inventing a new
+// completion state. result.error is set to a persistence-specific message
+// (distinct from a genuine research failure) so ha_monitoring_attempts.error
+// stays honest about what actually happened. A subsequent retry re-runs
+// persistSignals() (via a full new pipeline run) against the SAME
+// underlying real-world events, which resolve to the SAME event_fingerprint
+// -- persistValidatedSignals()'s ignore-duplicates insert makes that retry
+// safe by construction, never creating a duplicate row.
 export async function processMonitoringJob(message, metadata, deps) {
-  const { claimTarget, completeAttempt, resolveAccountContext, runPipeline, apiKey, model } = deps;
+  const { claimTarget, completeAttempt, resolveAccountContext, runPipeline, persistSignals, apiKey, model } = deps;
   const targetId = message?.targetId;
   const deliveryCount = metadata?.deliveryCount || 1;
 
@@ -287,27 +315,47 @@ export async function processMonitoringJob(message, metadata, deps) {
   }
 
   const startedAt = Date.now();
-  const accountContext = await resolveAccountContext(targetId);
+  const { userId, accountContext } = await resolveAccountContext(targetId);
   const result = await runPipeline(accountContext, { apiKey, model, startedAt });
+
+  let coverage = result.coverage;
+  let error = result.error;
+  let persistedSignalCount = 0;
+  if (coverage === 'complete' || coverage === 'degraded_trustworthy') {
+    try {
+      const persisted = await persistSignals({ userId, signals: result.signals || [] });
+      persistedSignalCount = (persisted?.newSignalRows || []).length;
+    } catch (persistErr) {
+      // Downgrade, do not swallow: a validated-but-unpersisted result is
+      // not a trustworthy monitoring cycle. See this function's header
+      // comment for why 'insufficient' (not a new state) is the correct
+      // reuse here.
+      coverage = 'insufficient';
+      error = `signal persistence failed: ${persistErr.message}`;
+    }
+  }
 
   await completeAttempt({
     targetId,
     attemptId: claim.attemptId,
-    coverage: result.coverage,
+    coverage,
     cadenceDays: CADENCE_DAYS,
-    error: result.error,
+    error,
     telemetry: result.providerUsage
   });
 
-  const decision = decideQueueOutcome({ coverage: result.coverage, deliveryCount });
+  const decision = decideQueueOutcome({ coverage, deliveryCount });
   // Item J observability: correlates back to the enqueue log line via
   // targetId, and is the "monitoring attempt -> completion/failure" half of
   // the due-target -> published message -> Queue delivery -> attempt ->
   // completion chain this item asks to be reconcilable, without any new
-  // dashboard.
+  // dashboard. Deliberately counts/fingerprints only (Phase 2C
+  // observability direction) -- full signal content (title, evidence,
+  // source URL) is never logged here; the durable ha_signals row itself is
+  // the auditable source for that.
   console.log('[monitoring-queue.completed]', JSON.stringify({
-    targetId, attemptId: claim.attemptId, deliveryCount, coverage: result.coverage,
-    signalCount: (result.signals || []).length, elapsedMs: result.elapsedMs,
+    targetId, attemptId: claim.attemptId, deliveryCount, coverage,
+    signalCount: (result.signals || []).length, persistedSignalCount, elapsedMs: result.elapsedMs,
     estimatedCostUsd: result.providerUsage?.estimatedCostUsd, queueAction: decision.action, queueActionReason: decision.reason
   }));
   return decision;

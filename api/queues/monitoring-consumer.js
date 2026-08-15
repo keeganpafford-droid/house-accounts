@@ -29,6 +29,10 @@ import {
   QUEUE_VISIBILITY_TIMEOUT_SECONDS,
   MonitoringRetryError
 } from '../lib/monitoring-queue.js';
+// Phase 2C: the same shared persistence boundary api/weekly-scan.js calls
+// -- not a second implementation. uploadId/weeklyRunId are null for every
+// monitoring call (this path is not upload-driven).
+import { persistValidatedSignals } from '../lib/signal-persistence.js';
 
 function env() {
   const rawUrl = process.env.SUPABASE_URL;
@@ -90,7 +94,11 @@ async function completeAttempt({ targetId, attemptId, coverage, cadenceDays, err
 // naturally absorbed (see Phase 1's identity-model rationale). Tries the
 // exact display_account_name first (the common, fast case); falls back to
 // scanning the user's accounts and normalizing if the account was renamed
-// since the target was last synced.
+// since the target was last synced. Returns userId alongside the bounded
+// accountContext -- processMonitoringJob() needs the real user id for
+// persistSignals(), but the projected accountContext itself stays exactly
+// the bounded shape runPipeline()/the OpenAI prompt-builder already expect,
+// never polluted with an extra raw id field.
 async function resolveAccountContext(targetId) {
   const [target] = await supabase(`ha_monitoring_targets?id=eq.${encodeURIComponent(targetId)}&select=*&limit=1`);
   if (!target) throw new Error(`resolveAccountContext: no monitoring target ${targetId} exists`);
@@ -103,11 +111,18 @@ async function resolveAccountContext(targetId) {
     row = (candidates || []).find(a => normalizeCompanyName(a.account_name) === target.normalized_company_name);
   }
   if (!row) throw new Error(`resolveAccountContext: no current ha_accounts row found for target ${targetId} (identity may have been deleted)`);
-  return projectAccountContext(row);
+  return { userId: target.user_id, accountContext: projectAccountContext(row) };
 }
 
 async function runPipeline(accountContext, options) {
   return runResearchPipeline(accountContext, { ...options, mode: 'weekly-monitoring' });
+}
+
+// Real persistence implementation: calls the SAME shared boundary
+// api/weekly-scan.js calls. uploadId/weeklyRunId are null -- this path is
+// not upload-driven, and persistValidatedSignals() treats both as optional.
+async function persistSignals({ userId, signals }) {
+  return persistValidatedSignals({ userId, uploadId: null, weeklyRunId: null, signals, supabase });
 }
 
 async function consumeMonitoringMessage(message, metadata) {
@@ -116,6 +131,7 @@ async function consumeMonitoringMessage(message, metadata) {
     completeAttempt,
     resolveAccountContext,
     runPipeline,
+    persistSignals,
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini'
   });

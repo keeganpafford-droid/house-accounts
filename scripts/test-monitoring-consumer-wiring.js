@@ -35,6 +35,9 @@ assert(typeof ALREADY_LEASED_RETRY_DELAY_SECONDS === 'number' && ALREADY_LEASED_
 assert(/normalizeCompanyName/.test(source), 'account resolution falls back to normalized-name matching for a renamed account, using the same identity function Phase 1 established (not a second copy)');
 assert(/projectAccountContext/.test(source), 'REQUIRED: the consumer resolves BOUNDED account context (item D), never the full ha_accounts row/raw_data, before calling the research pipeline');
 assert(typeof consumeMonitoringMessage === 'function', 'consumeMonitoringMessage is exported and importable without @vercel/queue being installed (the dynamic import is isolated to the default route handler, not this function)');
+assert(/persistValidatedSignals/.test(source), 'REQUIRED (Phase 2C): the consumer calls the SHARED persistValidatedSignals() boundary (api/lib/signal-persistence.js) -- the same function api/weekly-scan.js calls, not a second, divergent implementation');
+assert(/uploadId:\s*null/.test(source) && /weeklyRunId:\s*null/.test(source), 'the monitoring persistence call explicitly passes null upload/weekly-run ids -- this path is not upload-driven');
+assert(/persistSignals/.test(source), 'REQUIRED: a persistSignals dependency is wired into processMonitoringJob (Phase 2C: research -> validate -> persist -> completion)');
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);
