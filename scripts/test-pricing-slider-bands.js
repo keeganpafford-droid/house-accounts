@@ -150,5 +150,98 @@ for(const name of ['render', 'bandIndexForCount', 'syncFromRange', 'syncFromNumb
   assert(ticksEl.innerHTML.includes('left:calc(9px + 1 * (100% - 18px))'), 'the last (Enterprise) tick sits exactly at the thumb\'s rightmost resting position (9px in from the right edge)');
 }
 
+// ===========================================================================
+// Founder QA: a logged-in org with an existing paid capacity (100 monitored
+// accounts) landed on this page with the selector defaulted to Free/10.
+// initializeFromLoggedInEntitlement() -- extracted verbatim, not
+// reimplemented -- must override that default for a genuinely paid org
+// (from purchased CAPACITY, never current usage), leave it alone for a
+// Free/anonymous visitor, and never touch window.location (no redirect --
+// this is a public marketing page).
+// ===========================================================================
+const INIT_FN = extractFn(PRICING_HTML, 'initializeFromLoggedInEntitlement');
+
+function makeInitSandbox({ session, usageResult, usageThrows } = {}){
+  const range = { value: '0' };
+  const numberInput = { value: '10' };
+  const result = { dataset: {} };
+  const bandLabelEl = { textContent: '' };
+  const bandPriceEl = { innerHTML: '', textContent: '' };
+  const bandDetailEl = { textContent: '' };
+  const ctaEl = { textContent: '', href: '', onclick: null };
+  const errorEl = { style: {} };
+  const usageCalls = [];
+  const houseAuth = {
+    getSession: () => session || null,
+    usage: async () => {
+      usageCalls.push(1);
+      if(usageThrows) throw new Error('Could not load usage.');
+      return usageResult;
+    }
+  };
+  const sandbox = {
+    console,
+    window: { HouseAuth: houseAuth },
+    HouseAuth: houseAuth,
+    PRICING_BANDS, bandForAccountCount, formatPriceCents,
+    range, numberInput, result, bandLabelEl, bandPriceEl, bandDetailEl, ctaEl, errorEl,
+    startCheckout: () => {}
+  };
+  vm.createContext(sandbox);
+  const fullSource = [RENDER_FN, BAND_INDEX_FN, INIT_FN].join('\n\n');
+  new vm.Script(fullSource, { filename: 'pricing-init-extract.js' }).runInContext(sandbox);
+  return { sandbox, range, numberInput, bandLabelEl, ctaEl, usageCalls };
+}
+
+{
+  // No session at all (anonymous visitor) -- must never call usage()/redirect,
+  // and the Free/10 default is left completely untouched.
+  const { sandbox, range, numberInput, usageCalls } = makeInitSandbox({ session: null });
+  await sandbox.initializeFromLoggedInEntitlement();
+  assert(usageCalls.length === 0, 'REQUIRED: an anonymous visitor (no session) never triggers a usage fetch -- this public page must never force a login redirect on load');
+  assert(range.value === '0' && numberInput.value === '10', 'the anonymous default (Free/10) is left untouched');
+}
+{
+  // Logged in, but a genuinely Free org -- also stays at Free/10.
+  const { sandbox, range, numberInput, bandLabelEl } = makeInitSandbox({
+    session: { access_token: 'tok' },
+    usageResult: { usage: { paidActive: false, accountCapacity: 10 } }
+  });
+  await sandbox.initializeFromLoggedInEntitlement();
+  assert(numberInput.value === '10' && bandLabelEl.textContent !== 'Up to 100 accounts', 'REQUIRED: a logged-in Free organization initializes at Free/10, not overridden');
+}
+{
+  // REQUIRED: the founder's own exact case -- 100-account paid capacity, 30
+  // monitored (usage). The selector must show the PURCHASED capacity (100),
+  // never current usage (30), and never silently downgrade to it.
+  const { sandbox, range, numberInput, bandLabelEl, ctaEl } = makeInitSandbox({
+    session: { access_token: 'tok' },
+    usageResult: { usage: { paidActive: true, accountCapacity: 100, totalMonitoredCompanies: 30 } }
+  });
+  await sandbox.initializeFromLoggedInEntitlement();
+  assert(Number(numberInput.value) === 100, `REQUIRED: a paid org's selector initializes to its purchased capacity (100), not current usage (30) or the Free default (got ${numberInput.value})`);
+  assert(Number(range.value) === PRICING_BANDS.indexOf(bandForAccountCount(100)), 'the range slider position matches the 100-account band');
+  assert(bandLabelEl.textContent === 'Up to 100 accounts', 'REQUIRED: the band label reflects the org\'s real purchased tier');
+  assert(ctaEl.textContent.includes('Subscribe'), 'the CTA still renders normally for the matched tier (server-side checkout now safely redirects an already-paid org to the Billing Portal instead of a duplicate subscription)');
+}
+{
+  // Unlimited (Enterprise/manual) capacity -- lands on the last (Enterprise) stop.
+  const { sandbox, range, numberInput } = makeInitSandbox({
+    session: { access_token: 'tok' },
+    usageResult: { usage: { paidActive: true, accountCapacity: null } }
+  });
+  await sandbox.initializeFromLoggedInEntitlement();
+  assert(Number(range.value) === PRICING_BANDS.length - 1, 'REQUIRED: unlimited (null) capacity initializes the selector to the Enterprise stop');
+}
+{
+  // A failed usage fetch (expired token, network hiccup) degrades safely --
+  // never throws, never leaves the page in a broken state, just keeps the
+  // anonymous-visitor default.
+  const { sandbox, range, numberInput, usageCalls } = makeInitSandbox({ session: { access_token: 'tok' }, usageThrows: true });
+  await sandbox.initializeFromLoggedInEntitlement();
+  assert(usageCalls.length === 1, 'sanity: a usage fetch was attempted for a logged-in session');
+  assert(range.value === '0' && numberInput.value === '10', 'REQUIRED: a failed usage fetch degrades safely to the Free/10 default, never throws or breaks the page');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

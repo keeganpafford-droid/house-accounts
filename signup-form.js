@@ -5,15 +5,17 @@
   const message=document.getElementById('signupMessage');
   const params=new URLSearchParams(location.search);
   const next=params.get('next')||'/dashboard/';
+  // 2026-08-13 pricing decision: no new 30-day paid-capacity trials are
+  // granted -- see api/auth.js's orgDefaults(), which already records a
+  // requested 'solo'/'team' plan value harmlessly but grants no trial
+  // dates/status regardless. requestedPlan is kept (still sent to signup
+  // for that same harmless historical recording) but no longer changes
+  // this page's own copy/CTA -- the retired "?plan=solo"/"?plan=team"
+  // signup-time trial offer this branch used to render ("Start 30-Day Free
+  // Trial") promised something the backend has not granted for months; the
+  // markup's own default Free-forever copy is accurate for every visitor
+  // now, regardless of which plan query param they arrived with.
   const requestedPlan=['solo','team'].includes((params.get('plan')||'').toLowerCase())?(params.get('plan')||'').toLowerCase():'free';
-  const offer=document.getElementById('signupOffer');
-  const copy=document.getElementById('signupCopy');
-  if(requestedPlan!=='free'){
-    const planName=requestedPlan==='team'?'Team':'Solo';
-    if(offer) offer.textContent='30-Day Free Trial • No credit card required';
-    if(copy) copy.innerHTML=`<strong>Start your ${planName} plan free for 30 days.</strong><br>You can also choose the Free Forever plan for up to 10 customer accounts.`;
-    if(submit) submit.textContent='Start 30-Day Free Trial';
-  }
 
   function value(name){
     const field=form.elements.namedItem(name);
@@ -69,7 +71,7 @@
       show(error.message||'We could not create your account. Please try again.');
     }finally{
       submit.disabled=false;
-      submit.textContent=requestedPlan==='free'?'Start Free':'Start 30-Day Free Trial';
+      submit.textContent='Start Free';
     }
   });
 })();

@@ -41,4 +41,14 @@ for(const [name,html] of [['homepage',home],['signup',signup],['pricing',pricing
   assert(!/up to 10 companies/i.test(html),`${name} still uses companies for the free-tier limit`);
 }
 
+// Billing/pricing cleanup sprint: the homepage's static hero copy and the
+// canonical signup component both used to promise a "30-Day Free Trial" for
+// any non-free plan -- api/auth.js's orgDefaults() has granted no such
+// trial since the 2026-08-13 pricing decision (Free is the only
+// no-payment entry point; paid capacity is purchased through Stripe
+// Checkout), so this was a pure, live, customer-facing false promise.
+assert(!/30-day free trial/i.test(home),'REQUIRED: the homepage no longer promises a 30-day free trial that is not actually granted');
+assert(!/30-day free trial/i.test(signupScript),'REQUIRED: signup-form.js no longer promises a 30-day free trial for a ?plan=solo/?plan=team signup -- the backend has granted no such trial for months');
+assert(!/Start 30-Day Free Trial/.test(signupScript),'REQUIRED: signup-form.js no longer ever renders a "Start 30-Day Free Trial" button label, on submit or on failure/retry');
+
 console.log('Public MVP navigation and canonical signup checks passed.');

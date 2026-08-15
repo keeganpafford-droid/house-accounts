@@ -236,5 +236,32 @@ async function startCheckout(count){
 }
 
 syncFromRange();
+
+// Founder QA: a logged-in org with an existing paid capacity (e.g. 100
+// monitored accounts) landed on this page with the selector defaulted to
+// Free/10, not their actual purchased tier -- confusing, and it made
+// "Subscribe" read as if they had never bought anything. This never
+// touches the anonymous-visitor default above (still Free/10, rendered
+// synchronously with no flash) -- it only OVERRIDES it, asynchronously,
+// once a genuinely paid org's own entitlement is confirmed. Deliberately
+// uses HouseAuth.getSession() (no redirect, no navigation) rather than
+// authHeadersAsync()/requireAuth() -- this is a public marketing page an
+// anonymous visitor must be able to load without ever being bounced to
+// /login. Current USAGE (companyLimit's neighbor, totalMonitoredCompanies)
+// is a deliberately separate concept and is never used to initialize this
+// selector -- only the org's purchased capacity is.
+async function initializeFromLoggedInEntitlement(){
+  if(!window.HouseAuth || !HouseAuth.getSession()) return;
+  let data;
+  try{ data = await HouseAuth.usage(); }catch{ return; }
+  const usage = data?.usage || data?.entitlement;
+  if(!usage?.paidActive) return; // Free/trialing/canceled orgs keep the Free/10 default
+  const capacity = usage.accountCapacity ?? usage.companyLimit;
+  const count = capacity == null ? (PRICING_BANDS[PRICING_BANDS.length - 2].maxAccounts + 1) : capacity;
+  numberInput.value = count;
+  range.value = bandIndexForCount(count);
+  render(count);
+}
+initializeFromLoggedInEntitlement();
 </script>
 </body></html>
