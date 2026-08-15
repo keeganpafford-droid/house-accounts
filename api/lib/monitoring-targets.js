@@ -168,3 +168,67 @@ export function buildBackfillPlan({ groups = [], existingKeys = new Set(), now =
   }
   return { toInsert, alreadyPresentCount };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2A worker-readiness (item D): bounded recurring-monitoring account
+// context. Pure projection, DB-free -- given a full ha_accounts-row-shaped
+// object (raw_data included, however large), returns ONLY the fields
+// api/research-batch.js's synthesis pipeline actually reads
+// (accountPromptContext()'s own field list is the source of truth this
+// mirrors), each capped to the same small sizes that function already
+// enforces downstream.
+//
+// Why this exists: api/weekly-scan.js's current accountPayload() ships the
+// ENTIRE raw_data.purchases array (up to 3 years of order history) over the
+// wire to research-batch.js every week, even though only the last handful
+// of items are ever used -- a prior audit found this exact gap. A future
+// worker resolving account context for recurring public monitoring should
+// fetch/use this projection instead, leaving the full history to the paths
+// that genuinely need it (initial upload processing, dashboard, Prepare for
+// Call). This does not change how or where history is stored -- only what
+// is carried into the recurring monitoring pipeline. See
+// scripts/test-account-context-projection.js for the deterministic proof
+// that a large input never survives into a large output.
+const MAX_PROJECTED_PURCHASES = 8;
+const MAX_PROJECTED_ORDER_DATES = 5;
+const MAX_PROJECTED_CATEGORIES = 10;
+const MAX_PROJECTED_CONTACTS = 12;
+const MAX_PROJECTED_EXISTING_SIGNALS = 5;
+const MAX_PROJECTED_REPEAT_PATTERNS = 5;
+// Free-text rep notes are not transactional history, but an unbounded
+// value here would defeat the whole point of this projection -- capped to
+// a length generous enough for genuine rep notes while making a
+// pathological/huge value impossible to smuggle through.
+const MAX_PROJECTED_NOTES_CHARS = 1000;
+
+export function projectAccountContext(row = {}) {
+  const raw = row.raw_data || {};
+  const metrics = row.metrics || {};
+  const purchases = Array.isArray(raw.purchases) ? raw.purchases : [];
+  // Most-recent-last is the existing upload convention (see api/research-
+  // batch.js's pairedPurchases()); slice from the end so "bounded recent
+  // purchases" means the ACTUAL most recent ones, not an arbitrary prefix.
+  const recentPurchases = purchases.slice(-MAX_PROJECTED_PURCHASES);
+  return {
+    name: row.account_name || '',
+    industry: row.industry || raw.industry || '',
+    location: raw.location || '',
+    cityState: raw.location || '',
+    website: raw.website || '',
+    notes: String(raw.notes || '').slice(0, MAX_PROJECTED_NOTES_CHARS),
+    contactName: row.contact_name || (Array.isArray(raw.contacts) ? raw.contacts[0]?.name : '') || '',
+    contacts: Array.isArray(raw.contacts) ? raw.contacts.slice(0, MAX_PROJECTED_CONTACTS) : [],
+    categories: Array.isArray(raw.historicalCategories) ? raw.historicalCategories.slice(0, MAX_PROJECTED_CATEGORIES) : [],
+    recentOrderDates: Array.isArray(raw.recentOrderDates) ? raw.recentOrderDates.slice(-MAX_PROJECTED_ORDER_DATES) : [],
+    recentPurchases,
+    purchases: recentPurchases,
+    existingSignals: Array.isArray(raw.existingSignals) ? raw.existingSignals.slice(0, MAX_PROJECTED_EXISTING_SIGNALS) : [],
+    repeatPatterns: Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns.slice(0, MAX_PROJECTED_REPEAT_PATTERNS) : [],
+    relationshipStrength: metrics.relationshipStrength || 0,
+    quickWinScore: raw.quickWinScore || '',
+    revenue: Number(metrics.revenue || 0),
+    orderCount: Number(metrics.orderCount || 0),
+    intelligenceMode: raw.intelligenceMode || (Number(metrics.orderCount || 0) > 0 ? 'historical' : 'warm'),
+    oneOffResearch: false
+  };
+}

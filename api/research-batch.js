@@ -2911,6 +2911,280 @@ function startHeartbeatRenewalLoop({ userId, uploadId, researchRunId, attemptId 
   return { stop() { stopped = true; if (timer) clearTimeout(timer); } };
 }
 
+// Phase 2A worker-readiness: the synthesis prompt template, extracted
+// verbatim (same file, same static text) from what used to be an inline
+// template literal in handler(). Pure function of its two inputs
+// (safeAccounts, candidates) plus the module-scope accountPromptContext()
+// and the imported COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT -- exported
+// below so api/lib/research-pipeline.js's runResearchPipeline() can build
+// the exact same prompt a future worker needs, in-process.
+function buildSynthesisPrompt(safeAccounts, candidates) {
+  return `You are House Accounts' Prospect Buying Moment Extraction Engine.
+
+Act like a senior account researcher doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
+
+"Why should I contact this company today?"
+
+Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
+
+A buying moment is a concrete event that creates a real, identifiable human moment for a specific audience (employees, customers, recruits, investors, partners, or another concrete group the evidence supports) -- not merely an event that could theoretically justify a merchandise conversation. Examples of the kinds of events worth surfacing:
+- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
+- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
+- product launch, rebrand, merger, acquisition, partnership, contract win
+- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
+- community event, sponsorship, corporate philanthropy
+- safety milestone, company anniversary, major award actively promoted by the company
+
+Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
+Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable commercial-activation angle.
+Whether to RETURN a buying moment at all (governed by the criteria on this line and "Reject" below) and whether you have a credible commercial ACTIVATION for it (commercial_play/activation_ideas/expansion_potential, see below) are separate judgments -- a real, current, sourced, material event about the account (an acquisition, leadership change, facility opening, funding event, product launch, sponsorship, etc.) should still be returned even when you conclude no credible activation exists yet. In that case return the factual fields and leave commercial_play/activation_ideas/expansion_potential empty or omitted -- never drop the whole buying moment merely because you couldn't responsibly infer a program around it.
+
+Reject:
+- generic company descriptions, mission/history/culture copy
+- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
+- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
+- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
+- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
+
+Preserve concrete triggers. Do not generalize specific events. Examples:
+- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
+- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
+- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
+
+For each accepted signal:
+1. concrete_trigger: specific event phrased as a short label.
+2. buying_moment: the category of buying moment.
+3. business_context: what happened and why it likely happened. Keep this factual -- what happened, when, according to what evidence. This is not the place for commercial interpretation; see below for that.
+4. ${COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT}
+5. suggested_opener: the discovery question described above (this is the field name; the intent is a discovery question, not opener copy).
+6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
+7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
+8. ABD scores: actionability_score, budget_score, deadline_score.
+
+Recommended Buying Team examples:
+- Hiring expansion → HR / People, Talent Acquisition
+- Product launch → Marketing, Product Marketing
+- Community event → Marketing, Community Relations
+- Manufacturing expansion → Operations, HR / People
+- Trade show → Marketing, Events, Sales
+
+Potential Contacts rules:
+- Use uploaded knownContacts if they align with the recommended buying team.
+- Use public contacts only when the source supports the person and title.
+- If a user supplied a contact name, verify and prefer that person when supported.
+- Never invent names, titles, emails, phones, LinkedIn URLs, or contact pages.
+- Include public contact fields only when they appear in the supplied evidence.
+- Omit potential_contacts if no reliable person is found.
+
+Leadership and contact-change rules:
+- Accept executive appointments, promotions, known-contact role changes, and known-contact company changes only when the person, company, and new role are supported by a credible public source.
+- Preserve the person's name, exact new title, company, and announcement date when available.
+- Do not treat leadership changes as automatically high priority. They must compete with every other opportunity using the existing ABD / Why Now logic.
+- Penalize stale, weakly sourced, or role-only mentions, and reject undated directory listings that do not establish a recent change.
+
+Score concrete, high-intent buying moments higher:
+Highest value signals generally include facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, contract win/partnership, major award actively promoted, safety milestone, and company anniversary. A verified recent HR or Marketing executive change may also rank strongly when it creates a clear, timely promotional-products conversation.
+Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content, or stale leadership listings.
+
+Return strict JSON only with shape:
+{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","commercial_play":{"concept":"(optional)","narrative":""},"commercialPlay":{"concept":"(optional)","narrative":""},"activation_ideas":[""],"activationIdeas":[""],"expansion_potential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"expansionPotential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
+
+commercial_play, activation_ideas, and expansion_potential are all optional -- omit any of them entirely (or use null) for a signal where the evidence does not support a credible commercial interpretation, rather than filling them with generic content.
+
+Accounts:
+${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
+
+Candidate snippets and clean page content:
+${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, query:c.query, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, sources:c.sources})), null, 2)}`;
+}
+
+// Phase 2A worker-readiness: the parse/map/validate/grounding/event-
+// resolution tail, extracted verbatim (same file, parameters bound to the
+// exact names the body already used as closure variables -- no internal
+// line was rewritten) from what used to be inline in handler() between the
+// OpenAI response being parsed and the final signals array being computed.
+// Characterized by scripts/test-weekly-monitoring-characterization.js
+// BEFORE this extraction (all 30 assertions there passed against the
+// pre-extraction inline code; the same file is re-run against this
+// function unchanged, proving equivalence -- see the Phase 2A report).
+// Kept in this file (not moved to api/lib/research-pipeline.js) for the
+// same reason Phase 1's export-in-place choice was made: it depends on
+// module-scope helpers (makeSignal, requireResolvedCandidate,
+// normalizeOpportunity, validateOpportunity, verifyCandidateCompanyGrounding,
+// dedupeSignals, dedupeOpportunities, resolveOpportunityEvents, clean,
+// shortHash, DEBUG_INSTRUMENTATION) that are themselves not extracted --
+// moving this function alone to another file without those would require
+// either duplicating them or creating a circular import between this file
+// and api/lib/research-pipeline.js (see that module's own header comment
+// for why that was avoided in Phase 1). Exported below (existing named-
+// export block) so api/lib/research-pipeline.js's runResearchPipeline()
+// can call it in-process, same import pattern as
+// discoverCandidatesForAccounts/callOpenAIJson/mapLimit already use.
+function mapSignalsFromModelOutput({ parsed, mode, startedAt, providerMode, candidates, safeAccounts, derivedIdentityByAccount, runId }) {
+  const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
+  if (mode === 'prospect-intelligence' || mode === 'warm-account') {
+    prospectDebugLog('LLM opportunity parser complete', {
+      // Benchmark diagnostic (scale/research-runtime-benchmark): the gap
+      // between this and 'OpenAI synthesis starting' above is the OpenAI
+      // network call itself plus the (synchronous, cheap) parseJsonLoose()
+      // call -- effectively isolating OpenAI's own latency for this request.
+      elapsedMs: Date.now() - startedAt,
+      providerMode,
+      candidateCountPassedToParser: candidates.length,
+      rawSignalsReturned: rawSignals.length,
+      rawSignalsByAccount: safeAccounts.map(a => ({
+        company: a.name,
+        rawSignals: rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase())).length
+      }))
+    });
+  }
+  const validAccountNames = new Set(safeAccounts.map(a => a.name.toLowerCase()));
+  const accountLookup = new Map(safeAccounts.map(a => [a.name.toLowerCase(), a.name]));
+  const fixedSignals = rawSignals.map(s => {
+    const name = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
+    const exact = accountLookup.get(name.toLowerCase());
+    if (exact) return { ...s, accountName: exact };
+    // Fuzzy map if the model adds parentheticals or suffixes.
+    const lower = name.toLowerCase();
+    const found = safeAccounts.find(a => lower.includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(lower));
+    return found ? { ...s, accountName: found.name } : s;
+  });
+
+  const madeSignalsRaw = fixedSignals.map(s => {
+    const rawSignalAccountName = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
+    const account = safeAccounts.find(a => a.name.toLowerCase() === rawSignalAccountName.toLowerCase()) || {};
+    // Global Business Trigger Intelligence sprint, founder correction round
+    // (silent signal-loss diagnostics): fixedSignals' own fuzzy substring
+    // correction above only fires when one name is a substring of the
+    // other -- a raw AI accountName that is neither (a paraphrase, an
+    // abbreviation the model invented) falls through both that pass AND
+    // this exact-match lookup, leaving `account` the empty-object fallback
+    // for the rest of this signal's pipeline. Logged here, at the exact
+    // point of failure, rather than only surfacing later as an unexplained
+    // gap between rawSignals and mappedSignals counts.
+    if (!account.name) {
+      console.warn('[Signal Intelligence] raw signal discarded: accountName did not resolve to any requested account', { rawAccountName: rawSignalAccountName, title: s.signalTitle || s.title || s.concrete_trigger || '' });
+      return null;
+    }
+    const accountMode = clean(account.intelligenceMode).toLowerCase();
+    const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
+    if (!mapped) {
+      console.warn('[Signal Intelligence] raw signal discarded by makeSignal()', { company: account.name, reason: s.__rejectionReason || 'unknown', title: s.signalTitle || s.title || s.concrete_trigger || '' });
+      return null;
+    }
+    const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
+    let normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
+    const validation = validateOpportunity(normalized);
+    const groundingReasons = [];
+    let grounding = null;
+    if (!accountCandidate) {
+      groundingReasons.push('source not matched to a discovered candidate');
+    } else {
+      // Identity-bootstrap sprint: pass an AUGMENTED COPY of the account
+      // into the existing, unmodified grounding machinery -- never weaken
+      // verifyCandidateCompanyGrounding() itself, just give it the same
+      // location input an uploaded account would have had. Uploaded
+      // location always wins (account.location is checked first);
+      // derived identity only fills a genuine gap. Non-circularity: the
+      // exact candidate the identity was derived FROM is excluded from
+      // ever being evaluated WITH that same derived location -- it
+      // already grounds independently on its own merits (name + domain),
+      // so this guard costs nothing real while keeping the ordering
+      // honest. account/safeAccounts themselves are never mutated.
+      const derivedIdentity = derivedIdentityByAccount.get(account.name);
+      const candidateIsIdentitySource = Boolean(derivedIdentity?.sourceUrl) && accountCandidate.url === derivedIdentity.sourceUrl;
+      const groundingAccount = (!account.location && derivedIdentity?.location && !candidateIsIdentitySource)
+        ? { ...account, location: derivedIdentity.location }
+        : account;
+      grounding = verifyCandidateCompanyGrounding(accountCandidate, groundingAccount);
+      // Trust correction (entity-disambiguation): 'rejected' is the only
+      // hard-discard outcome now -- 'unconfirmed' still fails validation's
+      // old boolean expectation (grounding.grounded) but is a real,
+      // recall-preserving result that must reach persistence, just flagged.
+      // See normalizeOpportunity() below for identityConfidence stamping.
+      if (grounding.identityConfidence === 'rejected') {
+        groundingReasons.push(`company identity not confirmed in source evidence (${grounding.reasons.join('; ') || 'no corroborating evidence'})`);
+      }
+    }
+    if (!validation.valid || groundingReasons.length) {
+      console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
+      return null;
+    }
+    // Trust correction: stamp the tri-state identity verdict onto the
+    // persisted opportunity so dashboard-side primary/Verified-Opportunity
+    // gating (accountOpportunityCluster()/renderVerifiedOpportunitySection())
+    // can enforce confirmed > unconfirmed as a trust gate BEFORE any ranking
+    // runs -- never inferred at render time from unrelated fields. (A
+    // missing accountCandidate already hard-rejects above via
+    // groundingReasons, so `grounding` is always set by the time this line
+    // runs; the fallback exists only so this can never silently default to
+    // a truthy/confirmed value if that invariant ever changes.)
+    normalized = { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
+    return normalized;
+  });
+  const mappedSignals = madeSignalsRaw.filter(Boolean);
+  const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
+  // Global Business Trigger Intelligence sprint, founder correction round
+  // (silent signal-loss diagnostics): defense-in-depth logging -- the
+  // account-resolution check added above (madeSignalsRaw's map()) should
+  // make this filter a no-op in practice, but it is the last point a
+  // mapped signal could still be silently dropped before persistence, so
+  // it gets the same treatment rather than staying a bare count.
+  if (validMappedSignals.length !== mappedSignals.length) {
+    const droppedForInvalidAccountName = mappedSignals.filter(s => !validAccountNames.has(String(s.accountName || '').toLowerCase()));
+    console.warn('[Signal Intelligence] mapped signal(s) discarded: accountName not among requested accounts at final filter', droppedForInvalidAccountName.map(s => ({ accountName: s.accountName, title: s.signalTitle || '' })));
+  }
+  // Temporal-integrity round: dedupeSignals()/dedupeOpportunities() above
+  // are cheap first-pass collapses (same-account+type+topic-keywords, then
+  // a legacy per-title fingerprint) that reduce the candidate count, but
+  // neither considers canonical event type + location/date agreement --
+  // two write-ups of the SAME real event with slightly different phrasing
+  // could survive both and appear as two separate opportunities (confirmed
+  // production case: duplicate Avidia Bank Westborough branch write-ups,
+  // one becoming the primary opportunity and the other an Additional
+  // Opportunity). resolveOpportunityEvents() is the SAME canonical
+  // event-resolution engine api/weekly-scan.js and api/save-upload.js
+  // already run immediately before persistence (see its own header
+  // comment in signal-intelligence.js) -- running it here too, on the live
+  // response, is what makes live dashboard output and persisted/digest
+  // output use one shared identity system instead of two independently
+  // -derived ones. It operates on the same normalizeOpportunity()-shaped
+  // objects already produced above (headline/whatChanged/sourceUrl/
+  // canonicalEventType are already present), so no field adaptation is
+  // needed, and it never introduces fuzzy company matching -- grouping is
+  // still normalizeCompany()-exact, per account, unchanged.
+  const signals = resolveOpportunityEvents(dedupeOpportunities(dedupeSignals(validMappedSignals))).slice(0, 80);
+  // Phase 2A / Correction 1 instrumentation — records the pipeline stage
+  // counts requested for forensic classification of any future
+  // accepted-vs-persisted discrepancy: raw model signals (what the AI
+  // returned before any of this endpoint's own filtering), signals that
+  // survived makeSignal()'s per-signal validation, signals confirmed
+  // against a real requested account name, and the final accepted/deduped
+  // count returned to the caller. Correlated by researchRunId so a single
+  // logical research pass can be traced end-to-end alongside the
+  // save-upload.instrumentation line this endpoint's caller is expected to
+  // log against the same runId.
+  console.log('[research-batch.instrumentation]', JSON.stringify({
+    ts: new Date().toISOString(),
+    runId,
+    mode,
+    accountsRequested: safeAccounts.length,
+    rawModelSignals: rawSignals.length,
+    mappedSignals: mappedSignals.length,
+    validMappedSignals: validMappedSignals.length,
+    acceptedSignals: signals.length,
+    // Hashed by default -- an event_fingerprint embeds a normalized
+    // company name (see eventFingerprint()/resolveEvents() in
+    // signal-intelligence.js), so logging it verbatim would be logging a
+    // customer/account identifier. The hash is still stable and joinable
+    // against api/save-upload.js's own hashed instrumentation for the
+    // same run, without needing the raw value in normal logs.
+    acceptedEventFingerprintHashes: signals.map(s => s.eventFingerprint).filter(Boolean).map(shortHash),
+    ...(DEBUG_INSTRUMENTATION ? { acceptedEventFingerprints: signals.map(s => s.eventFingerprint).filter(Boolean) } : {})
+  }));
+  return { signals, rawSignals, mappedSignals, validMappedSignals };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const startedAt = Date.now();
@@ -3451,83 +3725,7 @@ export default async function handler(req, res) {
     let synthesisMode = 'candidate-backed';
     let fallbackSkippedReason = '';
     if (candidates.length) {
-      const synthesisPrompt = `You are House Accounts' Prospect Buying Moment Extraction Engine.
-
-Act like a senior account researcher doing prospect research for a sales rep. Your job is NOT to summarize companies. Your job is to extract buying moments that answer:
-
-"Why should I contact this company today?"
-
-Use ONLY the supplied account context, uploaded contacts, search snippets, URLs, and clean page content. Do not invent.
-
-A buying moment is a concrete event that creates a real, identifiable human moment for a specific audience (employees, customers, recruits, investors, partners, or another concrete group the evidence supports) -- not merely an event that could theoretically justify a merchandise conversation. Examples of the kinds of events worth surfacing:
-- facility expansion, new location, ribbon cutting, new distribution center, manufacturing expansion
-- trade show, exhibitor participation, booth, conference, summit, open house, customer event, dealer meeting, webinar
-- product launch, rebrand, merger, acquisition, partnership, contract win
-- hiring with HR, marketing, event, employee experience, field marketing, recruiting, or onboarding context
-- community event, sponsorship, corporate philanthropy
-- safety milestone, company anniversary, major award actively promoted by the company
-
-Return the strongest 0 to 4 distinct buying moments per account. Do not stop after the first strong signal when additional independently actionable opportunities are supported by different evidence or a meaningfully different event. Do not require perfect context. If a meaningful signal exists but the underlying driver is unclear, keep the signal, state the uncertainty clearly, and assign lower confidence.
-Prefer a low or medium live buying moment over a generic Predictable Timing fallback when there is a real recent source with a reasonable commercial-activation angle.
-Whether to RETURN a buying moment at all (governed by the criteria on this line and "Reject" below) and whether you have a credible commercial ACTIVATION for it (commercial_play/activation_ideas/expansion_potential, see below) are separate judgments -- a real, current, sourced, material event about the account (an acquisition, leadership change, facility opening, funding event, product launch, sponsorship, etc.) should still be returned even when you conclude no credible activation exists yet. In that case return the factual fields and leave commercial_play/activation_ideas/expansion_potential empty or omitted -- never drop the whole buying moment merely because you couldn't responsibly infer a program around it.
-
-Reject:
-- generic company descriptions, mission/history/culture copy
-- generic careers page existence unless evidence shows meaningful hiring or a recruiting push
-- old or irrelevant awards unless active/currently promoted or tied to a clear sales angle
-- vague community or sustainability copy unless tied to a concrete event, certification, deadline, award, partnership, facility, campaign, or active program
-- clearly negative/irrelevant signals: layoffs, downsizing, restructuring, bankruptcy, plant closures, investigations, recalls, scandals. Operational friction such as lawsuits, town disputes, power outages, or facility issues may only be accepted when the angle is respectful internal morale, retention, plant pride, or employee support
-
-Preserve concrete triggers. Do not generalize specific events. Examples:
-- Bad: "Expansion". Better: "New Facility Inauguration in Virginia".
-- Bad: "Community engagement". Better: "Hosting FTC Scrimmage at company headquarters".
-- Bad: "Hiring". Better: "Hiring Field Marketing Manager responsible for trade shows".
-
-For each accepted signal:
-1. concrete_trigger: specific event phrased as a short label.
-2. buying_moment: the category of buying moment.
-3. business_context: what happened and why it likely happened. Keep this factual -- what happened, when, according to what evidence. This is not the place for commercial interpretation; see below for that.
-4. ${COMMERCIAL_INTELLIGENCE_PROMPT_FRAGMENT}
-5. suggested_opener: the discovery question described above (this is the field name; the intent is a discovery question, not opener copy).
-6. recommended_buying_team: 1 to 3 departments inferred from the signal and context.
-7. potential_contacts: max 2 people only if supported by public evidence or uploaded contacts.
-8. ABD scores: actionability_score, budget_score, deadline_score.
-
-Recommended Buying Team examples:
-- Hiring expansion → HR / People, Talent Acquisition
-- Product launch → Marketing, Product Marketing
-- Community event → Marketing, Community Relations
-- Manufacturing expansion → Operations, HR / People
-- Trade show → Marketing, Events, Sales
-
-Potential Contacts rules:
-- Use uploaded knownContacts if they align with the recommended buying team.
-- Use public contacts only when the source supports the person and title.
-- If a user supplied a contact name, verify and prefer that person when supported.
-- Never invent names, titles, emails, phones, LinkedIn URLs, or contact pages.
-- Include public contact fields only when they appear in the supplied evidence.
-- Omit potential_contacts if no reliable person is found.
-
-Leadership and contact-change rules:
-- Accept executive appointments, promotions, known-contact role changes, and known-contact company changes only when the person, company, and new role are supported by a credible public source.
-- Preserve the person's name, exact new title, company, and announcement date when available.
-- Do not treat leadership changes as automatically high priority. They must compete with every other opportunity using the existing ABD / Why Now logic.
-- Penalize stale, weakly sourced, or role-only mentions, and reject undated directory listings that do not establish a recent change.
-
-Score concrete, high-intent buying moments higher:
-Highest value signals generally include facility expansion/new location, rebrand/merger, trade show exhibitor participation, major product launch, contract win/partnership, major award actively promoted, safety milestone, and company anniversary. A verified recent HR or Marketing executive change may also rank strongly when it creates a clear, timely promotional-products conversation.
-Lower value: generic sustainability copy, generic hiring without context, old awards, vague community posts, minor funding/grants, generic blog content, or stale leadership listings.
-
-Return strict JSON only with shape:
-{"signals":[{"company_name":"","accountName":"","signal_type":"Hiring|Expansion|Trade Show / Event|Award / Recognition|Leadership Change|Product Launch|Acquisition / Funding|Partnership / Contract|Community / CSR|Rebrand","signalType":"","concrete_trigger":"","buying_moment":"","signalTitle":"","whatChanged":"","event_date":"","location":"","source_url":"","source_name":"","business_context":"","businessContext":"","commercial_play":{"concept":"(optional)","narrative":""},"commercialPlay":{"concept":"(optional)","narrative":""},"activation_ideas":[""],"activationIdeas":[""],"expansion_potential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"expansionPotential":{"narrative":"","tags":["(0-3 from the fixed list)"]},"recommended_buying_team":[""],"recommendedBuyingTeam":[""],"potential_contacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","direct_phone":"","company_phone":"","contact_page":"","confidence":"High|Medium|Low","sources_used":[{"name":"","url":""}]}],"potentialContacts":[{"name":"","title":"","reason":"","sourceUrl":"","linkedin":"","email":"","directPhone":"","companyPhone":"","contactPage":"","confidence":"High|Medium|Low","sourcesUsed":[{"name":"","url":""}]}],"why_these_contacts":"","whyTheseContacts":"","promo_categories":[""],"likelyProducts":[""],"suggested_opener":"","suggestedOpener":"","actionability_score":0,"budget_score":0,"deadline_score":0,"why_now_score":0,"confidence":0,"sourceName":"","sourceUrl":"","sources":[{"name":"","url":""}],"publicationDate":""}]}
-
-commercial_play, activation_ideas, and expansion_potential are all optional -- omit any of them entirely (or use null) for a signal where the evidence does not support a credible commercial interpretation, rather than filling them with generic content.
-
-Accounts:
-${JSON.stringify(accountPromptContext(safeAccounts), null, 2)}
-
-Candidate snippets and clean page content:
-${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, title:c.title, snippet:c.snippet, pageContent:c.pageContent || '', url:c.url, sourceType:c.sourceType, provider:c.provider, date:c.date, query:c.query, signalFamily:c.signalFamily, signalSubtype:c.signalSubtype, sources:c.sources})), null, 2)}`;
+      const synthesisPrompt = buildSynthesisPrompt(safeAccounts, candidates);
       // Prompt-size fix (scale/research-runtime-benchmark): removed
       // score/intendedSignalFamily/entityVerification/sourceAuthorityScore/
       // freshnessScore/candidateScore/eventFingerprint from what is SENT to
@@ -3617,167 +3815,9 @@ ${JSON.stringify(candidates.slice(0, 180).map(c => ({accountName:c.accountName, 
       }
     }
 
-    const rawSignals = Array.isArray(parsed?.signals) ? parsed.signals : [];
-    if (mode === 'prospect-intelligence' || mode === 'warm-account') {
-      prospectDebugLog('LLM opportunity parser complete', {
-        // Benchmark diagnostic (scale/research-runtime-benchmark): the gap
-        // between this and 'OpenAI synthesis starting' above is the OpenAI
-        // network call itself plus the (synchronous, cheap) parseJsonLoose()
-        // call -- effectively isolating OpenAI's own latency for this request.
-        elapsedMs: Date.now() - startedAt,
-        providerMode,
-        candidateCountPassedToParser: candidates.length,
-        rawSignalsReturned: rawSignals.length,
-        rawSignalsByAccount: safeAccounts.map(a => ({
-          company: a.name,
-          rawSignals: rawSignals.filter(s => clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '').toLowerCase())).length
-        }))
-      });
-    }
-    const validAccountNames = new Set(safeAccounts.map(a => a.name.toLowerCase()));
-    const accountLookup = new Map(safeAccounts.map(a => [a.name.toLowerCase(), a.name]));
-    const fixedSignals = rawSignals.map(s => {
-      const name = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
-      const exact = accountLookup.get(name.toLowerCase());
-      if (exact) return { ...s, accountName: exact };
-      // Fuzzy map if the model adds parentheticals or suffixes.
-      const lower = name.toLowerCase();
-      const found = safeAccounts.find(a => lower.includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(lower));
-      return found ? { ...s, accountName: found.name } : s;
+    const { signals, rawSignals, mappedSignals, validMappedSignals } = mapSignalsFromModelOutput({
+      parsed, mode, startedAt, providerMode, candidates, safeAccounts, derivedIdentityByAccount, runId
     });
-
-    const madeSignalsRaw = fixedSignals.map(s => {
-      const rawSignalAccountName = clean(s.accountName || s.account || s.company || s.company_name || s.companyName || '');
-      const account = safeAccounts.find(a => a.name.toLowerCase() === rawSignalAccountName.toLowerCase()) || {};
-      // Global Business Trigger Intelligence sprint, founder correction round
-      // (silent signal-loss diagnostics): fixedSignals' own fuzzy substring
-      // correction above only fires when one name is a substring of the
-      // other -- a raw AI accountName that is neither (a paraphrase, an
-      // abbreviation the model invented) falls through both that pass AND
-      // this exact-match lookup, leaving `account` the empty-object fallback
-      // for the rest of this signal's pipeline. Logged here, at the exact
-      // point of failure, rather than only surfacing later as an unexplained
-      // gap between rawSignals and mappedSignals counts.
-      if (!account.name) {
-        console.warn('[Signal Intelligence] raw signal discarded: accountName did not resolve to any requested account', { rawAccountName: rawSignalAccountName, title: s.signalTitle || s.title || s.concrete_trigger || '' });
-        return null;
-      }
-      const accountMode = clean(account.intelligenceMode).toLowerCase();
-      const mapped = makeSignal(s, account, { enableProspectQuality: mode === 'prospect-intelligence' || mode === 'warm-account' || accountMode === 'warm' || accountMode === 'mixed' });
-      if (!mapped) {
-        console.warn('[Signal Intelligence] raw signal discarded by makeSignal()', { company: account.name, reason: s.__rejectionReason || 'unknown', title: s.signalTitle || s.title || s.concrete_trigger || '' });
-        return null;
-      }
-      const accountCandidate = requireResolvedCandidate(candidates, mapped, account);
-      let normalized = normalizeOpportunity(mapped, account, accountCandidate || {});
-      const validation = validateOpportunity(normalized);
-      const groundingReasons = [];
-      let grounding = null;
-      if (!accountCandidate) {
-        groundingReasons.push('source not matched to a discovered candidate');
-      } else {
-        // Identity-bootstrap sprint: pass an AUGMENTED COPY of the account
-        // into the existing, unmodified grounding machinery -- never weaken
-        // verifyCandidateCompanyGrounding() itself, just give it the same
-        // location input an uploaded account would have had. Uploaded
-        // location always wins (account.location is checked first);
-        // derived identity only fills a genuine gap. Non-circularity: the
-        // exact candidate the identity was derived FROM is excluded from
-        // ever being evaluated WITH that same derived location -- it
-        // already grounds independently on its own merits (name + domain),
-        // so this guard costs nothing real while keeping the ordering
-        // honest. account/safeAccounts themselves are never mutated.
-        const derivedIdentity = derivedIdentityByAccount.get(account.name);
-        const candidateIsIdentitySource = Boolean(derivedIdentity?.sourceUrl) && accountCandidate.url === derivedIdentity.sourceUrl;
-        const groundingAccount = (!account.location && derivedIdentity?.location && !candidateIsIdentitySource)
-          ? { ...account, location: derivedIdentity.location }
-          : account;
-        grounding = verifyCandidateCompanyGrounding(accountCandidate, groundingAccount);
-        // Trust correction (entity-disambiguation): 'rejected' is the only
-        // hard-discard outcome now -- 'unconfirmed' still fails validation's
-        // old boolean expectation (grounding.grounded) but is a real,
-        // recall-preserving result that must reach persistence, just flagged.
-        // See normalizeOpportunity() below for identityConfidence stamping.
-        if (grounding.identityConfidence === 'rejected') {
-          groundingReasons.push(`company identity not confirmed in source evidence (${grounding.reasons.join('; ') || 'no corroborating evidence'})`);
-        }
-      }
-      if (!validation.valid || groundingReasons.length) {
-        console.warn('[Signal Intelligence] opportunity rejected', { company: account.name, reasons: [...validation.reasons, ...groundingReasons], title: normalized.signalTitle });
-        return null;
-      }
-      // Trust correction: stamp the tri-state identity verdict onto the
-      // persisted opportunity so dashboard-side primary/Verified-Opportunity
-      // gating (accountOpportunityCluster()/renderVerifiedOpportunitySection())
-      // can enforce confirmed > unconfirmed as a trust gate BEFORE any ranking
-      // runs -- never inferred at render time from unrelated fields. (A
-      // missing accountCandidate already hard-rejects above via
-      // groundingReasons, so `grounding` is always set by the time this line
-      // runs; the fallback exists only so this can never silently default to
-      // a truthy/confirmed value if that invariant ever changes.)
-      normalized = { ...normalized, identityConfidence: grounding ? grounding.identityConfidence : 'unconfirmed' };
-      return normalized;
-    });
-    const mappedSignals = madeSignalsRaw.filter(Boolean);
-    const validMappedSignals = mappedSignals.filter(s => validAccountNames.has(String(s.accountName || '').toLowerCase()));
-    // Global Business Trigger Intelligence sprint, founder correction round
-    // (silent signal-loss diagnostics): defense-in-depth logging -- the
-    // account-resolution check added above (madeSignalsRaw's map()) should
-    // make this filter a no-op in practice, but it is the last point a
-    // mapped signal could still be silently dropped before persistence, so
-    // it gets the same treatment rather than staying a bare count.
-    if (validMappedSignals.length !== mappedSignals.length) {
-      const droppedForInvalidAccountName = mappedSignals.filter(s => !validAccountNames.has(String(s.accountName || '').toLowerCase()));
-      console.warn('[Signal Intelligence] mapped signal(s) discarded: accountName not among requested accounts at final filter', droppedForInvalidAccountName.map(s => ({ accountName: s.accountName, title: s.signalTitle || '' })));
-    }
-    // Temporal-integrity round: dedupeSignals()/dedupeOpportunities() above
-    // are cheap first-pass collapses (same-account+type+topic-keywords, then
-    // a legacy per-title fingerprint) that reduce the candidate count, but
-    // neither considers canonical event type + location/date agreement --
-    // two write-ups of the SAME real event with slightly different phrasing
-    // could survive both and appear as two separate opportunities (confirmed
-    // production case: duplicate Avidia Bank Westborough branch write-ups,
-    // one becoming the primary opportunity and the other an Additional
-    // Opportunity). resolveOpportunityEvents() is the SAME canonical
-    // event-resolution engine api/weekly-scan.js and api/save-upload.js
-    // already run immediately before persistence (see its own header
-    // comment in signal-intelligence.js) -- running it here too, on the live
-    // response, is what makes live dashboard output and persisted/digest
-    // output use one shared identity system instead of two independently
-    // -derived ones. It operates on the same normalizeOpportunity()-shaped
-    // objects already produced above (headline/whatChanged/sourceUrl/
-    // canonicalEventType are already present), so no field adaptation is
-    // needed, and it never introduces fuzzy company matching -- grouping is
-    // still normalizeCompany()-exact, per account, unchanged.
-    const signals = resolveOpportunityEvents(dedupeOpportunities(dedupeSignals(validMappedSignals))).slice(0, 80);
-    // Phase 2A / Correction 1 instrumentation — records the pipeline stage
-    // counts requested for forensic classification of any future
-    // accepted-vs-persisted discrepancy: raw model signals (what the AI
-    // returned before any of this endpoint's own filtering), signals that
-    // survived makeSignal()'s per-signal validation, signals confirmed
-    // against a real requested account name, and the final accepted/deduped
-    // count returned to the caller. Correlated by researchRunId so a single
-    // logical research pass can be traced end-to-end alongside the
-    // save-upload.instrumentation line this endpoint's caller is expected to
-    // log against the same runId.
-    console.log('[research-batch.instrumentation]', JSON.stringify({
-      ts: new Date().toISOString(),
-      runId,
-      mode,
-      accountsRequested: safeAccounts.length,
-      rawModelSignals: rawSignals.length,
-      mappedSignals: mappedSignals.length,
-      validMappedSignals: validMappedSignals.length,
-      acceptedSignals: signals.length,
-      // Hashed by default -- an event_fingerprint embeds a normalized
-      // company name (see eventFingerprint()/resolveEvents() in
-      // signal-intelligence.js), so logging it verbatim would be logging a
-      // customer/account identifier. The hash is still stable and joinable
-      // against api/save-upload.js's own hashed instrumentation for the
-      // same run, without needing the raw value in normal logs.
-      acceptedEventFingerprintHashes: signals.map(s => s.eventFingerprint).filter(Boolean).map(shortHash),
-      ...(DEBUG_INSTRUMENTATION ? { acceptedEventFingerprints: signals.map(s => s.eventFingerprint).filter(Boolean) } : {})
-    }));
     if (mode === 'prospect-intelligence' || mode === 'warm-account') {
       prospectDebugLog('Signal filtering complete', {
         rawSignals: rawSignals.length,
@@ -3986,5 +4026,9 @@ export {
   // See api/lib/research-pipeline.js for the one piece that needed actual
   // new logic (runBudgetedSynthesis), not just an export.
   discoverCandidatesForAccounts, callOpenAIJson, mapLimit,
-  REQUEST_DEADLINE_MS, MIN_USEFUL_OPENAI_MS, OPENAI_CALL_MAX_MS
+  REQUEST_DEADLINE_MS, MIN_USEFUL_OPENAI_MS, OPENAI_CALL_MAX_MS,
+  // Phase 2A worker-readiness: the extracted parse/map/validate/grounding/
+  // event-resolution tail, and the prompt-builder it depends on -- see
+  // their own header comments above.
+  mapSignalsFromModelOutput, buildSynthesisPrompt, parseJsonLoose
 };
