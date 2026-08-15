@@ -223,6 +223,39 @@ function makeDeps(overrides = {}) {
 }
 
 {
+  // Observability naming correction (founder QA, live Test A
+  // reconciliation): the '[monitoring-queue.completed]' log line's lease/
+  // ownership token (claim_ha_monitoring_target()'s attempt id, migration
+  // 16) must be logged as `leaseAttemptId`, not `attemptId` -- the latter
+  // reads as if it correlates to ha_monitoring_attempts.id (the durable
+  // row's own, independently-generated primary key), which it never has
+  // and structurally cannot without a separate RPC change. This pins the
+  // log SHAPE; completeAttempt()'s own `attemptId` parameter (the RPC-
+  // facing compare-and-swap token) is deliberately untouched -- see the
+  // 'Successful claim -> full flow' assertion above, which still checks
+  // `calls[4][2] === 'attempt-42'` against that parameter.
+  const originalLog = console.log;
+  const logLines = [];
+  console.log = (...args) => { logLines.push(args); };
+  let decision;
+  try {
+    const deps = makeDeps({
+      claimTarget: async () => ({ ok: true, outcome: 'claimed', attemptId: 'lease-token-99' }),
+      runPipeline: async () => ({ coverage: 'complete', signals: [], providerUsage: { elapsedMs: 5 }, error: null })
+    });
+    decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  } finally {
+    console.log = originalLog;
+  }
+  const completedLine = logLines.find(l => l[0] === '[monitoring-queue.completed]');
+  assert(!!completedLine, 'the [monitoring-queue.completed] log line is emitted');
+  const payload = completedLine ? JSON.parse(completedLine[1]) : {};
+  assert(payload.leaseAttemptId === 'lease-token-99', `REQUIRED: the completion log names the lease/ownership token 'leaseAttemptId', carrying the same value claimTarget() returned (got ${JSON.stringify(payload.leaseAttemptId)})`);
+  assert(!('attemptId' in payload), 'REQUIRED: the completion log no longer uses the misleading "attemptId" key, which read as if it correlated to ha_monitoring_attempts.id');
+  assert(decision.action === 'ack', 'sanity: the underlying decision is unaffected by the log-shape correction');
+}
+
+{
   // REQUIRED (Phase 2C): 0 accepted signals -> persistSignals still runs
   // (with an empty array), succeeds trivially, coverage is unchanged, and
   // the attempt still completes/advances cadence normally -- a legitimate

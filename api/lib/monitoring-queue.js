@@ -353,8 +353,18 @@ export async function processMonitoringJob(message, metadata, deps) {
   // observability direction) -- full signal content (title, evidence,
   // source URL) is never logged here; the durable ha_signals row itself is
   // the auditable source for that.
+  //
+  // Naming correction (founder QA, live Test A reconciliation): this is
+  // claim_ha_monitoring_target()'s lease/ownership token (migration 16),
+  // used only for complete_ha_monitoring_attempt()'s compare-and-swap check
+  // -- it is never written to, and has no relationship to,
+  // ha_monitoring_attempts.id (that row's own primary key, minted
+  // independently by its own gen_random_uuid() default). Logging it as
+  // plain "attemptId" reads as if it correlates to the durable attempt row,
+  // which it does not and structurally cannot without a separate change to
+  // return that row's id from the RPC. Named for what it actually is.
   console.log('[monitoring-queue.completed]', JSON.stringify({
-    targetId, attemptId: claim.attemptId, deliveryCount, coverage,
+    targetId, leaseAttemptId: claim.attemptId, deliveryCount, coverage,
     signalCount: (result.signals || []).length, persistedSignalCount, elapsedMs: result.elapsedMs,
     estimatedCostUsd: result.providerUsage?.estimatedCostUsd, queueAction: decision.action, queueActionReason: decision.reason
   }));
