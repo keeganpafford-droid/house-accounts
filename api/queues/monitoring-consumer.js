@@ -1,26 +1,33 @@
 // Phase 2B: the Vercel Queue consumer route for monitoring jobs. Thin by
 // design -- all Queue-specific wiring (handleNodeCallback,
-// visibilityTimeoutSeconds) lives only here; all decision logic lives in
-// api/lib/monitoring-queue.js's processMonitoringJob()/decideQueueOutcome(),
-// which this file supplies real Supabase/pipeline implementations to.
+// visibilityTimeoutSeconds, the retry handler) lives only here; all
+// decision logic lives in api/lib/monitoring-queue.js's
+// processMonitoringJob()/decideQueueOutcome(), which this file supplies
+// real Supabase/pipeline implementations to.
 //
-// NOT executed against a real Vercel Queue from this session (no
-// deployment access, no live provider credentials here) -- written against
-// the currently documented @vercel/queue API surface. Verify
-// handleNodeCallback's exact signature against your installed package
-// version before the first real deploy; see the Phase 2B report.
+// Verified against @vercel/queue 0.4.0's actual installed type
+// definitions: handleNodeCallback is an arrow-function property of a
+// QueueClient instance (`const queue = new QueueClient(); const {
+// handleNodeCallback } = queue;`), not a bare module export. Its options
+// are `{ visibilityTimeoutSeconds?: number, retry?: RetryHandler }`, where
+// `visibilityTimeoutSeconds` defaults to 300 and maxes at 3600 (push mode
+// uses the SAME bounds as polling mode, confirmed from the SDK's own
+// JSDoc) and `retry: (error, metadata) => { afterSeconds } | {
+// acknowledge } | undefined` is called whenever the handler throws.
+// Still not executed against a real deployed Queue from this sandbox (no
+// Vercel deployment access here) -- the first live smoke test is the
+// actual proof.
 //
-// Route registration: Vercel Queues wires a consumer to a topic via this
-// file's location/export per @vercel/queue's documented convention for a
-// Node-style (req/res) Vercel Function -- confirm the exact required path/
-// export shape against your installed package version and vercel.json
-// queue configuration before deploying; this repo has no prior Queue
-// consumer to copy the convention from.
+// Route registration: per @vercel/queue's queue/v2beta convention, this
+// route is wired to its topic via a `functions["api/queues/monitoring-
+// consumer.js"].experimentalTriggers` entry in vercel.json, not via file
+// location/naming alone -- see vercel.json and the smoke-test runbook.
 import { runResearchPipeline } from '../lib/research-pipeline.js';
 import { projectAccountContext, normalizeCompanyName } from '../lib/monitoring-targets.js';
 import {
   processMonitoringJob,
-  QUEUE_VISIBILITY_TIMEOUT_SECONDS
+  QUEUE_VISIBILITY_TIMEOUT_SECONDS,
+  MonitoringRetryError
 } from '../lib/monitoring-queue.js';
 
 function env() {
@@ -117,20 +124,39 @@ async function consumeMonitoringMessage(message, metadata) {
 export { consumeMonitoringMessage, QUEUE_VISIBILITY_TIMEOUT_SECONDS };
 
 // @vercel/queue route wiring -- resolves the ack/retry decision into the
-// throw-to-retry / return-to-ack contract handleNodeCallback expects.
+// resolve-to-ack / throw-to-retry contract handleNodeCallback actually
+// expects (there is no "return a decision object" surface on the SDK
+// side): a normal resolve tells Queue this delivery is permanently done;
+// throwing a MonitoringRetryError triggers the `retry` option below, which
+// reads the specific delay (e.g. the deliberately short
+// ALREADY_LEASED_RETRY_DELAY_SECONDS for an active-lease duplicate) back
+// off the error and returns it as `{ afterSeconds }`. Any OTHER thrown
+// error (a genuine unexpected crash, not a modeled decision) falls through
+// to `retry` returning undefined, which lets Queue apply its own
+// vercel.json-configured default redelivery behavior.
+//
 // Deferred (dynamic import) so this module stays importable/testable
 // (scripts/test-monitoring-queue-adapter.js imports consumeMonitoringMessage
 // directly) even in an environment where @vercel/queue is not installed.
 let handlerPromise;
 async function loadHandler() {
   if (!handlerPromise) {
-    handlerPromise = import('@vercel/queue').then(({ handleNodeCallback }) =>
-      handleNodeCallback(async (message, metadata) => {
+    handlerPromise = import('@vercel/queue').then(({ QueueClient }) => {
+      const queue = new QueueClient();
+      return queue.handleNodeCallback(async (message, metadata) => {
         const decision = await consumeMonitoringMessage(message, metadata);
-        if (decision.action === 'retry') throw new Error(`monitoring job retry requested: ${decision.reason}`);
-        return decision;
-      }, { visibilityTimeoutSeconds: QUEUE_VISIBILITY_TIMEOUT_SECONDS })
-    );
+        if (decision.action === 'retry') throw new MonitoringRetryError(decision.reason, decision.retryAfterSeconds);
+        // action === 'ack': resolve normally, Queue never redelivers this message.
+      }, {
+        visibilityTimeoutSeconds: QUEUE_VISIBILITY_TIMEOUT_SECONDS,
+        retry: (error, metadata) => {
+          if (error instanceof MonitoringRetryError && typeof error.retryAfterSeconds === 'number') {
+            return { afterSeconds: error.retryAfterSeconds };
+          }
+          return undefined;
+        }
+      });
+    });
   }
   return handlerPromise;
 }

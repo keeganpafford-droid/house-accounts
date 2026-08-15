@@ -1,19 +1,21 @@
 // Phase 2B: the thin Vercel Queue adapter. Every Vercel-Queue-specific call
-// (the @vercel/queue SDK's send()) is isolated to this one file's
-// enqueueMonitoringJob() -- domain/research code never imports @vercel/queue
-// directly. This is cheap insurance, not abstraction for its own sake: a
-// future Vercel Queue API change, or a later move to Workflow for a
-// different job shape, touches this one file's boundary rather than the
-// scheduler, the consumer route, or the research pipeline.
+// (the @vercel/queue SDK's QueueClient) is isolated to this one file's
+// getQueueClient()/enqueueMonitoringJob() -- domain/research code never
+// imports @vercel/queue directly. This is cheap insurance, not abstraction
+// for its own sake: a future Vercel Queue API change, or a later move to
+// Workflow for a different job shape, touches this one file's boundary
+// rather than the scheduler, the consumer route, or the research pipeline.
 //
-// IMPORTANT, stated plainly: this file is written against the current
-// documented @vercel/queue API surface (see the Phase 2B report for the
-// exact doc citations) but has NOT been executed against a real Vercel
-// Queue from this session -- this sandboxed environment has no Vercel
-// deployment access and no live provider credentials. Verify send()'s exact
-// signature against your installed @vercel/queue version before the first
-// real deploy; this is the one piece of this file that cannot be proven
-// correct by a deterministic test alone.
+// Verified against the actually installed package: @vercel/queue 0.4.0,
+// exact-pinned in package.json (Queues remain public beta -- no caret
+// range). This file's use of `new QueueClient()`, the destructured
+// `send`/`handleNodeCallback` arrow-function properties, `idempotencyKey`,
+// `retentionSeconds`, and the `MessageMetadata`/`RetryHandler`/
+// `RetryDirective` shapes below were all read directly from
+// node_modules/@vercel/queue/dist/index.d.mts, not assumed from docs --
+// this still has not been executed against a real deployed Queue from this
+// sandbox (no Vercel deployment access here), so the first live smoke test
+// remains the actual proof.
 //
 // ============================================================================
 // Coherent failure-model timings (Phase 2B item B).
@@ -90,6 +92,20 @@ export const MESSAGE_RETENTION_SECONDS = 60 * 60;
 // looking anything like "stuck forever."
 export const POISON_DELIVERY_THRESHOLD = 5;
 
+// Item 3: how long a duplicate delivery that lands on an ACTIVELY-LEASED
+// target waits before Queue tries again. Deliberately short relative to
+// DB_LEASE_SECONDS (300s) -- this is not an attempt to "wait out" the
+// original worker, just a modest, non-hot-looping check-back interval.
+// Whichever outcome has actually happened by the time the redelivery
+// lands -- original succeeded (target now not-due -> ack) or original
+// crashed (DB lease expired -> reclaimed) -- is decided fresh by a real
+// claim_ha_monitoring_target call at that later delivery, not by this
+// timer; the timer only bounds how soon that fresh check happens. Matches
+// the SDK's own vercel.json `retryAfterSeconds` default (60s, confirmed
+// via Vercel's queue/v2beta trigger docs) so an already-leased retry and a
+// generic unhandled-error retry behave on the same cadence.
+export const ALREADY_LEASED_RETRY_DELAY_SECONDS = 60;
+
 // Fixed weekly cadence, matching the locked architecture direction
 // (dynamic cadence is explicitly deferred). Not read from anywhere else --
 // this is the one place it is defined for the Queue-connected path.
@@ -124,17 +140,26 @@ export function isQueueManagedOrganization(organizationId, allowlistEnvValue) {
 // fully unit-testable without any real Queue or database call. "ack"
 // (resolve normally from the consumer route) tells Queue this delivery is
 // permanently done, never redeliver it. "retry" (throw from the consumer
-// route) tells Queue to redeliver later per its own backoff.
+// route, via MonitoringRetryError below) tells Queue's `retry` handler to
+// reschedule redelivery after retryAfterSeconds.
 // ============================================================================
 export function decideQueueOutcome({ claim, coverage, deliveryCount = 1 }) {
   if (claim && claim.ok === false) {
-    // already-leased: another worker owns this target's real completion
-    // right now, independent of this Queue delivery -- acking here never
-    // loses recoverable work, because next_due_at (not this message) is
-    // what actually tracks whether the target still needs research. If the
-    // OTHER worker also fails, next_due_at stays unchanged and a future
-    // scheduler run republishes fresh, under a Queue message this one's ack
-    // has no bearing on.
+    if (claim.reason === 'already-leased') {
+      // Item 3 (changed from the earlier ack-everything behavior): another
+      // worker actively owns this target's real completion RIGHT NOW.
+      // Acking here would tell Queue "permanently done" for a delivery
+      // this adapter deliberately did zero research work on -- wrong,
+      // because database ownership (the lease), not this Queue message,
+      // is what is actually authoritative. Retry instead, after a short
+      // delay, so a later delivery re-checks with a fresh
+      // claim_ha_monitoring_target call: if the original worker has since
+      // succeeded, that later claim returns not-due (ack, below); if it
+      // crashed, the lease has expired and the later claim reclaims and
+      // processes normally. No duplicate provider spend occurs either way,
+      // because this branch returns before any research call is made.
+      return { action: 'retry', reason: 'already-leased', retryAfterSeconds: ALREADY_LEASED_RETRY_DELAY_SECONDS };
+    }
     // not-due: expected (a race against a just-completed scan, or a stale
     // duplicate arriving after real completion) -- never retryable.
     // not-active: paused/removed -- never retryable; no amount of retrying
@@ -171,14 +196,30 @@ export function buildEnqueuePayload(target) {
   return { targetId: target.id, organizationId: target.organization_id };
 }
 
+// Lazily creates ONE QueueClient instance (per this file's own JSDoc-
+// recommended pattern: `const queue = new QueueClient(); export const
+// { send, handleCallback, handleNodeCallback } = queue;`) and reuses it for
+// every enqueueMonitoringJob() call, rather than constructing a fresh
+// client per publish. Deferred/dynamic import keeps every OTHER export in
+// this file importable/testable in an environment (like this sandbox)
+// where @vercel/queue is not installed. The constructor never throws (per
+// the SDK's own documented contract), so there is no failure mode here to
+// handle beyond the import itself.
+let queueClientPromise;
+async function getQueueClient() {
+  if (!queueClientPromise) {
+    queueClientPromise = import('@vercel/queue').then(({ QueueClient }) => new QueueClient());
+  }
+  return queueClientPromise;
+}
+
 // Publishes exactly one monitoring job for exactly one target. Written
-// against @vercel/queue's documented send(topic, payload, options)
-// surface -- see this file's header comment for the "not executed live"
-// caveat. The dynamic import keeps every OTHER export in this file
-// importable/testable in an environment (like this one) where
-// @vercel/queue is not installed.
+// against @vercel/queue@0.4.0's actual QueueClient.send(topicName, payload,
+// options) signature (idempotencyKey, retentionSeconds, delaySeconds,
+// headers) -- confirmed directly from the installed package's type
+// definitions, not assumed from docs.
 export async function enqueueMonitoringJob(target) {
-  const { send } = await import('@vercel/queue');
+  const { send } = await getQueueClient();
   const idempotencyKey = buildIdempotencyKey(target);
   const { messageId } = await send(
     MONITORING_QUEUE_TOPIC,
@@ -195,6 +236,24 @@ export async function enqueueMonitoringJob(target) {
   // "do not build a dashboard" instruction.
   console.log('[monitoring-queue.enqueued]', JSON.stringify({ targetId: target.id, organizationId: target.organization_id, messageId, idempotencyKey }));
   return { messageId, idempotencyKey };
+}
+
+// Thrown by the consumer route's handler when decideQueueOutcome() (via
+// processMonitoringJob) returns { action: 'retry' }. @vercel/queue's
+// handleCallback/handleNodeCallback contract is: the handler resolves
+// normally to ack, or throws to trigger the `retry` option (a RetryHandler:
+// `(error, metadata) => { afterSeconds: N } | { acknowledge: true } |
+// undefined`) -- there is no "return a decision object" surface, so this
+// error class is how a specific delay (e.g.
+// ALREADY_LEASED_RETRY_DELAY_SECONDS) crosses from processMonitoringJob's
+// decision into the retry handler that reads it back off the thrown error.
+export class MonitoringRetryError extends Error {
+  constructor(reason, retryAfterSeconds) {
+    super(`monitoring job retry requested: ${reason}`);
+    this.name = 'MonitoringRetryError';
+    this.reason = reason;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
 }
 
 // The consumer body. Deliberately dependency-injected (claimTarget/

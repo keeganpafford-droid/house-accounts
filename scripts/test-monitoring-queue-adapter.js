@@ -9,9 +9,10 @@
 // Usage: node scripts/test-monitoring-queue-adapter.js
 import {
   buildIdempotencyKey, buildEnqueuePayload, isQueueManagedOrganization,
-  decideQueueOutcome, processMonitoringJob,
+  decideQueueOutcome, processMonitoringJob, MonitoringRetryError,
   WORKER_MAX_DURATION_SECONDS, DB_LEASE_SECONDS, QUEUE_VISIBILITY_TIMEOUT_SECONDS,
-  MESSAGE_RETENTION_SECONDS, POISON_DELIVERY_THRESHOLD, CADENCE_DAYS
+  MESSAGE_RETENTION_SECONDS, POISON_DELIVERY_THRESHOLD, CADENCE_DAYS,
+  ALREADY_LEASED_RETRY_DELAY_SECONDS
 } from '../api/lib/monitoring-queue.js';
 
 let failures = 0;
@@ -31,6 +32,8 @@ async function assertRejects(promise, message) {
 // ---------------------------------------------------------------------------
 assert(WORKER_MAX_DURATION_SECONDS < DB_LEASE_SECONDS, `REQUIRED: worker maxDuration (${WORKER_MAX_DURATION_SECONDS}s) < DB lease (${DB_LEASE_SECONDS}s) -- a legitimately-finishing worker always clears its lease before the platform would kill it`);
 assert(DB_LEASE_SECONDS < QUEUE_VISIBILITY_TIMEOUT_SECONDS, `REQUIRED: DB lease (${DB_LEASE_SECONDS}s) < Queue visibility timeout (${QUEUE_VISIBILITY_TIMEOUT_SECONDS}s) -- a crashed worker's DB lease expires before Queue would ever redeliver, so a redelivered attempt correctly reclaims rather than bouncing off a stale already-leased state`);
+assert(QUEUE_VISIBILITY_TIMEOUT_SECONDS <= 3600, `REQUIRED: Queue visibility timeout (${QUEUE_VISIBILITY_TIMEOUT_SECONDS}s) is within the installed @vercel/queue SDK's documented handleNodeCallback bound (max 3600s)`);
+assert(ALREADY_LEASED_RETRY_DELAY_SECONDS > 0 && ALREADY_LEASED_RETRY_DELAY_SECONDS < DB_LEASE_SECONDS, `REQUIRED: the already-leased retry delay (${ALREADY_LEASED_RETRY_DELAY_SECONDS}s) is a short, deliberate check-back interval, not an attempt to wait out the full DB lease (${DB_LEASE_SECONDS}s)`);
 assert(MESSAGE_RETENTION_SECONDS < 24 * 60 * 60, `REQUIRED: message retention (${MESSAGE_RETENTION_SECONDS}s) is deliberately well under Queue's 24h maximum -- bounds how long a stuck target can go before a scheduler republish becomes fresh again`);
 assert(POISON_DELIVERY_THRESHOLD > 1 && POISON_DELIVERY_THRESHOLD < 32, `REQUIRED: the poison threshold (${POISON_DELIVERY_THRESHOLD}) is small and deliberate, not Queue's own ~32-attempt honored-delay ceiling`);
 assert(CADENCE_DAYS === 7, 'cadence is the locked weekly default');
@@ -67,8 +70,10 @@ assert(CADENCE_DAYS === 7, 'cadence is the locked weekly default');
 // decideQueueOutcome -- the full ack-vs-retry decision table.
 // ---------------------------------------------------------------------------
 {
-  assert(decideQueueOutcome({ claim: { ok: false, reason: 'already-leased' } }).action === 'ack', 'REQUIRED: duplicate delivery onto an actively-leased target is a safe ack, not a retry -- the active worker owns real completion independent of this delivery');
-  assert(decideQueueOutcome({ claim: { ok: false, reason: 'not-due' } }).action === 'ack', 'REQUIRED: a not-due target (already completed, or a scheduler race) is a safe ack');
+  const alreadyLeasedOutcome = decideQueueOutcome({ claim: { ok: false, reason: 'already-leased' } });
+  assert(alreadyLeasedOutcome.action === 'retry', 'REQUIRED (item 3): duplicate delivery onto an actively-leased target is now a RETRY, not an ack -- the active worker owns real completion right now, and Queue ownership of this delivery must not be surrendered while that is true');
+  assert(alreadyLeasedOutcome.retryAfterSeconds === ALREADY_LEASED_RETRY_DELAY_SECONDS, `REQUIRED: the already-leased retry carries the deliberate short delay (${ALREADY_LEASED_RETRY_DELAY_SECONDS}s), not an unbounded/hot-loop retry`);
+  assert(decideQueueOutcome({ claim: { ok: false, reason: 'not-due' } }).action === 'ack', 'REQUIRED: a not-due target (already completed, or a scheduler race) is STILL a safe immediate ack -- unchanged by item 3, which only touches already-leased');
   assert(decideQueueOutcome({ claim: { ok: false, reason: 'not-active' } }).action === 'ack', 'REQUIRED: a paused/removed target is a safe ack -- retrying can never make it active again');
   assert(decideQueueOutcome({ coverage: 'complete' }).action === 'ack', 'a successful complete coverage is acked');
   assert(decideQueueOutcome({ coverage: 'degraded_trustworthy' }).action === 'ack', 'a successful degraded_trustworthy coverage is acked');
@@ -115,15 +120,73 @@ function makeDeps(overrides = {}) {
 }
 
 {
-  // Duplicate while actively leased -- ack, and REQUIRED: zero provider calls.
+  // Duplicate while actively leased -- REQUIRED (item 3): retry with the
+  // deliberate short delay, zero provider calls -- never an immediate ack.
   let pipelineCalled = false;
   const deps = makeDeps({
     claimTarget: async () => ({ ok: false, reason: 'already-leased', lease_expires_at: '2026-01-01T00:00:00Z' }),
     runPipeline: async () => { pipelineCalled = true; return { coverage: 'complete', providerUsage: {} }; }
   });
   const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 2 }, deps);
-  assert(decision.action === 'ack' && decision.reason === 'already-leased', 'a duplicate delivery onto an actively-leased target is acked');
+  assert(decision.action === 'retry' && decision.reason === 'already-leased', `REQUIRED (item 3): a duplicate delivery onto an actively-leased target retries, it is never immediately acked (got ${JSON.stringify(decision)})`);
+  assert(decision.retryAfterSeconds === ALREADY_LEASED_RETRY_DELAY_SECONDS, 'the retry carries the deliberate short delay');
   assert(!pipelineCalled, 'REQUIRED: duplicate delivery triggers ZERO Serper/Firecrawl/OpenAI spend -- the DB claim gate runs strictly before any research call');
+}
+
+{
+  // REQUIRED progression (item 3), branch A: the ORIGINAL worker already
+  // succeeded by the time a later redelivery lands -- the target is now
+  // not-due, so this later delivery is a clean immediate ack, never a
+  // retry, and still zero provider spend.
+  let pipelineCalled = false;
+  const deps = makeDeps({
+    claimTarget: async () => ({ ok: false, reason: 'not-due' }),
+    runPipeline: async () => { pipelineCalled = true; return { coverage: 'complete', providerUsage: {} }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 3 }, deps);
+  assert(decision.action === 'ack' && decision.reason === 'not-due', `REQUIRED (item 3, branch A): a later redelivery after the original worker already succeeded is a clean ack, not a retry (got ${JSON.stringify(decision)})`);
+  assert(!pipelineCalled, 'no provider spend for a stale duplicate arriving after real completion');
+}
+
+{
+  // REQUIRED progression (item 3), branch B, end to end across two actual
+  // processMonitoringJob() calls sharing one stateful claimTarget mock: the
+  // first delivery finds the target actively leased (retry, zero spend);
+  // by the time a later redelivery lands, the ORIGINAL worker has crashed
+  // and its DB lease has expired, so the same claim call now succeeds
+  // (reclaimed) and normal processing runs to completion. Database
+  // ownership -- not the Queue message -- is what actually decides this at
+  // each delivery.
+  let claimCallCount = 0;
+  let pipelineCalled = false;
+  const deps = makeDeps({
+    claimTarget: async () => {
+      claimCallCount += 1;
+      if (claimCallCount === 1) return { ok: false, reason: 'already-leased', lease_expires_at: '2026-01-01T00:05:00Z' };
+      return { ok: true, outcome: 'claimed', attemptId: 'attempt-reclaimed' };
+    },
+    runPipeline: async () => { pipelineCalled = true; return { coverage: 'complete', providerUsage: {} }; }
+  });
+
+  const first = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 2 }, deps);
+  assert(first.action === 'retry' && first.reason === 'already-leased', 'first delivery onto the actively-leased target retries');
+  assert(!pipelineCalled, 'REQUIRED: zero provider spend on the actively-leased delivery');
+
+  const second = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 3 }, deps);
+  assert(second.action === 'ack' && second.reason === 'completed', `REQUIRED (item 3, branch B): the later redelivery, after the original worker's lease has expired and been reclaimed, completes normally and acks (got ${JSON.stringify(second)})`);
+  assert(pipelineCalled, 'the reclaimed delivery actually runs the real research pipeline -- database ownership, not the stale Queue delivery, decided this');
+}
+
+{
+  // MonitoringRetryError is the exact vehicle a retry decision travels
+  // through the real @vercel/queue handleNodeCallback `retry` option --
+  // confirm its shape directly, since the consumer route's retry handler
+  // (api/queues/monitoring-consumer.js) type-checks `instanceof
+  // MonitoringRetryError` to decide whether to return an explicit
+  // { afterSeconds } or let the error propagate to Queue's own default.
+  const err = new MonitoringRetryError('already-leased', ALREADY_LEASED_RETRY_DELAY_SECONDS);
+  assert(err instanceof Error, 'MonitoringRetryError is a real Error subclass');
+  assert(err.reason === 'already-leased' && err.retryAfterSeconds === ALREADY_LEASED_RETRY_DELAY_SECONDS, 'MonitoringRetryError carries the reason and the exact delay the retry handler needs to read back off it');
 }
 
 {
