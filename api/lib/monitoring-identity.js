@@ -31,6 +31,14 @@
 //     not reimplemented.
 import { sourceDomain, clean } from '../signal-intelligence.js';
 import { domainFromContactEmail } from '../research-batch.js';
+// Monitoring Identity V1, Path B wiring: the existing durable
+// (user_id, normalizeCompanyName(account_name)) identity convention
+// ha_monitoring_targets is already keyed by (see monitoring-targets.js's
+// own header comment) -- the ONE join key buildTargetIdentityIndex()/
+// lookupTargetIdentity() below reuse, so every read-time consumer
+// (dashboard, weekly digest) resolves a signal's target the same way,
+// not a second notion of "which target does this row belong to."
+import { identityKey, normalizeCompanyName } from './monitoring-targets.js';
 
 // Reuses sourceDomain()'s exact hostname/www/case normalization -- the
 // only addition is tolerating a bare domain (no scheme), which is how an
@@ -142,6 +150,42 @@ export function resolveTargetIdentity({ current = {}, uploadedWebsite = '', cont
   // Zero usable domains this round, or already unresolved with continuing
   // ambiguity/no evidence: nothing to change.
   return null;
+}
+
+// ============================================================================
+// Read-time target-identity lookup -- ONE bounded (user_id, normalized
+// account name) -> identity index, built once per request/invocation from
+// a single already-scoped ha_monitoring_targets query, never a per-signal
+// or per-account database call. Every read-time consumer
+// (api/get-dashboard.js, api/weekly-scan.js's digest) builds its index the
+// same way from its own already-fetched target rows and looks up through
+// lookupTargetIdentity() -- one shared implementation, not two.
+//
+// Fail-safe by construction: a miss (no matching target row, or the
+// caller never had one to fetch -- e.g. a signal whose account predates
+// Monitoring Identity V1 entirely) returns {}, so
+// targetIdentityDomainSource is undefined and
+// classifyMonitoringSignalEligibility() falls back to its existing
+// Path-A-only behavior. A missing/unresolvable target can never
+// accidentally promote a signal to priority.
+// ============================================================================
+export function buildTargetIdentityIndex(targetRows) {
+  const index = new Map();
+  for (const t of targetRows || []) {
+    const normalized = normalizeCompanyName(t?.display_account_name);
+    if (!normalized || !t?.user_id) continue;
+    index.set(identityKey(t.user_id, normalized), {
+      status: t.identity_status || 'unresolved',
+      domain: t.identity_domain || null,
+      source: t.identity_domain_source || null
+    });
+  }
+  return index;
+}
+
+export function lookupTargetIdentity(index, userId, accountName) {
+  if (!index || !userId) return {};
+  return index.get(identityKey(userId, normalizeCompanyName(accountName))) || {};
 }
 
 // ============================================================================

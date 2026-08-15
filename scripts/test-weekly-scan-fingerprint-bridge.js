@@ -98,6 +98,7 @@ async function run(){
           diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
         });
       }
+      if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
       throw new Error(`Unhandled fetch in weekly-scan bridge test mock: ${method} ${u}`);
     };
 
@@ -162,6 +163,7 @@ async function run(){
           diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
         });
       }
+      if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
       throw new Error(`Unhandled fetch in weekly-scan multi-match bridge test mock: ${method} ${u}`);
     };
 
@@ -214,6 +216,7 @@ async function run(){
           diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } }
         });
       }
+      if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
       throw new Error(`Unhandled fetch in weekly-scan new-event bridge test mock: ${method} ${u}`);
     };
 

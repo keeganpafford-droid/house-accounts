@@ -17,7 +17,7 @@ import { classifyLegacySignalActionability } from './research-batch.js';
 // consumer of identity-gated signal visibility (this file, the weekly
 // digest, and the live-research dashboard client) must call this same
 // function, not invent its own trust rule.
-import { classifyMonitoringSignalEligibility } from './lib/monitoring-identity.js';
+import { classifyMonitoringSignalEligibility, buildTargetIdentityIndex, lookupTargetIdentity } from './lib/monitoring-identity.js';
 // Follow-up temporal-integrity round (Preview QA): buildAccountsFromRows()
 // below assembles each account's futureOpportunities from TWO independent
 // sources -- the already-canonicalized snapshot stored on the account row
@@ -593,7 +593,7 @@ function stampAccountHistoryOpportunityRefs(storedOpps, refs){
   });
 }
 
-function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows){
+function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows, targetIdentityIndex){
   const byAccount = new Map();
   const opportunityRefsByAccountName = buildAccountHistoryOpportunityRefs(accountOpportunityRows);
   for(const a of accountRows || []){
@@ -715,7 +715,8 @@ function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows){
     // path (dashboard/index.html). A row with no identityConfidence at all
     // (legacy, predates the tri-state grounding model) is grandfathered as
     // eligible, unchanged from today.
-    if(classifyMonitoringSignalEligibility({ identityConfidence: signal.identityConfidence, reasons: signal.identityCorroboratorReasons }) === 'priority'){
+    const targetIdentity = lookupTargetIdentity(targetIdentityIndex, row.user_id, row.account_name);
+    if(classifyMonitoringSignalEligibility({ identityConfidence: signal.identityConfidence, reasons: signal.identityCorroboratorReasons, targetIdentityDomainSource: targetIdentity.source }) === 'priority'){
       acct.futureOpportunities.push(signalToOpportunity(row));
     }
   }
@@ -788,7 +789,11 @@ export default async function handler(req, res){
       // account_name), the same durable pair its own fingerprint uses, not
       // to whichever upload_id most recently reconciled it.
       const scopedAccountOpportunities = await supabase(`ha_account_opportunities?select=id,account_name,opportunity_type,category,fingerprint&status=eq.active&user_id=eq.${encodeURIComponent(scopedUpload.user_id)}&limit=5000`);
-      const {accountList: scopedAccountList, uniqueSignals: scopedUniqueSignals} = buildAccountsFromRows(scopedAccountRows, scopedSignalRows, scopedAccountOpportunities);
+      // Monitoring Identity V1, Path B wiring: ONE bounded query for this
+      // upload's owner's monitoring targets, never per-signal.
+      const scopedMonitoringTargets = await supabase(`ha_monitoring_targets?select=user_id,display_account_name,identity_status,identity_domain,identity_domain_source&user_id=eq.${encodeURIComponent(scopedUpload.user_id)}&limit=5000`);
+      const scopedTargetIdentityIndex = buildTargetIdentityIndex(scopedMonitoringTargets);
+      const {accountList: scopedAccountList, uniqueSignals: scopedUniqueSignals} = buildAccountsFromRows(scopedAccountRows, scopedSignalRows, scopedAccountOpportunities, scopedTargetIdentityIndex);
 
       return json(res, 200, {
         ok:true,
@@ -854,6 +859,11 @@ export default async function handler(req, res){
     // (usersFilter covers both the team and upload-owner cases above).
     // Never derived from anything the client submits.
     const accountOpportunities = await supabase(`ha_account_opportunities?select=id,account_name,opportunity_type,category,fingerprint&status=eq.active&user_id=${usersFilter}&limit=5000`);
+    // Monitoring Identity V1, Path B wiring: ONE bounded query, scoped the
+    // same way accounts/signals/accountOpportunities already are, never
+    // per-signal or per-account.
+    const monitoringTargets = await supabase(`ha_monitoring_targets?select=user_id,display_account_name,identity_status,identity_domain,identity_domain_source&user_id=${usersFilter}&limit=5000`);
+    const targetIdentityIndex = buildTargetIdentityIndex(monitoringTargets);
 
     let teamCustomerCount = accounts.length;
     let teamProspectCount = 0;
@@ -898,7 +908,7 @@ export default async function handler(req, res){
       return json(res, 404, {error:'No existing customer dashboard data found yet.'});
     }
 
-    const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals, accountOpportunities);
+    const {accountList, uniqueSignals} = buildAccountsFromRows(accounts, signals, accountOpportunities, targetIdentityIndex);
 
     const sevenDaysAgo = Date.now() - 7*24*60*60*1000;
     // Reconciliation item 1 / QA round 2 item 1: "Newly Detected" is an
@@ -917,7 +927,8 @@ export default async function handler(req, res){
       // unconfirmed, or only weakly corroborated) must not inflate "Newly
       // Detected" either -- same principle as futureOpportunities'
       // exclusion above, applied to this separate discovery-recency badge.
-      if(classifyMonitoringSignalEligibility({ identityConfidence: (s.payload || {}).identityConfidence, reasons: (s.payload || {}).identityCorroboratorReasons }) !== 'priority') return false;
+      const newThisWeekTargetIdentity = lookupTargetIdentity(targetIdentityIndex, s.user_id, s.account_name);
+      if(classifyMonitoringSignalEligibility({ identityConfidence: (s.payload || {}).identityConfidence, reasons: (s.payload || {}).identityCorroboratorReasons, targetIdentityDomainSource: newThisWeekTargetIdentity.source }) !== 'priority') return false;
       const { actionabilityStatus } = classifyLegacySignalActionability(s.payload || {});
       return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);
@@ -950,5 +961,6 @@ export default async function handler(req, res){
 export {
   rowToSignal, signalToOpportunity, uniqueSignalRows, uniqueAccountRows,
   buildAccountsFromRows, canonicalizeAccountOpportunities, isWebResearchSignal,
-  buildAccountHistoryOpportunityRefs, stampAccountHistoryOpportunityRefs
+  buildAccountHistoryOpportunityRefs, stampAccountHistoryOpportunityRefs,
+  buildTargetIdentityIndex, lookupTargetIdentity
 };

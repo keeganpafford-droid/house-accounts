@@ -305,6 +305,7 @@ async function runHandlerScenario({ researchBehavior, weeklyRunsPatchBehavior, w
     if(u.includes('/api/research-batch')){
       return researchBehavior(JSON.parse(options.body));
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in test mock: ${method} ${u}`);
   };
 
@@ -639,6 +640,7 @@ function successfulResearch(){
       researchBatchCalls += 1;
       return jsonResponse({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:2, processedAccounts:2, failedAccounts:0}}});
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in concurrent-invocation test mock: ${method} ${u}`);
   };
 
@@ -725,6 +727,7 @@ function successfulResearch(){
     if(u.includes('/api/research-batch')){
       return jsonResponse({signals:[], diagnostics:{structuredSummary:{eligibleAccounts:2, processedAccounts:2, failedAccounts:0}}});
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in select-projection regression test mock: ${method} ${u}`);
   };
 
@@ -1038,6 +1041,7 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
       if (resendBehavior) return resendBehavior(body);
       return jsonResponse({ id: 'resend-id-1' });
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in digest test mock: ${method} ${u}`);
   };
 
@@ -1100,6 +1104,7 @@ function twoUploadSameUserMock({ resendBehavior } = {}){
     if (u.includes('/rest/v1/ha_signals') && method === 'POST') return jsonResponse([]); // zero new signals inserted
     if (u.includes('/api/research-batch')) return jsonResponse({ signals: [], diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } } });
     if (u === 'https://api.resend.com/emails') { emailCalls.push(JSON.parse(options.body)); return jsonResponse({ id: 'should-not-be-called' }); }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in zero-signal digest test mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
@@ -1240,6 +1245,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       if (resendBehavior) return resendBehavior(body);
       return jsonResponse({ id: 'resend-id-1' });
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in account-history digest test mock: ${method} ${u}`);
   };
 
@@ -1331,6 +1337,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       return jsonResponse({ signals: [], diagnostics: { structuredSummary: { eligibleAccounts: body.accounts.length, processedAccounts: body.accounts.length, failedAccounts: 0 } } });
     }
     if (u === 'https://api.resend.com/emails' && method === 'POST') { emailCallsZero.push(JSON.parse(options.body)); return jsonResponse({ id: 'resend-id-zero' }); }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in zero-eligible account-history mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
@@ -1398,6 +1405,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       });
     }
     if (u === 'https://api.resend.com/emails') { emailCalls.push(JSON.parse(options.body)); return jsonResponse({ id: 'should-not-be-called' }); }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in stale-signal digest test mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
@@ -1494,6 +1502,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
     }
     if (u.includes('/api/research-batch')) return jsonResponse({ signals: [sharedSignal()], diagnostics: { structuredSummary: { eligibleAccounts: 1, processedAccounts: 1, failedAccounts: 0 } } });
     if (u === 'https://api.resend.com/emails' && method === 'POST') { const body = JSON.parse(options.body); emailCalls.push(body); return jsonResponse({ id: 'resend-id-overlap' }); }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in overlapping-signal digest test mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
@@ -1561,6 +1570,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       });
     }
     if (u === 'https://api.resend.com/emails' && method === 'POST') { const body = JSON.parse(options.body); emailCalls.push(body); return jsonResponse({ id: `resend-id-${emailCalls.length}` }); }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in multi-user digest test mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };
@@ -1660,6 +1670,7 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
       });
     }
     if (u === 'https://api.resend.com/emails') return jsonResponse({ id: 'resend-id-refresh' });
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in re-research persistence refresh test mock: ${method} ${u}`);
   };
   const req = { method: 'GET', headers: { host: 'example.test', authorization: `Bearer ${TEST_CRON_SECRET}` }, query: { limit: '25' } };

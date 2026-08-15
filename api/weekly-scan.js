@@ -44,7 +44,7 @@ import { classifyLegacySignalActionability } from './research-batch.js';
 // signal whose identity is only possible/unconfirmed or weakly
 // corroborated, exactly the same bar the dashboard reload path now
 // enforces (api/get-dashboard.js).
-import { classifyMonitoringSignalEligibility } from './lib/monitoring-identity.js';
+import { classifyMonitoringSignalEligibility, buildTargetIdentityIndex, lookupTargetIdentity } from './lib/monitoring-identity.js';
 // Phase 2B founder Queue dark-run: see the call site below for why this
 // legacy sweep must exclude Queue-managed organizations.
 import { isQueueManagedOrganization } from './lib/monitoring-queue.js';
@@ -631,6 +631,21 @@ export default async function handler(req, res){
     // constraint.
     const perUserDigest = new Map();
 
+    // Monitoring Identity V1, Path B wiring: ONE bounded query for every
+    // distinct user this invocation's uploads belong to (never a
+    // per-upload or per-signal database call), built before the loop so
+    // every upload -- regardless of which user owns it -- reads from the
+    // same already-fetched index. A user with no monitoring targets yet
+    // (or one this query somehow misses) simply gets no entries in the
+    // map -- lookupTargetIdentity() then returns {}, which
+    // classifyMonitoringSignalEligibility() already treats as "no strong
+    // target anchor," falling back to the existing Path-A-only behavior.
+    const digestUserIds = Array.from(new Set((uploads || []).map(u => u.ha_users?.id).filter(Boolean)));
+    const monitoringTargetsForDigest = digestUserIds.length
+      ? await supabase(`ha_monitoring_targets?select=user_id,display_account_name,identity_status,identity_domain,identity_domain_source&user_id=in.(${digestUserIds.map(id => encodeURIComponent(id)).join(',')})&limit=5000`)
+      : [];
+    const targetIdentityIndex = buildTargetIdentityIndex(monitoringTargetsForDigest);
+
     for(const upload of uploads || []){
       const user = upload.ha_users;
       if(!user?.email) continue;
@@ -895,10 +910,11 @@ export default async function handler(req, res){
         // with no identityConfidence at all (legacy, predates the
         // tri-state grounding model) is grandfathered exactly as before --
         // see classifyMonitoringSignalEligibility()'s own comment.
-        const digestEligibleRows = newSignalRows.filter(row =>
-          classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible !== false
-          && classifyMonitoringSignalEligibility({ identityConfidence: row.payload?.identityConfidence, reasons: row.payload?.identityCorroboratorReasons }) === 'priority'
-        );
+        const digestEligibleRows = newSignalRows.filter(row => {
+          if(classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible === false) return false;
+          const rowTargetIdentity = lookupTargetIdentity(targetIdentityIndex, user.id, row.account_name);
+          return classifyMonitoringSignalEligibility({ identityConfidence: row.payload?.identityConfidence, reasons: row.payload?.identityCorroboratorReasons, targetIdentityDomainSource: rowTargetIdentity.source }) === 'priority';
+        });
         const allDigestRowsForUpload = [...digestEligibleRows, ...accountHistoryDigestRows];
         if(allDigestRowsForUpload.length){
           const bucket = perUserDigest.get(user.id) || { user, newSignalRows: [], accountsMonitored: 0 };

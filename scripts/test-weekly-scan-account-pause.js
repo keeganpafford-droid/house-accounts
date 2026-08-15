@@ -74,6 +74,7 @@ async function runScenario(accounts){
       researchBatchCallAccounts = body.accounts || [];
       return jsonResponse({ signals: [], byAccount: {} });
     }
+    if(u.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
     throw new Error(`Unhandled fetch in test mock: ${method} ${u}`);
   };
 

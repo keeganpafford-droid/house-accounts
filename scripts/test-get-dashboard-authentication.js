@@ -259,6 +259,11 @@ function createFetchMock(){
     // this file isn't exercising V1B itself, just needs it to not be an
     // unhandled URL.
     if(url.includes('/rest/v1/ha_account_opportunities')) return jsonResponse([]);
+    // Monitoring Identity V1, Path B wiring: get-dashboard.js now fetches
+    // this scope's monitoring targets alongside accounts/signals -- this
+    // file isn't exercising Path B itself, just needs it to not be an
+    // unhandled URL.
+    if(url.includes('/rest/v1/ha_monitoring_targets')) return jsonResponse([]);
 
     throw new Error(`unexpected fetch in test-get-dashboard-authentication: ${url}`);
   };
