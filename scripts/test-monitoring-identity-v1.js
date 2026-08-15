@@ -327,5 +327,47 @@ assert(
   );
 }
 
+// ============================================================================
+// 9. Path B -- strongly resolved target + strong signal-side name match.
+//    Founder QA follow-up (live Test B, L.L. Bean): a credible third-party
+//    article that explicitly names an account whose identity is ALREADY
+//    durably resolved from independent account-side evidence should not be
+//    demoted to secondary merely because the article itself doesn't also
+//    restate the account's own domain. See classifyMonitoringSignalEligibility()'s
+//    own header comment for the full Path A / Path B rationale.
+// ============================================================================
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'unconfirmed', reasons: [], targetIdentityDomainSource: 'uploaded-website' }) === 'priority',
+  '9.1) REQUIRED: a resolved target (uploaded-website anchor) + an exact, unembedded name match (unconfirmed) + no contradiction => priority (the canonical llbean.com / Press Herald case)'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'possible', reasons: [], targetIdentityDomainSource: 'uploaded-website' }) === 'secondary',
+  '9.2) REQUIRED: a resolved target + only a possible (embedded/larger-entity or token-only) match stays secondary -- strong target identity never promotes a namesake-shaped match (the synthetic "Harborview Medical" inside "Harborview Medical Center" shape)'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'unconfirmed', reasons: [] }) === 'secondary',
+  '9.3) REQUIRED: an unresolved target (no targetIdentityDomainSource) + exact name-only unconfirmed evidence stays secondary -- Path B never fires without an independently-established target anchor'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'rejected', reasons: [], targetIdentityDomainSource: 'uploaded-website' }) === 'hidden',
+  '9.4) REQUIRED: an explicit contradiction (rejected) stays hidden even for a resolved target -- a strong account-side anchor never overrides a genuine identity contradiction'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'confirmed', reasons: ['verified company domain'] }) === 'priority',
+  '9.5) REQUIRED: the existing Path A (signal-level strong corroborator) still produces priority on its own, with no targetIdentityDomainSource at all -- Path B is additive, not a replacement'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'confirmed', reasons: ['location match'], targetIdentityDomainSource: 'contact-derived' }) === 'priority',
+  '9.5b) confirmed with only a weak signal-side corroborator still reaches priority via Path B when the target itself has a strong, independent anchor -- "at least unconfirmed" explicitly includes confirmed'
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'unconfirmed', reasons: ["target identity is uploaded-website, trust me"], targetIdentityDomainSource: undefined }) === 'secondary',
+  "9.6) REQUIRED (circularity): target identity cannot originate from the candidate being classified -- text that LOOKS like a target-identity claim inside the signal's own `reasons` array has no effect; only the caller's separate, structurally distinct targetIdentityDomainSource parameter (sourced exclusively from the durably-resolved ha_monitoring_targets row, never from the candidate) can trigger Path B"
+);
+assert(
+  classifyMonitoringSignalEligibility({ identityConfidence: 'unconfirmed', reasons: [], targetIdentityDomainSource: 'some-future-unvetted-source' }) === 'secondary',
+  '9.6b) an unrecognized targetIdentityDomainSource value (not one of the three account-side-only sources this module can ever write) is never treated as a strong anchor -- no silent trust of an unknown provenance'
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 if (failures) process.exitCode = 1;

@@ -192,17 +192,48 @@ export function classifyCorroboratorTier(reasons = []) {
 }
 
 // priority: eligible for the main opportunity feed, "new signal" treatment,
-//   digest, and any proactive notification. Requires a STRONG corroborator
-//   -- a bare name match, or a name match with only weak/inferred
-//   corroboration, is never enough on its own.
+//   digest, and any proactive notification. Reached via either of two
+//   paths (founder QA, live Test B follow-up -- see below for why a
+//   second path was added):
+//     Path A -- signal-level strong corroboration: a STRONG corroborator
+//       on the signal itself (see classifyCorroboratorTier()) and no
+//       contradiction. A bare name match, or a name match with only weak/
+//       inferred corroboration, is never enough on its own.
+//     Path B -- strongly resolved target + strong signal-side name match:
+//       the TARGET already carries a Strong, independently-established
+//       account-side identity anchor (identityDomainSource is
+//       'uploaded-website', 'contact-derived', or the future
+//       'rep-confirmed' -- never a value derived from the candidate being
+//       classified; see resolveTargetIdentity()'s own circularity guard,
+//       untouched by this function), AND the signal's own
+//       identityConfidence is at least 'unconfirmed' -- a genuine bare/
+//       exact normalized company-name match (hasBareNameMatch in
+//       verifyCandidateCompanyGrounding()), never the weaker embedded-in-
+//       a-larger-entity or token-only 'possible' tier. In this path the
+//       source itself does not need to contain or be hosted on the target
+//       domain -- once identity is durably established account-side,
+//       requiring every third-party article to also independently restate
+//       the customer's own domain would defeat part of the purpose of
+//       resolving identity first (the canonical case: a customer-supplied
+//       website + a credible, explicitly-naming third-party news article
+//       with no domain backlink and no contradiction).
+//   Strong target identity alone never promotes arbitrary evidence --
+//   'possible' (embedded/token-only/uncorroborated single-token matches,
+//   e.g. a synthetic "Harborview Medical" appearing only as part of the
+//   real "Harborview Medical Center") stays 'secondary' even for a fully
+//   resolved target, and an unresolved target gets no benefit from Path B
+//   at all.
 // secondary: visible to the rep in Research Details / "Other signals
 //   found" / equivalent surfaces, always with an explicit identity
-//   caveat -- never phrased as confirmed intelligence. Covers today's
-//   'possible', 'unconfirmed', and a 'confirmed' verdict whose only
-//   corroborator turned out to be weak.
-// hidden: never shown. Only 'rejected' -- and in current production
-//   practice, a rejected signal is already discarded before persistence
-//   (see mapSignalsFromModelOutput()), so this branch mostly exists for
+//   caveat -- never phrased as confirmed intelligence. Covers 'possible',
+//   an unresolved-target 'unconfirmed', and a 'confirmed' verdict whose
+//   only corroborator turned out to be weak and whose target lacks a
+//   Strong anchor.
+// hidden: never shown. Only 'rejected' -- checked before either path, so
+//   an explicit identity contradiction can never be promoted by a strong
+//   target anchor -- and in current production practice, a rejected
+//   signal is already discarded before persistence (see
+//   mapSignalsFromModelOutput()), so this branch mostly exists for
 //   completeness/future paths that might persist rejected candidates for
 //   audit purposes.
 //
@@ -215,9 +246,15 @@ export function classifyCorroboratorTier(reasons = []) {
 // number of already-relied-upon historical signals as a side effect of
 // this change, which is out of scope here (see "Existing ha_signals do
 // not need destructive rewriting").
-export function classifyMonitoringSignalEligibility({ identityConfidence, reasons } = {}) {
+const STRONG_TARGET_IDENTITY_SOURCES = ['uploaded-website', 'contact-derived', 'rep-confirmed'];
+
+export function classifyMonitoringSignalEligibility({ identityConfidence, reasons, targetIdentityDomainSource } = {}) {
   if (identityConfidence === undefined || identityConfidence === null) return 'priority';
   if (identityConfidence === 'rejected') return 'hidden';
   const tier = classifyCorroboratorTier(reasons);
-  return tier === 'strong' ? 'priority' : 'secondary';
+  if (tier === 'strong') return 'priority';
+  const targetHasStrongAnchor = STRONG_TARGET_IDENTITY_SOURCES.includes(targetIdentityDomainSource);
+  const signalAtLeastUnconfirmed = identityConfidence === 'unconfirmed' || identityConfidence === 'confirmed';
+  if (targetHasStrongAnchor && signalAtLeastUnconfirmed) return 'priority';
+  return 'secondary';
 }
