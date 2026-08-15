@@ -27,8 +27,13 @@ import { projectAccountContext, normalizeCompanyName } from '../lib/monitoring-t
 import {
   processMonitoringJob,
   QUEUE_VISIBILITY_TIMEOUT_SECONDS,
-  MonitoringRetryError
+  MonitoringRetryError,
+  DEFAULT_MONITORING_MAX_CONCURRENT_WORKERS
 } from '../lib/monitoring-queue.js';
+// Phase 2D: the global capacity lease -- see api/lib/monitoring-capacity.js's
+// own header comment for why this exists and how it differs from
+// claim_ha_monitoring_target()/complete_ha_monitoring_attempt() above.
+import { acquireMonitoringCapacity, releaseMonitoringCapacity, DEFAULT_CAPACITY_LEASE_SECONDS } from '../lib/monitoring-capacity.js';
 // Phase 2C: the same shared persistence boundary api/weekly-scan.js calls
 // -- not a second implementation. uploadId/weeklyRunId are null for every
 // monitoring call (this path is not upload-driven).
@@ -168,6 +173,29 @@ async function runPipeline(accountContext, options) {
   return runResearchPipeline(accountContext, { ...options, mode: 'weekly-monitoring' });
 }
 
+// Phase 2D: the cheap, non-locking pre-check processMonitoringJob() uses to
+// skip global-capacity contention for an obviously-stale delivery, BEFORE
+// the authoritative atomic claim runs. Deliberately just status/next_due_at
+// -- never a lock, never mutates anything -- so a wrong/stale answer can
+// only ever cause a redundant (still-correct) fall-through to the real
+// claim, never a false short-circuit past it. A target that no longer
+// exists at all resolves to null here (empty result), which
+// processMonitoringJob() treats as "no cheap info, proceed normally" --
+// the real claimTarget() call below remains the one that raises the
+// authoritative not-found error.
+async function peekTarget(targetId) {
+  const [target] = await supabase(`ha_monitoring_targets?id=eq.${encodeURIComponent(targetId)}&select=status,next_due_at&limit=1`);
+  return target || null;
+}
+
+async function acquireCapacity({ maxWorkers, leaseSeconds }) {
+  return acquireMonitoringCapacity({ maxWorkers, leaseSeconds, supabase });
+}
+
+async function releaseCapacity({ leaseToken }) {
+  return releaseMonitoringCapacity({ leaseToken, supabase });
+}
+
 // Real persistence implementation: calls the SAME shared boundary
 // api/weekly-scan.js calls. uploadId/weeklyRunId are null -- this path is
 // not upload-driven, and persistValidatedSignals() treats both as optional.
@@ -182,6 +210,14 @@ async function consumeMonitoringMessage(message, metadata) {
     resolveAccountContext,
     runPipeline,
     persistSignals,
+    peekTarget,
+    acquireCapacity,
+    releaseCapacity,
+    // Phase 2D Beta safety default: 2 concurrent monitoring workers
+    // globally. Env-configurable, never a migration/code change, per
+    // MONITORING_MAX_CONCURRENT_WORKERS's own design intent.
+    maxWorkers: Math.max(1, Number(process.env.MONITORING_MAX_CONCURRENT_WORKERS || DEFAULT_MONITORING_MAX_CONCURRENT_WORKERS)),
+    capacityLeaseSeconds: DEFAULT_CAPACITY_LEASE_SECONDS,
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini'
   });

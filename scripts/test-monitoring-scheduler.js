@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { selectQueueManagedDueTargets } from '../api/monitoring-scheduler.js';
+import { selectQueueManagedDueTargets, selectTargetsToPublish, DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT } from '../api/monitoring-scheduler.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -72,6 +72,66 @@ function assert(condition, message) {
   const vercelConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vercel.json'), 'utf8'));
   const crons = Array.isArray(vercelConfig.crons) ? vercelConfig.crons : [];
   assert(!crons.some(c => String(c.path || '').includes('monitoring-scheduler')), 'REQUIRED: api/monitoring-scheduler.js is not registered in vercel.json\'s crons -- general production scheduling is not enabled in this phase');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2D items 12-13: selectTargetsToPublish() -- deterministic due-
+// ordering, publish-cap enforcement, and deferred targets remaining
+// logically "due" (this function itself never mutates next_due_at; the
+// structural proof above already confirms the whole file never writes to
+// ha_monitoring_targets).
+// ---------------------------------------------------------------------------
+{
+  // Item 12: never publishes more than the configured cap, even with a
+  // large due backlog.
+  const dueBacklog = Array.from({ length: 25 }, (_, i) => ({ id: `t${String(i).padStart(2, '0')}`, next_due_at: `2026-08-${String(1 + (i % 20)).padStart(2, '0')}T00:00:00.000Z` }));
+  const { toPublish, deferred } = selectTargetsToPublish(dueBacklog, 10);
+  assert(toPublish.length === 10, `REQUIRED (item 12): publishing is capped at the configured limit even with a 25-target backlog (got ${toPublish.length})`);
+  assert(deferred.length === 15, `the remainder (25 - 10) is reported as deferred, not silently dropped (got ${deferred.length})`);
+  assert(toPublish.length + deferred.length === dueBacklog.length, 'REQUIRED: every due target is accounted for as either published or deferred -- none vanish');
+}
+
+{
+  // Item 12 (default): an unset/invalid publishLimit falls back to the
+  // documented default, never to "publish everything."
+  const dueBacklog = Array.from({ length: 15 }, (_, i) => ({ id: `t${i}`, next_due_at: '2026-08-10T00:00:00.000Z' }));
+  const { toPublish } = selectTargetsToPublish(dueBacklog, undefined);
+  assert(toPublish.length === DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT, `REQUIRED: an unset publish limit uses the documented default (${DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT}), not unbounded publishing (got ${toPublish.length})`);
+  const { toPublish: withZero } = selectTargetsToPublish(dueBacklog, 0);
+  assert(withZero.length === DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT, `REQUIRED: a zero/invalid publish limit also falls back to the safe default rather than publishing zero or everything (got ${withZero.length})`);
+}
+
+{
+  // Item 13: deferred targets are exactly the oldest-due-first remainder --
+  // still due, still eligible, simply left for a later scheduler
+  // invocation. Oldest-due-first ordering (item E) means the PUBLISHED set
+  // is always the longest-waiting targets, never an arbitrary subset.
+  const dueBacklog = [
+    { id: 'newest', next_due_at: '2026-08-15T00:00:00.000Z' },
+    { id: 'oldest', next_due_at: '2026-08-01T00:00:00.000Z' },
+    { id: 'middle', next_due_at: '2026-08-08T00:00:00.000Z' }
+  ];
+  const { toPublish, deferred } = selectTargetsToPublish(dueBacklog, 2);
+  assert(toPublish.map(t => t.id).join(',') === 'oldest,middle', `REQUIRED: the published set is the oldest-due-first targets, not input order or newest-first (got ${toPublish.map(t => t.id).join(',')})`);
+  assert(deferred.length === 1 && deferred[0].id === 'newest', `REQUIRED (item 13): the deferred target is the one target NOT published -- still a real, unmodified target object (same next_due_at), simply left for a later invocation (got ${JSON.stringify(deferred)})`);
+  assert(deferred[0].next_due_at === '2026-08-15T00:00:00.000Z', 'REQUIRED (item 13): a deferred target\'s next_due_at is completely untouched by selection -- it remains exactly as due as it was, ready to be published (or deferred again) on the next scheduler run');
+}
+
+{
+  // Determinism: a stable id tie-break when two targets share an exact
+  // next_due_at, so repeated calls against the same input always produce
+  // the same split -- correctness-critical for item 13's "deferred targets
+  // remain due and are picked up next run" guarantee to not flap between
+  // runs.
+  const tied = [
+    { id: 'b', next_due_at: '2026-08-10T00:00:00.000Z' },
+    { id: 'a', next_due_at: '2026-08-10T00:00:00.000Z' },
+    { id: 'c', next_due_at: '2026-08-10T00:00:00.000Z' }
+  ];
+  const run1 = selectTargetsToPublish(tied, 2);
+  const run2 = selectTargetsToPublish(tied, 2);
+  assert(JSON.stringify(run1) === JSON.stringify(run2), 'REQUIRED: repeated calls against identical input (including exactly-tied next_due_at) produce an identical split every time');
+  assert(run1.toPublish.map(t => t.id).join(',') === 'a,b', `a stable id tie-break orders exactly-tied targets deterministically (got ${run1.toPublish.map(t => t.id).join(',')})`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

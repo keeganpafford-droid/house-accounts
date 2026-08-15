@@ -12,7 +12,7 @@ import {
   decideQueueOutcome, processMonitoringJob, MonitoringRetryError,
   WORKER_MAX_DURATION_SECONDS, DB_LEASE_SECONDS, QUEUE_VISIBILITY_TIMEOUT_SECONDS,
   MESSAGE_RETENTION_SECONDS, POISON_DELIVERY_THRESHOLD, CADENCE_DAYS,
-  ALREADY_LEASED_RETRY_DELAY_SECONDS
+  ALREADY_LEASED_RETRY_DELAY_SECONDS, CAPACITY_UNAVAILABLE_RETRY_DELAY_SECONDS
 } from '../api/lib/monitoring-queue.js';
 
 let failures = 0;
@@ -94,6 +94,16 @@ function makeDeps(overrides = {}) {
     resolveAccountContext: async () => ({ userId: 'user-1', accountContext: { name: 'Test Co' } }),
     runPipeline: async () => ({ coverage: 'complete', signals: [], providerUsage: { elapsedMs: 10 }, error: null }),
     persistSignals: async () => ({ newSignalRows: [] }),
+    // Phase 2D defaults: no cheap pre-check data (always falls through to
+    // the real claim), capacity always available, release always
+    // succeeds -- every pre-existing test below exercises the SAME
+    // pre-Phase-2D behavior unless it explicitly overrides one of these
+    // three. See the dedicated Phase 2D section further down for the
+    // capacity-specific tests.
+    peekTarget: async () => null,
+    acquireCapacity: async () => ({ ok: true, leaseToken: 'test-lease-token' }),
+    releaseCapacity: async () => ({ ok: true }),
+    maxWorkers: 2, capacityLeaseSeconds: 270,
     apiKey: 'sk-test', model: 'gpt-4o-mini',
     ...overrides
   };
@@ -354,6 +364,106 @@ function makeDeps(overrides = {}) {
   assert(decision.action === 'retry', 'insufficient coverage below the poison threshold is retried');
   assert(completeArgs && completeArgs.coverage === 'insufficient' && completeArgs.error === 'budget exhausted', 'REQUIRED: attempt telemetry/error is persisted via completeAttempt even though the Queue outcome is retry -- a failed attempt is not invisible');
   assert(!persistCalled, 'REQUIRED: persistSignals is never called for insufficient coverage -- nothing validated exists to persist');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2D items 4-9: capacity acquisition/release integration inside
+// processMonitoringJob. All exercised via the same dependency-injected
+// makeDeps() convention as every test above -- no real Queue, database, or
+// provider call.
+// ---------------------------------------------------------------------------
+{
+  // Item 4 + 5: capacity unavailable -> zero provider calls, no monitoring
+  // attempt created, no cadence advance (claimTarget/completeAttempt are the
+  // only two dependencies that would create an ha_monitoring_attempts row or
+  // touch next_due_at -- see completeAttempt's real implementation).
+  let claimCalled = false, pipelineCalled = false, persistCalled = false, completeCalled = false;
+  const deps = makeDeps({
+    acquireCapacity: async () => ({ ok: false, reason: 'capacity-exhausted', activeCount: 2, maxWorkers: 2 }),
+    claimTarget: async () => { claimCalled = true; return { ok: true, outcome: 'claimed', attemptId: 'attempt-1' }; },
+    runPipeline: async () => { pipelineCalled = true; return { coverage: 'complete', signals: [], providerUsage: {}, error: null }; },
+    persistSignals: async () => { persistCalled = true; return { newSignalRows: [] }; },
+    completeAttempt: async () => { completeCalled = true; return { ok: true }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(decision.action === 'retry' && decision.reason === 'capacity-unavailable', `REQUIRED (item 4/5): capacity unavailable returns a retry decision, not an ack (got ${JSON.stringify(decision)})`);
+  assert(!claimCalled, 'REQUIRED (item 4): the target claim never runs when capacity is unavailable -- no duplicate-spend gate is even reached');
+  assert(!pipelineCalled, 'REQUIRED (item 4): zero Serper/Firecrawl/OpenAI calls happen when capacity is unavailable');
+  assert(!persistCalled, 'REQUIRED (item 4): zero signal persistence happens when capacity is unavailable');
+  assert(!completeCalled, 'REQUIRED (item 5): completeAttempt is never called when capacity is unavailable -- no ha_monitoring_attempts row is created and next_due_at is never touched');
+}
+
+{
+  // Item 6: capacity-unavailable retries unconditionally, regardless of the
+  // ordinary poison-delivery threshold -- deliveryCount is AT (and even
+  // beyond) POISON_DELIVERY_THRESHOLD, which would ack an insufficient-
+  // coverage outcome via decideQueueOutcome(), but must not affect this
+  // branch since it never calls into that function.
+  const deps = makeDeps({ acquireCapacity: async () => ({ ok: false, reason: 'capacity-exhausted' }) });
+  const atThreshold = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: POISON_DELIVERY_THRESHOLD }, deps);
+  assert(atThreshold.action === 'retry', `REQUIRED (item 6): capacity-unavailable still retries AT the ordinary poison threshold (${POISON_DELIVERY_THRESHOLD}) -- capacity exhaustion is backpressure, not a poison message (got ${JSON.stringify(atThreshold)})`);
+  const wayBeyondThreshold = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: POISON_DELIVERY_THRESHOLD * 10 }, deps);
+  assert(wayBeyondThreshold.action === 'retry', 'REQUIRED (item 6): capacity-unavailable still retries far beyond the ordinary poison threshold -- this branch is deliberately unconditional on deliveryCount');
+  assert(wayBeyondThreshold.retryAfterSeconds === CAPACITY_UNAVAILABLE_RETRY_DELAY_SECONDS, `the capacity-unavailable retry always carries its own deliberate delay (${CAPACITY_UNAVAILABLE_RETRY_DELAY_SECONDS}s), not the poison/already-leased delay`);
+}
+
+{
+  // Item 7: capacity is released if the subsequent authoritative target
+  // claim loses (already-leased) -- proves acquire-then-claim ordering
+  // AND the finally-release both hold together, not just each in isolation.
+  let releasedWithToken = null;
+  const deps = makeDeps({
+    acquireCapacity: async () => ({ ok: true, leaseToken: 'lease-for-lost-claim' }),
+    releaseCapacity: async ({ leaseToken }) => { releasedWithToken = leaseToken; return { ok: true }; },
+    claimTarget: async () => ({ ok: false, reason: 'already-leased', lease_expires_at: '2026-01-01T00:00:00Z' })
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(decision.action === 'retry' && decision.reason === 'already-leased', 'the existing already-leased Queue outcome is preserved unchanged when capacity was held but the target claim lost');
+  assert(releasedWithToken === 'lease-for-lost-claim', `REQUIRED (item 7): capacity is released with the SAME token that was acquired, immediately after the target claim loses (got ${JSON.stringify(releasedWithToken)})`);
+}
+
+{
+  // Item 8: capacity is released on normal completion.
+  let releaseCalled = false;
+  const deps = makeDeps({
+    acquireCapacity: async () => ({ ok: true, leaseToken: 'lease-normal-completion' }),
+    releaseCapacity: async ({ leaseToken }) => { releaseCalled = leaseToken === 'lease-normal-completion'; return { ok: true }; }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(decision.action === 'ack', 'sanity: this scenario completes normally');
+  assert(releaseCalled, 'REQUIRED (item 8): capacity is released on normal successful completion');
+}
+
+{
+  // Item 9a: capacity is released even when the research pipeline itself
+  // throws an uncaught exception -- proves the finally-release covers a
+  // genuine mid-flight crash, not just the two decision-returning paths
+  // above.
+  let releaseCalled = false;
+  const deps = makeDeps({
+    acquireCapacity: async () => ({ ok: true, leaseToken: 'lease-pipeline-crash' }),
+    releaseCapacity: async ({ leaseToken }) => { releaseCalled = leaseToken === 'lease-pipeline-crash'; return { ok: true }; },
+    runPipeline: async () => { throw new Error('simulated pipeline crash'); }
+  });
+  await assertRejects(processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps), 'a genuine pipeline exception propagates out of processMonitoringJob rather than being silently swallowed');
+  assert(releaseCalled, 'REQUIRED (item 9): capacity is released via finally even when the pipeline throws an uncaught exception');
+}
+
+{
+  // Item 9b: capacity is released when signal persistence fails (the
+  // existing downgrade-to-insufficient path) -- a second, narrower proof
+  // that the persistence-failure branch (which does not throw, it downgrades
+  // coverage and continues to completeAttempt) still releases capacity.
+  let releaseCalled = false;
+  const deps = makeDeps({
+    acquireCapacity: async () => ({ ok: true, leaseToken: 'lease-persist-failure' }),
+    releaseCapacity: async ({ leaseToken }) => { releaseCalled = leaseToken === 'lease-persist-failure'; return { ok: true }; },
+    runPipeline: async () => ({ coverage: 'complete', signals: [{ accountName: 'A' }], providerUsage: {}, error: null }),
+    persistSignals: async () => { throw new Error('Supabase 500: internal error'); }
+  });
+  const decision = await processMonitoringJob({ targetId: 't1' }, { deliveryCount: 1 }, deps);
+  assert(decision.action === 'retry', 'sanity: this scenario reproduces the existing persistence-failure-downgrades-to-retry behavior');
+  assert(releaseCalled, 'REQUIRED (item 9): capacity is released via finally when signal persistence fails');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

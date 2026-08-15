@@ -64,6 +64,33 @@ export function selectQueueManagedDueTargets(dueActiveTargets, allowlistEnvValue
   return (dueActiveTargets || []).filter(t => isQueueManagedOrganization(t.organization_id, allowlistEnvValue));
 }
 
+export const DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT = 10;
+
+// Phase 2D item E: deterministic due-ordering + publish-cap application,
+// pure and exported for testing without any Supabase/Queue call. Sorts
+// oldest-due-first (the fairest prioritization -- whichever target has
+// been waiting longest gets published first), with a stable id tie-break
+// so two targets that happen to share an exact next_due_at still produce
+// the identical split on every call against the same input. Publishing
+// fewer than every eligible target on one invocation is intentional
+// backpressure, not a bug: a large due backlog should not cause hundreds
+// of Vercel consumer invocations to all wake up merely to discover the
+// global capacity pool (see api/lib/monitoring-capacity.js) is already
+// occupied -- deferred targets are simply left due (this endpoint never
+// writes next_due_at either way, see this file's own header comment) and
+// are picked up by a later scheduler invocation, with the SAME
+// idempotency key since next_due_at has not changed.
+export function selectTargetsToPublish(eligibleDueTargets, publishLimit) {
+  const ordered = [...(eligibleDueTargets || [])].sort((a, b) => {
+    const dueA = new Date(a.next_due_at || 0).getTime();
+    const dueB = new Date(b.next_due_at || 0).getTime();
+    if (dueA !== dueB) return dueA - dueB;
+    return String(a.id).localeCompare(String(b.id));
+  });
+  const limit = Math.max(1, Number(publishLimit) || DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT);
+  return { toPublish: ordered.slice(0, limit), deferred: ordered.slice(limit) };
+}
+
 export default async function handler(req, res) {
   try {
     const cronSecret = process.env.CRON_SECRET;
@@ -76,11 +103,19 @@ export default async function handler(req, res) {
     const allowlist = process.env.QUEUE_MANAGED_ORGANIZATION_IDS || '';
     if (!allowlist.trim()) return json(res, 200, { ok: true, enqueued: 0, reason: 'QUEUE_MANAGED_ORGANIZATION_IDS is empty -- no organization is Queue-managed yet.' });
 
-    const dueActive = await supabase(`ha_monitoring_targets?status=eq.active&next_due_at=lte.${encodeURIComponent(new Date().toISOString())}&select=id,organization_id,next_due_at&limit=500`);
+    // order=next_due_at.asc,id.asc mirrors selectTargetsToPublish()'s own
+    // deterministic sort -- a defense-in-depth/performance nicety so the
+    // 500-row cap itself already grabs the oldest-due rows first if a
+    // backlog ever exceeds it, but the CORRECTNESS-critical determinism
+    // guarantee lives in the pure, independently-testable JS sort below,
+    // not in trusting the DB's row order.
+    const dueActive = await supabase(`ha_monitoring_targets?status=eq.active&next_due_at=lte.${encodeURIComponent(new Date().toISOString())}&select=id,organization_id,next_due_at&order=next_due_at.asc,id.asc&limit=500`);
     const eligible = selectQueueManagedDueTargets(dueActive, allowlist);
+    const publishLimit = Math.max(1, Number(process.env.MONITORING_SCHEDULER_PUBLISH_LIMIT || DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT));
+    const { toPublish, deferred } = selectTargetsToPublish(eligible, publishLimit);
 
     const results = [];
-    for (const target of eligible) {
+    for (const target of toPublish) {
       try {
         const { messageId, idempotencyKey } = await enqueueMonitoringJob(target);
         results.push({ targetId: target.id, ok: true, messageId, idempotencyKey });
@@ -92,7 +127,21 @@ export default async function handler(req, res) {
       }
     }
 
-    return json(res, 200, { ok: true, dueActiveCount: dueActive.length, queueManagedDueCount: eligible.length, results });
+    const publishedCount = results.filter(r => r.ok).length;
+    console.log('[monitoring-scheduler.published]', JSON.stringify({
+      dueActiveCount: dueActive.length, queueManagedDueCount: eligible.length,
+      publishLimit, publishedCount, deferredByPublishCapCount: deferred.length
+    }));
+
+    return json(res, 200, {
+      ok: true,
+      dueActiveCount: dueActive.length,
+      queueManagedDueCount: eligible.length,
+      publishLimit,
+      publishedCount,
+      deferredByPublishCapCount: deferred.length,
+      results
+    });
   } catch (err) {
     return json(res, 500, { error: err.message || 'Monitoring scheduler failed' });
   }

@@ -106,6 +106,25 @@ export const POISON_DELIVERY_THRESHOLD = 5;
 // generic unhandled-error retry behave on the same cadence.
 export const ALREADY_LEASED_RETRY_DELAY_SECONDS = 60;
 
+// Phase 2D: how long a delivery that found the global capacity pool full
+// waits before Queue tries again. Deliberately shorter than
+// ALREADY_LEASED_RETRY_DELAY_SECONDS -- an already-leased retry is waiting
+// on one specific target's own research to finish (tens of seconds at
+// least), while a capacity slot can free up the moment ANY worker in the
+// global pool finishes, which happens more often in aggregate. Not so
+// short it hot-loops uselessly against a pool that is genuinely saturated
+// for a while.
+export const CAPACITY_UNAVAILABLE_RETRY_DELAY_SECONDS = 30;
+
+// Phase 2D default: MONITORING_MAX_CONCURRENT_WORKERS env var, read here
+// (not scattered across call sites) so every consumer of the default
+// agrees on it. api/queues/monitoring-consumer.js and
+// api/monitoring-scheduler.js each read their own env vars independently
+// where they need them (matching this codebase's existing per-file env
+// convention) -- this constant exists only as the documented fallback
+// value for MONITORING_MAX_CONCURRENT_WORKERS itself.
+export const DEFAULT_MONITORING_MAX_CONCURRENT_WORKERS = 2;
+
 // Fixed weekly cadence, matching the locked architecture direction
 // (dynamic cadence is explicitly deferred). Not read from anywhere else --
 // this is the one place it is defined for the Queue-connected path.
@@ -257,13 +276,13 @@ export class MonitoringRetryError extends Error {
 }
 
 // The consumer body. Deliberately dependency-injected (claimTarget/
-// completeAttempt/resolveAccountContext/runPipeline/persistSignals) rather
-// than importing Supabase/research-pipeline calls directly, so it is
-// testable with plain mocks (see scripts/test-monitoring-queue-adapter.js)
-// without any real Queue, database, or provider call.
-// api/queues/monitoring-consumer.js is the thin route file that supplies
-// the real implementations and hands this function to @vercel/queue's
-// handleNodeCallback().
+// completeAttempt/resolveAccountContext/runPipeline/persistSignals/
+// peekTarget/acquireCapacity/releaseCapacity) rather than importing
+// Supabase/research-pipeline calls directly, so it is testable with plain
+// mocks (see scripts/test-monitoring-queue-adapter.js) without any real
+// Queue, database, or provider call. api/queues/monitoring-consumer.js is
+// the thin route file that supplies the real implementations and hands
+// this function to @vercel/queue's handleNodeCallback().
 //
 // Phase 2C: the intended architecture is research -> validate/ground ->
 // PERSIST -> downstream notification -- the pipeline's own validation
@@ -291,8 +310,33 @@ export class MonitoringRetryError extends Error {
 // underlying real-world events, which resolve to the SAME event_fingerprint
 // -- persistValidatedSignals()'s ignore-duplicates insert makes that retry
 // safe by construction, never creating a duplicate row.
+//
+// Phase 2D acquisition order (the entire reason this function's shape
+// changed): global capacity is acquired BEFORE the real target claim, and
+// the real target claim happens ONLY once capacity is held. "Do not claim
+// a target for five minutes and then sit waiting for global research
+// capacity" -- claim_ha_monitoring_target() hands out a real 300s DB
+// lease; holding that lease while blocked on a scarce, shared resource
+// would needlessly keep the target unclaimable by any other worker for the
+// whole wait, for zero reason (no research work is happening yet). The
+// target claim remains the sole source of truth for duplicate-SAME-target
+// spend prevention, unchanged; the capacity lease solves the separate
+// problem of bounding TOTAL simultaneous provider work.
+//
+// Step 0 (peekTarget): a cheap, non-locking pre-check -- NOT the
+// authoritative claim -- that lets an obviously-stale delivery (target
+// already paused/removed, or genuinely not due yet) skip capacity
+// contention entirely, so the global pool is never occupied by work that
+// was never going to happen. A peekTarget() that returns null (unknown /
+// no cheap data available) always falls through to the normal
+// capacity-then-claim path -- this step can only ever SKIP work early on
+// a confident negative, never invent a false positive; the real claim
+// below remains the authoritative decision in every other case.
 export async function processMonitoringJob(message, metadata, deps) {
-  const { claimTarget, completeAttempt, resolveAccountContext, runPipeline, persistSignals, apiKey, model } = deps;
+  const {
+    claimTarget, completeAttempt, resolveAccountContext, runPipeline, persistSignals, apiKey, model,
+    peekTarget, acquireCapacity, releaseCapacity, maxWorkers, capacityLeaseSeconds
+  } = deps;
   const targetId = message?.targetId;
   const deliveryCount = metadata?.deliveryCount || 1;
 
@@ -301,72 +345,109 @@ export async function processMonitoringJob(message, metadata, deps) {
     return { action: 'ack', reason: 'malformed-message-missing-target-id' };
   }
 
-  let claim;
-  try {
-    claim = await claimTarget(targetId, DB_LEASE_SECONDS);
-  } catch (err) {
-    // claim_ha_monitoring_target raises when the target does not exist at
-    // all (errcode HA010) -- a genuinely non-retryable poison message, same
-    // posture as a malformed one.
-    return { action: 'ack', reason: 'claim-failed-target-not-found', error: err.message };
-  }
-  if (!claim.ok) {
-    return decideQueueOutcome({ claim, deliveryCount });
-  }
-
-  const startedAt = Date.now();
-  const { userId, accountContext } = await resolveAccountContext(targetId);
-  const result = await runPipeline(accountContext, { apiKey, model, startedAt });
-
-  let coverage = result.coverage;
-  let error = result.error;
-  let persistedSignalCount = 0;
-  if (coverage === 'complete' || coverage === 'degraded_trustworthy') {
-    try {
-      const persisted = await persistSignals({ userId, signals: result.signals || [] });
-      persistedSignalCount = (persisted?.newSignalRows || []).length;
-    } catch (persistErr) {
-      // Downgrade, do not swallow: a validated-but-unpersisted result is
-      // not a trustworthy monitoring cycle. See this function's header
-      // comment for why 'insufficient' (not a new state) is the correct
-      // reuse here.
-      coverage = 'insufficient';
-      error = `signal persistence failed: ${persistErr.message}`;
+  const peek = await peekTarget(targetId);
+  if (peek) {
+    if (peek.status && peek.status !== 'active') {
+      return { action: 'ack', reason: 'not-active' };
+    }
+    if (peek.next_due_at && new Date(peek.next_due_at).getTime() > Date.now()) {
+      return { action: 'ack', reason: 'not-due' };
     }
   }
 
-  await completeAttempt({
-    targetId,
-    attemptId: claim.attemptId,
-    coverage,
-    cadenceDays: CADENCE_DAYS,
-    error,
-    telemetry: result.providerUsage
-  });
+  const capacity = await acquireCapacity({ maxWorkers, leaseSeconds: capacityLeaseSeconds });
+  if (!capacity.ok) {
+    // Phase 2D item C: capacity exhaustion is normal backpressure, not a
+    // poison-message failure -- deliberately retried unconditionally,
+    // never checked against deliveryCount/POISON_DELIVERY_THRESHOLD (see
+    // decideQueueOutcome()'s poison logic, which this branch never calls
+    // into). Zero provider calls happened, no ha_monitoring_attempts row
+    // is created, next_due_at is never touched -- this return is the ONLY
+    // side effect.
+    return { action: 'retry', reason: 'capacity-unavailable', retryAfterSeconds: CAPACITY_UNAVAILABLE_RETRY_DELAY_SECONDS };
+  }
 
-  const decision = decideQueueOutcome({ coverage, deliveryCount });
-  // Item J observability: correlates back to the enqueue log line via
-  // targetId, and is the "monitoring attempt -> completion/failure" half of
-  // the due-target -> published message -> Queue delivery -> attempt ->
-  // completion chain this item asks to be reconcilable, without any new
-  // dashboard. Deliberately counts/fingerprints only (Phase 2C
-  // observability direction) -- full signal content (title, evidence,
-  // source URL) is never logged here; the durable ha_signals row itself is
-  // the auditable source for that.
-  //
-  // Naming correction (founder QA, live Test A reconciliation): this is
-  // claim_ha_monitoring_target()'s lease/ownership token (migration 16),
-  // used only for complete_ha_monitoring_attempt()'s compare-and-swap check
-  // -- it is never written to, and has no relationship to,
-  // ha_monitoring_attempts.id (that row's own primary key, minted
-  // independently by its own gen_random_uuid() default). Logging it as
-  // plain "attemptId" reads as if it correlates to the durable attempt row,
-  // which it does not and structurally cannot without a separate change to
-  // return that row's id from the RPC. Named for what it actually is.
-  console.log('[monitoring-queue.completed]', JSON.stringify({
-    targetId, leaseAttemptId: claim.attemptId, deliveryCount, coverage,
-    signalCount: (result.signals || []).length, persistedSignalCount, elapsedMs: result.elapsedMs,
-    estimatedCostUsd: result.providerUsage?.estimatedCostUsd, queueAction: decision.action, queueActionReason: decision.reason
-  }));
-  return decision;
+  try {
+    let claim;
+    try {
+      claim = await claimTarget(targetId, DB_LEASE_SECONDS);
+    } catch (err) {
+      // claim_ha_monitoring_target raises when the target does not exist at
+      // all (errcode HA010) -- a genuinely non-retryable poison message, same
+      // posture as a malformed one.
+      return { action: 'ack', reason: 'claim-failed-target-not-found', error: err.message };
+    }
+    if (!claim.ok) {
+      // Target claim lost (already-leased) or the target turned out to be
+      // not-due/not-active by the time the AUTHORITATIVE check ran (the
+      // cheap peek above can miss this -- it is an optimization, not a
+      // guarantee). Capacity is released via the finally below; the
+      // existing per-reason Queue outcome is preserved unchanged.
+      return decideQueueOutcome({ claim, deliveryCount });
+    }
+
+    const startedAt = Date.now();
+    const { userId, accountContext } = await resolveAccountContext(targetId);
+    const result = await runPipeline(accountContext, { apiKey, model, startedAt });
+
+    let coverage = result.coverage;
+    let error = result.error;
+    let persistedSignalCount = 0;
+    if (coverage === 'complete' || coverage === 'degraded_trustworthy') {
+      try {
+        const persisted = await persistSignals({ userId, signals: result.signals || [] });
+        persistedSignalCount = (persisted?.newSignalRows || []).length;
+      } catch (persistErr) {
+        // Downgrade, do not swallow: a validated-but-unpersisted result is
+        // not a trustworthy monitoring cycle. See this function's header
+        // comment for why 'insufficient' (not a new state) is the correct
+        // reuse here.
+        coverage = 'insufficient';
+        error = `signal persistence failed: ${persistErr.message}`;
+      }
+    }
+
+    await completeAttempt({
+      targetId,
+      attemptId: claim.attemptId,
+      coverage,
+      cadenceDays: CADENCE_DAYS,
+      error,
+      telemetry: result.providerUsage
+    });
+
+    const decision = decideQueueOutcome({ coverage, deliveryCount });
+    // Item J observability: correlates back to the enqueue log line via
+    // targetId, and is the "monitoring attempt -> completion/failure" half of
+    // the due-target -> published message -> Queue delivery -> attempt ->
+    // completion chain this item asks to be reconcilable, without any new
+    // dashboard. Deliberately counts/fingerprints only (Phase 2C
+    // observability direction) -- full signal content (title, evidence,
+    // source URL) is never logged here; the durable ha_signals row itself is
+    // the auditable source for that.
+    //
+    // Naming correction (founder QA, live Test A reconciliation): this is
+    // claim_ha_monitoring_target()'s lease/ownership token (migration 16),
+    // used only for complete_ha_monitoring_attempt()'s compare-and-swap check
+    // -- it is never written to, and has no relationship to,
+    // ha_monitoring_attempts.id (that row's own primary key, minted
+    // independently by its own gen_random_uuid() default). Logging it as
+    // plain "attemptId" reads as if it correlates to the durable attempt row,
+    // which it does not and structurally cannot without a separate change to
+    // return that row's id from the RPC. Named for what it actually is.
+    console.log('[monitoring-queue.completed]', JSON.stringify({
+      targetId, leaseAttemptId: claim.attemptId, deliveryCount, coverage,
+      signalCount: (result.signals || []).length, persistedSignalCount, elapsedMs: result.elapsedMs,
+      estimatedCostUsd: result.providerUsage?.estimatedCostUsd, queueAction: decision.action, queueActionReason: decision.reason
+    }));
+    return decision;
+  } finally {
+    // Phase 2D: released unconditionally on every path out of this block
+    // -- claim loss, normal completion, or an uncaught pipeline/persistence
+    // exception -- exactly the "normal/error paths release in finally"
+    // requirement. Never throws itself (see releaseMonitoringCapacity()'s
+    // own contract), so it can never mask whatever this block was already
+    // returning/throwing.
+    await releaseCapacity({ leaseToken: capacity.leaseToken });
+  }
 }

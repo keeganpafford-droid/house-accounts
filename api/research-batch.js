@@ -268,6 +268,23 @@ async function fetchWithTimeout(url, options = {}, timeoutMs) {
   }
 }
 
+// Phase 2D item F: the smallest telemetry improvement for diagnosing rate
+// pressure -- a structured log line distinguishing a 429 (rate limit) from
+// any other provider failure, with Retry-After captured when the provider
+// sends one. Deliberately observability-only: no retry, no backoff, no
+// adaptive throttling decision is made from this -- every provider wrapper
+// below keeps its existing failure behavior byte-for-byte unchanged, this
+// only adds a console.log side effect (which Vercel Observability Plus can
+// search/alert on) at the exact moment a 429 is seen. Never logs the
+// request body, API key, or any other secret -- only provider name, HTTP
+// status, and the numeric retry delay if the header parses.
+function logIfRateLimited(provider, resp) {
+  if (!resp || resp.status !== 429) return;
+  const retryAfterHeader = resp.headers?.get ? resp.headers.get('retry-after') : null;
+  const retryAfterSeconds = retryAfterHeader != null && Number.isFinite(Number(retryAfterHeader)) ? Number(retryAfterHeader) : null;
+  console.log('[provider.rate-limited]', JSON.stringify({ provider, httpStatus: resp.status, retryAfterSeconds }));
+}
+
 // Identity-bootstrap sprint: returns BOTH the existing compacted string
 // (unchanged for every current consumer -- prompt-size-bounded, single-line,
 // exactly what it always was) and the raw scraped text before compact()'s
@@ -288,7 +305,10 @@ async function firecrawlScrape(url) {
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, timeout: 12000 })
     }, FIRECRAWL_CALL_TIMEOUT_MS);
-    if (!resp.ok) return { compact: '', raw: '' };
+    if (!resp.ok) {
+      logIfRateLimited('firecrawl', resp);
+      return { compact: '', raw: '' };
+    }
     const data = await resp.json();
     const text = data?.data?.markdown || data?.markdown || data?.data?.text || data?.text || '';
     return { compact: compact(text, 1800), raw: String(text || '') };
@@ -642,6 +662,7 @@ async function serperSearch(query) {
     }, SERPER_CALL_TIMEOUT_MS);
     httpStatus = resp.status;
     if (!resp.ok) {
+      logIfRateLimited('serper', resp);
       return [{
         title: '',
         snippet: '',
@@ -651,6 +672,7 @@ async function serperSearch(query) {
         provider: 'serper',
         query,
         httpStatus,
+        rateLimited: httpStatus === 429,
         searchError: `Serper returned HTTP ${httpStatus}`
       }];
     }
@@ -885,7 +907,36 @@ async function discoverCandidatesForAccounts(accounts = [], mode = 'ranked') {
     const deepResearch = effectiveMode === 'prospect-intelligence' || effectiveMode === 'warm-account';
     const queryLimit = Math.max(6, Math.min(Number(process.env.RESEARCH_QUERIES_PER_ACCOUNT || (deepResearch ? 12 : 10)), 18));
     const queries = allQueries.slice(0, queryLimit);
-    const resultSets = await Promise.all(queries.map(runSearch));
+    // Phase 2D item D: bound Serper dispatch specifically for the
+    // Queue-worker ('weekly-monitoring') path -- the Phase 2D concurrency
+    // audit found this line was the one materially bursty phase in the
+    // whole pipeline, firing ALL of one account's queries via a fully
+    // unbounded Promise.all (up to 18 simultaneous requests, the env-
+    // clamped ceiling on queryLimit above). Every other mode (interactive
+    // research, prospect intelligence, warm-account) is unaffected:
+    // passing queries.length as mapLimit()'s own concurrency limit spins
+    // up exactly queries.length single-item workers, which is
+    // behaviorally identical concurrent dispatch to
+    // Promise.all(queries.map(runSearch)) -- interactive timing does not
+    // change. Absolute query count and result-set order are unchanged
+    // either way: mapLimit() (defined above) preserves input-index order
+    // in its output array regardless of completion order, which is
+    // exactly what queriesWithResults below already depends on. runSearch()
+    // never rejects (serperSearch() catches internally and always returns
+    // an array), so mapLimit()'s own per-item error handling is never
+    // reached in practice -- switching from Promise.all changes only
+    // simultaneous dispatch, nothing else observable.
+    const serperConcurrencyLimit = mode === 'weekly-monitoring'
+      ? Math.max(1, Number(process.env.MONITORING_SERPER_CONCURRENCY || 4))
+      : queries.length;
+    // Phase 2D item F: observability for the configured monitoring Serper
+    // concurrency bound itself, distinct from the per-request 429 telemetry
+    // in logIfRateLimited() -- lets Observability Plus confirm the bound in
+    // effect on a given Queue worker without inferring it from request timing.
+    if (mode === 'weekly-monitoring') {
+      console.log('[research-batch.serper-concurrency]', JSON.stringify({ accountName: account.name, serperConcurrencyLimit, queryCount: queries.length }));
+    }
+    const resultSets = await mapLimit(queries, serperConcurrencyLimit, runSearch);
     const rawSearchResults = resultSets.flat();
     let raw = rawSearchResults.filter(r => r && (r.url || r.title));
     if (deepResearch) raw = raw.concat(priorityOwnedPages(account));
@@ -1035,7 +1086,10 @@ async function callOpenAIJson({ apiKey, model, prompt, timeoutMs }) {
       max_output_tokens: 9000
     })
   }, timeoutMs);
-  if (!resp.ok) throw new Error(await resp.text().catch(() => `OpenAI error ${resp.status}`));
+  if (!resp.ok) {
+    logIfRateLimited('openai', resp);
+    throw new Error(await resp.text().catch(() => `OpenAI error ${resp.status}`));
+  }
   const data = await resp.json();
   return { text: responseOutputText(data), usage: openaiUsageFromResponse(data) };
 }
