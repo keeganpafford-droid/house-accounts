@@ -35,11 +35,26 @@ export function signalHash(userId, uploadId, accountName, s) {
 // refreshableSignalRow(): never event_fingerprint/user_id (identity, must
 // stay stable) and never first_seen_at (when we first learned about it),
 // but every column that represents our CURRENT interpretation of the event.
+//
+// REQUIRED (confirmed production incident, Phase 2C live smoke test):
+// account_name must be included even though a refresh-upsert's target row
+// already exists and this call's only INTENT is an UPDATE via ON CONFLICT.
+// Postgres validates NOT NULL constraints on the proposed INSERT row before
+// evaluating the ON CONFLICT clause -- account_name is ha_signals' only
+// NOT NULL, no-default column besides signal_hash (already included) and
+// id/event_fingerprint (handled separately) -- so omitting it here fails
+// the whole upsert with "null value in column account_name violates
+// not-null constraint" regardless of the row already existing. This is not
+// identity in the event_fingerprint/user_id sense (it can't change without
+// changing which row this even targets), but it is REQUIRED on every
+// upsert call by the schema itself, not just a "current interpretation"
+// nicety.
 export function refreshableSignalRow(row) {
   return {
     user_id: row.user_id,
     event_fingerprint: row.event_fingerprint,
     signal_hash: row.signal_hash,
+    account_name: row.account_name,
     signal_type: row.signal_type,
     title: row.title,
     why_reach_out: row.why_reach_out,

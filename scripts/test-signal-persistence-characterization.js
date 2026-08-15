@@ -16,8 +16,17 @@
 //   - zero-signal behavior
 //   - failure behavior (persistence failure is never swallowed)
 //
+// REGRESSION (confirmed production incident, first Phase 2C live signals):
+// refreshableSignalRow() omitted account_name -- ha_signals' only NOT
+// NULL, no-default column besides signal_hash -- so the merge-duplicates
+// refresh-upsert failed Postgres' pre-conflict NOT NULL validation on
+// EVERY call, even though the permissive mocks above never caught it
+// (they accept any row shape, exactly like Postgres does NOT). The
+// dedicated "schema-aware mock" section below specifically enforces the
+// real NOT NULL columns, closing that blind spot.
+//
 // Usage: node scripts/test-signal-persistence-characterization.js
-import { persistValidatedSignals } from '../api/lib/signal-persistence.js';
+import { persistValidatedSignals, refreshableSignalRow } from '../api/lib/signal-persistence.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -170,6 +179,101 @@ function makeMockSupabase({ failInsert = false, insertResponder = null } = {}) {
     persistValidatedSignals({ userId: 'u1', signals: [makeSignal()], supabase }),
     'REQUIRED: a Supabase insert failure propagates as a rejected promise -- persistValidatedSignals() never swallows a persistence error into a false success'
   );
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: refreshableSignalRow() must include account_name.
+// ---------------------------------------------------------------------------
+{
+  const row = {
+    user_id: 'u1', event_fingerprint: 'fp-1', signal_hash: 'hash-1', account_name: 'Clearwater Engineering',
+    signal_type: 'Business Activity', title: 'Title', why_reach_out: 'Reason', confidence: 80,
+    source_url: 'https://example.com', source_domain: 'example.com', published_at: '2026-08-01',
+    payload: { some: 'data' }, last_seen_at: '2026-08-01T00:00:00.000Z'
+  };
+  const shaped = refreshableSignalRow(row);
+  assert(shaped.account_name === 'Clearwater Engineering', 'REQUIRED (regression): refreshableSignalRow() includes account_name in its refresh-upsert shape');
+  assert(!('first_seen_at' in shaped), 'refreshableSignalRow() still never carries first_seen_at through (unchanged by the fix)');
+  assert(shaped.event_fingerprint === 'fp-1' && shaped.user_id === 'u1' && shaped.signal_hash === 'hash-1', 'refreshableSignalRow() still keeps the identity/conflict-target columns (unchanged by the fix)');
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: the second (merge-duplicates) upsert call's actual request
+// body includes account_name, not just the object returned by
+// refreshableSignalRow() in isolation.
+// ---------------------------------------------------------------------------
+{
+  const { supabase, calls } = makeMockSupabase();
+  await persistValidatedSignals({ userId: 'u1', signals: [makeSignal()], supabase });
+  const refreshCall = calls.find(c => c.options.prefer === 'resolution=merge-duplicates');
+  assert(!!refreshCall, 'sanity: a merge-duplicates refresh-upsert call was made');
+  const refreshBody = JSON.parse(refreshCall.options.body);
+  assert(Array.isArray(refreshBody) && refreshBody.length === 1 && refreshBody[0].account_name === 'Gamma Co', `REQUIRED (regression): the ACTUAL refresh-upsert request body sent to Supabase includes account_name (got ${JSON.stringify(refreshBody[0]?.account_name)})`);
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: a schema-aware mock that enforces ha_signals' real NOT NULL
+// columns (account_name, signal_hash -- confirmed via information_schema
+// against the live production schema) now succeeds end to end. This is
+// deliberately STRICTER than makeMockSupabase() above, which (like every
+// prior test in this file) accepts any row shape -- exactly the blind spot
+// that let the original bug ship past a fully-passing test suite.
+// ---------------------------------------------------------------------------
+function makeSchemaAwareMockSupabase({ insertResponder = null } = {}) {
+  const NOT_NULL_NO_DEFAULT_COLUMNS = ['account_name', 'signal_hash'];
+  const calls = [];
+  let ignoreDuplicatesCallCount = 0;
+  const supabase = async (path, options = {}) => {
+    calls.push({ path, options: { ...options } });
+    if (options.method === 'GET') return [];
+    if (path.startsWith('ha_signals') && options.body) {
+      const rows = JSON.parse(options.body);
+      for (const row of rows) {
+        for (const col of NOT_NULL_NO_DEFAULT_COLUMNS) {
+          if (row[col] === undefined || row[col] === null) {
+            // The exact error shape the real production incident hit.
+            const err = new Error(`Supabase 400: null value in column "${col}" of relation "ha_signals" violates not-null constraint`);
+            err.status = 400;
+            throw err;
+          }
+        }
+      }
+      if (options.prefer && options.prefer.includes('ignore-duplicates')) {
+        ignoreDuplicatesCallCount += 1;
+        if (insertResponder) return insertResponder(rows, ignoreDuplicatesCallCount);
+      }
+    }
+    return JSON.parse(options.body);
+  };
+  return { supabase, calls };
+}
+
+{
+  const { supabase } = makeSchemaAwareMockSupabase();
+  const result = await persistValidatedSignals({ userId: 'u1', signals: [makeSignal()], supabase });
+  assert(result.newSignalRows.length === 1, `REQUIRED (regression): persistValidatedSignals() now succeeds end to end against a mock that enforces the REAL NOT NULL columns Postgres actually has, closing the exact gap the permissive mocks above missed (this is the mock that would have caught the original bug before it shipped)`);
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: existing duplicate-refresh semantics remain unchanged by the
+// fix -- same repeat-scan behavior as the earlier (permissive-mock) test,
+// now proven against the schema-aware mock too.
+// ---------------------------------------------------------------------------
+{
+  const { supabase } = makeSchemaAwareMockSupabase({
+    // First ignore-duplicates insert: genuinely new, Postgres returns the
+    // row. Second: Postgres silently skips the already-known
+    // event_fingerprint, returns nothing -- same simulated semantics as
+    // the earlier permissive-mock repeat-scan test.
+    insertResponder: (rows, callNumber) => (callNumber === 1 ? rows : [])
+  });
+  const signal = makeSignal();
+  const first = await persistValidatedSignals({ userId: 'u1', signals: [signal], supabase });
+  assert(first.newSignalRows.length === 1, 'unchanged: first persistence of a new event still reports exactly one new row against the schema-aware mock');
+
+  const second = await persistValidatedSignals({ userId: 'u1', signals: [signal], supabase });
+  assert(second.rowsToInsert.length === 1, 'unchanged: a repeat scan still BUILDS and ATTEMPTS the row');
+  assert(second.newSignalRows.length === 0, 'unchanged: a repeat scan of an already-known event still reports ZERO new rows');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
