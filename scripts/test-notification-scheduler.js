@@ -56,6 +56,11 @@ function makeMockFetch(state) {
     if (u.includes('api.resend.com')) {
       state.resendCalls.push(JSON.parse(options.body));
       if (state.resendShouldFail) return jsonResponse({ message: 'simulated Resend outage' }, false, 502);
+      // Simulates a 2xx response that -- contrary to Resend's own
+      // documented SendEmailResponse schema -- carries no id. Genuinely
+      // undocumented/anomalous, but the code must still fail closed
+      // against it rather than trust "the request didn't throw."
+      if (state.resendAmbiguousResponse) return jsonResponse({});
       return jsonResponse({ id: `resend-msg-${state.resendCalls.length}` });
     }
     if (u.includes('/rest/v1/ha_users')) {
@@ -110,6 +115,7 @@ function baseState(overrides = {}) {
     monitoringTargets: [],
     resendCalls: [],
     resendShouldFail: false,
+    resendAmbiguousResponse: false,
     ...overrides
   };
 }
@@ -411,6 +417,69 @@ async function run() {
   }
 
   // -------------------------------------------------------------------
+  // REQUIRED (delivery-success contract correction): only a positively-
+  // confirmed provider send (a real, non-empty string id) may count as
+  // 'sent', advance the watermark, or suppress an outreach prompt.
+  // sendEmail() -> { skipped: true } (e.g. RESEND_API_KEY unset in this
+  // environment) must NEVER be treated as a successful delivery.
+  // -------------------------------------------------------------------
+  {
+    const state = baseState({
+      users: [{ id: 'user-skip', email: 'skip@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
+      signals: { 'user-skip': [{ id: 'sig-skip', account_name: 'Acme', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }] },
+      outreachEvents: { 'user-skip': [{ id: 'or-skip', event_fingerprint: 'fp-skip', signal_id: 'sig-skip-outreach', opportunity_id: null, account_name: 'Acme', created_at: new Date(Date.now() - 10 * 86400000).toISOString() }] },
+      outcomeEvents: { 'user-skip': [] }
+    });
+    const originalKey = process.env.RESEND_API_KEY;
+    const res = makeRes();
+    await withState(state, async () => {
+      delete process.env.RESEND_API_KEY; // simulates the exact live-QA condition
+      await handler(makeReq(), res);
+    });
+    if (originalKey !== undefined) process.env.RESEND_API_KEY = originalKey;
+
+    assert(res.body.sent === 0, `REQUIRED: sent stays 0 when sendEmail() returns { skipped: true } -- "did not throw" is never treated as delivery (got ${JSON.stringify(res.body)})`);
+    assert(res.body.skipped === 1, `REQUIRED: the skip is counted in its own bucket, distinct from a genuine provider failure (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls.length === 0, 'sanity: sendEmail() never even reaches the Resend API call when the key is missing');
+    assert(state.deliveries.length === 1, 'REQUIRED: a durable record of the skipped attempt IS persisted -- delivery is never silently pretended or silently dropped');
+    assert(state.deliveries[0].status === 'failed', `REQUIRED: a skipped send is recorded as 'failed' (the schema's existing two-value status vocabulary), never 'success' (got ${state.deliveries[0].status})`);
+    assert(state.deliveries[0].resend_message_id == null, 'REQUIRED: no provider message id is stored for a skipped send');
+    assert(/RESEND_API_KEY/.test(state.deliveries[0].error || ''), `REQUIRED: the persisted error is honest about why -- names the missing key, not a generic failure (got ${JSON.stringify(state.deliveries[0].error)})`);
+
+    // The critical regression: a SECOND invocation, now with a real key,
+    // must still find the SAME signal and the SAME outreach prompt
+    // eligible -- proving the skipped attempt left no false watermark and
+    // suppressed nothing.
+    const secondRes = makeRes();
+    await withState(state, async () => { await handler(makeReq(), secondRes); });
+    assert(secondRes.body.sent === 1, `REQUIRED: the signal remains eligible on the next invocation -- the skipped attempt never advanced the watermark (got ${JSON.stringify(secondRes.body)})`);
+    assert(state.resendCalls.length === 1, 'the real send only happens once real transport succeeds');
+    const successRow = state.deliveries.find(d => d.status === 'success');
+    assert(!!successRow, 'a genuine success row now exists');
+    assert(JSON.stringify(successRow.included_signal_ids) === JSON.stringify(['sig-skip']), 'REQUIRED: the previously-skipped signal is included in the first REAL successful delivery, not lost');
+    assert(JSON.stringify(successRow.included_outreach_event_ids) === JSON.stringify(['or-skip']), 'REQUIRED: the outreach prompt ALSO remains eligible after the skipped attempt -- it was never suppressed by a delivery that didn\'t actually happen');
+  }
+  {
+    // REQUIRED (item 6, provider-error/ambiguous-response coverage): a 2xx
+    // Resend response that -- contrary to its own documented schema --
+    // carries no id must ALSO fail closed, not just the explicit
+    // { skipped: true } no-op path. "No throw" is never sufficient proof
+    // of delivery, regardless of which code path produced the falsy id.
+    const state = baseState({
+      users: [{ id: 'user-ambiguous', email: 'ambiguous@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
+      signals: { 'user-ambiguous': [{ id: 'sig-ambiguous', account_name: 'Acme', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }] },
+      outreachEvents: { 'user-ambiguous': [] },
+      resendAmbiguousResponse: true
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); });
+    assert(res.body.sent === 0, `REQUIRED: a 2xx Resend response with no id is never counted as sent (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls.length === 1, 'sanity: the Resend call genuinely happened this time (unlike the missing-key case) -- this is a distinct code path from the skip');
+    assert(state.deliveries.length === 1 && state.deliveries[0].status === 'failed', 'REQUIRED: the ambiguous response is still logged as a durable failed attempt');
+    assert(state.deliveries[0].resend_message_id == null, 'no message id is stored when none was actually returned');
+  }
+
+  // -------------------------------------------------------------------
   // REQUIRED: a Resend failure for one user is logged as 'failed' and
   // does NOT block a second user's send in the same invocation.
   // -------------------------------------------------------------------
@@ -433,6 +502,7 @@ async function run() {
     // this mock -- proves both are isolated (both attempted, both logged),
     // not that the second short-circuits after the first's failure.
     assert(res.body.failed === 2, `REQUIRED: both users' failed sends are counted, proving neither blocked the other's attempt (got ${JSON.stringify(res.body)})`);
+    assert(res.body.skipped === 0, 'REQUIRED: a genuine provider error (throws) is counted as failed, never conflated with the distinct skipped bucket');
     assert(state.deliveries.every(d => d.status === 'failed'), 'REQUIRED: every failed send is logged as status=failed, never silently dropped');
     assert(state.deliveries.length === 2, 'REQUIRED: one delivery row per user, even on failure');
   }
