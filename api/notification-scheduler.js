@@ -1,9 +1,11 @@
 // POST/GET /api/notification-scheduler
 // Notification & Outcome Loop V1 step 3: the independent notification job.
-// Deliberately NOT added to vercel.json's crons -- stays a manually-
-// invokable, CRON_SECRET-gated endpoint until Preview QA + founder approval
-// (Step 4/5), matching api/monitoring-scheduler.js's own dark-run
-// precedent. Zero research in this path: everything below only ever READS
+// Automated in vercel.json's crons array (0 12 * * *, once daily) as of the
+// Full Beta Cutover, after Preview QA, founder approval, and live Production
+// proof against the four approved Beta organizations. Remains
+// CRON_SECRET-gated the same way it always was, so a manual founder-run curl
+// invocation still works identically alongside the cron. Zero research in
+// this path: everything below only ever READS
 // ha_signals/ha_signal_events (via listUnresolvedOutreach) and
 // ha_notification_deliveries -- no provider call, no import of
 // research-batch.js or any provider wrapper, structurally.

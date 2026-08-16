@@ -1,14 +1,11 @@
-// Shared Resend-calling helper. Extracted from api/weekly-scan.js's own
-// local sendEmail() (byte-for-byte identical behavior) so the new,
-// independent notification scheduler (api/notification-scheduler.js) and
-// the legacy weekly digest share exactly ONE outbound-email implementation
-// from day one -- weekly-scan.js continues sending its own digest content
-// during the migration window, but never through a second, divergent
-// Resend call. See the Notification & Outcome Loop V1 recon report for why
-// this extraction happens now rather than at the eventual Monday Brief
-// cutover: duplicating this function today, even temporarily, is exactly
-// the "permanent second email implementation" risk the founder asked to
-// avoid.
+// Shared Resend-calling helper. Originally extracted from the legacy
+// api/weekly-scan.js's own local sendEmail() (byte-for-byte identical
+// behavior) so the new, independent notification scheduler
+// (api/notification-scheduler.js) and the legacy weekly digest could share
+// exactly ONE outbound-email implementation during the migration window,
+// never a second, divergent Resend call. api/weekly-scan.js was retired
+// with the Full Beta Cutover; this is now the one and only outbound-email
+// implementation in the codebase.
 export async function sendEmail({ to, subject, html }) {
   const key = process.env.RESEND_API_KEY;
   if (!key) return { skipped: true, reason: 'Missing RESEND_API_KEY' };

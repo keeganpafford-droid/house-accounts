@@ -454,10 +454,10 @@ function asBusinessOpportunity(opp){
 // ---------------------------------------------------------------------------
 {
   const researchBatchSrc = readFileSync(path.join(__dirname, '..', 'api', 'research-batch.js'), 'utf8');
-  const weeklyScanSrc = readFileSync(path.join(__dirname, '..', 'api', 'weekly-scan.js'), 'utf8');
   const saveUploadSrc = readFileSync(path.join(__dirname, '..', 'api', 'save-upload.js'), 'utf8');
+  const signalPersistenceSrc = readFileSync(path.join(__dirname, '..', 'api', 'lib', 'signal-persistence.js'), 'utf8');
   assert(/resolveOpportunityEvents\(/.test(researchBatchSrc), 'required test 1: api/research-batch.js (the live research/dashboard response path) calls resolveOpportunityEvents()');
-  assert(/resolveOpportunityEvents\(/.test(weeklyScanSrc) || /resolveOpportunityEvents\(/.test(saveUploadSrc), 'required test 1: the persistence/weekly-digest path (api/weekly-scan.js or api/save-upload.js) calls the SAME resolveOpportunityEvents(), not a separate implementation');
+  assert(/resolveOpportunityEvents\(/.test(saveUploadSrc) || /resolveOpportunityEvents\(/.test(signalPersistenceSrc), 'required test 1: the persistence path (api/save-upload.js and api/lib/signal-persistence.js, the shared boundary the Queue monitoring worker and the retired weekly-scan.js both used) calls the SAME resolveOpportunityEvents(), not a separate implementation');
 }
 
 // ---------------------------------------------------------------------------

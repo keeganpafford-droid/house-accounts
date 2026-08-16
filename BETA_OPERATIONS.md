@@ -20,18 +20,29 @@ deploy.
       `FIRECRAWL_API_KEY` — research quality depends on which of these are
       configured; confirm the set matches what you expect research quality
       to be.
-- [ ] **Verify `CRON_SECRET` is set.** `api/weekly-scan.js` and the
-      weekly-monitoring path in `api/research-batch.js` fail closed (503)
-      without it — this is correct and required, not a bug to work around.
-- [ ] **Verify `RESEND_API_KEY` and `RESEND_FROM_EMAIL`.** Required for the
-      weekly digest email and any transactional email to actually send.
-- [ ] **Confirm whether the Monday digest is enabled for Production.** The
-      cron is configured in `vercel.json` as `0 12 * * 1` (Mondays, 12:00
-      UTC) hitting `/api/weekly-scan`. Vercel Cron only runs against
-      Production deployments, so whether it is actually firing depends on
-      the currently promoted Production deployment, which this session
-      cannot verify — check the Vercel dashboard's Cron tab directly before
-      telling a customer to expect a Monday email.
+- [ ] **Verify `CRON_SECRET` is set.** `api/monitoring-scheduler.js`,
+      `api/notification-scheduler.js`, and the weekly-monitoring path in
+      `api/research-batch.js` all fail closed (503) without it — this is
+      correct and required, not a bug to work around.
+- [ ] **Verify `RESEND_API_KEY` and `ALERTS_FROM_EMAIL`.** Required for
+      notification digest email and any transactional email to actually
+      send.
+- [ ] **Verify `QUEUE_MANAGED_ORGANIZATION_IDS` and
+      `NOTIFICATION_ENABLED_ORGANIZATION_IDS`.** Both are fail-closed
+      allowlists (empty = nobody is monitored/notified). Confirm they
+      contain exactly the organizations you intend to be live in Production
+      — an organization absent from `QUEUE_MANAGED_ORGANIZATION_IDS`
+      receives no recurring monitoring at all; an organization absent from
+      `NOTIFICATION_ENABLED_ORGANIZATION_IDS` is monitored but never
+      emailed.
+- [ ] **Confirm the monitoring and notification crons are enabled for
+      Production.** `vercel.json` configures `/api/monitoring-scheduler` at
+      `*/5 * * * *` and `/api/notification-scheduler` at `0 12 * * *`.
+      Vercel Cron only runs against Production deployments, so whether they
+      are actually firing depends on the currently promoted Production
+      deployment, which this session cannot verify — check the Vercel
+      dashboard's Cron tab directly before telling a customer to expect
+      monitoring or email.
 - [ ] **Run a real signup → login → dashboard → upload smoke test** against
       Production using a disposable test account. Confirm a CSV upload
       completes and at least one account appears on the dashboard.
@@ -169,16 +180,19 @@ are honest limitations of the system as built today, not hypothetical:
   cannot produce. Customers who only want public-signal research on
   prospect lists will see a thinner product than customers who upload real
   account history.
-- **Weekly digest email availability depends on Production
-  configuration** (`RESEND_API_KEY`/`RESEND_FROM_EMAIL` set, and the
-  Vercel Cron actually enabled on the promoted Production deployment).
-  Confirm this is actually live before promising a customer a Monday
-  email.
-- **Outcome tracking does not exist yet.** House Accounts surfaces
-  opportunities and signals; it does not yet track whether a rep acted on
-  one or what happened if they did. This is understood to be the next
-  major product feature, not a beta gap you need to apologize for, but
-  don't promise it either.
+- **Notification email availability depends on Production configuration**
+  (`RESEND_API_KEY`/`ALERTS_FROM_EMAIL` set, both allowlists populated with
+  the customer's organization, and the Vercel Cron actually enabled on the
+  promoted Production deployment). Confirm this is actually live before
+  promising a customer proactive email — a customer's own
+  `notification_preference` (daily/weekly/in_app_only, set in Settings)
+  also governs whether and how often they receive email at all.
+- **Outcome tracking exists.** House Accounts prompts a rep to report what
+  happened after an outreach (via the dashboard's unresolved-outreach
+  panel and the "Tell us how it went →" link in notification email), and
+  terminal outcomes stop further auto-prompting for that outreach. This
+  captured outcome evidence does not yet change recommendations or ranking
+  — that's Behavioral Learning, a separate, not-yet-started feature.
 - **Beta includes founder-led onboarding and support.** There is no
   self-service billing, no in-app support chat, and no automated account
   recovery flow beyond what's described above. Every beta customer is

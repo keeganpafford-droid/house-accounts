@@ -5,27 +5,27 @@
 // scheduler.js is the thin route that fetches the real data and calls
 // api/lib/email.js's sendEmail() with this module's output.
 //
-// This is deliberately a NEW template, not a reuse of api/weekly-scan.js's
-// rich opportunityCardHtml()/reportHtml() -- the founder's own spec for
-// this artifact is a compact "N accounts worth a look, two headline lines,
-// X more in House Accounts" digest plus an unresolved-outreach section
-// weekly-scan's template has no concept of at all; forcing a shared
-// template today would couple two structurally different emails together
-// for no real benefit. The one genuinely duplicative piece (the outbound
-// Resend call itself) is shared via api/lib/email.js. Template unification
-// is a natural candidate for the eventual Monday Brief cutover (Step 6),
-// once weekly-scan's digest is actually being REPLACED rather than run
-// alongside this one.
+// This was deliberately a NEW template, not a reuse of the legacy
+// api/weekly-scan.js's rich opportunityCardHtml()/reportHtml() -- the
+// founder's own spec for this artifact is a compact "N accounts worth a
+// look, two headline lines, X more in House Accounts" digest plus an
+// unresolved-outreach section the old Monday Brief template had no concept
+// of at all; forcing a shared template would have coupled two structurally
+// different emails together for no real benefit. The one genuinely
+// duplicative piece (the outbound Resend call itself) is shared via
+// api/lib/email.js. api/weekly-scan.js was retired with the Full Beta
+// Cutover, so this is now the only digest email House Accounts sends --
+// the template-unification question this comment used to defer is moot.
 // Signal doctrine correction: a row persisted in ha_signals is NOT the same
 // thing as it being eligible for a PROACTIVE surface. classifyMonitoringSignalEligibility()
 // (+ lookupTargetIdentity()) is the ONE centralized priority/secondary/
-// hidden policy every consumer must call -- api/weekly-scan.js's own digest
-// already does (see its digestEligibleRows filter) -- reused here verbatim,
-// never recreated. classifyLegacySignalActionability() is the companion
-// actionability gate weekly-scan's digest also applies (dateless/non-
-// commercial signals can be identity-eligible yet still not actionable
-// enough to push proactively) -- both gates together are what "priority"
-// means for a proactive surface, exactly matching the existing digest.
+// hidden policy every consumer must call -- the dashboard opportunity feed
+// (api/get-dashboard.js) applies it too -- reused here verbatim, never
+// recreated. classifyLegacySignalActionability() is the companion
+// actionability gate the dashboard also applies (dateless/non-commercial
+// signals can be identity-eligible yet still not actionable enough to push
+// proactively) -- both gates together are what "priority" means for a
+// proactive surface, exactly matching the dashboard's own doctrine.
 import { classifyMonitoringSignalEligibility, lookupTargetIdentity } from './monitoring-identity.js';
 import { classifyLegacySignalActionability } from '../research-batch.js';
 
@@ -49,8 +49,8 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
-// Reuses the exact centralized eligibility policy api/weekly-scan.js's own
-// digest already applies -- not a second, looser notion of "new
+// Reuses the exact centralized eligibility policy the dashboard opportunity
+// feed already applies -- not a second, looser notion of "new
 // intelligence." A signal being persisted in ha_signals only means research
 // found and stored it; whether it's strong enough to push proactively is a
 // separate question this policy alone answers. 'secondary' signals are
@@ -58,7 +58,7 @@ function escapeHtml(value = '') {
 // mutated, still fully visible in HA's own View Research / Research
 // Details per the already-banked dashboard doctrine (this function has no
 // write path at all). targetIdentityIndex is built once per scheduler
-// invocation the same way api/weekly-scan.js builds its own (see
+// invocation the same way api/get-dashboard.js builds its own (see
 // buildTargetIdentityIndex() in api/lib/monitoring-identity.js) and passed
 // in here, never rebuilt or reinvented per call.
 export function filterPriorityEligibleSignals(signals, { targetIdentityIndex, userId } = {}) {

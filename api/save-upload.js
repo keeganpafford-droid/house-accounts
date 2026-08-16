@@ -534,7 +534,7 @@ export default async function handler(req, res){
         // Organizational Learning V1B: this is the one point purchase
         // history is known to have just changed (replace_ha_accounts_snapshot()
         // is the only writer of ha_accounts.raw_data.purchases -- research/
-        // weekly-scan runs never touch it), so it's the one hook point
+        // monitoring runs never touch it), so it's the one hook point
         // reconciliation needs. Runs for every account in THIS save, not
         // just changed ones -- reconcileAccountOpportunities() is already
         // idempotent for an unchanged account (same fingerprint -> same
@@ -764,10 +764,13 @@ export default async function handler(req, res){
       first_seen_at: new Date().toISOString(),
       last_seen_at: new Date().toISOString()
     })).filter(row => row.event_fingerprint);
-    // Defensive in-memory dedup before the bulk write, same as weekly-scan.js —
-    // the database's composite unique constraint is the final safety net.
-    // Deliberately NOT scoped by upload_id: see weekly-scan.js for why —
-    // the product monitors companies, not uploads.
+    // Defensive in-memory dedup before the bulk write, same as
+    // api/lib/signal-persistence.js's persistValidatedSignals() (the Queue
+    // monitoring worker's own persistence boundary) -- the database's
+    // composite unique constraint is the final safety net. Deliberately NOT
+    // scoped by upload_id: the product monitors companies, not uploads --
+    // (user_id, event_fingerprint) is the real identity a signal dedupes
+    // against, regardless of which upload or monitoring cycle produced it.
     const signalRows = dedupeByEventFingerprint(candidateRows, {
       keyOf: row => `${row.user_id}|${row.event_fingerprint}`,
       scoreOf: row => Number(row.confidence || 0)

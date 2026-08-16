@@ -3,7 +3,6 @@
 Upload/replace:
 - `index.html`
 - `api/get-dashboard.js`
-- `api/weekly-scan.js`
 
 Keep from v39:
 - `api/save-upload.js`
@@ -32,7 +31,7 @@ Test flow:
 2. Refresh the site.
 3. Use “Returning user? View dashboard” with the same email.
 4. Confirm saved accounts/signals load.
-5. Test weekly scan manually with `/api/weekly-scan?secret=YOUR_CRON_SECRET&dryRun=true`.
+5. Test monitoring manually with `/api/monitoring-scheduler` and notifications with `/api/notification-scheduler` (both `Authorization: Bearer YOUR_CRON_SECRET`). `/api/weekly-scan` was retired with the Full Beta Cutover — the Queue monitoring + independent notification architecture replaced it in production.
 
 
 ## V42 Marketing Site

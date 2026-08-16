@@ -142,12 +142,14 @@ export function buildIdempotencyKey(target) {
   return `monitor:${target.id}:${target.next_due_at}`;
 }
 
-// Phase 2B item K: whether an organization is currently managed by the new
-// Queue-connected path rather than the legacy api/weekly-scan.js sweep.
-// Empty/unset allowlist -> false for everyone -- a no-op by default, so
-// this function existing at all does not change production behavior until
-// an operator deliberately sets QUEUE_MANAGED_ORGANIZATION_IDS for their
-// own founder-controlled org(s).
+// Phase 2B item K: whether an organization is currently activated for
+// recurring Queue monitoring at all -- the legacy api/weekly-scan.js sweep
+// this allowlist originally excluded orgs FROM was retired with the Full
+// Beta Cutover, so the Queue path is now the only recurring-monitoring
+// mechanism and this allowlist is a straightforward activation gate.
+// Empty/unset allowlist -> false for everyone -- fail-closed, so this
+// function existing at all does not monitor any organization until an
+// operator deliberately sets QUEUE_MANAGED_ORGANIZATION_IDS.
 export function isQueueManagedOrganization(organizationId, allowlistEnvValue) {
   const list = String(allowlistEnvValue || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!list.length || !organizationId) return false;
@@ -292,7 +294,7 @@ export class MonitoringRetryError extends Error {
 // actually land durably in ha_signals before this attempt is allowed to
 // report success. persistSignals() (the real implementation calls the
 // shared persistValidatedSignals() boundary in
-// api/lib/signal-persistence.js -- the SAME function api/weekly-scan.js
+// api/lib/signal-persistence.js -- the SAME function api/save-upload.js
 // calls, not a second implementation) is only invoked for a coverage that
 // would otherwise advance cadence (complete/degraded_trustworthy); an
 // 'insufficient' result never had anything worth persisting and already

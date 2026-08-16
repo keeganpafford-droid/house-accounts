@@ -2491,7 +2491,7 @@
       <div class="workspace-card"><strong id="wsPausedCustomers">0</strong><span>Paused customers</span></div>
       <div class="workspace-card"><strong id="wsActiveProspects">0</strong><span>Active prospects</span></div>
       <div class="workspace-card"><strong id="wsPausedProspects">0</strong><span>Paused prospects</span></div>
-      <div class="workspace-card"><strong id="wsNextScan">Monday</strong><span>Next weekly scan</span></div>
+      <div class="workspace-card"><strong id="wsNextScan">Ongoing</strong><span>Monitoring cadence</span></div>
       <div class="workspace-card"><strong id="wsMonitoringStatus">Active</strong><span>Monitoring status</span></div>
     </div>
     <div id="customerListGrid" class="monitor-list-grid"></div>
@@ -8152,10 +8152,7 @@ function getActiveResearchBreadcrumb(uploadId, researchRunId){
 // threw a raw V8 SyntaxError ("Unexpected token 'A', "An error o"... is
 // not valid JSON") straight into the user's error message. Every real
 // branch of research-account.js/research-batch.js returns JSON on every
-// path, so a non-JSON body here is never an application error. Mirrors the
-// same read-once-as-text-then-parse pattern weekly-scan.js already uses
-// for its own internal /api/research-batch call (see that file's own
-// comment on this exact failure mode).
+// path, so a non-JSON body here is never an application error.
 async function safeParseResearchResponse(res, context){
   const rawBody = await res.text();
   let parsed = null;

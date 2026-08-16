@@ -191,13 +191,13 @@ function mockSb(rows){
     accounts: [{ account_name: 'Acme Inc' }, { account_name: 'Nike' }, { account_name: 'L.L.Bean' }]
   });
   const usage = await usageFor(sb, { id: 'u1', organization_id: 'org-1' }, { plan: 'free' });
-  assert(usage.totalMonitoredCompanies === 3, 'REQUIRED: active customer accounts (the population api/weekly-scan.js actually re-researches weekly) consume capacity (got ' + usage.totalMonitoredCompanies + ')');
+  assert(usage.totalMonitoredCompanies === 3, 'REQUIRED: active customer accounts (the population the Queue monitoring architecture actually re-researches on cadence) consume capacity (got ' + usage.totalMonitoredCompanies + ')');
 }
 
 // REQUIRED: an individually paused customer account does not consume
 // capacity, using the SAME canonical pause field (ha_accounts.raw_data.
-// monitoring_status) api/weekly-scan.js's accountPayload() now reads --
-// one pause definition, not two.
+// monitoring_status) api/lib/monitoring-targets.js's account-status
+// resolution reads -- one pause definition, not two.
 {
   const sb = mockSb({
     users: [{ id: 'u1', email: 'a@example.com', status: 'active' }],

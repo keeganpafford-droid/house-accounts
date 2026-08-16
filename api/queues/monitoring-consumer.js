@@ -34,7 +34,7 @@ import {
 // own header comment for why this exists and how it differs from
 // claim_ha_monitoring_target()/complete_ha_monitoring_attempt() above.
 import { acquireMonitoringCapacity, releaseMonitoringCapacity, DEFAULT_CAPACITY_LEASE_SECONDS } from '../lib/monitoring-capacity.js';
-// Phase 2C: the same shared persistence boundary api/weekly-scan.js calls
+// Phase 2C: the same shared persistence boundary api/save-upload.js calls
 // -- not a second implementation. uploadId/weeklyRunId are null for every
 // monitoring call (this path is not upload-driven).
 import { persistValidatedSignals } from '../lib/signal-persistence.js';
@@ -147,7 +147,7 @@ async function resolveAndPersistTargetIdentity(target, accountRow) {
 // and -- when one is on file -- projects it onto accountContext.website,
 // matching the SAME contact-email-domain-derivation benefit
 // api/research-batch.js's interactive safeAccounts construction already
-// gives the weekly-scan path. Only ever overrides accountContext.website
+// gives the upload-driven research path. Only ever overrides accountContext.website
 // with a domain resolved from ACCOUNT-side evidence, never from a
 // candidate discovered this cycle.
 async function resolveAccountContext(targetId) {
@@ -197,7 +197,7 @@ async function releaseCapacity({ leaseToken }) {
 }
 
 // Real persistence implementation: calls the SAME shared boundary
-// api/weekly-scan.js calls. uploadId/weeklyRunId are null -- this path is
+// api/save-upload.js calls. uploadId/weeklyRunId are null -- this path is
 // not upload-driven, and persistValidatedSignals() treats both as optional.
 async function persistSignals({ userId, signals }) {
   return persistValidatedSignals({ userId, uploadId: null, weeklyRunId: null, signals, supabase });
