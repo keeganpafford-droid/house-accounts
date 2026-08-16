@@ -66,6 +66,19 @@ function assert(condition, message) {
   assert(/CRON_SECRET/.test(source) && /safeSecretEqual/.test(source), 'the scheduler is gated behind the same CRON_SECRET auth convention as every other internal cron endpoint in this codebase');
 }
 
+// ---------------------------------------------------------------------------
+// Notification & Outcome Loop V1 prerequisite (migration 20): the due-query
+// must exclude targets still inside their research-failure cooldown, so the
+// 5-minute scheduler cadence cannot repeatedly re-publish a chronically-
+// failing target. Structural proof against the real source, same convention
+// as the checks above -- this sandbox has no live database to query.
+// ---------------------------------------------------------------------------
+{
+  const source = readFileSync(join(REPO_ROOT, 'api', 'monitoring-scheduler.js'), 'utf8');
+  assert(/or=\(research_retry_cooldown_until\.is\.null,research_retry_cooldown_until\.lte\./.test(source), 'REQUIRED: the due-query excludes targets whose research_retry_cooldown_until is set and still in the future, via an OR filter that still admits targets with no cooldown set at all');
+  assert(!/PATCH[\s\S]*?research_retry_cooldown_until|research_retry_cooldown_until[\s\S]*?method:\s*['"]PATCH['"]/.test(source), 'REQUIRED: the scheduler never writes research_retry_cooldown_until -- setting/clearing it remains exclusively complete_ha_monitoring_attempt()\'s job');
+}
+
 // vercel.json itself must not list this endpoint as a cron in this phase --
 // checked against the real config file, not just the scheduler's own source.
 {
