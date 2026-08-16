@@ -221,25 +221,40 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
 // ---------------------------------------------------------------------------
 {
   const subject = renderDigestSubject({ newSignals: [{ account_name: 'Acme Co' }], promptEligibleOutreach: [] });
-  assert(subject === '1 new reason to reach out this week: Acme Co', `single-signal subject names the account (got ${JSON.stringify(subject)})`);
+  assert(subject === '1 account worth a look', `REQUIRED: signals-only subject uses the founder's concise count-based shape, singular (got ${JSON.stringify(subject)})`);
 }
 {
   const subject = renderDigestSubject({ newSignals: [{ account_name: 'A' }, { account_name: 'B' }], promptEligibleOutreach: [] });
-  assert(subject === '2 new reasons to reach out this week', `multi-signal subject (got ${JSON.stringify(subject)})`);
+  assert(subject === '2 accounts worth a look', `REQUIRED: signals-only subject uses the founder's concise count-based shape, plural (got ${JSON.stringify(subject)})`);
 }
 {
   const subject = renderDigestSubject({ newSignals: [], promptEligibleOutreach: [{ accountName: 'Acme' }] });
-  assert(subject === 'Outreach waiting on an update', `outreach-only subject (got ${JSON.stringify(subject)})`);
+  assert(subject === '1 follow-up waiting on you', `REQUIRED: follow-ups-only subject, singular (got ${JSON.stringify(subject)})`);
+}
+{
+  const subject = renderDigestSubject({ newSignals: [], promptEligibleOutreach: [{ accountName: 'Acme' }, { accountName: 'Beta' }] });
+  assert(subject === '2 follow-ups waiting on you', `REQUIRED: follow-ups-only subject, plural (got ${JSON.stringify(subject)})`);
+}
+{
+  const subject = renderDigestSubject({ newSignals: [{ account_name: 'Acme Co' }], promptEligibleOutreach: [{ accountName: 'Beta' }] });
+  assert(subject === '1 account worth a look + 1 follow-up', `REQUIRED: combined subject matches the founder's exact preferred shape (got ${JSON.stringify(subject)})`);
+}
+{
+  const subject = renderDigestSubject({ newSignals: [{ account_name: 'A' }, { account_name: 'B' }], promptEligibleOutreach: [{ accountName: 'X' }, { accountName: 'Y' }, { accountName: 'Z' }] });
+  assert(subject === '2 accounts worth a look + 3 follow-ups', `REQUIRED: combined subject pluralizes both halves independently (got ${JSON.stringify(subject)})`);
 }
 {
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [], baseUrl: 'https://app.example.com' });
   assert(html.includes('Dover Honda') && html.includes('Holiday parade activity'), 'REQUIRED: the rendered HTML includes the real account name and signal title, not a placeholder');
-  assert(html.includes('1 account worth a look this week'), 'REQUIRED: the headline uses the compact "N accounts worth a look" phrasing from the founder\'s spec, not the old Monday Brief\'s phrasing');
+  assert(html.includes('New Intelligence'), 'REQUIRED: the New Intelligence section is visually/textually distinct with its own heading');
+  assert(html.indexOf('New Intelligence') < html.indexOf('Dover Honda'), 'REQUIRED: the section heading renders before the account it introduces');
 }
 {
-  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [], promptEligibleOutreach: [{ accountName: 'Dover Honda', outreachEventId: 'or-1' }], baseUrl: 'https://app.example.com' });
-  assert(html.includes('You reached out to Dover Honda') && html.includes('how did it go?'), 'REQUIRED: an outreach prompt uses the exact founder-specified phrasing');
-  assert(html.includes('Tell House Accounts'), 'REQUIRED: the outreach prompt links back into House Accounts, never asking for a reply-by-email');
+  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [], promptEligibleOutreach: [{ accountName: 'Dover Honda', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(3) }], baseUrl: 'https://app.example.com', now: NOW });
+  assert(html.includes('How Did This Go?'), 'REQUIRED: the outreach section has its own distinct "How Did This Go?" heading, visually separated from New Intelligence');
+  assert(html.includes('You reached out to Dover Honda 3 days ago.'), `REQUIRED: the outreach prompt uses the founder-specified "reached out ... ago" phrasing with a real day count (got: ${html.match(/You reached out[^<]*/)})`);
+  assert(html.includes('Report outcome →'), 'REQUIRED: the outreach prompt uses the founder-specified "Report outcome ->" link text');
+  assert(html.includes('href="https://app.example.com/dashboard/?outreach=or-1"'), `REQUIRED: Notification Deep Links -- the Report outcome link carries this exact outreach's own outreachEventId so it lands on the specific item, not just the dashboard (got: ${html.match(/href="[^"]*outreach[^"]*"/g)})`);
 }
 {
   const extra = Array.from({ length: 8 }, (_, i) => ({ account_name: `Account ${i}`, title: 'Signal' }));
@@ -247,10 +262,11 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
   assert(html.includes('3 more in House Accounts'), `REQUIRED: only the top 5 headline signals render inline, the rest collapse into an "N more in House Accounts" line matching the founder's example (got no match in: ${html.includes('more in House Accounts')})`);
 }
 {
-  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [{ accountName: 'Acme', outreachEventId: 'or-1' }], baseUrl: 'https://app.example.com/' });
-  assert(html.includes('https://app.example.com/dashboard/'), `REQUIRED: the CTA and outreach prompt links point at the authenticated /dashboard/ route, not the marketing homepage (got: ${html.match(/href="[^"]*"/g)})`);
-  assert(!html.includes('dashboardEmail'), 'REQUIRED: the vestigial dashboardEmail query param must never reappear on the CTA link');
-  assert(!/href="https:\/\/app\.example\.com\/?"/.test(html), 'REQUIRED: the CTA must not regress back to the bare marketing homepage URL');
+  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [{ accountName: 'Acme', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(1) }], baseUrl: 'https://app.example.com/', now: NOW });
+  assert(html.includes('https://app.example.com/dashboard/'), `REQUIRED: the fallback CTA and outreach prompt links point at the authenticated /dashboard/ route, not the marketing homepage (got: ${html.match(/href="[^"]*"/g)})`);
+  assert(!html.includes('dashboardEmail'), 'REQUIRED: the vestigial dashboardEmail query param must never reappear on any CTA link');
+  assert(!/href="https:\/\/app\.example\.com\/?"/.test(html), 'REQUIRED: no link regresses back to the bare marketing homepage URL');
+  assert(html.includes('Open Dashboard →'), 'REQUIRED: a general Open Dashboard fallback/global CTA is always present alongside the specific per-item links');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

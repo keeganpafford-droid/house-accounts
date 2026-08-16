@@ -16,7 +16,6 @@
 // is a natural candidate for the eventual Monday Brief cutover (Step 6),
 // once weekly-scan's digest is actually being REPLACED rather than run
 // alongside this one.
-import { clean } from './signal-persistence.js';
 // Signal doctrine correction: a row persisted in ha_signals is NOT the same
 // thing as it being eligible for a PROACTIVE surface. classifyMonitoringSignalEligibility()
 // (+ lookupTargetIdentity()) is the ONE centralized priority/secondary/
@@ -123,44 +122,91 @@ export function selectDigestContent({ user, signals = [], unresolvedOutreach = [
 }
 
 const MAX_HEADLINE_SIGNALS = 5;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-export function renderDigestSubject({ newSignals = [], promptEligibleOutreach = [] }) {
-  if (newSignals.length && promptEligibleOutreach.length) {
-    return `${newSignals.length} new reason${newSignals.length === 1 ? '' : 's'} to reach out, plus outreach to follow up on`;
-  }
-  if (newSignals.length === 1) return `1 new reason to reach out this week: ${clean(newSignals[0].account_name) || 'your top account'}`;
-  if (newSignals.length) return `${newSignals.length} new reasons to reach out this week`;
-  return 'Outreach waiting on an update';
+function pluralize(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : (plural || `${singular}s`)}`;
 }
 
-export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach = [], baseUrl }) {
+// Concise, count-based subject per the founder's exact preferred shapes --
+// replaces the old verbose/clunky "1 new reason to reach out, plus outreach
+// to follow up on" phrasing entirely, for all three cases (not just the
+// combined one). No cadence-specific copy (daily vs weekly reads
+// identically) -- deliberately not overbuilt.
+export function renderDigestSubject({ newSignals = [], promptEligibleOutreach = [] }) {
+  const signalCount = newSignals.length;
+  const outreachCount = promptEligibleOutreach.length;
+  const signalPart = pluralize(signalCount, 'account worth a look', 'accounts worth a look');
+  const outreachPart = pluralize(outreachCount, 'follow-up', 'follow-ups');
+  if (signalCount && outreachCount) return `${signalPart} + ${outreachPart}`;
+  if (signalCount) return signalPart;
+  if (outreachCount) return `${outreachPart} waiting on you`;
+  // selectDigestContent()'s hasContent gate means an empty digest is never
+  // actually sent -- this fallback exists only so the function itself
+  // never returns something nonsensical if called directly.
+  return 'House Accounts update';
+}
+
+function daysAgoLabel(iso, now) {
+  const ms = now.getTime() - new Date(iso).getTime();
+  const days = Math.max(0, Math.floor(ms / MS_PER_DAY));
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+// Notification Deep Links (bounded scope, see api/notification-scheduler.js's
+// own comment on the same topic): outreachEventId is the exact same stable
+// ha_signal_events primary key dashboard/index.html's unresolved-outreach
+// panel already keys everything on and now stamps as data-outreach-event-id
+// -- reusing it here as a query param is the smallest possible way to land
+// a rep on the SPECIFIC outreach the email is asking about, not just the
+// general dashboard. A per-SIGNAL deep link ("View opportunity ->") is
+// deliberately NOT built yet: unlike this outreach panel (one small,
+// self-contained fetch+render function), the priorities feed a signal would
+// need to deep-link into is a much larger, async, collapsing/deduping
+// render pipeline where the exact same signal may no longer render as a
+// distinct card by the time a rep opens the email days later -- see
+// BACKLOG.md's "Notification Deep Links / Actionable Re-entry" entry.
+function outreachDeepLinkUrl(dashboardUrl, outreachEventId) {
+  return `${dashboardUrl}?outreach=${encodeURIComponent(outreachEventId)}`;
+}
+
+export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach = [], baseUrl, now = new Date() }) {
   const dashboardUrl = `${String(baseUrl || '').replace(/\/$/, '')}/dashboard/`;
   const headline = newSignals.slice(0, MAX_HEADLINE_SIGNALS);
   const extraCount = Math.max(newSignals.length - headline.length, 0);
   const signalLines = headline
-    .map(s => `<div style="margin:6px 0;color:#25364d;">${escapeHtml(s.account_name || 'Account')} — ${escapeHtml(s.title || s.signal_type || 'New reason to reach out')}</div>`)
+    .map(s => `<div style="margin:0 0 14px;">
+      <div style="font-weight:700;font-size:15px;color:#17375E;">${escapeHtml(s.account_name || 'Account')}</div>
+      <div style="margin-top:2px;color:#5b677a;font-size:14px;">${escapeHtml(s.title || s.signal_type || 'New reason to reach out')}</div>
+    </div>`)
     .join('');
   const extraLine = extraCount > 0
-    ? `<div style="margin:8px 0 0;color:#5b677a;">${extraCount} more in House Accounts</div>`
+    ? `<div style="margin:4px 0 0;color:#5b677a;font-size:14px;">${extraCount} more in House Accounts</div>`
     : '';
-  const signalsBlock = newSignals.length ? `<div style="margin:0 0 22px;">
-    <div style="font-weight:700;font-size:16px;margin-bottom:8px;color:#17375E;">${newSignals.length} account${newSignals.length === 1 ? '' : 's'} worth a look this week</div>
+  const signalsBlock = newSignals.length ? `<div style="margin:0 0 26px;">
+    <div style="font-size:12px;font-weight:700;color:#1FB7AE;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px;">New Intelligence</div>
     ${signalLines}
     ${extraLine}
   </div>` : '';
 
   const outreachLines = promptEligibleOutreach
-    .map(item => `<div style="margin:10px 0;color:#25364d;">You reached out to ${escapeHtml(item.accountName)} — how did it go? <a href="${dashboardUrl}" style="color:#1FB7AE;font-weight:700;text-decoration:none;">Tell House Accounts →</a></div>`)
+    .map(item => `<div style="margin:0 0 12px;">
+      <div style="color:#25364d;font-size:14px;">You reached out to ${escapeHtml(item.accountName)} ${daysAgoLabel(item.outreachCreatedAt, now)}.</div>
+      <a href="${outreachDeepLinkUrl(dashboardUrl, item.outreachEventId)}" style="color:#1FB7AE;font-weight:700;text-decoration:none;font-size:14px;">Report outcome →</a>
+    </div>`)
     .join('');
-  const outreachBlock = promptEligibleOutreach.length ? `<div>${outreachLines}</div>` : '';
+  const outreachBlock = promptEligibleOutreach.length ? `<div style="margin:0 0 26px;padding-top:22px;border-top:1px solid #D8DEE9;">
+    <div style="font-size:12px;font-weight:700;color:#1FB7AE;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px;">How Did This Go?</div>
+    ${outreachLines}
+  </div>` : '';
 
   return `<div style="margin:0;padding:0;background:#F7F8FA;font-family:Arial,sans-serif;color:#17375E;">
     <div style="max-width:600px;margin:0 auto;padding:28px 16px;">
       <div style="background:#ffffff;border:1px solid #D8DEE9;border-radius:18px;padding:28px;">
-        <div style="font-size:13px;font-weight:700;color:#1FB7AE;letter-spacing:.04em;text-transform:uppercase;margin-bottom:14px;">House Accounts</div>
+        <div style="font-size:13px;font-weight:700;color:#1FB7AE;letter-spacing:.04em;text-transform:uppercase;margin-bottom:20px;">House Accounts</div>
         ${signalsBlock}
         ${outreachBlock}
-        <div style="margin:24px 0 0;">
+        <div style="margin:4px 0 0;">
           <a href="${dashboardUrl}" style="display:inline-block;background:#1FB7AE;color:#ffffff;padding:14px 22px;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;">Open Dashboard →</a>
         </div>
       </div>

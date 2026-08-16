@@ -322,7 +322,8 @@ async function run() {
     await withState(state, async () => { await handler(makeReq(), res); });
     assert(res.body.sent === 1, `REQUIRED: a daily user with a real new signal gets an email sent (got ${JSON.stringify(res.body)})`);
     assert(state.resendCalls.length === 1, 'exactly one Resend call happened');
-    assert(state.resendCalls[0].subject.includes('Dover Honda'), `REQUIRED: the sent email's subject reflects the real account (got ${JSON.stringify(state.resendCalls[0].subject)})`);
+    assert(state.resendCalls[0].html.includes('Dover Honda'), `REQUIRED: the sent email's body reflects the real account (got no match in the HTML)`);
+    assert(state.resendCalls[0].subject === '1 account worth a look', `REQUIRED: the subject uses the concise, count-based phrasing (never names an individual account) (got ${JSON.stringify(state.resendCalls[0].subject)})`);
     assert(state.deliveries.length === 1 && state.deliveries[0].status === 'success', 'REQUIRED: a status=success delivery row is created');
     assert(JSON.stringify(state.deliveries[0].included_signal_ids) === JSON.stringify(['sig-dover']), 'REQUIRED: the delivery row records exactly which signal was included, for future dedupe/audit');
   }

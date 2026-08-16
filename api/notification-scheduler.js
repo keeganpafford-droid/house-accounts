@@ -124,7 +124,7 @@ async function processUser(user, { baseUrl, now, targetIdentityIndex }) {
   if (!hasContent) return { outcome: 'empty-digest' };
 
   const subject = renderDigestSubject({ newSignals, promptEligibleOutreach });
-  const html = renderDigestHtml({ user, newSignals, promptEligibleOutreach, baseUrl });
+  const html = renderDigestHtml({ user, newSignals, promptEligibleOutreach, baseUrl, now });
   const baseDeliveryRow = {
     user_id: user.id, organization_id: user.organization_id || null,
     new_signal_count: newSignals.length, unresolved_outreach_count: promptEligibleOutreach.length,

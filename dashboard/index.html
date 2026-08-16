@@ -2156,6 +2156,7 @@
 .unresolved-outreach-item:first-child{border-top:0;padding-top:0;}
 .unresolved-outreach-text{font-weight:600;}
 .unresolved-outreach-actions{display:flex;gap:6px;flex-wrap:wrap;}
+.unresolved-outreach-item-highlight{background:#EAFBF9;border-radius:8px;transition:background 1.8s ease;}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){
@@ -3168,6 +3169,13 @@ function renderUnresolvedOutreachItem(item){
   const days = daysSinceIso(item.outreachCreatedAt);
   const row = document.createElement('div');
   row.className = 'unresolved-outreach-item';
+  // Notification Deep Links (bounded scope): outreachEventId is already the
+  // stable ha_signal_events primary key this exact panel/API already keys
+  // everything on -- stamping it here is what lets a notification's
+  // "Report outcome ->" link land on THIS specific item (see
+  // initUnresolvedOutreachPanel()'s ?outreach= handling below) rather than
+  // just the general dashboard. No new identifier, no new endpoint.
+  row.dataset.outreachEventId = item.outreachEventId;
   const text = document.createElement('div');
   text.className = 'unresolved-outreach-text';
   text.textContent = `You reached out to ${item.accountName} ${days} day${days === 1 ? '' : 's'} ago — how did it go?`;
@@ -3235,6 +3243,23 @@ async function initUnresolvedOutreachPanel(){
   list.innerHTML = '';
   items.forEach(item => list.appendChild(renderUnresolvedOutreachItem(item)));
   panel.hidden = false;
+  // Notification Deep Links (bounded scope): a notification's "Report
+  // outcome ->" link carries ?outreach=<outreachEventId> -- this function
+  // already owns the one place this list is fetched AND rendered, so once
+  // rendering is done here, it's the correct, self-contained place to
+  // check for a matching item and bring it into view. If the item is gone
+  // (already resolved, or simply not among this rep's open outreach), this
+  // silently does nothing -- the rep still lands on a normal, working
+  // dashboard, never a broken or blank state.
+  const targetId = new URLSearchParams(window.location.search).get('outreach');
+  if(targetId){
+    const targetRow = list.querySelector(`[data-outreach-event-id="${CSS.escape(targetId)}"]`);
+    if(targetRow){
+      targetRow.scrollIntoView({behavior:'smooth', block:'center'});
+      targetRow.classList.add('unresolved-outreach-item-highlight');
+      setTimeout(() => targetRow.classList.remove('unresolved-outreach-item-highlight'), 2600);
+    }
+  }
 }
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUnresolvedOutreachPanel);
 else initUnresolvedOutreachPanel();
@@ -4514,6 +4539,11 @@ function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
   if(results) results.style.display = 'none';
   if(banner) banner.style.display = 'none';
   if(typeof renderDashboardViewSwitcher === 'function') renderDashboardViewSwitcher();
+  // Returning-user onboarding correction: the ONE place the automatic Beta
+  // welcome popup is eligible to fire -- only once the server has confirmed
+  // this rep genuinely has no data yet, never merely because a session
+  // exists. See maybeShowBetaWelcomeForSignedInUser()'s own header comment.
+  if(typeof maybeShowBetaWelcomeForSignedInUser === 'function') maybeShowBetaWelcomeForSignedInUser();
 }
 
 function wireEmptyWorkspaceStateControls(){
@@ -5160,6 +5190,22 @@ function dismissBetaWelcomeModal(){
   if(wasActive && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 }
 
+// Notification & Outcome Loop V1, returning-user onboarding correction: this
+// must NEVER be called merely because a signed-in session exists (that
+// covers a 6-month customer landing on a brand-new browser/device/origin --
+// e.g. via a notification email link -- exactly as readily as a genuine
+// first-time user). It is only meaningful once the workspace's real,
+// server-backed state is known -- see applyEmptyWorkspaceState()'s own call
+// below, which fires this ONLY when the fetch has confirmed the rep
+// genuinely has no data yet. applyPopulatedWorkspaceState() deliberately
+// never calls this. A failed/unknown workspace fetch (the generic error
+// path in fetchAndRenderAggregateDashboard()'s catch block) also never
+// calls this -- fail safe means "don't show," not "guess." localStorage's
+// houseAccountsBetaWelcomeDismissed flag (checked inside showBetaWelcomeModal())
+// remains the mechanism that keeps this from reappearing on a browser where
+// it was already dismissed; this change only narrows WHEN it is even
+// eligible to fire automatically. Manual replay (the Help menu's own
+// "Restart Product Tour") is untouched.
 function maybeShowBetaWelcomeForSignedInUser(){
   const saved = getSavedLead();
   if(saved && saved.email) showBetaWelcomeModal();
@@ -5169,7 +5215,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
   document.querySelectorAll('#dashboardViewButtons [data-view]').forEach(btn=>btn.addEventListener('click',()=>setDashboardView(btn.dataset.view)));
   loadDashboardUsage();
-  maybeShowBetaWelcomeForSignedInUser();
   wireGuidedTourControls();
   setTimeout(() => {
     const params = new URLSearchParams(window.location.search);

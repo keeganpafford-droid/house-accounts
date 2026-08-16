@@ -24,6 +24,12 @@ async function loadOrg(user){if(!user?.organization_id)return null;const {data}=
 // before planPatch() is ever called. See settings.audit log for every
 // accepted and rejected attempt.
 const CLIENT_REQUESTABLE_PLANS = ['free'];
+// Notification & Outcome Loop V1, Part A4: the exact three values migration
+// 22's ha_users.notification_preference CHECK constraint already allows --
+// no new enum invented here, this endpoint just exposes the existing
+// backend field. Unlike plan changes, this is a personal preference: any
+// authenticated user may set their own, no owner/role gate.
+const NOTIFICATION_PREFERENCES = ['daily', 'weekly', 'in_app_only'];
 function auditLog(entry){
   try{ console.log('[settings.audit]', JSON.stringify({ ts:new Date().toISOString(), ...entry })); }
   catch{ console.log('[settings.audit] (unserializable entry)'); }
@@ -35,7 +41,15 @@ function auditLog(entry){
 function planConfig(planRaw){const plan=clean(planRaw||'free').toLowerCase();if(plan==='solo')return{plan:'solo',seat_limit:1};if(plan==='team')return{plan:'team',seat_limit:25};if(plan==='enterprise')return{plan:'enterprise',seat_limit:null};return{plan:'free',seat_limit:1}}
 async function usageFor(user, org=null){return sharedUsageFor(sbData, user, org)}
 function planPatch(planRaw, org={}){const cfg=planConfig(planRaw);const now=new Date();const patch={plan:cfg.plan,seat_limit:cfg.seat_limit,updated_at:now.toISOString()};const ent=entitlement(org);if(cfg.plan==='free'){Object.assign(patch,{trial_status:'inactive',subscription_status:'inactive',trial_end:null,seat_limit:1});return patch;}if(cfg.plan==='solo'||cfg.plan==='team'){if(ent.trialActive){Object.assign(patch,{trial_status:'active',subscription_status:'trialing'});return patch;}if(!ent.trialUsed){const started=now.toISOString();const end=new Date(now.getTime()+30*86400000).toISOString();Object.assign(patch,{trial_status:'active',subscription_status:'trialing',trial_started_at:started,trial_end:end,trial_used:true});return patch;}const err=new Error('Your 30-day trial has already been used. Upgrade will be available soon.');err.status=403;throw err;}if(cfg.plan==='enterprise'){Object.assign(patch,{trial_status:'inactive',subscription_status:'manual',trial_end:null});return patch;}return patch}
-export default async function handler(req,res){try{const user=await haUser(req);if(!user)return json(res,401,{error:'Not authenticated'});if(req.method==='GET'){const org=await loadOrg(user);const usage=await usageFor(user, org);return json(res,200,{user,organization:org,usage,entitlement:usage})}if(req.method==='POST'){const action=clean(req.body?.action||'');if(action!=='update-plan')return json(res,400,{error:'Unknown settings action.'});if(!user.organization_id)return json(res,400,{error:'User is not linked to an organization.'});
+export default async function handler(req,res){try{const user=await haUser(req);if(!user)return json(res,401,{error:'Not authenticated'});if(req.method==='GET'){const org=await loadOrg(user);const usage=await usageFor(user, org);return json(res,200,{user,organization:org,usage,entitlement:usage})}if(req.method==='POST'){const action=clean(req.body?.action||'');
+    if(action==='update-notification-preference'){
+      const requested=clean(req.body?.notificationPreference||'').toLowerCase();
+      if(!NOTIFICATION_PREFERENCES.includes(requested))return json(res,400,{error:`Unknown notification preference. Allowed values: ${NOTIFICATION_PREFERENCES.join(', ')}.`});
+      const {data}=await sb(`ha_users?id=eq.${encodeURIComponent(user.id)}`,{method:'PATCH',body:JSON.stringify({notification_preference:requested})});
+      const updatedUser=Array.isArray(data)?data[0]:data;
+      return json(res,200,{ok:true,user:updatedUser});
+    }
+    if(action!=='update-plan')return json(res,400,{error:'Unknown settings action.'});if(!user.organization_id)return json(res,400,{error:'User is not linked to an organization.'});
     const requestedPlan=clean(req.body?.plan||'').toLowerCase();
     const currentOrg=await loadOrg(user);
     const actorRole=clean(user.app_role||'').toLowerCase();
@@ -52,4 +66,4 @@ export default async function handler(req,res){try{const user=await haUser(req);
     auditLog({event:'update-plan.applied',mechanism:'self-service',actorUserId:user.id,actorEmail:user.email,actorRole,organizationId:user.organization_id,requestedPlan,previousState,resultingState:{plan:org?.plan||null,subscription_status:org?.subscription_status||null,trial_status:org?.trial_status||null}});
     const usage=await usageFor(user, org);return json(res,200,{ok:true,organization:org,usage,entitlement:usage})}return json(res,405,{error:'Method not allowed'})}catch(err){return json(res,err.status||500,{error:err.message||'Settings failed'})}}
 
-export { CLIENT_REQUESTABLE_PLANS, planConfig, planPatch, entitlement, auditLog };
+export { CLIENT_REQUESTABLE_PLANS, NOTIFICATION_PREFERENCES, planConfig, planPatch, entitlement, auditLog };
