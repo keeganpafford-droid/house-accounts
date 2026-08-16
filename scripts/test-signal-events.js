@@ -568,6 +568,45 @@ async function run() {
     assert(statuses.join(',') === 'no_response_yet,no_response_yet,engaged', `REQUIRED: the full history is preserved in order, including the repeated no_response_yet -- an earlier report is never overwritten or destroyed by a later one (got ${statuses.join(',')})`);
   }
   {
+    // REQUIRED (Notification & Outcome Loop V1 pre-QA verification item 1):
+    // outcome_reported still honors client_event_id idempotency for a
+    // duplicate TRANSPORT submission (a network retry replaying the exact
+    // same clientEventId) -- collapses to the existing row, no second
+    // insert -- while a GENUINELY LATER update (a fresh clientEventId,
+    // whether the same or a different outcomeStatus) still persists as new
+    // history. These are two different things and must not be confused:
+    // the generic idempotency check in handlePost() runs before the
+    // eventType dispatch, so it applies to outcome_reported exactly the
+    // same way it already does for every other event type -- this proves
+    // that generic behavior actually reaches outcome_reported's own branch.
+    const { firstId, replayId, laterId, count, statuses } = await withState(async (state) => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'c-outreach-idem-outcome' } }), outreachRes);
+
+      const req1 = makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'c-outcome-idem-retry' } });
+      const res1 = makeRes();
+      await handler(req1, res1);
+
+      // Simulated network retry of the SAME client gesture -- identical
+      // clientEventId, identical payload.
+      const req2 = makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'c-outcome-idem-retry' } });
+      const res2 = makeRes();
+      await handler(req2, res2);
+
+      // A genuinely later, real update -- fresh clientEventId.
+      const req3 = makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'engaged', clientEventId: 'c-outcome-idem-later' } });
+      const res3 = makeRes();
+      await handler(req3, res3);
+
+      const rows = state.haSignalEvents.filter(e => e.event_type === 'outcome_reported' && e.parent_event_id === outreachRes.body.id);
+      return { firstId: res1.body.id, replayId: res2.body.id, laterId: res3.body.id, count: rows.length, statuses: rows.map(r => r.payload.outcomeStatus) };
+    });
+    assert(firstId === replayId, `REQUIRED: replaying the exact same clientEventId for outcome_reported returns the SAME event id, not a duplicate (got ${firstId} vs ${replayId})`);
+    assert(laterId && laterId !== firstId, 'REQUIRED: a genuinely later update (fresh clientEventId) is never collapsed into the earlier replay-idempotent row');
+    assert(count === 2, `REQUIRED: exactly 2 durable rows exist -- the original report and the later update -- the transport retry never created a third (got ${count})`);
+    assert(statuses.join(',') === 'no_response_yet,engaged', `REQUIRED: history reflects the real report then the real update, with no duplicate from the retry (got ${statuses.join(',')})`);
+  }
+  {
     // outcome_reported against an opportunity_outreach_made parent inherits
     // opportunity_id, not signal_id.
     const { ev } = await withState(async (state) => {

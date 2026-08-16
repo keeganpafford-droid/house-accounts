@@ -21,6 +21,23 @@
 // An empty digest (nothing new, nothing prompt-eligible) is never sent and
 // never logged -- ha_notification_deliveries only ever records a genuine
 // decision to email someone, success or failure, never a no-op.
+//
+// NOTIFICATION_ENABLED_ORGANIZATION_IDS: activation safety, not a user
+// preference -- same fail-closed allowlist philosophy as
+// QUEUE_MANAGED_ORGANIZATION_IDS (api/lib/monitoring-queue.js's
+// isQueueManagedOrganization()), kept as its own gate here rather than
+// reused directly since it answers a different question (which orgs may
+// receive email today) than the Queue gate (which orgs' monitoring runs on
+// the new path). Unset/empty -> nobody is a candidate, full stop, checked
+// BEFORE any ha_users query even runs. notification_preference (daily/
+// weekly/in_app_only) is the user's own choice of cadence; this allowlist
+// is a separate, coarser switch that must ALSO pass -- an in_app_only user
+// is never a candidate regardless of their org's allowlist state, and an
+// enabled org's user still respects their own preference. Migration 22
+// defaults every existing user to 'weekly', which is exactly why this gate
+// exists: without it, enabling the scheduler at all would be capable of
+// emailing every Beta user immediately, including in a Preview environment
+// that shares live Supabase data.
 import { timingSafeEqual } from 'crypto';
 import { sendEmail } from './lib/email.js';
 import { selectDigestContent, renderDigestSubject, renderDigestHtml, initialLookbackHours } from './lib/notification-digest.js';
@@ -28,6 +45,12 @@ import { listUnresolvedOutreach } from './unresolved-outreach.js';
 
 const WEEKLY_DUE_DAYS = 7;
 const NON_EMAIL_PREFERENCES = new Set(['in_app_only']);
+
+export function isNotificationEnabledOrganization(organizationId, allowlistEnvValue) {
+  const list = String(allowlistEnvValue || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!list.length || !organizationId) return false;
+  return list.includes(String(organizationId));
+}
 
 function safeSecretEqual(provided, expected) {
   const providedBuf = Buffer.from(String(provided || ''), 'utf8');
@@ -124,10 +147,15 @@ export default async function handler(req, res) {
     const providedSecret = bearerMatch ? bearerMatch[1] : '';
     if (!providedSecret || !safeSecretEqual(providedSecret, cronSecret)) return json(res, 401, { error: 'Unauthorized' });
 
+    const allowlist = process.env.NOTIFICATION_ENABLED_ORGANIZATION_IDS || '';
+    if (!allowlist.trim()) return json(res, 200, { ok: true, usersConsidered: 0, reason: 'NOTIFICATION_ENABLED_ORGANIZATION_IDS is empty -- no organization is notification-enabled yet.' });
+
     const now = new Date();
     const baseUrl = getBaseUrl(req);
     const users = await supabase(`ha_users?select=id,email,organization_id,notification_preference&limit=1000`, { method: 'GET' });
-    const candidates = (Array.isArray(users) ? users : []).filter(u => u.email && !NON_EMAIL_PREFERENCES.has(u.notification_preference));
+    const candidates = (Array.isArray(users) ? users : [])
+      .filter(u => u.email && !NON_EMAIL_PREFERENCES.has(u.notification_preference))
+      .filter(u => isNotificationEnabledOrganization(u.organization_id, allowlist));
 
     const results = { notDue: 0, emptyDigest: 0, sent: 0, failed: 0 };
     for (const user of candidates) {

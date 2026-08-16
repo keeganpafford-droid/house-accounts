@@ -2,13 +2,20 @@
 // api/notification-scheduler.js against the REAL, production-bound handler
 // export (mocked Supabase/Resend fetch), same convention as
 // scripts/test-weekly-monitoring-characterization.js. Proves: auth
-// gating, in_app_only users never get email, weekly cadence due-checking
-// via the delivery log watermark, empty digests are never sent/logged,
-// successful sends create a durable success row, and one user's Resend
-// failure never blocks another user's send.
+// gating, the NOTIFICATION_ENABLED_ORGANIZATION_IDS activation gate,
+// in_app_only users never get email, weekly cadence due-checking via the
+// delivery log watermark, empty digests are never sent/logged, successful
+// sends create a durable success row, one user's Resend failure never
+// blocks another user's send, an ignored prompt is not repeated on
+// consecutive daily runs, and cross-user isolation of digest content.
+//
+// Every scenario below except the dedicated allowlist-gate block sets
+// NOTIFICATION_ENABLED_ORGANIZATION_IDS to 'org-1' (the org every other
+// fixture user belongs to) -- proving those behaviors while the gate is
+// open, since the gate itself is covered separately.
 //
 // Usage: node scripts/test-notification-scheduler.js
-import handler from '../api/notification-scheduler.js';
+import handler, { isNotificationEnabledOrganization } from '../api/notification-scheduler.js';
 
 const CRON_SECRET = 'notification-scheduler-test-secret-1234567890';
 
@@ -32,12 +39,14 @@ function makeReq(secret = CRON_SECRET) {
   return { method: 'POST', headers: secret ? { authorization: `Bearer ${secret}` } : {} };
 }
 
-function setEnv() {
+function setEnv({ allowlist = 'org-1' } = {}) {
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
   process.env.CRON_SECRET = CRON_SECRET;
   process.env.RESEND_API_KEY = 'fake-resend-key';
   process.env.ALERTS_FROM_EMAIL = 'House Accounts <alerts@houseaccounts.ai>';
+  if (allowlist === null) delete process.env.NOTIFICATION_ENABLED_ORGANIZATION_IDS;
+  else process.env.NOTIFICATION_ENABLED_ORGANIZATION_IDS = allowlist;
 }
 
 function makeMockFetch(state) {
@@ -101,8 +110,8 @@ function baseState(overrides = {}) {
   };
 }
 
-async function withState(state, fn) {
-  setEnv();
+async function withState(state, fn, envOpts) {
+  setEnv(envOpts);
   const realFetch = global.fetch;
   global.fetch = makeMockFetch(state);
   try { return await fn(state); }
@@ -122,6 +131,66 @@ async function run() {
     const res = makeRes();
     await withState(baseState(), async () => { await handler(makeReq('wrong-secret'), res); });
     assert(res.statusCode === 401, `REQUIRED: a wrong secret is rejected 401 (got ${res.statusCode})`);
+  }
+
+  // -------------------------------------------------------------------
+  // NOTIFICATION_ENABLED_ORGANIZATION_IDS: activation safety, fail-closed.
+  // -------------------------------------------------------------------
+  {
+    assert(isNotificationEnabledOrganization('org-1', '') === false, 'an empty allowlist enables no organization');
+    assert(isNotificationEnabledOrganization('org-1', undefined) === false, 'an unset allowlist enables no organization (the default, no-op state)');
+    assert(isNotificationEnabledOrganization('41e28b77-fe7f-49ea-b299-e361fd03df6d', '41e28b77-fe7f-49ea-b299-e361fd03df6d') === true, 'an exact single-entry allowlist match is enabled');
+    assert(isNotificationEnabledOrganization('org-2', 'org-1,org-2,org-3') === true, 'a multi-entry allowlist match is enabled');
+    assert(isNotificationEnabledOrganization('org-4', 'org-1,org-2,org-3') === false, 'an organization not in the allowlist is not enabled');
+    assert(isNotificationEnabledOrganization(null, 'org-1') === false, 'a null/missing organizationId is never enabled, even with a non-empty allowlist');
+  }
+  {
+    // REQUIRED: with the env var unset entirely, nobody is a candidate --
+    // not even a daily user with real, waiting content -- and the ha_users
+    // query never even runs (usersConsidered stays 0, no fetch beyond the
+    // gate check).
+    const state = baseState({
+      users: [{ id: 'user-x', email: 'x@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
+      signals: { 'user-x': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); }, { allowlist: null });
+    assert(res.statusCode === 200 && res.body.usersConsidered === 0, `REQUIRED: an unset NOTIFICATION_ENABLED_ORGANIZATION_IDS considers zero users, even with real waiting content (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls.length === 0, 'REQUIRED: zero Resend calls when the activation gate is closed');
+    assert(state.deliveries.length === 0, 'REQUIRED: zero delivery log rows when the activation gate is closed');
+  }
+  {
+    // A user whose org is NOT in a non-empty allowlist is skipped, while a
+    // user whose org IS in it proceeds normally -- proves the gate
+    // discriminates per-org, not just on/off globally.
+    const state = baseState({
+      users: [
+        { id: 'user-not-enabled', email: 'not-enabled@example.com', organization_id: 'org-other', notification_preference: 'daily' },
+        { id: 'user-enabled', email: 'enabled@example.com', organization_id: 'org-1', notification_preference: 'daily' }
+      ],
+      signals: {
+        'user-not-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }],
+        'user-enabled': [{ id: 'sig-2', account_name: 'Beta', title: 'New activity', first_seen_at: new Date().toISOString() }]
+      },
+      outreachEvents: { 'user-not-enabled': [], 'user-enabled': [] }
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); }, { allowlist: 'org-1' });
+    assert(res.body.usersConsidered === 1, `REQUIRED: only the user whose organization is in the allowlist is considered (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls.length === 1, 'exactly one email sent -- the enabled org\'s user');
+    assert(state.deliveries.length === 1 && state.deliveries[0].user_id === 'user-enabled', 'REQUIRED: the delivery row belongs to the enabled-org user, never the excluded one');
+  }
+  {
+    // REQUIRED: an in_app_only user is excluded EVEN when their org is
+    // enabled -- the allowlist is activation safety, not a substitute for
+    // the user's own notification_preference.
+    const state = baseState({
+      users: [{ id: 'user-inapp-enabled', email: 'inapp-enabled@example.com', organization_id: 'org-1', notification_preference: 'in_app_only' }],
+      signals: { 'user-inapp-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); }, { allowlist: 'org-1' });
+    assert(res.body.usersConsidered === 0, `REQUIRED: in_app_only is excluded even when the org itself is enabled (got ${JSON.stringify(res.body)})`);
   }
 
   // -------------------------------------------------------------------
@@ -209,6 +278,80 @@ async function run() {
     const res = makeRes();
     await withState(state, async () => { await handler(makeReq(), res); });
     assert(res.body.sent === 1, `REQUIRED: a weekly user with no prior delivery at all is due on their first invocation (got ${JSON.stringify(res.body)})`);
+  }
+
+  // -------------------------------------------------------------------
+  // REQUIRED (Notification & Outcome Loop V1 pre-QA verification item 2):
+  // an ignored automatic outcome prompt is not repeated on the very next
+  // daily invocation merely because the rep hasn't answered -- integration-
+  // level proof (unit coverage already exists in
+  // scripts/test-notification-digest.js) that two real, consecutive
+  // handler invocations against the SAME unanswered outreach item actually
+  // produce this behavior end to end.
+  // -------------------------------------------------------------------
+  {
+    const state = baseState({
+      users: [{ id: 'user-repeat-check', email: 'repeat@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
+      signals: { 'user-repeat-check': [] },
+      // Old enough (>=5 days) to already be eligible for an automatic
+      // prompt, never reported on -- exactly the "still waiting, ignored"
+      // case.
+      outreachEvents: { 'user-repeat-check': [{ id: 'or-repeat', event_fingerprint: 'fp-repeat', signal_id: 'sig-repeat', opportunity_id: null, account_name: 'Dover Honda', created_at: new Date(Date.now() - 10 * 86400000).toISOString() }] },
+      outcomeEvents: { 'user-repeat-check': [] }
+    });
+    const firstRes = makeRes();
+    await withState(state, async () => { await handler(makeReq(), firstRes); });
+    assert(firstRes.body.sent === 1, `REQUIRED: the first invocation sends the outreach prompt, since it is eligible and has never been mentioned (got ${JSON.stringify(firstRes.body)})`);
+    assert(state.resendCalls[0].html.includes('Dover Honda'), 'the first email actually contains the outreach prompt');
+
+    // Second invocation, same day, nothing about the outreach item has
+    // changed (no new outcome_reported, no new signals) -- must NOT
+    // resend the same prompt.
+    const secondRes = makeRes();
+    await withState(state, async () => { await handler(makeReq(), secondRes); });
+    assert(secondRes.body.emptyDigest === 1, `REQUIRED: the second consecutive daily invocation, with nothing changed, produces an empty digest -- the prompt is not repeated (got ${JSON.stringify(secondRes.body)})`);
+    assert(state.resendCalls.length === 1, `REQUIRED: still exactly one Resend call total across both invocations -- the second run sent nothing (got ${state.resendCalls.length})`);
+    assert(state.deliveries.length === 1, 'REQUIRED: no second delivery row was created for the suppressed repeat');
+  }
+
+  // -------------------------------------------------------------------
+  // REQUIRED (Notification & Outcome Loop V1 pre-QA verification item 3):
+  // notification selection is strictly user/org scoped -- two different
+  // users, each with their own real signal and their own real unresolved
+  // outreach, must never see the other's content in their digest.
+  // -------------------------------------------------------------------
+  {
+    const state = baseState({
+      users: [
+        { id: 'user-iso-a', email: 'iso-a@example.com', organization_id: 'org-1', notification_preference: 'daily' },
+        { id: 'user-iso-b', email: 'iso-b@example.com', organization_id: 'org-1', notification_preference: 'daily' }
+      ],
+      signals: {
+        'user-iso-a': [{ id: 'sig-a', account_name: 'Alpha Corp', title: 'Alpha signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }],
+        'user-iso-b': [{ id: 'sig-b', account_name: 'Bravo Corp', title: 'Bravo signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }]
+      },
+      outreachEvents: {
+        'user-iso-a': [{ id: 'or-a', event_fingerprint: 'fp-a', signal_id: 'sig-a', opportunity_id: null, account_name: 'Alpha Corp', created_at: new Date(Date.now() - 10 * 86400000).toISOString() }],
+        'user-iso-b': [{ id: 'or-b', event_fingerprint: 'fp-b', signal_id: 'sig-b', opportunity_id: null, account_name: 'Bravo Corp', created_at: new Date(Date.now() - 10 * 86400000).toISOString() }]
+      },
+      outcomeEvents: { 'user-iso-a': [], 'user-iso-b': [] }
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); });
+    assert(res.body.sent === 2, `sanity: both isolated users get a real send (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls.length === 2, 'exactly two Resend calls, one per user');
+
+    const callToA = state.resendCalls.find(c => c.to === 'iso-a@example.com');
+    const callToB = state.resendCalls.find(c => c.to === 'iso-b@example.com');
+    assert(callToA.html.includes('Alpha Corp') && !callToA.html.includes('Bravo Corp'), 'REQUIRED: user A\'s email contains only Alpha Corp -- never Bravo Corp\'s signal or outreach prompt');
+    assert(callToB.html.includes('Bravo Corp') && !callToB.html.includes('Alpha Corp'), 'REQUIRED: user B\'s email contains only Bravo Corp -- never Alpha Corp\'s signal or outreach prompt');
+
+    const deliveryA = state.deliveries.find(d => d.user_id === 'user-iso-a');
+    const deliveryB = state.deliveries.find(d => d.user_id === 'user-iso-b');
+    assert(JSON.stringify(deliveryA.included_signal_ids) === JSON.stringify(['sig-a']), 'REQUIRED: user A\'s delivery log row records only user A\'s own signal id');
+    assert(JSON.stringify(deliveryB.included_signal_ids) === JSON.stringify(['sig-b']), 'REQUIRED: user B\'s delivery log row records only user B\'s own signal id');
+    assert(JSON.stringify(deliveryA.included_outreach_event_ids) === JSON.stringify(['or-a']), 'REQUIRED: user A\'s delivery log row records only user A\'s own outreach event id, never user B\'s');
+    assert(JSON.stringify(deliveryB.included_outreach_event_ids) === JSON.stringify(['or-b']), 'REQUIRED: user B\'s delivery log row records only user B\'s own outreach event id, never user A\'s');
   }
 
   // -------------------------------------------------------------------
