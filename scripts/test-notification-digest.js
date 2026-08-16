@@ -5,7 +5,7 @@
 // convention.
 //
 // Usage: node scripts/test-notification-digest.js
-import { selectDigestContent, renderDigestSubject, renderDigestHtml, initialLookbackHours, filterPriorityEligibleSignals, DAILY_INITIAL_LOOKBACK_HOURS, WEEKLY_INITIAL_LOOKBACK_HOURS } from '../api/lib/notification-digest.js';
+import { selectDigestContent, renderDigestSubject, renderDigestHtml, renderPreheaderText, initialLookbackHours, filterPriorityEligibleSignals, DAILY_INITIAL_LOOKBACK_HOURS, WEEKLY_INITIAL_LOOKBACK_HOURS } from '../api/lib/notification-digest.js';
 import { buildTargetIdentityIndex } from '../api/lib/monitoring-identity.js';
 
 let failures = 0;
@@ -243,11 +243,52 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
   const subject = renderDigestSubject({ newSignals: [{ account_name: 'A' }, { account_name: 'B' }], promptEligibleOutreach: [{ accountName: 'X' }, { accountName: 'Y' }, { accountName: 'Z' }] });
   assert(subject === '2 accounts worth a look + 3 follow-ups', `REQUIRED: combined subject pluralizes both halves independently (got ${JSON.stringify(subject)})`);
 }
+
+// ---------------------------------------------------------------------------
+// Hidden preheader (founder-approved small email improvement): dynamic
+// per signal/follow-up counts, per the founder's exact example shape.
+// ---------------------------------------------------------------------------
+{
+  const preheader = renderPreheaderText({ newSignals: [{ account_name: 'L.L. Bean' }], promptEligibleOutreach: [{ accountName: 'Acme' }] });
+  assert(preheader === 'L.L. Bean has a new reason to reach out. Plus 1 follow-up waiting on you.', `REQUIRED: the preheader matches the founder's exact preferred shape for 1 signal + 1 follow-up (got ${JSON.stringify(preheader)})`);
+}
+{
+  const preheader = renderPreheaderText({ newSignals: [{ account_name: 'L.L. Bean' }], promptEligibleOutreach: [] });
+  assert(preheader === 'L.L. Bean has a new reason to reach out.', `REQUIRED: a single signal with no follow-ups names the account, no "Plus" clause (got ${JSON.stringify(preheader)})`);
+}
+{
+  const preheader = renderPreheaderText({ newSignals: [{ account_name: 'A' }, { account_name: 'B' }], promptEligibleOutreach: [] });
+  assert(preheader === '2 accounts have new reasons to reach out.', `REQUIRED: multiple signals use count-based phrasing, not multiple account names (got ${JSON.stringify(preheader)})`);
+}
+{
+  const preheader = renderPreheaderText({ newSignals: [], promptEligibleOutreach: [{ accountName: 'Acme' }] });
+  assert(preheader === '1 follow-up waiting on you.', `REQUIRED: follow-ups-only preheader, singular (got ${JSON.stringify(preheader)})`);
+}
+{
+  const preheader = renderPreheaderText({ newSignals: [], promptEligibleOutreach: [{ accountName: 'A' }, { accountName: 'B' }] });
+  assert(preheader === '2 follow-ups waiting on you.', `REQUIRED: follow-ups-only preheader, plural (got ${JSON.stringify(preheader)})`);
+}
+{
+  const preheader = renderPreheaderText({ newSignals: [{ account_name: 'A' }, { account_name: 'B' }], promptEligibleOutreach: [{ accountName: 'X' }, { accountName: 'Y' }, { accountName: 'Z' }] });
+  assert(preheader === '2 accounts have new reasons to reach out. Plus 3 follow-ups waiting on you.', `REQUIRED: combined preheader pluralizes both halves independently (got ${JSON.stringify(preheader)})`);
+}
+{
+  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'L.L. Bean', title: 'Flagship Store Reopening' }], promptEligibleOutreach: [{ accountName: 'Acme', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(2) }], baseUrl: 'https://app.example.com', now: NOW });
+  assert(html.includes('L.L. Bean has a new reason to reach out. Plus 1 follow-up waiting on you.'), `REQUIRED: renderDigestHtml() embeds the exact rendered preheader text (got no match)`);
+  assert(/display:\s*none/.test(html.split('L.L. Bean has a new reason')[0].slice(-400)), 'REQUIRED: the preheader is wrapped in a display:none element, never visible when the email is opened');
+  assert(html.indexOf('L.L. Bean has a new reason to reach out. Plus 1 follow-up waiting on you.') < html.indexOf('New Intelligence'), 'REQUIRED: the preheader is the very first text in the document, before the visible body');
+}
 {
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [], baseUrl: 'https://app.example.com' });
   assert(html.includes('Dover Honda') && html.includes('Holiday parade activity'), 'REQUIRED: the rendered HTML includes the real account name and signal title, not a placeholder');
   assert(html.includes('New Intelligence'), 'REQUIRED: the New Intelligence section is visually/textually distinct with its own heading');
-  assert(html.indexOf('New Intelligence') < html.indexOf('Dover Honda'), 'REQUIRED: the section heading renders before the account it introduces');
+  // Compared against the signal TITLE, not the account name -- the hidden
+  // preheader (added below) also names the account and deliberately sits
+  // before the visible body, so comparing against the account name alone
+  // would find the preheader's own (correct, but not visible-body) mention
+  // instead of proving the VISIBLE section ordering this assertion is
+  // actually about. The title never appears in the preheader.
+  assert(html.indexOf('New Intelligence') < html.indexOf('Holiday parade activity'), 'REQUIRED: the section heading renders before the signal content it introduces');
 }
 {
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [], promptEligibleOutreach: [{ accountName: 'Dover Honda', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(3) }], baseUrl: 'https://app.example.com', now: NOW });

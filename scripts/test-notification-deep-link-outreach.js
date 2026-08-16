@@ -115,6 +115,46 @@ async function main(){
     }
   );
 
+  // REQUIRED (founder QA correction): the highlight must be visually
+  // UNMISTAKABLE, not merely a class name -- when several rows for the
+  // same account are visually identical (e.g. four real "Albany
+  // International" rows), a subtle background tint alone was not provable
+  // from a screenshot. Asserts real computed style differences: a visible
+  // left border and a box-shadow ring on the targeted row, genuinely
+  // absent from an identical sibling row.
+  await withPanelPage(
+    [
+      unresolvedItem({ outreachEventId: 'outreach-a', accountName: 'Albany International' }),
+      unresolvedItem({ outreachEventId: 'outreach-b', accountName: 'Albany International' }),
+      unresolvedItem({ outreachEventId: 'outreach-c', accountName: 'Albany International' }),
+      unresolvedItem({ outreachEventId: 'outreach-d', accountName: 'Albany International' })
+    ],
+    '?outreach=outreach-c',
+    async (page) => {
+      await page.evaluate(() => window.initUnresolvedOutreachPanel());
+      await page.waitForTimeout(80);
+      const computed = await page.$$eval('#unresolvedOutreachList .unresolved-outreach-item', els => els.map(el => {
+        const cs = getComputedStyle(el);
+        return {
+          outreachEventId: el.dataset.outreachEventId,
+          borderLeftWidth: cs.borderLeftWidth,
+          boxShadow: cs.boxShadow,
+          backgroundColor: cs.backgroundColor
+        };
+      }));
+      const target = computed.find(r => r.outreachEventId === 'outreach-c');
+      const siblings = computed.filter(r => r.outreachEventId !== 'outreach-c');
+      assert(!!target, 'sanity: the targeted row exists among four identical-text siblings');
+      assert(target.borderLeftWidth !== '0px', `REQUIRED: the targeted row has a real, visible left accent border distinguishing it from identical siblings (got ${target.borderLeftWidth})`);
+      assert(target.boxShadow !== 'none', `REQUIRED: the targeted row has a visible ring (box-shadow), not just a subtle background tint (got ${target.boxShadow})`);
+      for(const sibling of siblings){
+        assert(sibling.borderLeftWidth === '0px', `REQUIRED: a non-targeted sibling row (same account name, same text) has NO left accent border (got ${sibling.borderLeftWidth} for ${sibling.outreachEventId})`);
+        assert(sibling.boxShadow === 'none', `REQUIRED: a non-targeted sibling row has no ring/box-shadow (got ${sibling.boxShadow} for ${sibling.outreachEventId})`);
+        assert(sibling.backgroundColor !== target.backgroundColor, `REQUIRED: a non-targeted sibling's background is genuinely different from the targeted row's (sibling got ${sibling.backgroundColor}, target got ${target.backgroundColor})`);
+      }
+    }
+  );
+
   // REQUIRED: the dataset identifier is stamped on every rendered row,
   // even with no deep-link param present -- proves the identifier itself
   // (not just the highlight behavior) is always available.

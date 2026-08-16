@@ -2156,7 +2156,32 @@
 .unresolved-outreach-item:first-child{border-top:0;padding-top:0;}
 .unresolved-outreach-text{font-weight:600;}
 .unresolved-outreach-actions{display:flex;gap:6px;flex-wrap:wrap;}
-.unresolved-outreach-item-highlight{background:#EAFBF9;border-radius:8px;transition:background 1.8s ease;}
+/* Notification deep-link highlight (founder QA correction): the prior
+   version (a flat, subtle background tint alone) was indistinguishable in
+   real Gmail-then-Preview QA when several visually identical rows for the
+   same account sit in the list (e.g. four "Albany International" rows) --
+   scrolling landed in the right SECTION but which exact row was targeted
+   was not provable from a screenshot. Strengthened to a colored left
+   accent bar (matching the panel's own --radar teal), a visible ring, and
+   a brief pulse, so the targeted row is unmistakable at a glance without
+   touching the other rows or the underlying mechanism (still the same
+   class toggle, still ephemeral, still no persisted state). */
+.unresolved-outreach-item-highlight{
+  position:relative;
+  background:#D2F5EF;
+  border-radius:8px;
+  border-left:4px solid var(--radar);
+  margin:0 -12px;
+  padding-left:12px;
+  padding-right:12px;
+  box-shadow:0 0 0 2px rgba(20,184,166,.4);
+  transition:background .6s ease, box-shadow .6s ease;
+  animation:unresolvedOutreachHighlightPulse 1.4s ease-in-out 2;
+}
+@keyframes unresolvedOutreachHighlightPulse{
+  0%,100%{box-shadow:0 0 0 2px rgba(20,184,166,.4);}
+  50%{box-shadow:0 0 0 6px rgba(20,184,166,.6);}
+}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){
@@ -3257,7 +3282,11 @@ async function initUnresolvedOutreachPanel(){
     if(targetRow){
       targetRow.scrollIntoView({behavior:'smooth', block:'center'});
       targetRow.classList.add('unresolved-outreach-item-highlight');
-      setTimeout(() => targetRow.classList.remove('unresolved-outreach-item-highlight'), 2600);
+      // Long enough to cover the smooth-scroll settle time plus both
+      // pulse cycles (2 x 1.4s) with a comfortable dwell before fading --
+      // strengthened alongside the CSS itself so the highlight is still
+      // visible by the time a rep's eye actually reaches the row.
+      setTimeout(() => targetRow.classList.remove('unresolved-outreach-item-highlight'), 3400);
     }
   }
 }

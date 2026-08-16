@@ -147,6 +147,32 @@ export function renderDigestSubject({ newSignals = [], promptEligibleOutreach = 
   return 'House Accounts update';
 }
 
+// Hidden preheader text (founder-approved small email improvement): without
+// this, Gmail/most inbox clients scrape the first visible text in the body
+// for the inbox preview snippet -- for this template that would be the
+// "House Accounts" eyebrow label, not anything useful. Dynamic per the
+// founder's exact example shape ("L.L. Bean has a new reason to reach out.
+// Plus 1 follow-up waiting on you." for 1 signal + 1 follow-up), correctly
+// pluralized, concise. Deliberately separate copy from renderDigestSubject()
+// -- the subject is count-only by design; the preheader can afford to name
+// the single top account when there's exactly one, since it has more room
+// and a different job (inbox curiosity, not scanability across many emails).
+export function renderPreheaderText({ newSignals = [], promptEligibleOutreach = [] }) {
+  const signalCount = newSignals.length;
+  const outreachCount = promptEligibleOutreach.length;
+  let signalPart = '';
+  if (signalCount === 1) {
+    signalPart = `${escapeHtml(newSignals[0].account_name) || 'An account'} has a new reason to reach out.`;
+  } else if (signalCount > 1) {
+    signalPart = `${signalCount} accounts have new reasons to reach out.`;
+  }
+  const outreachPart = outreachCount ? `${pluralize(outreachCount, 'follow-up', 'follow-ups')} waiting on you.` : '';
+  if (signalPart && outreachPart) return `${signalPart} Plus ${outreachPart}`;
+  if (signalPart) return signalPart;
+  if (outreachPart) return outreachPart;
+  return 'House Accounts has an update for you.';
+}
+
 function daysAgoLabel(iso, now) {
   const ms = now.getTime() - new Date(iso).getTime();
   const days = Math.max(0, Math.floor(ms / MS_PER_DAY));
@@ -200,7 +226,20 @@ export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach
     ${outreachLines}
   </div>` : '';
 
+  // Hidden preheader: display:none/font-size:1/color-matched/max-height:0/
+  // opacity:0 covers every major client's hiding quirks (Gmail/Outlook/
+  // Apple Mail all differ in which single rule they honor); the trailing
+  // zero-width-space + non-breaking-space padding stops Gmail from
+  // appending the next VISIBLE text (the "House Accounts" eyebrow) onto
+  // the inbox preview once the real preheader text runs out. Never
+  // rendered/visible once the email is actually opened -- purely an inbox-
+  // list affordance.
+  const preheaderText = renderPreheaderText({ newSignals, promptEligibleOutreach });
+  const preheaderPadding = '&zwnj;&nbsp;'.repeat(40);
+  const preheaderHtml = `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;color:#F7F8FA;">${escapeHtml(preheaderText)}${preheaderPadding}</div>`;
+
   return `<div style="margin:0;padding:0;background:#F7F8FA;font-family:Arial,sans-serif;color:#17375E;">
+    ${preheaderHtml}
     <div style="max-width:600px;margin:0 auto;padding:28px 16px;">
       <div style="background:#ffffff;border:1px solid #D8DEE9;border-radius:18px;padding:28px;">
         <div style="font-size:13px;font-weight:700;color:#1FB7AE;letter-spacing:.04em;text-transform:uppercase;margin-bottom:20px;">House Accounts</div>
