@@ -116,6 +116,7 @@ function baseState() {
       { id: 'sig-a3-collision', user_id: 'user-a1', event_fingerprint: 'fp-collision-shared', account_name: 'Anderson Group', payload: { signalType: 'Hiring Activity', title: 'Anderson Group is hiring' } },
       { id: 'sig-a4-collision', user_id: 'user-a1', event_fingerprint: 'fp-collision-shared', account_name: 'Anderson Consulting', payload: { signalType: 'Hiring Activity', title: 'Anderson Consulting is hiring' } }
     ],
+    haAccountOpportunities: [],
     haSignalEvents: []
   };
 }
@@ -138,6 +139,9 @@ function makeMockFetch(state) {
     }
     if (u.includes('/rest/v1/ha_signals')) {
       return jsonResponse(applyOrderLimit(filterRows(state.haSignals, filters), params));
+    }
+    if (u.includes('/rest/v1/ha_account_opportunities')) {
+      return jsonResponse(applyOrderLimit(filterRows(state.haAccountOpportunities, filters), params));
     }
     if (u.includes('/rest/v1/ha_signal_events')) {
       if (method === 'POST') {
@@ -206,13 +210,16 @@ async function run() {
     assert(res.statusCode === 400, `unknown eventType is rejected 400 (got ${res.statusCode})`);
   }
   {
+    // outcome_reported with no parentEventId at all (distinct from the
+    // dedicated outcome_reported test block below, which covers the real
+    // parent-linkage/status-enum behavior).
     const { res } = await withState(async () => {
-      const req = makeReq({ body: { eventType: 'outcome_reported', signalId: 'sig-a1', clientEventId: 'c-1' } });
+      const req = makeReq({ body: { eventType: 'outcome_reported', outcomeStatus: 'engaged', clientEventId: 'c-1' } });
       const res = makeRes();
       await handler(req, res);
       return { res };
     });
-    assert(res.statusCode === 400, `REQUIRED: outcome_reported is rejected as unsupported this sprint (got ${res.statusCode})`);
+    assert(res.statusCode === 400, `an outcome_reported with no parentEventId is rejected 400 (got ${res.statusCode})`);
   }
   {
     const { res } = await withState(async () => {
@@ -473,6 +480,105 @@ async function run() {
       return { res };
     });
     assert(res.statusCode === 404, `REQUIRED: a rep cannot attach an approach note to a DIFFERENT rep's outreach attempt, even within the same organization (got ${res.statusCode})`);
+  }
+
+  // ---------------------------------------------------------------------
+  // outcome_reported: append-only child of the caller's OWN outreach_made
+  // event, inherits fingerprint/signal_id/account_name from the parent,
+  // validated outcomeStatus enum, optional note, NEVER deduped -- multiple
+  // later updates are valid real history.
+  // ---------------------------------------------------------------------
+  {
+    const { res, ev } = await withState(async (state) => {
+      const outreachReq = makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'c-outreach-for-outcome' } });
+      const outreachRes = makeRes();
+      await handler(outreachReq, outreachRes);
+      const outcomeReq = makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'c-outcome-1' } });
+      const res = makeRes();
+      await handler(outcomeReq, res);
+      return { res, ev: state.haSignalEvents.find(e => e.event_type === 'outcome_reported') };
+    });
+    assert(res.statusCode === 200, `a valid outcome_reported saves successfully (got ${res.statusCode})`);
+    assert(ev.parent_event_id, 'REQUIRED: outcome_reported carries parent_event_id linking it to its outreach attempt');
+    assert(ev.payload.outcomeStatus === 'no_response_yet', 'the outcomeStatus is stored');
+    assert(!('note' in ev.payload), 'REQUIRED: an omitted note is not stored as an empty/null field -- the payload simply has no note key');
+    assert(ev.event_fingerprint === 'fp-shared-account' && ev.account_name === 'Acme Co', 'REQUIRED: outcome_reported inherits its fingerprint/account from the parent outreach event, never client-supplied');
+    assert(ev.signal_id === 'sig-a1' && ev.opportunity_id == null, 'REQUIRED: outcome_reported inherits signal_id from a signal-family parent and carries no opportunity_id');
+  }
+  {
+    // Optional note is stored verbatim when provided.
+    const { ev } = await withState(async (state) => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'c-outreach-outcome-note' } }), outreachRes);
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'engaged', note: 'Replied same day, wants a call next week.', clientEventId: 'c-outcome-note' } }), makeRes());
+      return { ev: state.haSignalEvents.find(e => e.event_type === 'outcome_reported') };
+    });
+    assert(ev.payload.note === 'Replied same day, wants a call next week.', 'an optional note is stored verbatim alongside outcomeStatus');
+  }
+  {
+    // Unknown outcomeStatus rejected.
+    const { res } = await withState(async (state) => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'c-outreach-bad-status' } }), outreachRes);
+      const req = makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'closed_won', clientEventId: 'c-bad-status' } });
+      const res = makeRes();
+      await handler(req, res);
+      return { res };
+    });
+    assert(res.statusCode === 400, `REQUIRED: an outcomeStatus outside the fixed V1 vocabulary (no CRM-stage free-for-all) is rejected 400 (got ${res.statusCode})`);
+  }
+  {
+    // parentEventId must point at an outreach_made/opportunity_outreach_made
+    // event, not just any event (e.g. a prior signal_useful).
+    const { res } = await withState(async (state) => {
+      const usefulRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'signal_useful', signalId: 'sig-a1', clientEventId: 'c-useful-for-bad-parent' } }), usefulRes);
+      const req = makeReq({ body: { eventType: 'outcome_reported', parentEventId: usefulRes.body.id, outcomeStatus: 'engaged', clientEventId: 'c-wrong-parent-type' } });
+      const res = makeRes();
+      await handler(req, res);
+      return { res };
+    });
+    assert(res.statusCode === 404, `REQUIRED: outcome_reported rejects a parentEventId that isn't an outreach_made/opportunity_outreach_made event (got ${res.statusCode})`);
+  }
+  {
+    // Cross-rep: a rep cannot report an outcome on a teammate's outreach.
+    const { res } = await withState(async (state) => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ token: 'valid-token-a2', body: { eventType: 'outreach_made', signalId: 'sig-a2', clientEventId: 'c-a2-outreach-for-outcome' } }), outreachRes);
+      const req = makeReq({ token: 'valid-token-a1', body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'engaged', clientEventId: 'c-cross-rep-outcome' } });
+      const res = makeRes();
+      await handler(req, res);
+      return { res };
+    });
+    assert(res.statusCode === 404, `REQUIRED: a rep cannot report an outcome on a DIFFERENT rep's outreach attempt (got ${res.statusCode})`);
+  }
+  {
+    // REQUIRED: multiple later outcome updates are valid, real history --
+    // never deduped/no-op'd the way signal_useful/signal_not_useful is.
+    const { count, statuses } = await withState(async (state) => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'c-outreach-multi-outcome' } }), outreachRes);
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'c-outcome-multi-1' } }), makeRes());
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'c-outcome-multi-2' } }), makeRes());
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'engaged', clientEventId: 'c-outcome-multi-3' } }), makeRes());
+      const rows = state.haSignalEvents.filter(e => e.event_type === 'outcome_reported' && e.parent_event_id === outreachRes.body.id);
+      return { count: rows.length, statuses: rows.map(r => r.payload.outcomeStatus) };
+    });
+    assert(count === 3, `REQUIRED: three separate outcome_reported calls on the SAME outreach all persist as distinct rows -- no dedup/no-op, even for the two identical 'no_response_yet' reports (got ${count})`);
+    assert(statuses.join(',') === 'no_response_yet,no_response_yet,engaged', `REQUIRED: the full history is preserved in order, including the repeated no_response_yet -- an earlier report is never overwritten or destroyed by a later one (got ${statuses.join(',')})`);
+  }
+  {
+    // outcome_reported against an opportunity_outreach_made parent inherits
+    // opportunity_id, not signal_id.
+    const { ev } = await withState(async (state) => {
+      state.haAccountOpportunities = [{ id: 'opp-1', user_id: 'user-a1', fingerprint: 'fp-opp-1', account_name: 'Delta LLC', opportunity_type: 'REPEAT PATTERN', category: 'Apparel' }];
+      const oppOutreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'opportunity_outreach_made', opportunityId: 'opp-1', clientEventId: 'c-opp-outreach-for-outcome' } }), oppOutreachRes);
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: oppOutreachRes.body.id, outcomeStatus: 'went_nowhere', clientEventId: 'c-opp-outcome' } }), makeRes());
+      return { ev: state.haSignalEvents.find(e => e.event_type === 'outcome_reported' && e.parent_event_id === oppOutreachRes.body.id) };
+    });
+    assert(ev.opportunity_id === 'opp-1' && ev.signal_id == null, 'REQUIRED: outcome_reported against an opportunity-family parent inherits opportunity_id, not signal_id');
+    assert(ev.account_name === 'Delta LLC', 'inherits account_name from the opportunity-family parent');
   }
 
   // ---------------------------------------------------------------------

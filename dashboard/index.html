@@ -2141,6 +2141,13 @@
 .checkout-success-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--radar);border-left:4px solid var(--radar);background:#E9FBF8;color:var(--ink);font-weight:700;align-items:center;justify-content:space-between;gap:12px;}
 .checkout-success-notice.active{display:flex;}
 .checkout-success-notice-dismiss{flex-shrink:0;background:transparent;border:0;color:var(--ink);font-size:18px;line-height:1;font-weight:900;cursor:pointer;padding:0 4px;}
+.unresolved-outreach-panel{max-width:1136px;margin:0 auto 16px;padding:14px 16px;border:1px solid var(--line);border-left:4px solid var(--radar);background:#fff;}
+.unresolved-outreach-panel[hidden]{display:none;}
+.unresolved-outreach-heading{font-weight:700;margin-bottom:10px;}
+.unresolved-outreach-item{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line);}
+.unresolved-outreach-item:first-child{border-top:0;padding-top:0;}
+.unresolved-outreach-text{font-weight:600;}
+.unresolved-outreach-actions{display:flex;gap:6px;flex-wrap:wrap;}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){
@@ -2309,6 +2316,18 @@
   </section>
   <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
   <div class="checkout-success-notice" id="checkoutSuccessNotice" role="status"><span id="checkoutSuccessNoticeText"></span><button type="button" class="checkout-success-notice-dismiss" id="checkoutSuccessNoticeDismiss" aria-label="Dismiss">×</button></div>
+
+  <!-- Notification & Outcome Loop V1: "still open" outreach a rep can close
+       out in one click. Hidden by default and only ever unhidden once real
+       items are fetched (never an empty "nothing to report" state) --
+       api/unresolved-outreach.js is the single source of truth for what
+       counts as "still open" (shared with the notification digest builder,
+       Step 3), so this panel can never disagree with the email prompts
+       about which outreach is unresolved. -->
+  <section class="unresolved-outreach-panel" id="unresolvedOutreachPanel" role="status" hidden>
+    <div class="unresolved-outreach-heading">Outreach waiting on an update</div>
+    <div class="unresolved-outreach-list" id="unresolvedOutreachList"></div>
+  </section>
 
   <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
     <div class="beta-modal">
@@ -3056,14 +3075,14 @@ function signalStateKey(eventFingerprint, accountName){
 // both. templateKey is only meaningful (and only ever read server-side)
 // for a follow_up opportunity_* event with SNAPSHOT_EVENT_TYPES coverage;
 // it is harmless to send undefined otherwise.
-async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey} = {}){
+async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey, outcomeStatus} = {}){
   try{
     const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) return null;
     const res = await fetch('/api/signal-events', {
       method:'POST',
       headers,
-      body: JSON.stringify({eventType, signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey})
+      body: JSON.stringify({eventType, signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey, outcomeStatus})
     });
     const data = await res.json().catch(() => ({}));
     if(!res.ok) return null;
@@ -3073,6 +3092,90 @@ async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerpr
     return null;
   }
 }
+
+// Notification & Outcome Loop V1: "You reached out N days ago -- how did it
+// go?" panel. Deliberately lightweight -- a flat list, four one-click
+// status buttons, no navigation into an admin workflow. Reuses
+// logSignalEvent() (outcome_reported) rather than a new write path;
+// api/unresolved-outreach.js (GET) is the single source of truth for what
+// counts as "still open," shared with the future notification digest, so
+// this panel and the email prompts can never disagree.
+const OUTCOME_STATUS_LABELS = {
+  no_response_yet: 'Still no response',
+  engaged: 'They engaged',
+  progressed: 'Real progress',
+  went_nowhere: 'Went nowhere'
+};
+
+function daysSinceIso(iso){
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / (24*60*60*1000)));
+}
+
+async function fetchUnresolvedOutreach(){
+  try{
+    const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : null;
+    if(!headers) return [];
+    const res = await fetch('/api/unresolved-outreach', {headers});
+    if(!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data.items) ? data.items : [];
+  }catch(err){
+    console.warn('[unresolved-outreach] fetch failed; panel stays hidden.', err);
+    return [];
+  }
+}
+
+function renderUnresolvedOutreachItem(item){
+  const days = daysSinceIso(item.outreachCreatedAt);
+  const row = document.createElement('div');
+  row.className = 'unresolved-outreach-item';
+  const text = document.createElement('div');
+  text.className = 'unresolved-outreach-text';
+  text.textContent = `You reached out to ${item.accountName} ${days} day${days === 1 ? '' : 's'} ago — how did it go?`;
+  const actions = document.createElement('div');
+  actions.className = 'unresolved-outreach-actions';
+  Object.keys(OUTCOME_STATUS_LABELS).forEach(status => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost btn-mini';
+    btn.textContent = OUTCOME_STATUS_LABELS[status];
+    btn.addEventListener('click', async () => {
+      if(btn.disabled) return;
+      actions.querySelectorAll('button').forEach(b => b.disabled = true);
+      const result = await logSignalEvent('outcome_reported', {
+        parentEventId: item.outreachEventId,
+        eventFingerprint: item.eventFingerprint,
+        accountName: item.accountName,
+        outcomeStatus: status,
+        clientEventId: generateClientEventId()
+      });
+      if(result && result.id) row.remove();
+      else actions.querySelectorAll('button').forEach(b => b.disabled = false);
+      if(row.parentElement && !row.parentElement.children.length){
+        const panel = document.getElementById('unresolvedOutreachPanel');
+        if(panel) panel.hidden = true;
+      }
+    });
+    actions.appendChild(btn);
+  });
+  row.appendChild(text);
+  row.appendChild(actions);
+  return row;
+}
+
+async function initUnresolvedOutreachPanel(){
+  const panel = document.getElementById('unresolvedOutreachPanel');
+  const list = document.getElementById('unresolvedOutreachList');
+  if(!panel || !list) return;
+  const items = await fetchUnresolvedOutreach();
+  if(!items.length) return; // never show an empty panel
+  list.innerHTML = '';
+  items.forEach(item => list.appendChild(renderUnresolvedOutreachItem(item)));
+  panel.hidden = false;
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUnresolvedOutreachPanel);
+else initUnresolvedOutreachPanel();
 
 // Organizational Learning V1B, Correction 1: chooses which durable target
 // an opportunity object should log events against -- the account-history

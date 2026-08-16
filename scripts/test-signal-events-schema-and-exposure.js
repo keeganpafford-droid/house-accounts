@@ -81,5 +81,31 @@ assert(/'outcome_reported'/.test(migrationSql), 'migration 11 reserves the outco
 assert(!/ha_signals\s+ADD COLUMN organization_id/i.test(migrationSql), 'REQUIRED: migration 11 does not add organization_id to ha_signals -- evaluated and found unnecessary for this sprint');
 assert(/user_id, event_fingerprint, created_at desc/i.test(migrationSql), 'migration 11 adds the (user_id, event_fingerprint, created_at desc) composite index matching the actual V1 read-back access pattern');
 
+// ---------------------------------------------------------------------------
+// 3. Migration 21: outcome_reported's target-family shape goes live.
+// ---------------------------------------------------------------------------
+const migration21Sql = readFileSync(join(REPO_ROOT, 'supabase-schema-migration-21-outcome-reported.sql'), 'utf8');
+assert(/alter table public\.ha_signal_events drop constraint if exists ha_signal_events_target_family_check;/.test(migration21Sql), 'migration 21 drops the existing constraint before recreating it with the new case');
+assert(/when event_type = 'outcome_reported' then\s*\n\s*not \(signal_id is not null and opportunity_id is not null\) and parent_event_id is not null/.test(migration21Sql), 'REQUIRED: outcome_reported forbids BOTH signal_id/opportunity_id being set simultaneously (the same ON DELETE SET NULL-tolerant shape migration 14 established for prepare_call_opened, not a strict XOR that would break once a parent row is later deleted) AND requires a non-null parent_event_id');
+// REQUIRED: this migration's baseline must be migration 14's CURRENT
+// prepare_call_opened fix, not migration 12's original (buggy) strict-XOR
+// version -- applying the strict-XOR version against real production data
+// fails immediately (23514) against existing orphaned prepare_call_opened
+// rows, exactly the bug migration 14 already fixed once.
+assert(/when event_type = 'prepare_call_opened' then\s*\n\s*not \(signal_id is not null and opportunity_id is not null\)/.test(migration21Sql), 'REQUIRED: migration 21 preserves migration 14\'s prepare_call_opened fix (tolerant of both-null after an ON DELETE SET NULL cascade), not migration 12\'s original strict XOR');
+assert(!/when event_type = 'prepare_call_opened' then\s*\n\s*\(signal_id is not null\) <> \(opportunity_id is not null\)/.test(migration21Sql), 'REQUIRED: the pre-migration-14 strict-XOR prepare_call_opened case must never reappear in a later migration\'s baseline');
+// Sanity: every other pre-existing case survives unchanged -- this
+// migration only ADDS a case (plus the prepare_call_opened baseline
+// correction above), it must not silently drop or alter an existing
+// family's rule.
+for (const existingCase of [
+  "when event_type in ('signal_selected', 'signal_useful', 'signal_not_useful', 'outreach_made') then",
+  "when event_type = 'approach_shared' then",
+  "when event_type in ('opportunity_selected', 'opportunity_useful', 'opportunity_not_useful', 'opportunity_outreach_made') then",
+  "when event_type = 'opportunity_approach_shared' then"
+]) {
+  assert(migration21Sql.includes(existingCase), `REQUIRED: migration 21 preserves the pre-existing case "${existingCase.slice(0, 50)}..." unchanged`);
+}
+
 console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
 process.exitCode = failures === 0 ? 0 : 1;
