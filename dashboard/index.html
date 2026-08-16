@@ -3145,8 +3145,6 @@ const OUTCOME_CONFIRMATION_TEXT = {
   progressed: 'Got it — real progress. We’ll stop asking about this outreach and keep the result with this account.',
   went_nowhere: 'Got it — it went nowhere. We’ll stop asking about this outreach and keep the result with this account.'
 };
-const OUTCOME_CONFIRMATION_DISMISS_MS = 2600;
-
 function daysSinceIso(iso){
   const ms = Date.now() - new Date(iso).getTime();
   return Math.max(0, Math.floor(ms / (24*60*60*1000)));
@@ -3191,20 +3189,32 @@ function renderUnresolvedOutreachItem(item){
         clientEventId: generateClientEventId()
       });
       if(result && result.id){
-        // Lightweight post-click confirmation (founder audit correction):
-        // swap the prompt for a short acknowledgement instead of the row
-        // just silently disappearing, then remove it after a brief pause --
-        // no modal, no extra click required to dismiss.
+        // Lightweight post-click confirmation (founder QA correction): the
+        // outcome is already resolved server-side by this point (the write
+        // above succeeded) -- the unresolved action buttons disappear
+        // immediately, replaced by a confirmation that stays on screen
+        // until the rep explicitly closes it. No auto-dismiss timer: this
+        // is purely ephemeral local UI, not a persisted "confirmation
+        // state" -- nothing is written or read to remember whether it was
+        // shown/closed. A refresh or revisit simply re-fetches
+        // /api/unresolved-outreach, which naturally no longer includes this
+        // item because the outcome is already terminal, so the confirmation
+        // never reappears on its own regardless of whether it was closed.
         text.textContent = OUTCOME_CONFIRMATION_TEXT[status] || 'Got it — thanks for the update.';
         actions.remove();
-        setTimeout(() => {
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'btn btn-ghost btn-mini unresolved-outreach-confirmation-close';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => {
           const parent = row.parentElement;
           row.remove();
           if(parent && !parent.children.length){
             const panel = document.getElementById('unresolvedOutreachPanel');
             if(panel) panel.hidden = true;
           }
-        }, OUTCOME_CONFIRMATION_DISMISS_MS);
+        });
+        row.appendChild(closeBtn);
       }else{
         actions.querySelectorAll('button').forEach(b => b.disabled = false);
       }

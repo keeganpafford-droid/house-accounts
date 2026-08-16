@@ -129,7 +129,6 @@ async function outcomeStatusState(page){
 const PANEL_JS_SRC = [
   extractFn(DASHBOARD_SRC, 'OUTCOME_STATUS_LABELS'),
   extractFn(DASHBOARD_SRC, 'OUTCOME_CONFIRMATION_TEXT'),
-  extractFn(DASHBOARD_SRC, 'OUTCOME_CONFIRMATION_DISMISS_MS'),
   extractFn(DASHBOARD_SRC, 'daysSinceIso'),
   extractFn(DASHBOARD_SRC, 'generateClientEventId'),
   extractFn(DASHBOARD_SRC, 'logSignalEvent'),
@@ -237,32 +236,55 @@ async function main(){
       await buttons[btnIndex].click();
       await page.waitForTimeout(80);
       const rowText = await page.textContent('#unresolvedOutreachList .unresolved-outreach-item');
-      assert(rowText.includes(expectedText), `REQUIRED: clicking "${status}" shows the exact founder-specified confirmation before the row disappears (got "${rowText}")`);
+      assert(rowText.includes(expectedText), `REQUIRED: clicking "${status}" shows the exact founder-specified confirmation immediately (got "${rowText}")`);
       assert(!rowText.toLowerCase().includes('improve') && !rowText.toLowerCase().includes('recommendation'), `REQUIRED: the confirmation for "${status}" never claims House Accounts will improve future recommendations from this result`);
-      const stillPresent = await page.$('#unresolvedOutreachList .unresolved-outreach-item');
-      assert(!!stillPresent, `REQUIRED: the row is NOT removed immediately -- the confirmation is shown first (lightweight, not instant vanish) for "${status}"`);
+      // REQUIRED (founder QA correction): the unresolved action buttons
+      // (the four outcome-status choices) are gone immediately -- only the
+      // Close action remains -- and the row does NOT disappear on its own
+      // no matter how long it sits there, since there is no auto-dismiss
+      // timer anymore.
+      const statusButtonsRemaining = await page.$$eval('#unresolvedOutreachList .unresolved-outreach-item button', btns => btns.filter(b => !b.classList.contains('unresolved-outreach-confirmation-close')).length);
+      assert(statusButtonsRemaining === 0, `REQUIRED: the unresolved outcome-status buttons disappear immediately once the outcome is saved (got ${statusButtonsRemaining} remaining)`);
+      const closeBtn = await page.$('#unresolvedOutreachList .unresolved-outreach-confirmation-close');
+      assert(!!closeBtn && (await closeBtn.textContent()).trim() === 'Close', 'REQUIRED: a lightweight Close action is present on the confirmation');
+      await page.waitForTimeout(3200); // well past the OLD 2600ms auto-dismiss window
+      const stillPresentAfterWait = await page.$('#unresolvedOutreachList .unresolved-outreach-item');
+      assert(!!stillPresentAfterWait, `REQUIRED: no timer-based auto-dismiss remains -- the confirmation for "${status}" is still visible after waiting well past the old dismiss window`);
     });
   }
 
-  // One representative status proves the row is actually removed afterward
-  // (not left dangling forever) and the panel hides once empty.
+  // Clicking Close removes the row and hides the panel once empty -- the
+  // rep's own explicit action, not a timer.
   await withPanelPage([unresolvedItem()], async (page) => {
     await page.evaluate(() => window.initUnresolvedOutreachPanel());
     await page.waitForTimeout(50);
     await page.click('#unresolvedOutreachList button:has-text("They engaged")');
     await page.waitForTimeout(80);
     const presentAfterClick = await page.$('#unresolvedOutreachList .unresolved-outreach-item');
-    assert(!!presentAfterClick, 'sanity: row still present immediately after click (confirmation showing)');
-    await page.waitForTimeout(2700); // past OUTCOME_CONFIRMATION_DISMISS_MS
-    const presentAfterDismiss = await page.$('#unresolvedOutreachList .unresolved-outreach-item');
-    assert(!presentAfterDismiss, 'REQUIRED: the row is removed after the confirmation has been shown for a moment');
+    assert(!!presentAfterClick, 'sanity: row still present immediately after the outcome click (confirmation showing)');
+    await page.click('#unresolvedOutreachList .unresolved-outreach-confirmation-close');
+    const presentAfterClose = await page.$('#unresolvedOutreachList .unresolved-outreach-item');
+    assert(!presentAfterClose, 'REQUIRED: clicking Close removes the row');
     const panelHidden = await page.evaluate(() => document.getElementById('unresolvedOutreachPanel').hidden);
-    assert(panelHidden === true, 'REQUIRED: the panel hides itself once its last item is removed');
+    assert(panelHidden === true, 'REQUIRED: the panel hides itself once its last item is removed via Close');
+  });
+
+  // Ephemeral, not persisted: a fresh panel load (simulating a page
+  // refresh/revisit) never shows a leftover confirmation -- the server's
+  // own /api/unresolved-outreach simply no longer returns a resolved item,
+  // which is what actually keeps the confirmation from reappearing (not any
+  // local "confirmation dismissed" flag).
+  await withPanelPage([], async (page) => {
+    await page.evaluate(() => window.initUnresolvedOutreachPanel());
+    await page.waitForTimeout(50);
+    const panelHidden = await page.evaluate(() => document.getElementById('unresolvedOutreachPanel').hidden);
+    assert(panelHidden === true, 'REQUIRED: once the outcome is resolved server-side, a fresh load (refresh/revisit) never shows the item or its confirmation again');
   });
 
   // No modal, no required note, no extra workflow: a single click resolves
   // the item -- no additional element (dialog/textarea/select) is ever
-  // introduced by a successful click.
+  // introduced by a successful click, and Close is a plain inline button,
+  // not a second confirmation step.
   await withPanelPage([unresolvedItem()], async (page) => {
     await page.evaluate(() => window.initUnresolvedOutreachPanel());
     await page.waitForTimeout(50);
