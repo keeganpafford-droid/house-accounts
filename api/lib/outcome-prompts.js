@@ -47,18 +47,24 @@ export function latestOutcomeEvent(outcomeEvents = []) {
 export function evaluateOutreachOutcome({ outreachCreatedAt, outcomeEvents = [], now = new Date() }) {
   const latest = latestOutcomeEvent(outcomeEvents);
   const currentStatus = latest ? (latest.payload?.outcomeStatus || null) : null;
+  // Exposed so a caller (api/lib/notification-digest.js) can tell whether
+  // an item's state has genuinely changed since it was last mentioned in a
+  // notification, independent of this function's own eligibility window --
+  // null when nothing has ever been reported (outreachCreatedAt is then the
+  // relevant "last changed" timestamp for that comparison).
+  const latestOutcomeReportedAt = latest ? latest.created_at : null;
 
   if (latest && TERMINAL_STATUSES.has(currentStatus)) {
-    return { currentStatus, isEligibleForPrompt: false, isStillOpen: false, reason: 'terminal-outcome-reported' };
+    return { currentStatus, isEligibleForPrompt: false, isStillOpen: false, reason: 'terminal-outcome-reported', latestOutcomeReportedAt };
   }
 
   if (!latest) {
     const eligible = daysSince(outreachCreatedAt, now) >= INITIAL_PROMPT_DAYS;
-    return { currentStatus: null, isEligibleForPrompt: eligible, isStillOpen: true, reason: eligible ? 'never-reported-past-initial-window' : 'never-reported-within-initial-window' };
+    return { currentStatus: null, isEligibleForPrompt: eligible, isStillOpen: true, reason: eligible ? 'never-reported-past-initial-window' : 'never-reported-within-initial-window', latestOutcomeReportedAt };
   }
 
   // currentStatus === 'no_response_yet' (the only remaining case: latest
   // exists and is not terminal).
   const eligible = daysSince(latest.created_at, now) >= NO_RESPONSE_RECHECK_DAYS;
-  return { currentStatus, isEligibleForPrompt: eligible, isStillOpen: true, reason: eligible ? 'no-response-yet-past-recheck-window' : 'no-response-yet-within-recheck-window' };
+  return { currentStatus, isEligibleForPrompt: eligible, isStillOpen: true, reason: eligible ? 'no-response-yet-past-recheck-window' : 'no-response-yet-within-recheck-window', latestOutcomeReportedAt };
 }

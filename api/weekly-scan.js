@@ -48,6 +48,11 @@ import { classifyMonitoringSignalEligibility, buildTargetIdentityIndex, lookupTa
 // Phase 2B founder Queue dark-run: see the call site below for why this
 // legacy sweep must exclude Queue-managed organizations.
 import { isQueueManagedOrganization } from './lib/monitoring-queue.js';
+// Notification & Outcome Loop V1 step 3: sendEmail() (the Resend call) now
+// lives in one shared place -- see api/lib/email.js's own header comment
+// for why this extraction happens now rather than at the eventual Monday
+// Brief cutover. Pure extraction: behavior is byte-for-byte unchanged.
+import { sendEmail } from './lib/email.js';
 
 // Constant-time-ish secret comparison: equal-length secrets are compared via
 // crypto.timingSafeEqual (no early-exit on byte mismatch); a length mismatch
@@ -384,19 +389,6 @@ function dedupeDigestRows(rows){
   return out;
 }
 
-async function sendEmail({to, subject, html}){
-  const key = process.env.RESEND_API_KEY;
-  if(!key) return {skipped:true, reason:'Missing RESEND_API_KEY'};
-  const from = process.env.ALERTS_FROM_EMAIL || 'House Accounts <alerts@houseaccounts.ai>';
-  const resp = await fetch('https://api.resend.com/emails', {
-    method:'POST',
-    headers:{Authorization:`Bearer ${key}`, 'Content-Type':'application/json'},
-    body: JSON.stringify({from, to, subject, html})
-  });
-  const data = await resp.json().catch(()=>({}));
-  if(!resp.ok) throw new Error(`Resend ${resp.status}: ${data.message || JSON.stringify(data)}`);
-  return data;
-}
 function escapeHtml(value=''){
   return String(value || '')
     .replace(/&/g, '&amp;')

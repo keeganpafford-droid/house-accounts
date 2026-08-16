@@ -92,7 +92,8 @@ export async function listUnresolvedOutreach(userId, { now = new Date() } = {}) 
       return {
         outreachEventId: o.id, accountName: o.account_name, eventFingerprint: o.event_fingerprint,
         signalId: o.signal_id, opportunityId: o.opportunity_id, outreachCreatedAt: o.created_at,
-        currentStatus: evaluated.currentStatus, isEligibleForPrompt: evaluated.isEligibleForPrompt, isStillOpen: evaluated.isStillOpen
+        currentStatus: evaluated.currentStatus, isEligibleForPrompt: evaluated.isEligibleForPrompt, isStillOpen: evaluated.isStillOpen,
+        latestOutcomeReportedAt: evaluated.latestOutcomeReportedAt
       };
     })
     .filter(item => item.isStillOpen);
