@@ -215,16 +215,40 @@ export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach
     ${extraLine}
   </div>` : '';
 
+  // Founder QA correction: in a mixed email the large filled "Open
+  // Dashboard" button visually dominated, so a rep would default to
+  // clicking it instead of the contextual deep link this section exists
+  // for. Each outreach item's own link is now styled as the PROMINENT
+  // (filled, button-style) action -- reusing the exact same visual
+  // language the generic CTA used to own -- while the generic CTA is
+  // demoted to a small secondary link when outreach exists (see
+  // primaryCta/secondaryCta below). Still the same outreachDeepLinkUrl()
+  // per item, unchanged -- only copy and styling changed, not the link
+  // target or the deep-link mechanism itself.
+  const hasOutreach = promptEligibleOutreach.length > 0;
   const outreachLines = promptEligibleOutreach
-    .map(item => `<div style="margin:0 0 12px;">
-      <div style="color:#25364d;font-size:14px;">You reached out to ${escapeHtml(item.accountName)} ${daysAgoLabel(item.outreachCreatedAt, now)}.</div>
-      <a href="${outreachDeepLinkUrl(dashboardUrl, item.outreachEventId)}" style="color:#1FB7AE;font-weight:700;text-decoration:none;font-size:14px;">Report outcome →</a>
+    .map(item => `<div style="margin:0 0 16px;">
+      <div style="color:#25364d;font-size:14px;margin-bottom:8px;">You reached out to ${escapeHtml(item.accountName)} ${daysAgoLabel(item.outreachCreatedAt, now)}.</div>
+      <a href="${outreachDeepLinkUrl(dashboardUrl, item.outreachEventId)}" style="display:inline-block;background:#1FB7AE;color:#ffffff;padding:10px 18px;text-decoration:none;border-radius:8px;font-weight:700;font-size:14px;">Tell us how it went →</a>
     </div>`)
     .join('');
-  const outreachBlock = promptEligibleOutreach.length ? `<div style="margin:0 0 26px;padding-top:22px;border-top:1px solid #D8DEE9;">
+  const outreachBlock = hasOutreach ? `<div style="margin:0 0 26px;padding-top:22px;border-top:1px solid #D8DEE9;">
     <div style="font-size:12px;font-weight:700;color:#1FB7AE;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px;">How Did This Go?</div>
     ${outreachLines}
   </div>` : '';
+
+  // No contextual outreach action exists -- the general dashboard CTA has
+  // nothing to lose to, so it stays the prominent primary button exactly
+  // as before.
+  const primaryCta = hasOutreach ? '' : `<div style="margin:4px 0 0;">
+      <a href="${dashboardUrl}" style="display:inline-block;background:#1FB7AE;color:#ffffff;padding:14px 22px;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;">Open Dashboard →</a>
+    </div>`;
+  // Demoted: small, unfilled, centered -- still present and functional
+  // (the general fallback/global CTA per the founder's spec), just no
+  // longer visually competing with the per-item contextual action above.
+  const secondaryCta = hasOutreach ? `<div style="margin:20px 0 0;text-align:center;">
+      <a href="${dashboardUrl}" style="color:#5b677a;font-weight:700;text-decoration:none;font-size:13px;">Open House Accounts →</a>
+    </div>` : '';
 
   // Hidden preheader: display:none/font-size:1/color-matched/max-height:0/
   // opacity:0 covers every major client's hiding quirks (Gmail/Outlook/
@@ -245,9 +269,8 @@ export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach
         <div style="font-size:13px;font-weight:700;color:#1FB7AE;letter-spacing:.04em;text-transform:uppercase;margin-bottom:20px;">House Accounts</div>
         ${signalsBlock}
         ${outreachBlock}
-        <div style="margin:4px 0 0;">
-          <a href="${dashboardUrl}" style="display:inline-block;background:#1FB7AE;color:#ffffff;padding:14px 22px;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;">Open Dashboard →</a>
-        </div>
+        ${primaryCta}
+        ${secondaryCta}
       </div>
       <p style="text-align:center;margin:16px 0 0;color:#7b8794;font-size:12px;">House Accounts helps you focus on who to contact this week, and why.</p>
     </div>

@@ -1,5 +1,6 @@
 // Notification Deep Links (bounded scope, Part A3): a notification's
-// "Report outcome ->" link carries ?outreach=<outreachEventId> -- the exact
+// "Tell us how it went ->" link (formerly "Report outcome ->") carries
+// ?outreach=<outreachEventId> -- the exact
 // stable ha_signal_events primary key /api/unresolved-outreach already
 // returns and dashboard/index.html's own panel already keys everything on.
 // initUnresolvedOutreachPanel() is the one place this list is fetched AND

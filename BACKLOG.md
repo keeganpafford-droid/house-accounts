@@ -13,7 +13,7 @@ The current commercial path stays the anchor for prioritization: **existing cust
 Noted here only so these are never rediscovered as gaps. No action needed.
 
 - **Notification preferences UX** (Notification & Outcome Loop V1, Part A4, 2026-08-16): a simple Daily / Weekly / In-app only control now lives in Settings (`settings.html`), backed by `POST /api/settings` `action:'update-notification-preference'` and the existing `ha_users.notification_preference` field. No new settings architecture — reused the existing preference field/API pattern verbatim.
-- **Notification deep link — unresolved outreach** (Notification & Outcome Loop V1, Part A3, 2026-08-16): a notification's "Report outcome →" link now carries `?outreach=<outreachEventId>` and lands the rep on that exact item in the dashboard's unresolved-outreach panel (scrolled into view, briefly highlighted), reusing the existing stable `ha_signal_events` primary key and the existing `next=`-preserving auth-redirect flow. This is the *bounded half* of "Notification Deep Links / Actionable Re-entry" below — the per-signal "View opportunity →" half remains open, see that entry.
+- **Notification deep link — unresolved outreach** (Notification & Outcome Loop V1, Part A3, 2026-08-16; CTA copy/hierarchy strengthened 2026-08-16 live-QA rounds): a notification's "Tell us how it went →" link (originally "Report outcome →") now carries `?outreach=<outreachEventId>` and lands the rep on that exact item in the dashboard's unresolved-outreach panel — scrolled into view with a strengthened, visually unmistakable highlight (colored left border + ring + pulse, not just a subtle tint) — reusing the existing stable `ha_signal_events` primary key and the existing `next=`-preserving auth-redirect flow. Rendered as the prominent/primary CTA whenever a follow-up prompt exists, demoting the generic dashboard link to a small secondary "Open House Accounts →" action so the contextual action visually wins. This is the *bounded half* of "Notification Deep Links / Actionable Re-entry" below — the per-signal "View opportunity →" half remains open, see that entry.
 
 ---
 
@@ -25,7 +25,7 @@ Bounded, near-term work that directly completes or polishes what's already live.
 
 **Priority: High — near-term.**
 
-**Status:** partially built. The outreach-prompt half ("Report outcome →" → the specific unresolved outreach) shipped in Notification & Outcome Loop V1, Part A3 (2026-08-16) — see "Recently completed" above.
+**Status:** partially built. The outreach-prompt half ("Tell us how it went →" → the specific unresolved outreach) shipped in Notification & Outcome Loop V1, Part A3 (2026-08-16) — see "Recently completed" above.
 
 **Remaining scope:** the intelligence-item half — clicking a specific "New Intelligence" line in an email should land the rep on that exact signal/opportunity (e.g. auto-opening its Prepare for Call), not just the general dashboard.
 

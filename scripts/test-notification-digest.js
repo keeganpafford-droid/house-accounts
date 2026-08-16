@@ -294,20 +294,43 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [], promptEligibleOutreach: [{ accountName: 'Dover Honda', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(3) }], baseUrl: 'https://app.example.com', now: NOW });
   assert(html.includes('How Did This Go?'), 'REQUIRED: the outreach section has its own distinct "How Did This Go?" heading, visually separated from New Intelligence');
   assert(html.includes('You reached out to Dover Honda 3 days ago.'), `REQUIRED: the outreach prompt uses the founder-specified "reached out ... ago" phrasing with a real day count (got: ${html.match(/You reached out[^<]*/)})`);
-  assert(html.includes('Report outcome →'), 'REQUIRED: the outreach prompt uses the founder-specified "Report outcome ->" link text');
-  assert(html.includes('href="https://app.example.com/dashboard/?outreach=or-1"'), `REQUIRED: Notification Deep Links -- the Report outcome link carries this exact outreach's own outreachEventId so it lands on the specific item, not just the dashboard (got: ${html.match(/href="[^"]*outreach[^"]*"/g)})`);
+  assert(html.includes('Tell us how it went →'), 'REQUIRED: the outreach prompt uses the founder-specified "Tell us how it went ->" link text');
+  assert(!html.includes('Report outcome'), 'REQUIRED: the old "Report outcome ->" copy is fully replaced, not left alongside the new copy');
+  assert(html.includes('href="https://app.example.com/dashboard/?outreach=or-1"'), `REQUIRED: Notification Deep Links -- the Tell us how it went link carries this exact outreach's own outreachEventId so it lands on the specific item, not just the dashboard (got: ${html.match(/href="[^"]*outreach[^"]*"/g)})`);
+  // Founder QA correction: the contextual per-item CTA must visually WIN
+  // over the generic dashboard link -- proven by real style attributes,
+  // not just text presence.
+  const tellUsAnchor = html.match(/<a href="https:\/\/app\.example\.com\/dashboard\/\?outreach=or-1"[^>]*>Tell us how it went →<\/a>/);
+  assert(!!tellUsAnchor && /background:#1FB7AE/.test(tellUsAnchor[0]), `REQUIRED: "Tell us how it went" is styled as the prominent filled/button-style CTA (got ${tellUsAnchor ? tellUsAnchor[0] : 'no match'})`);
+  assert(html.includes('Open House Accounts →'), 'REQUIRED: the generic dashboard CTA is demoted to a small secondary link ("Open House Accounts ->") when a follow-up prompt exists');
+  assert(!html.includes('Open Dashboard →'), 'REQUIRED: the old prominent "Open Dashboard ->" button text/copy does not appear at all when a contextual outreach action exists');
+  const openHouseAnchor = html.match(/<a href="https:\/\/app\.example\.com\/dashboard\/"[^>]*>Open House Accounts →<\/a>/);
+  assert(!!openHouseAnchor && !/background:#1FB7AE/.test(openHouseAnchor[0]), `REQUIRED: the demoted "Open House Accounts" link is NOT styled as a filled button -- it must visually lose to the contextual action (got ${openHouseAnchor ? openHouseAnchor[0] : 'no match'})`);
 }
 {
   const extra = Array.from({ length: 8 }, (_, i) => ({ account_name: `Account ${i}`, title: 'Signal' }));
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: extra, promptEligibleOutreach: [], baseUrl: 'https://app.example.com' });
   assert(html.includes('3 more in House Accounts'), `REQUIRED: only the top 5 headline signals render inline, the rest collapse into an "N more in House Accounts" line matching the founder's example (got no match in: ${html.includes('more in House Accounts')})`);
+  // Founder QA correction: with signals only (no follow-up), there is no
+  // contextual action to lose to -- the general dashboard CTA stays the
+  // prominent primary button, unchanged from before this round.
+  assert(html.includes('Open Dashboard →'), 'REQUIRED: with signals only (no follow-up), the general dashboard CTA remains the prominent primary button');
+  assert(!html.includes('Open House Accounts →'), 'REQUIRED: the demoted secondary CTA copy never appears when there is no contextual outreach action');
+  assert(!html.includes('How Did This Go?'), 'sanity: no outreach section renders when there is no outreach');
+  const openDashboardAnchor = html.match(/<a href="https:\/\/app\.example\.com\/dashboard\/"[^>]*>Open Dashboard →<\/a>/);
+  assert(!!openDashboardAnchor && /background:#1FB7AE/.test(openDashboardAnchor[0]), `REQUIRED: "Open Dashboard" stays styled as the prominent filled button when there is no contextual action to lose to (got ${openDashboardAnchor ? openDashboardAnchor[0] : 'no match'})`);
 }
 {
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [{ accountName: 'Acme', outreachEventId: 'or-1', outreachCreatedAt: daysAgo(1) }], baseUrl: 'https://app.example.com/', now: NOW });
   assert(html.includes('https://app.example.com/dashboard/'), `REQUIRED: the fallback CTA and outreach prompt links point at the authenticated /dashboard/ route, not the marketing homepage (got: ${html.match(/href="[^"]*"/g)})`);
   assert(!html.includes('dashboardEmail'), 'REQUIRED: the vestigial dashboardEmail query param must never reappear on any CTA link');
   assert(!/href="https:\/\/app\.example\.com\/?"/.test(html), 'REQUIRED: no link regresses back to the bare marketing homepage URL');
-  assert(html.includes('Open Dashboard →'), 'REQUIRED: a general Open Dashboard fallback/global CTA is always present alongside the specific per-item links');
+  // Founder QA correction: in a MIXED email (both New Intelligence and How
+  // Did This Go?), the contextual action must still win visually -- same
+  // hierarchy as the follow-up-only case above.
+  assert(html.includes('Tell us how it went →'), 'REQUIRED: a mixed email still surfaces the prominent contextual outreach CTA');
+  assert(html.includes('Open House Accounts →'), 'REQUIRED: a mixed email demotes the general CTA to "Open House Accounts ->", same as the follow-up-only case');
+  assert(!html.includes('Open Dashboard →'), 'REQUIRED: a mixed email never shows the old prominent "Open Dashboard ->" button -- the contextual action must not have to compete with it');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
