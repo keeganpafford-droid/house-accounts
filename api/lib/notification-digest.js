@@ -17,6 +17,18 @@
 // once weekly-scan's digest is actually being REPLACED rather than run
 // alongside this one.
 import { clean } from './signal-persistence.js';
+// Signal doctrine correction: a row persisted in ha_signals is NOT the same
+// thing as it being eligible for a PROACTIVE surface. classifyMonitoringSignalEligibility()
+// (+ lookupTargetIdentity()) is the ONE centralized priority/secondary/
+// hidden policy every consumer must call -- api/weekly-scan.js's own digest
+// already does (see its digestEligibleRows filter) -- reused here verbatim,
+// never recreated. classifyLegacySignalActionability() is the companion
+// actionability gate weekly-scan's digest also applies (dateless/non-
+// commercial signals can be identity-eligible yet still not actionable
+// enough to push proactively) -- both gates together are what "priority"
+// means for a proactive surface, exactly matching the existing digest.
+import { classifyMonitoringSignalEligibility, lookupTargetIdentity } from './monitoring-identity.js';
+import { classifyLegacySignalActionability } from '../research-batch.js';
 
 export const DAILY_INITIAL_LOOKBACK_HOURS = 24;
 export const WEEKLY_INITIAL_LOOKBACK_HOURS = 24 * 7;
@@ -38,6 +50,30 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+// Reuses the exact centralized eligibility policy api/weekly-scan.js's own
+// digest already applies -- not a second, looser notion of "new
+// intelligence." A signal being persisted in ha_signals only means research
+// found and stored it; whether it's strong enough to push proactively is a
+// separate question this policy alone answers. 'secondary' signals are
+// simply excluded from proactive surfaces here -- never deleted, never
+// mutated, still fully visible in HA's own View Research / Research
+// Details per the already-banked dashboard doctrine (this function has no
+// write path at all). targetIdentityIndex is built once per scheduler
+// invocation the same way api/weekly-scan.js builds its own (see
+// buildTargetIdentityIndex() in api/lib/monitoring-identity.js) and passed
+// in here, never rebuilt or reinvented per call.
+export function filterPriorityEligibleSignals(signals, { targetIdentityIndex, userId } = {}) {
+  return (signals || []).filter(row => {
+    if (classifyLegacySignalActionability(row.payload || {}).actionabilityStatus?.isPriorityEligible === false) return false;
+    const rowTargetIdentity = lookupTargetIdentity(targetIdentityIndex, userId, row.account_name);
+    return classifyMonitoringSignalEligibility({
+      identityConfidence: row.payload?.identityConfidence,
+      reasons: row.payload?.identityCorroboratorReasons,
+      targetIdentityDomainSource: rowTargetIdentity.source
+    }) === 'priority';
+  });
+}
+
 // Selection: which signals/outreach items actually belong in THIS
 // notification. signals/unresolvedOutreach are already-fetched candidate
 // rows (unresolvedOutreach already filtered to isStillOpen by
@@ -57,12 +93,18 @@ function escapeHtml(value = '') {
 //     what stops the SAME "still waiting" prompt appearing on every single
 //     daily digest forever; a genuinely new report always re-qualifies
 //     regardless of how recently it was last mentioned.
-export function selectDigestContent({ user, signals = [], unresolvedOutreach = [], lastSuccessfulDelivery = null, now = new Date() }) {
+//
+//   Eligibility runs FIRST, before the recency watermark -- signals is
+//   filtered through filterPriorityEligibleSignals() before anything else,
+//   so a secondary signal can never enter the New Intelligence section
+//   regardless of how recent it is.
+export function selectDigestContent({ user, signals = [], unresolvedOutreach = [], lastSuccessfulDelivery = null, targetIdentityIndex, now = new Date() }) {
   const watermarkMs = lastSuccessfulDelivery
     ? new Date(lastSuccessfulDelivery.sent_at).getTime()
     : now.getTime() - initialLookbackHours(user.notification_preference) * 60 * 60 * 1000;
 
-  const newSignals = signals.filter(s => new Date(s.first_seen_at).getTime() > watermarkMs);
+  const eligibleSignals = filterPriorityEligibleSignals(signals, { targetIdentityIndex, userId: user.id });
+  const newSignals = eligibleSignals.filter(s => new Date(s.first_seen_at).getTime() > watermarkMs);
 
   const previouslyIncludedOutreachIds = new Set(lastSuccessfulDelivery?.included_outreach_event_ids || []);
   const promptEligibleOutreach = unresolvedOutreach.filter(item => {

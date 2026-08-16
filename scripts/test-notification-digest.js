@@ -5,7 +5,8 @@
 // convention.
 //
 // Usage: node scripts/test-notification-digest.js
-import { selectDigestContent, renderDigestSubject, renderDigestHtml, initialLookbackHours, DAILY_INITIAL_LOOKBACK_HOURS, WEEKLY_INITIAL_LOOKBACK_HOURS } from '../api/lib/notification-digest.js';
+import { selectDigestContent, renderDigestSubject, renderDigestHtml, initialLookbackHours, filterPriorityEligibleSignals, DAILY_INITIAL_LOOKBACK_HOURS, WEEKLY_INITIAL_LOOKBACK_HOURS } from '../api/lib/notification-digest.js';
+import { buildTargetIdentityIndex } from '../api/lib/monitoring-identity.js';
 
 let failures = 0;
 function assert(condition, message) {
@@ -16,6 +17,27 @@ function assert(condition, message) {
 const NOW = new Date('2026-08-20T00:00:00.000Z');
 function hoursAgo(n, from = NOW) { return new Date(from.getTime() - n * 60 * 60 * 1000).toISOString(); }
 function daysAgo(n, from = NOW) { return hoursAgo(n * 24, from); }
+
+// A real, actionable payload shape (matches classifyLegacySignalActionability's
+// own 'upcoming'/isPriorityEligible:true requirements -- an event-like
+// canonicalEventType, a future exact-confidence event_date, and a
+// publishedAt field) with NO identityConfidence set, so
+// classifyMonitoringSignalEligibility()'s LEGACY GRANDFATHER clause treats
+// it as 'priority' by default. Tests that care specifically about the
+// priority/secondary distinction override identityConfidence/reasons
+// explicitly -- every other test uses this default so it isn't accidentally
+// exercising the eligibility gate it isn't testing.
+function actionablePayload(overrides = {}) {
+  return {
+    concreteTrigger: 'Flagship Store Reopening',
+    title: 'Flagship Store Reopening',
+    businessContext: 'The flagship store has undergone extensive renovations, indicating a commitment to enhancing customer experience and brand presence.',
+    publishedAt: 'Jun 11, 2026',
+    event_date: '2026-12-01',
+    eventDateConfidence: 'exact',
+    ...overrides
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Initial lookback defaults.
@@ -31,19 +53,79 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
 // ---------------------------------------------------------------------------
 {
   const signals = [
-    { id: 'sig-recent', account_name: 'Acme', title: 'Recent', first_seen_at: hoursAgo(2) },
-    { id: 'sig-old', account_name: 'Beta', title: 'Old', first_seen_at: daysAgo(30) }
+    { id: 'sig-recent', account_name: 'Acme', title: 'Recent', first_seen_at: hoursAgo(2), payload: actionablePayload() },
+    { id: 'sig-old', account_name: 'Beta', title: 'Old', first_seen_at: daysAgo(30), payload: actionablePayload() }
   ];
-  const { newSignals } = selectDigestContent({ user: { notification_preference: 'daily' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery: null, now: NOW });
+  const { newSignals } = selectDigestContent({ user: { id: 'user-1', notification_preference: 'daily' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery: null, now: NOW });
   assert(newSignals.length === 1 && newSignals[0].id === 'sig-recent', `REQUIRED: a daily user's first-ever digest only includes signals within the 24h initial lookback, never a 30-day-old signal (got ${JSON.stringify(newSignals.map(s => s.id))})`);
 }
 {
   const signals = [
-    { id: 'sig-within-week', account_name: 'Acme', title: 'Within week', first_seen_at: daysAgo(5) },
-    { id: 'sig-old', account_name: 'Beta', title: 'Old', first_seen_at: daysAgo(30) }
+    { id: 'sig-within-week', account_name: 'Acme', title: 'Within week', first_seen_at: daysAgo(5), payload: actionablePayload() },
+    { id: 'sig-old', account_name: 'Beta', title: 'Old', first_seen_at: daysAgo(30), payload: actionablePayload() }
   ];
-  const { newSignals } = selectDigestContent({ user: { notification_preference: 'weekly' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery: null, now: NOW });
+  const { newSignals } = selectDigestContent({ user: { id: 'user-1', notification_preference: 'weekly' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery: null, now: NOW });
   assert(newSignals.length === 1 && newSignals[0].id === 'sig-within-week', 'REQUIRED: a weekly user\'s first-ever digest uses the 7-day initial lookback');
+}
+
+// ---------------------------------------------------------------------------
+// REQUIRED (signal doctrine correction): a signal persisted in ha_signals is
+// NOT automatically eligible for a proactive surface -- filterPriorityEligibleSignals()
+// must reuse the exact centralized classifyMonitoringSignalEligibility()/
+// classifyLegacySignalActionability() policy api/weekly-scan.js's own
+// digest already applies, never a new looser definition. 'hidden'/rejected
+// and 'secondary' signals are excluded; 'priority' signals (via either
+// path) are included; excluding a signal here never mutates it.
+// ---------------------------------------------------------------------------
+{
+  // Path A: strong signal-level corroboration alone -> priority, regardless
+  // of target identity state.
+  const targetIdentityIndex = buildTargetIdentityIndex([]); // no targets at all -- unresolved by construction
+  const priorityByPathA = { id: 'sig-priority-a', account_name: 'Acme Co', payload: actionablePayload({ identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'] }) };
+  const secondaryWeak = { id: 'sig-secondary-weak', account_name: 'Beta Inc', payload: actionablePayload({ identityConfidence: 'possible', identityCorroboratorReasons: ['location match'] }) };
+  const hiddenRejected = { id: 'sig-hidden', account_name: 'Gamma LLC', payload: actionablePayload({ identityConfidence: 'rejected', identityCorroboratorReasons: [] }) };
+  const legacyGrandfathered = { id: 'sig-legacy', account_name: 'Delta Co', payload: actionablePayload() }; // no identityConfidence at all
+
+  const result = filterPriorityEligibleSignals([priorityByPathA, secondaryWeak, hiddenRejected, legacyGrandfathered], { targetIdentityIndex, userId: 'user-1' });
+  const ids = result.map(r => r.id).sort();
+  assert(JSON.stringify(ids) === JSON.stringify(['sig-legacy', 'sig-priority-a']), `REQUIRED: only the priority-tier and legacy-grandfathered signals survive -- secondary (weak corroboration) and hidden (rejected) are excluded (got ${JSON.stringify(ids)})`);
+}
+{
+  // Path B: an unresolved target gets NO benefit -- an otherwise-identical
+  // signal with only weak corroboration stays secondary even with a
+  // resolved target unless the target's anchor is genuinely Strong.
+  const weakTargetIndex = buildTargetIdentityIndex([{ user_id: 'user-1', display_account_name: 'Weak Co', identity_status: 'unresolved', identity_domain: null, identity_domain_source: null }]);
+  const stillSecondary = { id: 'sig-weak-target', account_name: 'Weak Co', payload: actionablePayload({ identityConfidence: 'possible', identityCorroboratorReasons: [] }) };
+  assert(filterPriorityEligibleSignals([stillSecondary], { targetIdentityIndex: weakTargetIndex, userId: 'user-1' }).length === 0, 'REQUIRED: an unresolved target grants no Path B benefit -- a possible-tier signal stays secondary and is excluded');
+
+  // A STRONG target anchor (uploaded-website) promotes an otherwise-bare
+  // name-match signal to priority -- Path B, reused verbatim from
+  // classifyMonitoringSignalEligibility(), not reimplemented here.
+  const strongTargetIndex = buildTargetIdentityIndex([{ user_id: 'user-1', display_account_name: 'Strong Co', identity_status: 'derived', identity_domain: 'strongco.com', identity_domain_source: 'uploaded-website' }]);
+  const promotedByPathB = { id: 'sig-strong-target', account_name: 'Strong Co', payload: actionablePayload({ identityConfidence: 'unconfirmed', identityCorroboratorReasons: [] }) };
+  const promoted = filterPriorityEligibleSignals([promotedByPathB], { targetIdentityIndex: strongTargetIndex, userId: 'user-1' });
+  assert(promoted.length === 1 && promoted[0].id === 'sig-strong-target', 'REQUIRED: a Strong target-side identity anchor (uploaded-website) promotes an otherwise-secondary signal to priority via Path B, reused from the real centralized policy');
+}
+{
+  // Actionability gate: even a priority-tier identity classification is
+  // excluded if the signal itself is not actionable (e.g. dateless/ongoing)
+  // -- the SAME combined gate api/weekly-scan.js's real digest applies.
+  const nonActionable = { id: 'sig-non-actionable', account_name: 'Acme Co', payload: {} }; // empty payload -> ongoing-undated, isPriorityEligible:false
+  assert(filterPriorityEligibleSignals([nonActionable], { targetIdentityIndex: buildTargetIdentityIndex([]), userId: 'user-1' }).length === 0, 'REQUIRED: a non-actionable signal is excluded even without any identity concern -- both gates must pass');
+}
+{
+  // End-to-end through selectDigestContent(): a recent priority signal is
+  // included in the New Intelligence section; a recent secondary signal
+  // (same recency, same digest) is excluded -- proving the eligibility
+  // gate is actually wired into the real selection path, not just the
+  // standalone filter function.
+  const targetIdentityIndex = buildTargetIdentityIndex([]);
+  const signals = [
+    { id: 'sig-priority', account_name: 'Priority Co', first_seen_at: hoursAgo(1), payload: actionablePayload({ identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'] }) },
+    { id: 'sig-secondary', account_name: 'Secondary Co', first_seen_at: hoursAgo(1), payload: actionablePayload({ identityConfidence: 'possible', identityCorroboratorReasons: ['location match'] }) }
+  ];
+  const { newSignals } = selectDigestContent({ user: { id: 'user-1', notification_preference: 'daily' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery: null, targetIdentityIndex, now: NOW });
+  assert(newSignals.length === 1 && newSignals[0].id === 'sig-priority', `REQUIRED: a recent PRIORITY signal is included and a recent SECONDARY signal (same age, same digest) is excluded from the New Intelligence section (got ${JSON.stringify(newSignals.map(s => s.id))})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -57,10 +139,10 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
 {
   const lastSuccessfulDelivery = { sent_at: hoursAgo(3), included_signal_ids: [], included_outreach_event_ids: [] };
   const signals = [
-    { id: 'sig-since-last', account_name: 'Acme', title: 'New', first_seen_at: hoursAgo(1) },
-    { id: 'sig-before-last', account_name: 'Beta', title: 'Already seen', first_seen_at: hoursAgo(5) }
+    { id: 'sig-since-last', account_name: 'Acme', title: 'New', first_seen_at: hoursAgo(1), payload: actionablePayload() },
+    { id: 'sig-before-last', account_name: 'Beta', title: 'Already seen', first_seen_at: hoursAgo(5), payload: actionablePayload() }
   ];
-  const { newSignals } = selectDigestContent({ user: { notification_preference: 'daily' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery, now: NOW });
+  const { newSignals } = selectDigestContent({ user: { id: 'user-1', notification_preference: 'daily' }, signals, unresolvedOutreach: [], lastSuccessfulDelivery, now: NOW });
   assert(newSignals.length === 1 && newSignals[0].id === 'sig-since-last', `REQUIRED: only signals newer than the last SUCCESSFUL delivery's sent_at count as new (got ${JSON.stringify(newSignals.map(s => s.id))})`);
 }
 

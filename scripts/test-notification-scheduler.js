@@ -83,6 +83,9 @@ function makeMockFetch(state) {
       const rows = (state.signals[userId] || []).filter(s => new Date(s.first_seen_at).getTime() > watermark);
       return jsonResponse(rows);
     }
+    if (u.includes('/rest/v1/ha_monitoring_targets')) {
+      return jsonResponse(state.monitoringTargets || []);
+    }
     if (u.includes('/rest/v1/ha_signal_events')) {
       const userMatch = /user_id=eq\.([^&]+)/.exec(u);
       const userId = userMatch ? decodeURIComponent(userMatch[1]) : null;
@@ -104,8 +107,27 @@ function baseState(overrides = {}) {
     signals: {},
     outreachEvents: {},
     outcomeEvents: {},
+    monitoringTargets: [],
     resendCalls: [],
     resendShouldFail: false,
+    ...overrides
+  };
+}
+
+// Same real, actionable payload shape as scripts/test-notification-digest.js
+// (matches classifyLegacySignalActionability's own requirements for
+// isPriorityEligible:true) with no identityConfidence set, so the LEGACY
+// GRANDFATHER clause in classifyMonitoringSignalEligibility() treats it as
+// 'priority' by default -- every fixture in this file uses this unless a
+// test is specifically exercising the priority/secondary distinction.
+function actionablePayload(overrides = {}) {
+  return {
+    concreteTrigger: 'Flagship Store Reopening',
+    title: 'Flagship Store Reopening',
+    businessContext: 'The flagship store has undergone extensive renovations, indicating a commitment to enhancing customer experience and brand presence.',
+    publishedAt: 'Jun 11, 2026',
+    event_date: '2026-12-01',
+    eventDateConfidence: 'exact',
     ...overrides
   };
 }
@@ -151,7 +173,7 @@ async function run() {
     // gate check).
     const state = baseState({
       users: [{ id: 'user-x', email: 'x@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
-      signals: { 'user-x': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+      signals: { 'user-x': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }] }
     });
     const res = makeRes();
     await withState(state, async () => { await handler(makeReq(), res); }, { allowlist: null });
@@ -169,8 +191,8 @@ async function run() {
         { id: 'user-enabled', email: 'enabled@example.com', organization_id: 'org-1', notification_preference: 'daily' }
       ],
       signals: {
-        'user-not-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }],
-        'user-enabled': [{ id: 'sig-2', account_name: 'Beta', title: 'New activity', first_seen_at: new Date().toISOString() }]
+        'user-not-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }],
+        'user-enabled': [{ id: 'sig-2', account_name: 'Beta', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }]
       },
       outreachEvents: { 'user-not-enabled': [], 'user-enabled': [] }
     });
@@ -186,7 +208,7 @@ async function run() {
     // the user's own notification_preference.
     const state = baseState({
       users: [{ id: 'user-inapp-enabled', email: 'inapp-enabled@example.com', organization_id: 'org-1', notification_preference: 'in_app_only' }],
-      signals: { 'user-inapp-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+      signals: { 'user-inapp-enabled': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }] }
     });
     const res = makeRes();
     await withState(state, async () => { await handler(makeReq(), res); }, { allowlist: 'org-1' });
@@ -200,7 +222,7 @@ async function run() {
   {
     const state = baseState({
       users: [{ id: 'user-inapp', email: 'inapp@example.com', organization_id: 'org-1', notification_preference: 'in_app_only' }],
-      signals: { 'user-inapp': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+      signals: { 'user-inapp': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }] }
     });
     const res = makeRes();
     await withState(state, async () => { await handler(makeReq(), res); });
@@ -219,7 +241,7 @@ async function run() {
     const state = baseState({
       users: [{ id: 'user-weekly', email: 'weekly@example.com', organization_id: 'org-1', notification_preference: 'weekly' }],
       deliveries: [recentSuccess],
-      signals: { 'user-weekly': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString() }] }
+      signals: { 'user-weekly': [{ id: 'sig-1', account_name: 'Acme', title: 'New activity', first_seen_at: new Date().toISOString(), payload: actionablePayload() }] }
     });
     const res = makeRes();
     await withState(state, async () => { await handler(makeReq(), res); });
@@ -246,6 +268,40 @@ async function run() {
   }
 
   // -------------------------------------------------------------------
+  // REQUIRED (signal doctrine correction): a recent PRIORITY signal is
+  // included in the actual sent email while a recent SECONDARY signal
+  // (same digest, same age) is excluded -- end to end through the real
+  // handler, real ha_monitoring_targets fetch, and real
+  // classifyMonitoringSignalEligibility()/classifyLegacySignalActionability()
+  // policy, not a mocked/bypassed eligibility check.
+  // -------------------------------------------------------------------
+  {
+    const state = baseState({
+      users: [{ id: 'user-doctrine', email: 'doctrine@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
+      signals: {
+        'user-doctrine': [
+          // Priority via Path A: strong signal-level corroboration.
+          { id: 'sig-priority', account_name: 'Priority Co', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload({ identityConfidence: 'confirmed', identityCorroboratorReasons: ['verified company domain'] }) },
+          // Secondary: weak corroboration, no strong target anchor -- must
+          // never enter the email.
+          { id: 'sig-secondary', account_name: 'Secondary Co', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload({ identityConfidence: 'possible', identityCorroboratorReasons: ['location match'] }) }
+        ]
+      },
+      outreachEvents: { 'user-doctrine': [] },
+      // Neither account has a resolved monitoring target -- Path B grants
+      // no benefit to either, proving the exclusion is genuinely about the
+      // signal's own weak corroboration, not an artifact of missing target data.
+      monitoringTargets: []
+    });
+    const res = makeRes();
+    await withState(state, async () => { await handler(makeReq(), res); });
+    assert(res.body.sent === 1, `sanity: the user receives an email (has real priority content) (got ${JSON.stringify(res.body)})`);
+    assert(state.resendCalls[0].html.includes('Priority Co'), 'REQUIRED: the sent email contains the priority-eligible signal');
+    assert(!state.resendCalls[0].html.includes('Secondary Co'), 'REQUIRED: the sent email does NOT contain the secondary-tier signal -- a persisted ha_signals row is not automatically eligible for a proactive notification');
+    assert(JSON.stringify(state.deliveries[0].included_signal_ids) === JSON.stringify(['sig-priority']), 'REQUIRED: the delivery log\'s included_signal_ids records only the priority signal, confirming the secondary signal was excluded from selection itself, not merely hidden in rendering');
+  }
+
+  // -------------------------------------------------------------------
   // Daily user with real new content: never sent before -> due, real
   // signal exists -> email sent, a success delivery row is created with
   // the correct included ids/counts.
@@ -253,7 +309,7 @@ async function run() {
   {
     const state = baseState({
       users: [{ id: 'user-daily-new', email: 'new@example.com', organization_id: 'org-1', notification_preference: 'daily' }],
-      signals: { 'user-daily-new': [{ id: 'sig-dover', account_name: 'Dover Honda', title: 'Holiday parade activity', first_seen_at: new Date(Date.now() - 3600000).toISOString() }] },
+      signals: { 'user-daily-new': [{ id: 'sig-dover', account_name: 'Dover Honda', title: 'Holiday parade activity', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }] },
       outreachEvents: { 'user-daily-new': [] }
     });
     const res = makeRes();
@@ -272,7 +328,7 @@ async function run() {
   {
     const state = baseState({
       users: [{ id: 'user-weekly-first', email: 'weeklyfirst@example.com', organization_id: 'org-1', notification_preference: 'weekly' }],
-      signals: { 'user-weekly-first': [{ id: 'sig-1', account_name: 'ABC Manufacturing', title: 'New facility expansion', first_seen_at: new Date(Date.now() - 3600000).toISOString() }] },
+      signals: { 'user-weekly-first': [{ id: 'sig-1', account_name: 'ABC Manufacturing', title: 'New facility expansion', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }] },
       outreachEvents: { 'user-weekly-first': [] }
     });
     const res = makeRes();
@@ -327,8 +383,8 @@ async function run() {
         { id: 'user-iso-b', email: 'iso-b@example.com', organization_id: 'org-1', notification_preference: 'daily' }
       ],
       signals: {
-        'user-iso-a': [{ id: 'sig-a', account_name: 'Alpha Corp', title: 'Alpha signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }],
-        'user-iso-b': [{ id: 'sig-b', account_name: 'Bravo Corp', title: 'Bravo signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }]
+        'user-iso-a': [{ id: 'sig-a', account_name: 'Alpha Corp', title: 'Alpha signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }],
+        'user-iso-b': [{ id: 'sig-b', account_name: 'Bravo Corp', title: 'Bravo signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }]
       },
       outreachEvents: {
         'user-iso-a': [{ id: 'or-a', event_fingerprint: 'fp-a', signal_id: 'sig-a', opportunity_id: null, account_name: 'Alpha Corp', created_at: new Date(Date.now() - 10 * 86400000).toISOString() }],
@@ -365,8 +421,8 @@ async function run() {
         { id: 'user-ok', email: 'ok@example.com', organization_id: 'org-1', notification_preference: 'daily' }
       ],
       signals: {
-        'user-fail': [{ id: 'sig-fail', account_name: 'Acme', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }],
-        'user-ok': [{ id: 'sig-ok', account_name: 'Beta', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString() }]
+        'user-fail': [{ id: 'sig-fail', account_name: 'Acme', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }],
+        'user-ok': [{ id: 'sig-ok', account_name: 'Beta', title: 'Signal', first_seen_at: new Date(Date.now() - 3600000).toISOString(), payload: actionablePayload() }]
       },
       outreachEvents: { 'user-fail': [], 'user-ok': [] },
       resendShouldFail: true

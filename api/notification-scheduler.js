@@ -42,6 +42,13 @@ import { timingSafeEqual } from 'crypto';
 import { sendEmail } from './lib/email.js';
 import { selectDigestContent, renderDigestSubject, renderDigestHtml, initialLookbackHours } from './lib/notification-digest.js';
 import { listUnresolvedOutreach } from './unresolved-outreach.js';
+// Signal doctrine: a persisted ha_signals row is not automatically eligible
+// for a proactive surface -- buildTargetIdentityIndex() is built ONCE per
+// invocation from a single bounded query (never per-user, never per-signal),
+// exactly matching api/weekly-scan.js's own digestUserIds/
+// monitoringTargetsForDigest pattern -- one shared implementation of "which
+// target does this signal belong to," not a second one invented here.
+import { buildTargetIdentityIndex } from './lib/monitoring-identity.js';
 
 const WEEKLY_DUE_DAYS = 7;
 const NON_EMAIL_PREFERENCES = new Set(['in_app_only']);
@@ -99,7 +106,7 @@ function isWeeklyUserDue(lastSuccessfulDelivery, now) {
   return daysSinceLastSend >= WEEKLY_DUE_DAYS;
 }
 
-async function processUser(user, { baseUrl, now }) {
+async function processUser(user, { baseUrl, now, targetIdentityIndex }) {
   const lastSuccessfulDelivery = await fetchLastSuccessfulDelivery(user.id);
   if (user.notification_preference === 'weekly' && !isWeeklyUserDue(lastSuccessfulDelivery, now)) {
     return { outcome: 'not-due' };
@@ -109,11 +116,11 @@ async function processUser(user, { baseUrl, now }) {
     ? lastSuccessfulDelivery.sent_at
     : new Date(now.getTime() - initialLookbackHours(user.notification_preference) * 60 * 60 * 1000).toISOString();
   const [signals, unresolvedOutreach] = await Promise.all([
-    supabase(`ha_signals?user_id=eq.${encodeURIComponent(user.id)}&first_seen_at=gt.${encodeURIComponent(watermarkIso)}&select=id,account_name,title,signal_type,first_seen_at&order=first_seen_at.asc&limit=200`, { method: 'GET' }),
+    supabase(`ha_signals?user_id=eq.${encodeURIComponent(user.id)}&first_seen_at=gt.${encodeURIComponent(watermarkIso)}&select=id,account_name,title,signal_type,first_seen_at,payload&order=first_seen_at.asc&limit=200`, { method: 'GET' }),
     listUnresolvedOutreach(user.id, { now })
   ]);
 
-  const { hasContent, newSignals, promptEligibleOutreach } = selectDigestContent({ user, signals: Array.isArray(signals) ? signals : [], unresolvedOutreach, lastSuccessfulDelivery, now });
+  const { hasContent, newSignals, promptEligibleOutreach } = selectDigestContent({ user, signals: Array.isArray(signals) ? signals : [], unresolvedOutreach, lastSuccessfulDelivery, targetIdentityIndex, now });
   if (!hasContent) return { outcome: 'empty-digest' };
 
   const subject = renderDigestSubject({ newSignals, promptEligibleOutreach });
@@ -157,9 +164,19 @@ export default async function handler(req, res) {
       .filter(u => u.email && !NON_EMAIL_PREFERENCES.has(u.notification_preference))
       .filter(u => isNotificationEnabledOrganization(u.organization_id, allowlist));
 
+    // ONE bounded query for every candidate user's monitoring targets,
+    // built before the loop -- same efficiency doctrine as
+    // api/weekly-scan.js's own monitoringTargetsForDigest, never a
+    // per-user or per-signal database call.
+    const candidateUserIds = candidates.map(u => u.id);
+    const monitoringTargets = candidateUserIds.length
+      ? await supabase(`ha_monitoring_targets?select=user_id,display_account_name,identity_status,identity_domain,identity_domain_source&user_id=in.(${candidateUserIds.map(id => encodeURIComponent(id)).join(',')})&limit=5000`, { method: 'GET' })
+      : [];
+    const targetIdentityIndex = buildTargetIdentityIndex(monitoringTargets);
+
     const results = { notDue: 0, emptyDigest: 0, sent: 0, failed: 0 };
     for (const user of candidates) {
-      const { outcome } = await processUser(user, { baseUrl, now });
+      const { outcome } = await processUser(user, { baseUrl, now, targetIdentityIndex });
       if (outcome === 'not-due') results.notDue += 1;
       else if (outcome === 'empty-digest') results.emptyDigest += 1;
       else if (outcome === 'sent') results.sent += 1;
