@@ -246,6 +246,12 @@ assert(initialLookbackHours('weekly') === 168, 'initialLookbackHours(\'weekly\')
   const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: extra, promptEligibleOutreach: [], baseUrl: 'https://app.example.com' });
   assert(html.includes('3 more in House Accounts'), `REQUIRED: only the top 5 headline signals render inline, the rest collapse into an "N more in House Accounts" line matching the founder's example (got no match in: ${html.includes('more in House Accounts')})`);
 }
+{
+  const html = renderDigestHtml({ user: { email: 'rep@example.com' }, newSignals: [{ account_name: 'Dover Honda', title: 'Holiday parade activity' }], promptEligibleOutreach: [{ accountName: 'Acme', outreachEventId: 'or-1' }], baseUrl: 'https://app.example.com/' });
+  assert(html.includes('https://app.example.com/dashboard/'), `REQUIRED: the CTA and outreach prompt links point at the authenticated /dashboard/ route, not the marketing homepage (got: ${html.match(/href="[^"]*"/g)})`);
+  assert(!html.includes('dashboardEmail'), 'REQUIRED: the vestigial dashboardEmail query param must never reappear on the CTA link');
+  assert(!/href="https:\/\/app\.example\.com\/?"/.test(html), 'REQUIRED: the CTA must not regress back to the bare marketing homepage URL');
+}
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

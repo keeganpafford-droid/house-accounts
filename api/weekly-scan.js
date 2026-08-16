@@ -513,7 +513,7 @@ function weeklySummaryFromSignals(newSignals=[], accountsMonitored){
 function reportHtml(user, upload, newSignals, baseUrl, summary={}){
   const firstName = firstNameFromUser(user);
   const opportunityCount = newSignals.length;
-  const dashboardUrl = `${String(baseUrl || '').replace(/\/$/,'')}?dashboardEmail=${encodeURIComponent(user.email || '')}`;
+  const dashboardUrl = `${String(baseUrl || '').replace(/\/$/,'')}/dashboard/`;
   const topOpportunities = newSignals.slice(0,3);
   const cards = topOpportunities.map(opportunityCardHtml).join('');
   const extraCount = Math.max(opportunityCount - topOpportunities.length, 0);

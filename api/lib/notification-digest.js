@@ -134,7 +134,7 @@ export function renderDigestSubject({ newSignals = [], promptEligibleOutreach = 
 }
 
 export function renderDigestHtml({ user, newSignals = [], promptEligibleOutreach = [], baseUrl }) {
-  const dashboardUrl = `${String(baseUrl || '').replace(/\/$/, '')}?dashboardEmail=${encodeURIComponent(user.email || '')}`;
+  const dashboardUrl = `${String(baseUrl || '').replace(/\/$/, '')}/dashboard/`;
   const headline = newSignals.slice(0, MAX_HEADLINE_SIGNALS);
   const extraCount = Math.max(newSignals.length - headline.length, 0);
   const signalLines = headline
