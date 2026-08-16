@@ -306,20 +306,24 @@ assert(
 );
 
 // ============================================================================
-// 8. Uniform application across monitoring transports -- both the legacy
-//    weekly-scan digest path and the Queue monitoring worker import and
+// 8. Uniform application across monitoring surfaces -- the dashboard
+//    opportunity feed and the independent notification digest import and
 //    call the SAME classifyMonitoringSignalEligibility() from this module,
-//    proving there is exactly one trust policy regardless of which
-//    recurring-monitoring transport produced the signal (not two parallel
-//    reimplementations that could silently drift apart).
+//    proving there is exactly one trust policy regardless of which surface
+//    displays a Queue-monitoring-sourced signal (not two parallel
+//    reimplementations that could silently drift apart). The legacy
+//    weekly-scan digest path this originally also covered was retired with
+//    the Full Beta Cutover (api/weekly-scan.js deleted); api/lib/
+//    notification-digest.js is its replacement and now the other half of
+//    this proof.
 // ============================================================================
 {
   const fs = await import('node:fs');
-  const weeklyScanSrc = fs.readFileSync(new URL('../api/weekly-scan.js', import.meta.url), 'utf8');
+  const notificationDigestSrc = fs.readFileSync(new URL('../api/lib/notification-digest.js', import.meta.url), 'utf8');
   const dashboardSrc = fs.readFileSync(new URL('../api/get-dashboard.js', import.meta.url), 'utf8');
   assert(
-    /from ['"]\.\/lib\/monitoring-identity\.js['"]/.test(weeklyScanSrc) && /classifyMonitoringSignalEligibility/.test(weeklyScanSrc),
-    '8) api/weekly-scan.js (legacy weekly sweep + digest path) imports and uses the shared classifyMonitoringSignalEligibility() from monitoring-identity.js'
+    /from ['"]\.\/monitoring-identity\.js['"]/.test(notificationDigestSrc) && /classifyMonitoringSignalEligibility/.test(notificationDigestSrc),
+    '8) api/lib/notification-digest.js (independent notification digest path) imports and uses the shared classifyMonitoringSignalEligibility() from monitoring-identity.js'
   );
   assert(
     /from ['"]\.\/lib\/monitoring-identity\.js['"]/.test(dashboardSrc) && /classifyMonitoringSignalEligibility/.test(dashboardSrc),

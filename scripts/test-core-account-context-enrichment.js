@@ -218,14 +218,14 @@ async function main() {
     assert(/recentPurchases: pairedPurchases\(a\),\s*\n\s*purchases: pairedPurchases\(a\),/.test(src), 'defect B wiring: safeAccounts now sets both recentPurchases and purchases from pairedPurchases(a)');
     assert(/findLikelyRelatedPurchase\(account\.purchases, resolvedEventDate/.test(src), 'sanity: findLikelyRelatedPurchase()\'s call site (the consumer this fix restores data to) is unchanged');
   }
-  {
-    // Same defect, mirrored at the weekly-scan.js automated entry point --
-    // accountPayload() previously never read raw_data.purchases back out at
-    // all, so the automated weekly pipeline sent no purchase history
-    // regardless of this fix to research-batch.js's own safeAccounts.
-    const src = readFileSync(new URL('../api/weekly-scan.js', import.meta.url), 'utf8');
-    assert(/purchases: raw\.purchases \|\| \[\]/.test(src), 'defect B wiring (weekly-scan.js): accountPayload() now reads persisted raw_data.purchases back out');
-  }
+  // Same defect, at the recurring-monitoring automated entry point: covered
+  // independently by scripts/test-account-context-projection.js, which
+  // proves api/lib/monitoring-targets.js's projectAccountContext() (the
+  // Queue path's account-context resolver, api/queues/monitoring-
+  // consumer.js's resolveAccountContext()) reads raw_data.purchases back out
+  // into a bounded recentPurchases array -- the Queue architecture's own
+  // fix for this same class of defect, not a re-test of the retired
+  // api/weekly-scan.js's accountPayload().
 
   // =========================================================================
   // Required property: no new LLM call was introduced -- exactly one

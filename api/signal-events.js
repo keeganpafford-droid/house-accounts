@@ -331,8 +331,9 @@ async function handlePost(req, res, user, organizationId) {
   // acted on, by signalId -- never by event_fingerprint alone.
   // event_fingerprint is NOT guaranteed to identify one account/business-
   // event context: ha_signals' own persistence constraint is (user_id,
-  // event_fingerprint) only (see api/save-upload.js and api/weekly-scan.js's
-  // `on_conflict=user_id,event_fingerprint` upserts) -- there is no
+  // event_fingerprint) only (see api/save-upload.js's and api/lib/signal-
+  // persistence.js's `on_conflict=user_id,event_fingerprint` upserts) --
+  // there is no
   // account_name or upload_id in that key. Two distinct real accounts
   // under the same user whose company name/family/subtype/month/entity
   // tokens happen to normalize identically (normalizeCompany() in

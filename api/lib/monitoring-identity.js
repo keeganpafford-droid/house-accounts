@@ -157,9 +157,10 @@ export function resolveTargetIdentity({ current = {}, uploadedWebsite = '', cont
 // account name) -> identity index, built once per request/invocation from
 // a single already-scoped ha_monitoring_targets query, never a per-signal
 // or per-account database call. Every read-time consumer
-// (api/get-dashboard.js, api/weekly-scan.js's digest) builds its index the
-// same way from its own already-fetched target rows and looks up through
-// lookupTargetIdentity() -- one shared implementation, not two.
+// (api/get-dashboard.js, api/lib/notification-digest.js's digest) builds
+// its index the same way from its own already-fetched target rows and
+// looks up through lookupTargetIdentity() -- one shared implementation,
+// not two.
 //
 // Fail-safe by construction: a miss (no matching target row, or the
 // caller never had one to fetch -- e.g. a signal whose account predates

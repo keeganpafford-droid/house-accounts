@@ -1,10 +1,10 @@
 // Billing-count correction round: api/monitoring-lists.js's GET summary
-// used to fold activeProspects into monitoringStatus/nextWeeklyScan --
-// "Active"/"Monday" -- even when an org had zero active CUSTOMER lists,
+// used to fold activeProspects into monitoringStatus/monitoringCadence --
+// "Active"/"Ongoing" -- even when an org had zero active CUSTOMER lists,
 // implying prospect research snapshots are under the same continuous
-// weekly re-scan customer accounts get. They are not (see
-// api/lib/entitlement.js's usageFor(), traced against api/weekly-scan.js,
-// which never touches ha_prospect_accounts). This mocks global.fetch and
+// recurring re-scan customer accounts get. They are not (see
+// api/lib/entitlement.js's usageFor(), traced against the Queue monitoring
+// architecture, which never touches ha_prospect_accounts). This mocks global.fetch and
 // invokes the real exported handler to prove the actual GET response, not
 // a source-text pattern match.
 //
@@ -56,8 +56,8 @@ const originalFetch = global.fetch;
 
 async function run(){
   // 1. REQUIRED: an org with ONLY active prospect lists (zero customer
-  // lists at all) must NOT be reported as "Active"/"next scan Monday" --
-  // there is nothing for weekly-scan.js to actually process.
+  // lists at all) must NOT be reported as "Active"/"Ongoing" -- there is
+  // nothing for the Queue monitoring architecture to actually process.
   {
     global.fetch = mockFetch({
       customerUploads: [],
@@ -70,11 +70,12 @@ async function run(){
     assert(res.statusCode === 200, 'the GET summary request succeeds');
     assert(res.body.summary.activeProspects === 3, 'the 3 active prospect accounts are still counted and reported (got ' + res.body.summary.activeProspects + ')');
     assert(res.body.summary.monitoringStatus === 'No active lists', `REQUIRED: with zero active customer lists, monitoringStatus is "No active lists" even though 3 prospect accounts are active (got "${res.body.summary.monitoringStatus}")`);
-    assert(res.body.summary.nextWeeklyScan === null, `REQUIRED: nextWeeklyScan is null when there is no active customer list for weekly-scan.js to actually process, regardless of active prospects (got ${JSON.stringify(res.body.summary.nextWeeklyScan)})`);
+    assert(res.body.summary.monitoringCadence === null, `REQUIRED: monitoringCadence is null when there is no active customer list to actually monitor, regardless of active prospects (got ${JSON.stringify(res.body.summary.monitoringCadence)})`);
   }
 
-  // 2. A genuinely active customer list still reports Active/Monday, same
-  // as before this correction.
+  // 2. A genuinely active customer list still reports Active/Ongoing, same
+  // as before this correction (field renamed from nextWeeklyScan/'Monday'
+  // with the Full Beta Cutover -- see api/monitoring-lists.js).
   {
     let customerUploadsCall = [{ id: 'cu-1', user_id: 'user-1', upload_name: 'Q3 Customers', stage: 'uploaded', updated_at: new Date().toISOString(), created_at: new Date().toISOString() }];
     global.fetch = async (url) => {
@@ -95,7 +96,7 @@ async function run(){
     assert(res.statusCode === 200, 'the GET summary request succeeds with an active customer list');
     assert(res.body.summary.activeCustomers === 5, 'the 5 active customer accounts are reported (got ' + res.body.summary.activeCustomers + ')');
     assert(res.body.summary.monitoringStatus === 'Active', 'with a genuinely active customer list, monitoringStatus is "Active" -- unchanged from before this correction');
-    assert(res.body.summary.nextWeeklyScan === 'Monday', 'with a genuinely active customer list, nextWeeklyScan is still "Monday" -- unchanged from before this correction');
+    assert(res.body.summary.monitoringCadence === 'Ongoing', 'with a genuinely active customer list, monitoringCadence is "Ongoing" -- gating behavior unchanged from before this correction');
   }
 
   global.fetch = originalFetch;

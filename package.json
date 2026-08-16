@@ -10,7 +10,6 @@
     "test:public-mvp": "node scripts/test-public-mvp.js",
     "test:sprint-4.3c": "node scripts/test-sprint-4-3c.js",
     "test:event-dedup": "node scripts/test-event-dedup-e2e.js",
-    "test:weekly-scan-reliability": "node scripts/test-weekly-scan-reliability.js",
     "test:settings-authorization": "node scripts/test-settings-authorization.js",
     "test:canonical-classification": "node scripts/test-canonical-classification.js",
     "test:save-upload-persistence": "node scripts/test-save-upload-persistence.js",
@@ -22,7 +21,6 @@
     "test:get-dashboard-authentication": "node scripts/test-get-dashboard-authentication.js",
     "test:signal-benchmark": "node scripts/run-signal-benchmark.js",
     "research:benchmark": "node scripts/run-live-research.js",
-    "research:all": "node scripts/run-live-research.js --all",
     "benchmark:research-batch-mechanics": "node scripts/benchmark-research-batch-mechanics.js"
   },
   "dependencies": {

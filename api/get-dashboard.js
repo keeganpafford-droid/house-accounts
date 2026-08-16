@@ -22,7 +22,7 @@ import { classifyMonitoringSignalEligibility, buildTargetIdentityIndex, lookupTa
 // below assembles each account's futureOpportunities from TWO independent
 // sources -- the already-canonicalized snapshot stored on the account row
 // (raw_data.existingSignals, written by resolveOpportunityEvents() at
-// weekly-scan.js/save-upload.js persistence time) and a fresh
+// save-upload.js/the Queue monitoring worker's persistence time) and a fresh
 // signalToOpportunity() built from EVERY row still in ha_signals (deduped
 // only WITHIN itself, by uniqueSignalRows()'s title-text key) -- with no
 // dedup pass EVER run BETWEEN the two sources. A signal whose event was

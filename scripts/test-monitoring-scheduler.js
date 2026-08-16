@@ -79,12 +79,16 @@ function assert(condition, message) {
   assert(!/PATCH[\s\S]*?research_retry_cooldown_until|research_retry_cooldown_until[\s\S]*?method:\s*['"]PATCH['"]/.test(source), 'REQUIRED: the scheduler never writes research_retry_cooldown_until -- setting/clearing it remains exclusively complete_ha_monitoring_attempt()\'s job');
 }
 
-// vercel.json itself must not list this endpoint as a cron in this phase --
+// Full Beta Cutover: api/monitoring-scheduler.js IS now registered in
+// vercel.json's crons, replacing the retired /api/weekly-scan Monday cron --
 // checked against the real config file, not just the scheduler's own source.
 {
   const vercelConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vercel.json'), 'utf8'));
   const crons = Array.isArray(vercelConfig.crons) ? vercelConfig.crons : [];
-  assert(!crons.some(c => String(c.path || '').includes('monitoring-scheduler')), 'REQUIRED: api/monitoring-scheduler.js is not registered in vercel.json\'s crons -- general production scheduling is not enabled in this phase');
+  const monitoringCron = crons.find(c => String(c.path || '').includes('monitoring-scheduler'));
+  assert(!!monitoringCron, 'REQUIRED: api/monitoring-scheduler.js is registered in vercel.json\'s crons -- general production scheduling is enabled as of the Full Beta Cutover');
+  assert(monitoringCron?.schedule === '*/5 * * * *', `REQUIRED: the monitoring-scheduler cron runs every 5 minutes (got "${monitoringCron?.schedule}")`);
+  assert(!crons.some(c => String(c.path || '').includes('weekly-scan')), 'REQUIRED: the retired /api/weekly-scan cron is no longer registered in vercel.json');
 }
 
 // ---------------------------------------------------------------------------

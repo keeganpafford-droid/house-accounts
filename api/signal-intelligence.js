@@ -2607,9 +2607,9 @@ function resolveEvents(candidates = []) {
     // above RECURRING_EVENT_TYPES) instead of recomputing it here. This is
     // what makes "compute canonical event type once" an actual guarantee
     // rather than an assumption that two separate regex passes over
-    // similar-but-not-identical text happen to agree. Any other caller
-    // (e.g. api/weekly-scan.js, which does not set canonicalEventType) keeps
-    // today's behavior unchanged: resolveEventType() computed fresh here.
+    // similar-but-not-identical text happen to agree. Any other caller that
+    // does not set canonicalEventType keeps today's behavior unchanged:
+    // resolveEventType() computed fresh here.
     const typeInfo = c.canonicalEventType
       ? { primaryType: c.canonicalEventType, candidateTypes: [c.canonicalEventType], recurring: RECURRING_EVENT_TYPES.has(c.canonicalEventType) }
       : resolveEventType(text, family);
@@ -2622,7 +2622,8 @@ function resolveEvents(candidates = []) {
     // run, while rawTitle/rawSnippet reflect the actual fetched source.
     // Falls back to the existing fields when raw text wasn't captured, so
     // behavior is unchanged for any caller that never threads raw text
-    // through (e.g. api/weekly-scan.js's plain search-result candidates).
+    // through (e.g. a plain search-result candidate with no rawTitle/
+    // rawSnippet attached).
     // company is passed through so an appointment/acquisition-style capture
     // that merely restates the company's own name (e.g. "Dover Honda was
     // named as a recipient of the Presidents Award" -> subjectEntity="Dover

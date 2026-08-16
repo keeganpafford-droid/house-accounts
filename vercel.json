@@ -2,14 +2,15 @@
   "cleanUrls": true,
   "crons": [
     {
-      "path": "/api/weekly-scan",
-      "schedule": "0 12 * * 1"
+      "path": "/api/monitoring-scheduler",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/notification-scheduler",
+      "schedule": "0 12 * * *"
     }
   ],
   "functions": {
-    "api/weekly-scan.js": {
-      "maxDuration": 300
-    },
     "api/research-batch.js": {
       "maxDuration": 58
     },

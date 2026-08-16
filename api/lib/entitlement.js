@@ -132,8 +132,8 @@ export async function usageFor(sb, user, org = null) {
         // sets, at ha_accounts.raw_data.monitoring_status -- distinct from
         // the upload-level stage checked above) is not actively monitored,
         // so it must not consume capacity either. Same canonical pause
-        // state api/weekly-scan.js now reads (see its own accountPayload()
-        // fix) -- one pause definition, not two.
+        // state api/lib/monitoring-targets.js reads for the Queue
+        // architecture -- one pause definition, not two.
         const rows = (await sb(`ha_accounts?upload_id=${upFilter}&select=account_name,raw_data`)) || [];
         customer = rows.filter(r => !['paused', 'archived'].includes(clean(r.raw_data?.monitoring_status || '').toLowerCase()));
       }
@@ -159,13 +159,13 @@ export async function usageFor(sb, user, org = null) {
   const legacyNames = new Set(legacy.map(r => normalizeCompanyName(r.company_name || r.name || r.account_name)).filter(Boolean));
   // Billing-count correction: monitored-account CAPACITY counts only
   // customer accounts (ha_accounts, via active uploads) and legacy
-  // monitored companies -- both genuinely enrolled in api/weekly-scan.js's
-  // recurring weekly re-research. Traced directly: ha_prospect_accounts
-  // are researched exactly once at creation (the bulk prospect-upload
-  // flow or api/prospect-one-off.js) and are never re-scanned by
-  // weekly-scan.js or any other recurring job -- they are stored research
-  // snapshots, not monitored accounts, so they must not consume purchased
-  // capacity. prospectNames/prospectCompanyCount are still computed and
+  // monitored companies -- both genuinely enrolled in the Queue monitoring
+  // architecture's recurring re-research (api/monitoring-scheduler.js's
+  // due-cadence sweep). Traced directly: ha_prospect_accounts are
+  // researched exactly once at creation (the bulk prospect-upload flow or
+  // api/prospect-one-off.js) and are never re-scanned by any recurring
+  // job -- they are stored research snapshots, not monitored accounts, so
+  // they must not consume purchased capacity. prospectNames/prospectCompanyCount are still computed and
   // returned below for display (e.g. the Monitoring Lists UI's own
   // prospect tally) -- they are simply excluded from the capacity-facing
   // total. No new prospect pricing/usage system is introduced here.

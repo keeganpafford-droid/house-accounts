@@ -90,7 +90,7 @@ function summaryPayload(){
       ],
       prospect: []
     },
-    summary: {activeCustomers: 953, pausedCustomers: 50, activeProspects: 0, pausedProspects: 0, nextWeeklyScan: 'Monday', monitoringStatus: 'Active'}
+    summary: {activeCustomers: 953, pausedCustomers: 50, activeProspects: 0, pausedProspects: 0, monitoringCadence: 'Ongoing', monitoringStatus: 'Active'}
   };
 }
 

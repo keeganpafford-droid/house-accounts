@@ -1,10 +1,10 @@
 // POST/GET /api/monitoring-scheduler
-// Phase 2B founder Queue dark-run: the lightweight due-target scheduler.
-// Deliberately NOT added to vercel.json's crons array in this phase --
-// per item I, this stays a manually-invokable, CRON_SECRET-gated endpoint
-// until the founder deliberately decides to automate it, exactly like
-// api/weekly-scan.js's own auth convention (reused verbatim here, not
-// reinvented).
+// The lightweight due-target scheduler for the Queue monitoring
+// architecture. Automated in vercel.json's crons array (*/5 * * * *) as of
+// the Full Beta Cutover -- the manual-invocation-only phase (Phase 2B/2D
+// dark-run, and the founder-run Production activation proof) is over.
+// Remains CRON_SECRET-gated the same way it always was, so a manual
+// founder-run curl invocation still works identically alongside the cron.
 //
 // What this endpoint does, and does not do:
 //   - Selects active, due, Queue-managed targets (organization_id in the
