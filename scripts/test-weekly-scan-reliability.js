@@ -15,7 +15,7 @@
 import handler, {
   computeDeadline, isStaleRun, fetchWithTimeout, summarizeChunkResult,
   accumulateProgress, decideFinalStatus, FUNCTION_MAX_DURATION_MS, FINALIZE_RESERVE_MS,
-  RESEARCH_FETCH_TIMEOUT_MS, safeSecretEqual, refreshableSignalRow
+  RESEARCH_FETCH_TIMEOUT_MS, safeSecretEqual, refreshableSignalRow, reportHtml
 } from '../api/weekly-scan.js';
 import { resolveOpportunityEvents, dedupeByEventFingerprint, normalizeOpportunity } from '../api/signal-intelligence.js';
 
@@ -1690,6 +1690,18 @@ function accountHistoryDigestMock({ users = 1, resendBehavior } = {}){
     assert(/would it be okay if i sent/i.test(refreshedRow.payload?.conversationStarter || ''), 'required test 1: the refresh upsert carries the fresh conversationStarter (concept-led permission ask), not stale generic discovery text');
     assert(!('first_seen_at' in refreshedRow), 'required test 1: the refresh upsert never touches first_seen_at');
   }
+}
+
+// CTA routing fix: the Monday Brief's "Open Dashboard" link must land an
+// already-authenticated user directly on the dashboard, not the marketing
+// homepage -- reusing dashboard/index.html's existing data-protected +
+// requireAuth() auth wall verbatim, not a bare "/" the app has no auth-state
+// redirect logic on at all.
+{
+  const html = reportHtml({ email: 'rep@example.com' }, null, [{ account_name: 'Dover Honda', signal_type: 'Business Activity' }], 'https://app.example.com/');
+  assert(html.includes('https://app.example.com/dashboard/'), `REQUIRED: the Monday Brief CTA points at the authenticated /dashboard/ route, not the marketing homepage (got: ${html.match(/href="[^"]*"/g)})`);
+  assert(!html.includes('dashboardEmail'), 'REQUIRED: the vestigial dashboardEmail query param must never reappear on the Monday Brief CTA link');
+  assert(!/href="https:\/\/app\.example\.com\/?"/.test(html), 'REQUIRED: the Monday Brief CTA must not regress back to the bare marketing homepage URL');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

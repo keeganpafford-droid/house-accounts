@@ -136,6 +136,17 @@ const OPPORTUNITY_EVENT_TYPES = new Set(['opportunity_selected', 'opportunity_us
 const NOTE_MAX_LENGTH = 500;
 const MAX_READBACK_FINGERPRINTS = 50;
 
+// Notification & Outcome Loop V1: outcome_reported's allowed statuses.
+// 'no_response_yet' is deliberately a REAL report, not the absence of one --
+// it is what a rep files when they truly don't know yet, and it remains
+// eligible for a later automatic prompt (see api/lib/outcome-prompts.js);
+// the other three are terminal for automatic-prompting purposes (a rep can
+// still manually append a later update, this only stops the SYSTEM asking
+// again). Kept here, not in outcome-prompts.js, since this is the one place
+// that owns what a valid write actually is -- outcome-prompts.js imports it
+// rather than redeclaring it.
+export const OUTCOME_STATUSES = ['no_response_yet', 'engaged', 'progressed', 'went_nowhere'];
+
 function truncate(value, max) {
   const str = clean(value);
   return str.length > max ? str.slice(0, max).replace(/\s+\S*$/, '') + '…' : str;
@@ -162,7 +173,6 @@ async function handlePost(req, res, user, organizationId) {
   const eventType = clean(body.eventType);
   if (!clientEventId) return json(res, 400, { error: 'clientEventId is required.' });
   if (!EVENT_TYPES.includes(eventType)) return json(res, 400, { error: `Unknown eventType "${eventType}".` });
-  if (eventType === 'outcome_reported') return json(res, 400, { error: 'outcome_reported is not supported yet.' });
 
   // Idempotency: a request replaying a (user_id, client_event_id) pair
   // that already succeeded returns the existing event rather than writing
@@ -219,6 +229,46 @@ async function handlePost(req, res, user, organizationId) {
         event_fingerprint: parent.event_fingerprint, opportunity_id: parent.opportunity_id, parent_event_id: parent.id,
         account_name: parent.account_name, event_type: 'opportunity_approach_shared', schema_version: 1,
         payload: { approachNote: note }
+      }])
+    });
+    const row = Array.isArray(inserted) ? inserted[0] : inserted;
+    return json(res, 200, { ok: true, id: row.id });
+  }
+
+  // Notification & Outcome Loop V1: outcome_reported is an append-only
+  // child of the SPECIFIC outreach_made/opportunity_outreach_made event it
+  // reports on, via parent_event_id -- never resolved by event_fingerprint
+  // or a bare account reference, same posture as approach_shared/
+  // opportunity_approach_shared and for the same reason (a rep's outcome
+  // report is a personal reflection on their OWN outreach attempt, not
+  // attachable to a teammate's or to "the account" in the abstract).
+  // Unlike approach_shared, this is NEVER deduped/no-op'd against a prior
+  // report on the same parent -- multiple later outcome updates are
+  // explicitly valid history (a rep who reported 'no_response_yet' and
+  // later gets a reply reports 'engaged' as a NEW row, the old one stays
+  // exactly as it was). signal_id/opportunity_id are inherited from
+  // whichever family the parent belongs to (never supplied by the caller),
+  // satisfying migration 21's XOR check the same way prepare_call_opened's
+  // does.
+  if (eventType === 'outcome_reported') {
+    const parentEventId = clean(body.parentEventId);
+    if (!parentEventId) return json(res, 400, { error: 'parentEventId is required for outcome_reported.' });
+    const outcomeStatus = clean(body.outcomeStatus);
+    if (!OUTCOME_STATUSES.includes(outcomeStatus)) return json(res, 400, { error: `Unknown outcomeStatus "${outcomeStatus}".` });
+    const note = clean(body.note);
+    if (note.length > NOTE_MAX_LENGTH) return json(res, 400, { error: `Note must be ${NOTE_MAX_LENGTH} characters or fewer.` });
+    const parentRows = await sb(`ha_signal_events?id=eq.${encodeURIComponent(parentEventId)}&select=*&limit=1`, { method: 'GET' });
+    const parent = Array.isArray(parentRows) ? parentRows[0] : null;
+    if (!parent || !['outreach_made', 'opportunity_outreach_made'].includes(parent.event_type) || parent.user_id !== user.id || parent.organization_id !== organizationId) {
+      return json(res, 404, { error: 'Outreach attempt not found.' });
+    }
+    const inserted = await sb('ha_signal_events', {
+      method: 'POST',
+      body: JSON.stringify([{
+        organization_id: organizationId, user_id: user.id, client_event_id: clientEventId,
+        event_fingerprint: parent.event_fingerprint, signal_id: parent.signal_id, opportunity_id: parent.opportunity_id, parent_event_id: parent.id,
+        account_name: parent.account_name, event_type: 'outcome_reported', schema_version: 1,
+        payload: note ? { outcomeStatus, note } : { outcomeStatus }
       }])
     });
     const row = Array.isArray(inserted) ? inserted[0] : inserted;
@@ -386,7 +436,7 @@ async function handleGet(req, res, user) {
   const states = {};
   for (const k of capped) {
     const composite = readBackKey(k.eventFingerprint, k.accountName);
-    const state = { feedback: null, selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
+    const state = { feedback: null, selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null, outcomeStatus: null, latestOutcomeReportedAt: null };
     states[composite] = state;
     // Rows arrive newest-first; scoped to this exact (fingerprint,
     // account) pair so a different account sharing the same fingerprint
@@ -427,6 +477,17 @@ async function handleGet(req, res, user) {
     if (state.latestOutreachEventId) {
       const note = relevant.find(row => (row.event_type === 'approach_shared' || row.event_type === 'opportunity_approach_shared') && row.parent_event_id === state.latestOutreachEventId);
       if (note) state.approachNote = note.payload?.approachNote || null;
+      // Notification & Outcome Loop V1, UX read-back correction: the latest
+      // outcome_reported child of the LATEST outreach attempt, same scoping
+      // rule as approachNote just above -- an older attempt's outcome must
+      // never appear to belong to a newer attempt that has none of its own
+      // yet. `relevant` is still newest-first here, so the first match is
+      // already the latest report.
+      const outcome = relevant.find(row => row.event_type === 'outcome_reported' && row.parent_event_id === state.latestOutreachEventId);
+      if (outcome) {
+        state.outcomeStatus = outcome.payload?.outcomeStatus || null;
+        state.latestOutcomeReportedAt = outcome.created_at;
+      }
     }
   }
   return json(res, 200, { ok: true, states });

@@ -9,7 +9,7 @@
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key';
 
-import handler, { CLIENT_REQUESTABLE_PLANS, planConfig, planPatch } from '../api/settings.js';
+import handler, { CLIENT_REQUESTABLE_PLANS, NOTIFICATION_PREFERENCES, planConfig, planPatch } from '../api/settings.js';
 
 let failures = 0;
 function assert(condition, message){
@@ -24,8 +24,8 @@ function jsonResponse(data, ok = true, status = 200){
 // One fake org + owner user + one fake non-owner member, reused across cases.
 const ORG_ID = 'org-1';
 let orgState = { id: ORG_ID, name: 'Test Org', plan: 'free', seat_limit: 1, subscription_status: 'inactive', trial_status: 'inactive', trial_used: false, trial_end: null };
-const OWNER = { id: 'user-owner', auth_user_id: 'auth-owner', email: 'owner@example.com', organization_id: ORG_ID, app_role: 'owner' };
-const MEMBER = { id: 'user-member', auth_user_id: 'auth-member', email: 'member@example.com', organization_id: ORG_ID, app_role: 'member' };
+let OWNER = { id: 'user-owner', auth_user_id: 'auth-owner', email: 'owner@example.com', organization_id: ORG_ID, app_role: 'owner', notification_preference: 'weekly' };
+let MEMBER = { id: 'user-member', auth_user_id: 'auth-member', email: 'member@example.com', organization_id: ORG_ID, app_role: 'member', notification_preference: 'weekly' };
 
 function mockFetch(authUserForToken){
   return async (url, options = {}) => {
@@ -47,6 +47,13 @@ function mockFetch(authUserForToken){
     }
     if(u.includes('/rest/v1/ha_users?organization_id=eq.')){
       return jsonResponse([OWNER, MEMBER]);
+    }
+    if(u.includes('/rest/v1/ha_users?id=eq.') && options.method === 'PATCH'){
+      const patch = JSON.parse(options.body);
+      const targetId = decodeURIComponent(u.split('id=eq.')[1].split('&')[0]);
+      if(OWNER.id === targetId){ OWNER = { ...OWNER, ...patch }; return jsonResponse([{ ...OWNER }]); }
+      if(MEMBER.id === targetId){ MEMBER = { ...MEMBER, ...patch }; return jsonResponse([{ ...MEMBER }]); }
+      return jsonResponse([]);
     }
     if(u.includes('/rest/v1/ha_uploads?user_id=')) return jsonResponse([]);
     if(u.includes('/rest/v1/ha_accounts?upload_id=')) return jsonResponse([]);
@@ -201,6 +208,62 @@ async function run(){
     assert(res.statusCode === 400, 'a request to switch to team after the org\'s trial has already expired is rejected');
     assert(orgState.plan === 'solo', 'the org plan is unchanged by the rejected request');
   }
+
+  // ---------------------------------------------------------------------
+  // Notification & Outcome Loop V1, Part A4: POST /api/settings
+  // action:update-notification-preference. A personal preference, not an
+  // org-level plan change -- no owner/role gate, unlike update-plan above.
+  // ---------------------------------------------------------------------
+
+  // 12. Owner sets their own preference to 'daily' -> 200, persisted.
+  {
+    OWNER = { ...OWNER, notification_preference: 'weekly' };
+    global.fetch = mockFetch(OWNER);
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-notification-preference', notificationPreference: 'daily' } }), res);
+    assert(res.statusCode === 200 && res.body?.ok === true, `owner setting notification preference to 'daily' succeeds (got status ${res.statusCode})`);
+    assert(OWNER.notification_preference === 'daily', 'the ha_users row is actually patched to the requested value');
+    assert(res.body?.user?.notification_preference === 'daily', 'the response reflects the updated preference');
+  }
+
+  // 13. A non-owner member can set their OWN preference too -- this is a
+  // personal setting, not an org-level change, so no owner-only gate.
+  {
+    MEMBER = { ...MEMBER, notification_preference: 'weekly' };
+    global.fetch = mockFetch(MEMBER);
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-notification-preference', notificationPreference: 'in_app_only' } }), res);
+    assert(res.statusCode === 200, `REQUIRED: a non-owner member can update their own notification preference without an owner/role gate (got ${res.statusCode})`);
+    assert(MEMBER.notification_preference === 'in_app_only', 'the member\'s own row is patched to the requested value');
+  }
+
+  // 14. Isolation: updating the member's preference never touched the owner's.
+  {
+    assert(OWNER.notification_preference === 'daily', 'REQUIRED: updating one user\'s notification preference never affects a different user\'s row');
+  }
+
+  // 15. Unknown value -> 400, rejected before any PATCH -- no CRM-stage-style
+  // free-for-all; only the three backend-supported values are accepted.
+  {
+    OWNER = { ...OWNER, notification_preference: 'daily' };
+    global.fetch = mockFetch(OWNER);
+    const res = fakeRes();
+    await handler(fakeReq({ body: { action: 'update-notification-preference', notificationPreference: 'instant' } }), res);
+    assert(res.statusCode === 400, `REQUIRED: an unrecognized notification preference is rejected 400, not silently accepted or coerced (got ${res.statusCode})`);
+    assert(OWNER.notification_preference === 'daily', 'the rejected request leaves the existing preference unchanged');
+  }
+
+  // 16. Unauthenticated request -> 401, same as every other action.
+  {
+    global.fetch = async (url) => { if(String(url).includes('/auth/v1/user')) return jsonResponse({}, false, 401); throw new Error('should not reach REST calls when unauthenticated'); };
+    const res = fakeRes();
+    await handler(fakeReq({ token: '', body: { action: 'update-notification-preference', notificationPreference: 'daily' } }), res);
+    assert(res.statusCode === 401, 'an unauthenticated notification-preference update attempt gets 401');
+  }
+
+  // 17. Pure allowlist sanity -- matches migration 22's ha_users check
+  // constraint exactly, no invented values.
+  assert(NOTIFICATION_PREFERENCES.length === 3 && ['daily', 'weekly', 'in_app_only'].every(v => NOTIFICATION_PREFERENCES.includes(v)), `NOTIFICATION_PREFERENCES matches the exact three backend-supported values (got ${JSON.stringify(NOTIFICATION_PREFERENCES)})`);
 
   // 7. Pure allowlist/config sanity.
   assert(CLIENT_REQUESTABLE_PLANS.length === 1 && CLIENT_REQUESTABLE_PLANS.includes('free'), 'the allowlist includes exactly one legitimate self-service plan: free (solo/team self-service trials are retired; paid capacity is purchased through Stripe Checkout)');

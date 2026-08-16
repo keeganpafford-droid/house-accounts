@@ -1337,6 +1337,13 @@
     font-size:0.85rem;
     font-weight:600;
   }
+  .sales-play-outreach-row .outreach-outcome-status{
+    display:inline-block;
+    margin-right:8px;
+    color:#0F766E;
+    font-size:0.85rem;
+    font-weight:600;
+  }
   /* Outreach-state hydration bugs (founder QA): [hidden] is a UA-stylesheet
      rule with specificity 0-1-0 ([hidden]{display:none}). Both rules above
      set display:inline-block at the SAME specificity via a class selector
@@ -1350,6 +1357,7 @@
      duplicate CTA sat visible under the draft). Scoped to these two exact
      elements -- not a change to .btn or [hidden] generally. */
   .sales-play-outreach-row .outreach-status[hidden],
+  .sales-play-outreach-row .outreach-outcome-status[hidden],
   .sales-play-outreach-row .outreach-log-btn[hidden]{
     display:none;
   }
@@ -2141,6 +2149,39 @@
 .checkout-success-notice{display:none;max-width:1136px;margin:0 auto 16px;padding:11px 14px;border:1px solid var(--radar);border-left:4px solid var(--radar);background:#E9FBF8;color:var(--ink);font-weight:700;align-items:center;justify-content:space-between;gap:12px;}
 .checkout-success-notice.active{display:flex;}
 .checkout-success-notice-dismiss{flex-shrink:0;background:transparent;border:0;color:var(--ink);font-size:18px;line-height:1;font-weight:900;cursor:pointer;padding:0 4px;}
+.unresolved-outreach-panel{max-width:1136px;margin:0 auto 16px;padding:14px 16px;border:1px solid var(--line);border-left:4px solid var(--radar);background:#fff;}
+.unresolved-outreach-panel[hidden]{display:none;}
+.unresolved-outreach-heading{font-weight:700;margin-bottom:10px;}
+.unresolved-outreach-item{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line);}
+.unresolved-outreach-item:first-child{border-top:0;padding-top:0;}
+.unresolved-outreach-text{font-weight:600;}
+.unresolved-outreach-actions{display:flex;gap:6px;flex-wrap:wrap;}
+/* Notification deep-link highlight (founder QA correction): the prior
+   version (a flat, subtle background tint alone) was indistinguishable in
+   real Gmail-then-Preview QA when several visually identical rows for the
+   same account sit in the list (e.g. four "Albany International" rows) --
+   scrolling landed in the right SECTION but which exact row was targeted
+   was not provable from a screenshot. Strengthened to a colored left
+   accent bar (matching the panel's own --radar teal), a visible ring, and
+   a brief pulse, so the targeted row is unmistakable at a glance without
+   touching the other rows or the underlying mechanism (still the same
+   class toggle, still ephemeral, still no persisted state). */
+.unresolved-outreach-item-highlight{
+  position:relative;
+  background:#D2F5EF;
+  border-radius:8px;
+  border-left:4px solid var(--radar);
+  margin:0 -12px;
+  padding-left:12px;
+  padding-right:12px;
+  box-shadow:0 0 0 2px rgba(20,184,166,.4);
+  transition:background .6s ease, box-shadow .6s ease;
+  animation:unresolvedOutreachHighlightPulse 1.4s ease-in-out 2;
+}
+@keyframes unresolvedOutreachHighlightPulse{
+  0%,100%{box-shadow:0 0 0 2px rgba(20,184,166,.4);}
+  50%{box-shadow:0 0 0 6px rgba(20,184,166,.6);}
+}
 .ha-mvp .opportunities-section{margin-top:18px;}
 .ha-mvp .opportunities-section .legend{margin-bottom:16px;}
 @media(max-width:760px){
@@ -2309,6 +2350,18 @@
   </section>
   <div class="mvp-dashboard-notice" id="mvpDashboardNotice" role="status"></div>
   <div class="checkout-success-notice" id="checkoutSuccessNotice" role="status"><span id="checkoutSuccessNoticeText"></span><button type="button" class="checkout-success-notice-dismiss" id="checkoutSuccessNoticeDismiss" aria-label="Dismiss">×</button></div>
+
+  <!-- Notification & Outcome Loop V1: "still open" outreach a rep can close
+       out in one click. Hidden by default and only ever unhidden once real
+       items are fetched (never an empty "nothing to report" state) --
+       api/unresolved-outreach.js is the single source of truth for what
+       counts as "still open" (shared with the notification digest builder,
+       Step 3), so this panel can never disagree with the email prompts
+       about which outreach is unresolved. -->
+  <section class="unresolved-outreach-panel" id="unresolvedOutreachPanel" role="status" hidden>
+    <div class="unresolved-outreach-heading">Outreach waiting on an update</div>
+    <div class="unresolved-outreach-list" id="unresolvedOutreachList"></div>
+  </section>
 
   <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
     <div class="beta-modal">
@@ -3056,14 +3109,14 @@ function signalStateKey(eventFingerprint, accountName){
 // both. templateKey is only meaningful (and only ever read server-side)
 // for a follow_up opportunity_* event with SNAPSHOT_EVENT_TYPES coverage;
 // it is harmless to send undefined otherwise.
-async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey} = {}){
+async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey, outcomeStatus} = {}){
   try{
     const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : {'Content-Type':'application/json'};
     if(!headers) return null;
     const res = await fetch('/api/signal-events', {
       method:'POST',
       headers,
-      body: JSON.stringify({eventType, signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey})
+      body: JSON.stringify({eventType, signalId, opportunityId, eventFingerprint, accountName, clientEventId, parentEventId, note, templateKey, outcomeStatus})
     });
     const data = await res.json().catch(() => ({}));
     if(!res.ok) return null;
@@ -3073,6 +3126,172 @@ async function logSignalEvent(eventType, {signalId, opportunityId, eventFingerpr
     return null;
   }
 }
+
+// Notification & Outcome Loop V1, UX read-back correction: concise, rep-
+// facing text for a resolved outreach's LATEST reported outcome -- shown
+// wherever the outreach widget already shows its saved state (see
+// wireOutreachRow()'s renderSaved() below), reusing the exact
+// outcomeStatus/latestOutcomeReportedAt fields api/signal-events.js's own
+// read-back now exposes. Deliberately distinct copy from
+// OUTCOME_STATUS_LABELS just below (those are the ACTION button labels a
+// rep clicks; this is the PAST-TENSE result shown afterward) and
+// deliberately does not claim House Accounts will use this to improve
+// future recommendations -- per the founder's audit finding, it does not,
+// yet.
+const OUTCOME_DISPLAY_TEXT = {
+  no_response_yet: 'Still waiting for a response',
+  engaged: 'Outcome: Engaged',
+  progressed: 'Outcome: Real progress',
+  went_nowhere: 'Outcome: Went nowhere'
+};
+
+// Notification & Outcome Loop V1: "You reached out N days ago -- how did it
+// go?" panel. Deliberately lightweight -- a flat list, four one-click
+// status buttons, no navigation into an admin workflow. Reuses
+// logSignalEvent() (outcome_reported) rather than a new write path;
+// api/unresolved-outreach.js (GET) is the single source of truth for what
+// counts as "still open," shared with the future notification digest, so
+// this panel and the email prompts can never disagree.
+const OUTCOME_STATUS_LABELS = {
+  no_response_yet: 'Still no response',
+  engaged: 'They engaged',
+  progressed: 'Real progress',
+  went_nowhere: 'Went nowhere'
+};
+
+// Post-click confirmation (founder audit correction): shown in place of the
+// "how did it go?" prompt immediately after a successful save, before the
+// row is removed -- so the rep gets lightweight acknowledgement rather than
+// the item just silently vanishing. Deliberately does NOT claim House
+// Accounts will use this to improve future recommendations -- the audit
+// confirmed that isn't wired today, so promising it would be dishonest.
+const OUTCOME_CONFIRMATION_TEXT = {
+  no_response_yet: 'Got it — no response yet. We’ll check back in about a week.',
+  engaged: 'Got it — they engaged. We’ll stop asking about this outreach and keep the result with this account.',
+  progressed: 'Got it — real progress. We’ll stop asking about this outreach and keep the result with this account.',
+  went_nowhere: 'Got it — it went nowhere. We’ll stop asking about this outreach and keep the result with this account.'
+};
+function daysSinceIso(iso){
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / (24*60*60*1000)));
+}
+
+async function fetchUnresolvedOutreach(){
+  try{
+    const headers = (window.HouseAuth && HouseAuth.authHeadersAsync) ? await HouseAuth.authHeadersAsync() : null;
+    if(!headers) return [];
+    const res = await fetch('/api/unresolved-outreach', {headers});
+    if(!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data.items) ? data.items : [];
+  }catch(err){
+    console.warn('[unresolved-outreach] fetch failed; panel stays hidden.', err);
+    return [];
+  }
+}
+
+function renderUnresolvedOutreachItem(item){
+  const days = daysSinceIso(item.outreachCreatedAt);
+  const row = document.createElement('div');
+  row.className = 'unresolved-outreach-item';
+  // Notification Deep Links (bounded scope): outreachEventId is already the
+  // stable ha_signal_events primary key this exact panel/API already keys
+  // everything on -- stamping it here is what lets a notification's
+  // "Tell us how it went ->" link land on THIS specific item (see
+  // initUnresolvedOutreachPanel()'s ?outreach= handling below) rather than
+  // just the general dashboard. No new identifier, no new endpoint.
+  row.dataset.outreachEventId = item.outreachEventId;
+  const text = document.createElement('div');
+  text.className = 'unresolved-outreach-text';
+  text.textContent = `You reached out to ${item.accountName} ${days} day${days === 1 ? '' : 's'} ago — how did it go?`;
+  const actions = document.createElement('div');
+  actions.className = 'unresolved-outreach-actions';
+  Object.keys(OUTCOME_STATUS_LABELS).forEach(status => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost btn-mini';
+    btn.textContent = OUTCOME_STATUS_LABELS[status];
+    btn.addEventListener('click', async () => {
+      if(btn.disabled) return;
+      actions.querySelectorAll('button').forEach(b => b.disabled = true);
+      const result = await logSignalEvent('outcome_reported', {
+        parentEventId: item.outreachEventId,
+        eventFingerprint: item.eventFingerprint,
+        accountName: item.accountName,
+        outcomeStatus: status,
+        clientEventId: generateClientEventId()
+      });
+      if(result && result.id){
+        // Lightweight post-click confirmation (founder QA correction): the
+        // outcome is already resolved server-side by this point (the write
+        // above succeeded) -- the unresolved action buttons disappear
+        // immediately, replaced by a confirmation that stays on screen
+        // until the rep explicitly closes it. No auto-dismiss timer: this
+        // is purely ephemeral local UI, not a persisted "confirmation
+        // state" -- nothing is written or read to remember whether it was
+        // shown/closed. A refresh or revisit simply re-fetches
+        // /api/unresolved-outreach, which naturally no longer includes this
+        // item because the outcome is already terminal, so the confirmation
+        // never reappears on its own regardless of whether it was closed.
+        text.textContent = OUTCOME_CONFIRMATION_TEXT[status] || 'Got it — thanks for the update.';
+        actions.remove();
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'btn btn-ghost btn-mini unresolved-outreach-confirmation-close';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => {
+          const parent = row.parentElement;
+          row.remove();
+          if(parent && !parent.children.length){
+            const panel = document.getElementById('unresolvedOutreachPanel');
+            if(panel) panel.hidden = true;
+          }
+        });
+        row.appendChild(closeBtn);
+      }else{
+        actions.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    });
+    actions.appendChild(btn);
+  });
+  row.appendChild(text);
+  row.appendChild(actions);
+  return row;
+}
+
+async function initUnresolvedOutreachPanel(){
+  const panel = document.getElementById('unresolvedOutreachPanel');
+  const list = document.getElementById('unresolvedOutreachList');
+  if(!panel || !list) return;
+  const items = await fetchUnresolvedOutreach();
+  if(!items.length) return; // never show an empty panel
+  list.innerHTML = '';
+  items.forEach(item => list.appendChild(renderUnresolvedOutreachItem(item)));
+  panel.hidden = false;
+  // Notification Deep Links (bounded scope): a notification's "Report
+  // outcome ->" link carries ?outreach=<outreachEventId> -- this function
+  // already owns the one place this list is fetched AND rendered, so once
+  // rendering is done here, it's the correct, self-contained place to
+  // check for a matching item and bring it into view. If the item is gone
+  // (already resolved, or simply not among this rep's open outreach), this
+  // silently does nothing -- the rep still lands on a normal, working
+  // dashboard, never a broken or blank state.
+  const targetId = new URLSearchParams(window.location.search).get('outreach');
+  if(targetId){
+    const targetRow = list.querySelector(`[data-outreach-event-id="${CSS.escape(targetId)}"]`);
+    if(targetRow){
+      targetRow.scrollIntoView({behavior:'smooth', block:'center'});
+      targetRow.classList.add('unresolved-outreach-item-highlight');
+      // Long enough to cover the smooth-scroll settle time plus both
+      // pulse cycles (2 x 1.4s) with a comfortable dwell before fading --
+      // strengthened alongside the CSS itself so the highlight is still
+      // visible by the time a rep's eye actually reaches the row.
+      setTimeout(() => targetRow.classList.remove('unresolved-outreach-item-highlight'), 3400);
+    }
+  }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUnresolvedOutreachPanel);
+else initUnresolvedOutreachPanel();
 
 // Organizational Learning V1B, Correction 1: chooses which durable target
 // an opportunity object should log events against -- the account-history
@@ -4349,6 +4568,11 @@ function applyEmptyWorkspaceState({silent, banner, viewMode, teamHasData}){
   if(results) results.style.display = 'none';
   if(banner) banner.style.display = 'none';
   if(typeof renderDashboardViewSwitcher === 'function') renderDashboardViewSwitcher();
+  // Returning-user onboarding correction: the ONE place the automatic Beta
+  // welcome popup is eligible to fire -- only once the server has confirmed
+  // this rep genuinely has no data yet, never merely because a session
+  // exists. See maybeShowBetaWelcomeForSignedInUser()'s own header comment.
+  if(typeof maybeShowBetaWelcomeForSignedInUser === 'function') maybeShowBetaWelcomeForSignedInUser();
 }
 
 function wireEmptyWorkspaceStateControls(){
@@ -4995,6 +5219,22 @@ function dismissBetaWelcomeModal(){
   if(wasActive && window.HouseAccountsHeader && typeof window.HouseAccountsHeader.endOverlay === 'function') window.HouseAccountsHeader.endOverlay();
 }
 
+// Notification & Outcome Loop V1, returning-user onboarding correction: this
+// must NEVER be called merely because a signed-in session exists (that
+// covers a 6-month customer landing on a brand-new browser/device/origin --
+// e.g. via a notification email link -- exactly as readily as a genuine
+// first-time user). It is only meaningful once the workspace's real,
+// server-backed state is known -- see applyEmptyWorkspaceState()'s own call
+// below, which fires this ONLY when the fetch has confirmed the rep
+// genuinely has no data yet. applyPopulatedWorkspaceState() deliberately
+// never calls this. A failed/unknown workspace fetch (the generic error
+// path in fetchAndRenderAggregateDashboard()'s catch block) also never
+// calls this -- fail safe means "don't show," not "guess." localStorage's
+// houseAccountsBetaWelcomeDismissed flag (checked inside showBetaWelcomeModal())
+// remains the mechanism that keeps this from reappearing on a browser where
+// it was already dismissed; this change only narrows WHEN it is even
+// eligible to fire automatically. Manual replay (the Help menu's own
+// "Restart Product Tour") is untouched.
 function maybeShowBetaWelcomeForSignedInUser(){
   const saved = getSavedLead();
   if(saved && saved.email) showBetaWelcomeModal();
@@ -5004,7 +5244,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setLeadGateState();
   document.querySelectorAll('#dashboardViewButtons [data-view]').forEach(btn=>btn.addEventListener('click',()=>setDashboardView(btn.dataset.view)));
   loadDashboardUsage();
-  maybeShowBetaWelcomeForSignedInUser();
   wireGuidedTourControls();
   setTimeout(() => {
     const params = new URLSearchParams(window.location.search);
@@ -10851,6 +11090,7 @@ window.closeSalesPlayModal = function(el){
 function wireOutreachRow(rowEl){
   const logBtn = rowEl.querySelector('.outreach-log-btn');
   const statusEl = rowEl.querySelector('.outreach-status');
+  const outcomeStatusEl = rowEl.querySelector('.outreach-outcome-status');
   const noteWrap = rowEl.querySelector('.approach-note-wrap');
   const noteInput = rowEl.querySelector('.approach-note-input');
   const noteSaveBtn = rowEl.querySelector('.approach-note-save');
@@ -10859,6 +11099,7 @@ function wireOutreachRow(rowEl){
   if(!logBtn) return;
   let latestOutreachEventId = null;
   let latestNoteText = null;
+  let latestOutcomeStatus = null;
   let saveInFlight = false;
 
   function renderInitial(){
@@ -10866,6 +11107,7 @@ function wireOutreachRow(rowEl){
     logBtn.textContent = 'I reached out';
     logBtn.disabled = false;
     if(statusEl) statusEl.hidden = true;
+    if(outcomeStatusEl) outcomeStatusEl.hidden = true;
     if(noteReadonly) noteReadonly.hidden = true;
     if(noteWrap) noteWrap.hidden = true;
   }
@@ -10876,6 +11118,16 @@ function wireOutreachRow(rowEl){
     logBtn.classList.add('outreach-logged');
     logBtn.disabled = false;
     if(statusEl) statusEl.hidden = false;
+    // Outcome visibility (Notification & Outcome Loop V1, UX correction):
+    // shows the LATEST outreach attempt's reported outcome, if any -- a
+    // fresh "Log another outreach" attempt with no outcome of its own yet
+    // (latestOutcomeStatus reset to null by a new save, see below) simply
+    // hides this again, exactly like approachNote's own reset behavior.
+    if(outcomeStatusEl){
+      const text = latestOutcomeStatus && OUTCOME_DISPLAY_TEXT[latestOutcomeStatus];
+      if(text){ outcomeStatusEl.textContent = text; outcomeStatusEl.hidden = false; }
+      else outcomeStatusEl.hidden = true;
+    }
     if(noteReadonly){
       if(latestNoteText){ noteReadonly.textContent = latestNoteText; noteReadonly.hidden = false; }
       else noteReadonly.hidden = true;
@@ -10891,6 +11143,7 @@ function wireOutreachRow(rowEl){
   function renderDraft(){
     logBtn.hidden = true;
     if(statusEl) statusEl.hidden = true;
+    if(outcomeStatusEl) outcomeStatusEl.hidden = true;
     if(noteReadonly) noteReadonly.hidden = true;
     if(noteWrap) noteWrap.hidden = false;
     if(noteInput) noteInput.value = '';
@@ -10899,10 +11152,16 @@ function wireOutreachRow(rowEl){
   }
 
   // hydrateOutreachRow() restores server-known SAVED state on reopen --
-  // exposed the same way the prior round's hooks were.
-  rowEl.__houseAccountsHydrateOutreach = function(eventId, noteText){
+  // exposed the same way the prior round's hooks were. outcomeStatus is
+  // additive (Notification & Outcome Loop V1, UX correction): the latest
+  // outcome_reported child of this exact latest outreach attempt, straight
+  // from api/signal-events.js's own read-back -- undefined/null for an
+  // outreach nobody has reported an outcome for yet, which renderSaved()
+  // already treats as "show nothing."
+  rowEl.__houseAccountsHydrateOutreach = function(eventId, noteText, outcomeStatus){
     latestOutreachEventId = eventId;
     latestNoteText = noteText || null;
+    latestOutcomeStatus = outcomeStatus || null;
     renderSaved();
   };
 
@@ -10948,6 +11207,9 @@ function wireOutreachRow(rowEl){
       }
       latestOutreachEventId = outreachResult.id;
       latestNoteText = null;
+      // A brand-new outreach attempt has no outcome of its own yet -- never
+      // carry a PRIOR attempt's outcome forward onto this new one.
+      latestOutcomeStatus = null;
       // The note is genuinely optional -- an empty textarea means exactly
       // one outreach_made and zero approach_shared, a fully valid saved
       // state, not an error or an incomplete save.
@@ -10978,7 +11240,7 @@ async function hydrateOutreachRow(rowEl){
   const states = await fetchSignalEventStates([{eventFingerprint, accountName}]);
   const state = states[signalStateKey(eventFingerprint, accountName)];
   if(state && state.outreachLogged && state.latestOutreachEventId && typeof rowEl.__houseAccountsHydrateOutreach === 'function'){
-    rowEl.__houseAccountsHydrateOutreach(state.latestOutreachEventId, state.approachNote);
+    rowEl.__houseAccountsHydrateOutreach(state.latestOutreachEventId, state.approachNote, state.outcomeStatus);
   }
 }
 
@@ -11137,6 +11399,7 @@ window.createSalesPlayPanel = function(opp, opts){
           return `
         <div class="sales-play-outreach-row" ${outreachAttrs} data-outreach-fingerprint="${escapeHtml(target.eventFingerprint)}" data-account-name="${escapeHtml(account)}">
           <span class="outreach-status" hidden>Reached out ✓</span>
+          <span class="outreach-outcome-status" hidden></span>
           <div class="approach-note-readonly" hidden></div>
           <div class="approach-note-wrap" hidden>
             <label class="approach-note-label">How did you approach this outreach?</label>

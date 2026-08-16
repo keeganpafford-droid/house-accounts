@@ -109,7 +109,24 @@ export default async function handler(req, res) {
     // backlog ever exceeds it, but the CORRECTNESS-critical determinism
     // guarantee lives in the pure, independently-testable JS sort below,
     // not in trusting the DB's row order.
-    const dueActive = await supabase(`ha_monitoring_targets?status=eq.active&next_due_at=lte.${encodeURIComponent(new Date().toISOString())}&select=id,organization_id,next_due_at&order=next_due_at.asc,id.asc&limit=500`);
+    //
+    // research-failure cooldown (migration 20): the OR filter excludes any
+    // target whose most recent attempt concluded 'insufficient' within the
+    // last ~24h (research_retry_cooldown_until, set by
+    // complete_ha_monitoring_attempt()) -- without this, a chronically-
+    // failing target's next_due_at never advances, so it stays "due"
+    // forever and this scheduler (now running every 5 minutes) would keep
+    // re-publishing it once Vercel Queue's own idempotency-key
+    // deduplication window lapses, re-triggering real paid research on a
+    // loop. This predicate is the ONLY place the cooldown is consulted --
+    // claim_ha_monitoring_target() and the Queue consumer's peekTarget()
+    // deliberately never check it, so an already-in-flight message's own
+    // Queue-level retry lifecycle is completely unaffected. A target with
+    // no cooldown set (research_retry_cooldown_until is null -- the common
+    // case: never failed, or already cleared by a later success) is always
+    // eligible, same as before this migration.
+    const nowIso = new Date().toISOString();
+    const dueActive = await supabase(`ha_monitoring_targets?status=eq.active&next_due_at=lte.${encodeURIComponent(nowIso)}&or=(research_retry_cooldown_until.is.null,research_retry_cooldown_until.lte.${encodeURIComponent(nowIso)})&select=id,organization_id,next_due_at&order=next_due_at.asc,id.asc&limit=500`);
     const eligible = selectQueueManagedDueTargets(dueActive, allowlist);
     const publishLimit = Math.max(1, Number(process.env.MONITORING_SCHEDULER_PUBLISH_LIMIT || DEFAULT_MONITORING_SCHEDULER_PUBLISH_LIMIT));
     const { toPublish, deferred } = selectTargetsToPublish(eligible, publishLimit);
