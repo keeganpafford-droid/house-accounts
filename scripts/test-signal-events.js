@@ -664,6 +664,55 @@ async function run() {
   }
 
   // ---------------------------------------------------------------------
+  // Outcome visibility read-back (founder audit correction): the latest
+  // outcome_reported child of the LATEST outreach attempt is exposed as
+  // outcomeStatus/latestOutcomeReportedAt, reusing the exact read-back
+  // mechanism approachNote already uses -- same latest-wins/no-leak rules.
+  // ---------------------------------------------------------------------
+  {
+    const { states } = await withState(async () => {
+      const outreachRes = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'outcome-rb-outreach-1' } }), outreachRes);
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'no_response_yet', clientEventId: 'outcome-rb-1' } }), makeRes());
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreachRes.body.id, outcomeStatus: 'engaged', clientEventId: 'outcome-rb-2' } }), makeRes());
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', query: getKeys(['fp-shared-account', 'Acme Co']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const s = states[readBackKey('fp-shared-account', 'Acme Co')];
+    assert(s.outcomeStatus === 'engaged', `REQUIRED: read-back exposes the LATEST outcome_reported status for the latest outreach attempt, not an earlier one (got ${JSON.stringify(s.outcomeStatus)})`);
+    assert(typeof s.latestOutcomeReportedAt === 'string' && s.latestOutcomeReportedAt.length > 0, 'REQUIRED: read-back exposes latestOutcomeReportedAt as a real timestamp');
+  }
+  {
+    // No outcome ever reported: outcomeStatus stays null, distinct from an
+    // explicit no_response_yet report.
+    const { states } = await withState(async () => {
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'outcome-rb-none-outreach' } }), makeRes());
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', query: getKeys(['fp-shared-account', 'Acme Co']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const s = states[readBackKey('fp-shared-account', 'Acme Co')];
+    assert(s.outreachLogged === true, 'sanity: outreach is logged');
+    assert(s.outcomeStatus === null && s.latestOutcomeReportedAt === null, `REQUIRED: an outreach with no outcome_reported child at all reads outcomeStatus:null, not a false 'no_response_yet' (got ${JSON.stringify({ status: s.outcomeStatus, at: s.latestOutcomeReportedAt })})`);
+  }
+  {
+    // Older-attempt outcome must never leak onto a newer attempt with none
+    // of its own yet -- same scoping rule as approachNote's own test above.
+    const { states } = await withState(async () => {
+      const outreach1Res = makeRes();
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'outcome-rb-scope-1' } }), outreach1Res);
+      await handler(makeReq({ body: { eventType: 'outcome_reported', parentEventId: outreach1Res.body.id, outcomeStatus: 'went_nowhere', clientEventId: 'outcome-rb-scope-outcome-1' } }), makeRes());
+      await handler(makeReq({ body: { eventType: 'outreach_made', signalId: 'sig-a1', clientEventId: 'outcome-rb-scope-2' } }), makeRes());
+      const getRes = makeRes();
+      await handler(makeReq({ method: 'GET', query: getKeys(['fp-shared-account', 'Acme Co']) }), getRes);
+      return { states: getRes.body.states };
+    });
+    const s = states[readBackKey('fp-shared-account', 'Acme Co')];
+    assert(s.outcomeStatus === null, `REQUIRED: a newer outreach attempt with no outcome of its own never inherits an OLDER attempt's outcome (got ${JSON.stringify(s.outcomeStatus)})`);
+  }
+
+  // ---------------------------------------------------------------------
   // Batched, current-rep-only read-back.
   // ---------------------------------------------------------------------
   {

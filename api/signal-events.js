@@ -436,7 +436,7 @@ async function handleGet(req, res, user) {
   const states = {};
   for (const k of capped) {
     const composite = readBackKey(k.eventFingerprint, k.accountName);
-    const state = { feedback: null, selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null };
+    const state = { feedback: null, selected: false, outreachLogged: false, latestOutreachEventId: null, approachNote: null, outcomeStatus: null, latestOutcomeReportedAt: null };
     states[composite] = state;
     // Rows arrive newest-first; scoped to this exact (fingerprint,
     // account) pair so a different account sharing the same fingerprint
@@ -477,6 +477,17 @@ async function handleGet(req, res, user) {
     if (state.latestOutreachEventId) {
       const note = relevant.find(row => (row.event_type === 'approach_shared' || row.event_type === 'opportunity_approach_shared') && row.parent_event_id === state.latestOutreachEventId);
       if (note) state.approachNote = note.payload?.approachNote || null;
+      // Notification & Outcome Loop V1, UX read-back correction: the latest
+      // outcome_reported child of the LATEST outreach attempt, same scoping
+      // rule as approachNote just above -- an older attempt's outcome must
+      // never appear to belong to a newer attempt that has none of its own
+      // yet. `relevant` is still newest-first here, so the first match is
+      // already the latest report.
+      const outcome = relevant.find(row => row.event_type === 'outcome_reported' && row.parent_event_id === state.latestOutreachEventId);
+      if (outcome) {
+        state.outcomeStatus = outcome.payload?.outcomeStatus || null;
+        state.latestOutcomeReportedAt = outcome.created_at;
+      }
     }
   }
   return json(res, 200, { ok: true, states });

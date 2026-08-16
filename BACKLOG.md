@@ -39,6 +39,25 @@ Durable near-term items identified during active engineering work but deliberate
 
 Either condition alone would have caught the Insurcomm/Rytech case; neither is close to tripping on any other current target. Cheap to add later if this pattern recurs; not worth building against a single occurrence today.
 
+## Behavioral Learning V1 — close the recommendation → outcome → better recommendation loop
+
+**Priority: High — near-term, sequenced immediately after monitoring + notification activation** (Notification & Outcome Loop V1's own Steps 4–6).
+
+**Surfaced by:** Notification & Outcome Loop V1 live outcome QA, downstream-consumer audit (2026-08-16) — see the read-only trace of every consumer of `ha_signal_events`/`outcome_reported` performed during that sprint.
+
+**Confirmed gap:** `ha_signal_events` already durably captures rep behavioral evidence — signal feedback (`signal_useful`/`signal_not_useful`), selections (`signal_selected`/`opportunity_selected`), outreach (`outreach_made`/`opportunity_outreach_made`), approach notes (`approach_shared`), and now outcome reports (`outcome_reported`: `no_response_yet`/`engaged`/`progressed`/`went_nowhere`). None of this accumulated evidence currently influences:
+- future recommendation ranking
+- account prioritization
+- signal-type weighting
+- rep/org-level behavioral profiles
+- Expansion (which accounts/signals surface as expansion opportunities, e.g. the "Why It Could Grow" surface)
+
+The audit traced every real consumer of this data: `classifyMonitoringSignalEligibility()`/`classifyLegacySignalActionability()` (priority/secondary/hidden policy) derive entirely from a signal's own research payload; Organizational Learning V1B (`api/lib/account-opportunities.js`) derives account-history opportunities entirely from raw purchase history. Neither reads `ha_signal_events` at all. The table's own foundational commit (V1A, `1ec79ad`) explicitly describes it as being built "so House Accounts can **eventually** learn how a specific organization sells" — a deliberate foundation for future work, not a live learning system. Today, `outcome_reported`'s only functional effect is stopping the notification/dashboard nag loop (`api/lib/outcome-prompts.js`) — nothing more.
+
+**What Behavioral Learning V1 should eventually do:** close the loop — `recommendation → rep action → outcome → better future recommendation` — using the behavioral evidence already being captured, without inventing ad-hoc weights mid-sprint. Design as its own deliberate system (data model, what "better" means, how weights/profiles are computed and applied, how they interact with the existing priority/secondary eligibility policy) rather than layering scoring logic onto an unrelated sprint.
+
+**Explicitly not started:** no scoring, weighting, ranking, or profile logic has been implemented. This entry exists so the gap the audit confirmed doesn't get silently re-litigated or re-discovered — it's a known, named, prioritized next system, not a surprise.
+
 ## Duplicate monitoring target: "L.L. Bean" vs "L.L.Bean"
 
 **Surfaced by:** Monitoring Identity V1 backfill audit (2026-08-15).
