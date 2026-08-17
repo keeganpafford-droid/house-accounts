@@ -92,26 +92,52 @@
 //   - approach_shared notes — free text, not structured evidence.
 //
 // ============================================================================
-// DIMENSION (V1 — single dimension, chosen from what's ACTUALLY persisted)
+// DIMENSION (V1 — three broad families, deliberately coarser than what's
+// actually persisted, per founder decision after the design-review audit)
 // ============================================================================
 // The recon's original "signal family/layer" idea (Follow-Up vs. Repeat-
-// Pattern vs. Business Activity Signal) turned out to be a DASHBOARD-ONLY,
-// client-side-computed label (getRecommendationType()/signalLayerLabel() in
-// dashboard/index.html) that is never persisted onto a ha_signal_events row
-// — so it cannot be read back here. Two already-persisted proxies exist
-// instead, both captured in the recommendation snapshot at event-write time
-// (api/signal-events.js's buildRecommendationSnapshot()/
-// buildOpportunityRecommendationSnapshot()):
-//   - signal_* family events carry payload.signalType (e.g. "Hiring",
-//     "Award / Recognition", "Acquisition", "Leadership Change") —
-//     moderate cardinality.
-//   - opportunity_* family events carry payload.opportunityType, exactly
-//     two values: 'repeat_pattern' | 'follow_up' — low cardinality, closer
-//     to the original "family" idea for that one family.
-// dimensionKeyForSnapshot() below namespaces these into one dimension-key
-// space (`signal:<signalType>` / `opportunity:<opportunityType>`) so the
-// aggregation logic stays generic and doesn't need to know which family it
-// came from.
+// Pattern vs. Business Activity Signal) is a DASHBOARD-ONLY, client-side-
+// computed label (getRecommendationType()/signalLayerLabel() in
+// dashboard/index.html) that is never persisted onto a ha_signal_events row.
+// An early Phase 1 draft substituted the closest ALREADY-PERSISTED proxies
+// instead (payload.signalType's ~15-value taxonomy plus an ~11-value
+// BUSINESS_ACTIVITY_* fallback family, and payload.opportunityType's 2
+// values) — a design-review audit found this was materially higher
+// cardinality than intended (~25+ possible buckets against a 5-event floor
+// on tiny Beta data), so buckets would almost never accumulate enough
+// evidence to matter.
+//
+// Founder decision: V1 stays intentionally much coarser than that. Exactly
+// THREE canonical preference families, matching the original three-way
+// product distinction without requiring the unpersisted display label:
+//   - FOLLOW_UP        — payload.opportunityType === 'follow_up'
+//   - REPEAT_PATTERN    — payload.opportunityType === 'repeat_pattern'
+//   - BUSINESS_ACTIVITY — any signal_* event backed by the public/business
+//                         payload.signalType taxonomy (regardless of WHICH
+//                         specific signalType string -- V1 does not yet
+//                         learn Acquisition vs. Hiring vs. Award; that
+//                         finer-grained learning is an explicit, deferred
+//                         V1.1/V2 once real evidence volume justifies it)
+// canonicalPreferenceFamily() below is the ONE function that performs this
+// mapping. It fails safe: an event that doesn't confidently match one of
+// the three rules returns null and is EXCLUDED from learning entirely --
+// never guessed, and never collapsed into a synthetic fourth "UNKNOWN"
+// bucket that could itself accumulate influence.
+//
+// Payload shapes verified directly against the real snapshot builders
+// (api/signal-events.js) to confirm BUSINESS_ACTIVITY cannot accidentally
+// swallow the other two families: buildOpportunityRecommendationSnapshot()
+// (opportunity_* events) returns {opportunityType, opportunityName,
+// recommendedContact, reasonToReachOut, conversationStarter} -- it NEVER
+// sets a signalType field, in either its 'repeat_pattern' or 'follow_up'
+// branch. buildRecommendationSnapshot() (signal_* events) returns
+// {signalType, signalTitle, commercialPlay, recommendedContact,
+// activationIdeas, conversationStarter} -- it NEVER sets an opportunityType
+// field. The two snapshot shapes are disjoint by construction; checking
+// opportunityType first (with an exact-value match, not mere truthiness) is
+// still done defensively so a hypothetical future THIRD opportunityType
+// value is excluded rather than silently falling through to
+// BUSINESS_ACTIVITY.
 
 // Reused, not reinvented: this is the SAME "latest report wins" primitive
 // api/lib/outcome-prompts.js already established for exactly this append-
@@ -136,16 +162,27 @@ const QUALITY_NEGATIVE_TYPES = new Set(['signal_not_useful', 'opportunity_not_us
 const OUTREACH_TYPES = new Set(['outreach_made', 'opportunity_outreach_made']);
 const OUTCOME_POSITIVE_STATUSES = new Set(['engaged', 'progressed']);
 
-// Extracts this dimension's bucket key from an event's own snapshot
-// payload. Returns null when the event type carries no snapshot at all
-// (e.g. outcome_reported, approach_shared) or the snapshot has neither
-// signalType nor opportunityType (should not happen for a well-formed row,
-// but never throws on one -- an unclassifiable event is simply excluded,
-// not an error).
-function dimensionKeyForSnapshot(payload = {}) {
-  if (payload.signalType) return `signal:${payload.signalType}`;
-  if (payload.opportunityType) return `opportunity:${payload.opportunityType}`;
-  return null;
+export const FOLLOW_UP = 'FOLLOW_UP';
+export const REPEAT_PATTERN = 'REPEAT_PATTERN';
+export const BUSINESS_ACTIVITY = 'BUSINESS_ACTIVITY';
+
+// The ONE canonicalization function -- maps an event's own snapshot payload
+// to exactly one of the three V1 preference families, or null (excluded,
+// never guessed, never a synthetic UNKNOWN bucket). See the DIMENSION
+// header comment above for the full rationale and the payload-shape proof
+// that BUSINESS_ACTIVITY cannot swallow the other two families.
+export function canonicalPreferenceFamily(payload = {}) {
+  const opportunityType = payload?.opportunityType;
+  if (opportunityType === 'follow_up') return FOLLOW_UP;
+  if (opportunityType === 'repeat_pattern') return REPEAT_PATTERN;
+  // An opportunity_* event with some OTHER/future opportunityType value:
+  // do not guess, and do NOT fall through to signalType -- this payload
+  // shape never carries one anyway (see the header comment's proof), but
+  // the explicit early return keeps that guarantee independent of that
+  // fact ever changing unnoticed.
+  if (opportunityType) return null;
+  const signalType = typeof payload?.signalType === 'string' ? payload.signalType.trim() : '';
+  return signalType ? BUSINESS_ACTIVITY : null;
 }
 
 function withinRecencyWindow(createdAt, now, windowDays) {
@@ -226,7 +263,7 @@ export function computeOrgSignalPreferences(organizationId, events, { now = new 
   for (const group of qualityGroups.values()) {
     const latest = latestByCreatedAt(group);
     if (!latest?.created_at || !withinRecencyWindow(latest.created_at, now, RECENCY_WINDOW_DAYS)) continue;
-    const key = dimensionKeyForSnapshot(latest.payload || {});
+    const key = canonicalPreferenceFamily(latest.payload || {});
     if (!key) continue;
     const bucket = bucketFor(key);
     if (QUALITY_POSITIVE_TYPES.has(latest.event_type)) bucket.qualityPositiveCount += 1;
@@ -248,7 +285,7 @@ export function computeOrgSignalPreferences(organizationId, events, { now = new 
     if (!OUTCOME_POSITIVE_STATUSES.has(status)) continue; // went_nowhere/no_response_yet: never counted, by design
     const parent = eventsById.get(latest.parent_event_id);
     if (!parent || !OUTREACH_TYPES.has(parent.event_type)) continue;
-    const key = dimensionKeyForSnapshot(parent.payload || {});
+    const key = canonicalPreferenceFamily(parent.payload || {});
     if (!key) continue;
     bucketFor(key).outcomePositiveCount += 1;
   }
@@ -278,8 +315,6 @@ export function getOrgPreferenceAdjustment(preferences, dimensionKey) {
   const entry = preferences?.[dimensionKey];
   return entry?.sufficientEvidence ? entry.adjustment : 0;
 }
-
-export { dimensionKeyForSnapshot };
 
 // ============================================================================
 // FUTURE GLOBAL LAYER — NOT IMPLEMENTED. Left as a pointer only, per the
