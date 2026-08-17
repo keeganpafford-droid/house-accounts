@@ -132,9 +132,23 @@ Bounded, near-term work that directly completes or polishes what's already live.
 
 Work that makes House Accounts' recommendations get better over time, not just visible. Build in this order — the second item explicitly depends on the first.
 
+**Current priority framing (2026-08-16 founder reconciliation of older printed roadmap notes against live product state):** 1) Behavioral Learning V1; 2) real Beta usage / selling; 3) adoption-critical integrations where demand is proven; 4) selected seller-UX correctness fixes driven by observed friction; 5) Manager Intelligence / team reporting, once enough behavior/outcome data exists; 6) Expansion. Not a permanent frozen order — a current framing that supersedes older printed sequences (e.g. any older ordering that put UX cleanup, card compression, or a CRM ahead of Behavioral Learning). Older cleanup/hardening ideas do not displace Behavioral Learning V1 unless they represent a genuine sell-the-product blocker.
+
 ### Behavioral Learning V1 — close the recommendation → outcome → better recommendation loop
 
 **Priority: High — immediate next product-intelligence capability.** Its prerequisite (Production monitoring + notification activation, Notification & Outcome Loop V1's own Steps 4–6) is now complete — see "Full Beta Monitoring + Notification Cutover" under Recently completed above. Not started.
+
+**Two distinct kinds of evidence this system must keep separate, not collapse into one signal:**
+- **Direct signal-quality feedback** — `signal_useful`/`signal_not_useful` and the reason a rep gives when marking a signal not useful (e.g. "Already knew this," "Wrong account," "Too late," "Not actionable"). This is a rep's judgment on the *signal itself* — its accuracy, timing, and relevance to the account — independent of whether anyone ever acted on it.
+- **Outcome evidence** — `outreach_made`/`opportunity_outreach_made` → `outcome_reported` (`no_response_yet`/`engaged`/`progressed`/`went_nowhere`), plus `approach_shared`. This is evidence about what happened *after a rep acted* on a signal.
+
+These must not be conflated: a signal can be good and simply never acted on (no outcome evidence exists, but that says nothing bad about the signal); a rep can act on a good signal and get no response (weak/absent outcome evidence, but that does not prove the signal was bad — timing, the specific outreach approach, or plain bad luck could explain it just as well). Behavioral Learning V1's design must model these as two related but distinct evidence streams feeding recommendation quality, not one blended "was this good" score.
+
+**No separate "internal learning database" project** — `ha_signal_events` (feedback, selections, outreach, approach notes, outcome reports) is already the durable event/data foundation this system needs. Behavioral Learning V1 is the reasoning/weighting layer built on top of that existing table, not a new data-capture project.
+
+**Organization-level learning before rep-level personalization** — model how an *organization* wins first (which signal types it acts on, which lead to real engagement, what its own behavioral pattern looks like); rep-level personalization is explicitly a later refinement on top of that foundation, not a parallel first phase, unless a future reconciliation of the roadmap says otherwise.
+
+**Do not build a parallel opportunity-scoring system alongside this** — any future "more sophisticated opportunity scoring and explanation" idea belongs inside Behavioral Learning V1's own data model and weighting design (see below), not as a separate scoring project built next to it.
 
 **Surfaced by:** Notification & Outcome Loop V1 live outcome QA, downstream-consumer audit (2026-08-16) — see the read-only trace of every consumer of `ha_signal_events`/`outcome_reported` performed during that sprint.
 
@@ -153,11 +167,15 @@ The audit traced every real consumer of this data: `classifyMonitoringSignalElig
 
 ### Manager intelligence / organizational insights
 
-**Depends on:** Behavioral Learning V1 above — do not build as a separate analytics feature ahead of or instead of that foundation.
+**Depends on:** Behavioral Learning V1 above — do not build as a separate analytics feature ahead of or instead of that foundation. Also sequenced behind real Beta usage and adoption-critical integrations (see the current priority framing above) — this is a post-Behavioral-Learning track, not the immediate next sprint even once Behavioral Learning ships.
 
-**Surfaced by:** founder backlog reconciliation (2026-08-16).
+**Surfaced by:** founder backlog reconciliation (2026-08-16); reconciled again (2026-08-16) against older printed roadmap notes describing rep activity/follow-up visibility, opportunities being worked, meetings, quotes, wins, revenue, adoption by rep, ignored/aging opportunities, team-level ROI, and executive summaries — folded into this single entry rather than becoming a separate project.
 
-**Eventual scope:** once Behavioral Learning V1 exists, allow managers to see patterns such as: which signal types reps actually act on; which signals lead to real engagement/progress; what top-performing reps do differently; team opportunity coverage; account risk/neglect (accounts nobody is reaching out to). This should be a natural view built on top of Behavioral Learning's data model, not a bespoke analytics feature built in parallel to it.
+**Eventual scope:** once Behavioral Learning V1 exists, allow managers to see patterns such as: which signal types reps actually act on; which signals lead to real engagement/progress; what top-performing reps do differently; team opportunity coverage; account risk/neglect (accounts nobody is reaching out to); rep activity and follow-up visibility; opportunities currently being worked; adoption by rep; ignored/aging opportunities; team-level ROI and executive-summary views. This should be a natural view built on top of Behavioral Learning's data model, not a bespoke analytics feature built in parallel to it.
+
+**Explicitly not a CRM:** House Accounts is not becoming a full CRM (no generic meeting/quote/win/revenue tracking system of its own) — any of the above that requires data House Accounts doesn't already capture stays out of scope until there's a specific, evidence-backed reason to capture it.
+
+**Permission role vs. selling role stay separate** — see "Manager/team workflow" under SOON below, which already establishes this distinction; do not conflate the two here either.
 
 ---
 
@@ -168,6 +186,10 @@ Work that grows and organizes who uses House Accounts and how, once the core int
 ### Account identity / duplicate hygiene
 
 Keep distinct from Monitoring Identity V1, which is already banked (`a5abea8`) — do not reopen that classifier absent a confirmed real-user failure. These are the remaining, explicitly out-of-scope-for-V1 hygiene items.
+
+**Architectural lesson to preserve:** account name alone is not globally safe identity in an aggregate, multi-upload workspace — Monitoring Identity V1 has already hardened target-side identity resolution substantially (domain-based anchors, corroborator tiers); the items below are the remaining name-only/aggregate-matching paths that lesson doesn't yet cover, not a reason to redo the work already banked.
+
+**Related, unverified — public-article duplication under Additional Opportunities:** an older note claimed related public articles could still duplicate under the "Additional Opportunities" surface (`additionalOpportunitiesFor()`, `dashboard/index.html`). Substantial same-account/clean-persisted-opportunity dedup work already exists in that code path (see its own inline comments), and the general "duplicate primary/additional opportunity bug" is already banked — but this narrower related-public-article case hasn't been specifically re-verified against current code. **NEEDS EVIDENCE** — reproduce against a real account with multiple related public articles before treating as a live bug; do not let this become a roadmap driver either way.
 
 **Cross-target identity diagnostic (data-quality signal, not a policy change)**
 
@@ -200,11 +222,72 @@ Either condition alone would have caught the Insurcomm/Rytech case; neither is c
 
 ### Integrations
 
-**Adoption-critical (near-term within this tier):** Commonsku, Facilis, Antera.
+**Adoption-critical, based on real Beta feedback (near-term within this tier):** Commonsku, Facilis, Antera. Older guidance to "wait for more demand" before prioritizing specific integrations is now stale for these three specifically — current Beta usage has made them adoption-critical, not merely requested.
 
-**Longer-term / broader:** Salesforce, HubSpot, Essent, Pipedrive.
+**Longer-term / broader, no proven demand yet:** Salesforce, HubSpot, Essent, Pipedrive, and others — revisit if customer demand changes.
+
+**Desired long-term model:** continuous synchronization with the source system, not repeated manual CSV exports — the eventual integration shape to design toward, not a one-time import connector.
 
 CSV remains the current Beta path and should stay fully supported — do not turn the first sale of any single integration into a hard requirement for adoption generally.
+
+### Opportunity lifecycle / snoozing / repetition control
+
+**Surfaced by:** older printed roadmap notes, reconciled 2026-08-16 against current event/outcome semantics.
+
+**Already shipped — do not reopen:** "mark contacted"/outreach logging, outcome/result states (`engaged`/`progressed`/`went_nowhere`/`no_response_yet`), and unresolved-follow-up tracking are all live via Notification & Outcome Loop V1 (`ha_signal_events`, the unresolved-outreach panel, `api/lib/outcome-prompts.js`).
+
+**Genuinely still missing, merged into this one entry rather than a mini-CRM of separate features:**
+- Snooze an opportunity/signal until a chosen date.
+- Dismiss with a reason, or mark "no longer relevant" (distinct from an outcome report — this is a rep saying the item itself isn't worth surfacing again, not reporting what happened after outreach).
+- Resurfacing rules for a snoozed/dismissed item.
+- Suppressing repetitive resurfacing of essentially the same actionable item (e.g. a reorder/follow-up opportunity) after a rep has already acted on, dismissed, or resolved it — the current terminal-outcome logic stops the *automatic outcome-prompt nag* for a specific outreach, but does not confirm whether the underlying signal/opportunity itself is prevented from re-entering the priorities feed or a future notification digest as if it were new. **Needs verification against current dedup/eligibility logic before scoping further** — if it turns out already handled, drop this bullet.
+
+Reconciles the older, now-architecturally-obsolete "reorder opportunities may repeat in multiple weekly digests" note (the weekly-digest architecture it referred to no longer exists) into the same real, still-open question above: can essentially the same opportunity repeatedly re-enter *any* current proactive surface (priorities feed or notification digest) after a rep has already acted on it.
+
+**Explicitly do not build a full opportunity-management CRM layer** — this is bounded lifecycle/resurfacing control on top of the existing priority/secondary eligibility policy, not a parallel task-management system.
+
+### Contact intelligence
+
+**Surfaced by:** older printed roadmap notes, reconciled 2026-08-16.
+
+**Classification: DEFER / NEEDS EVIDENCE.** Do not elevate to a near-term build absent Beta feedback specifically showing "who do I contact?" is a bigger obstacle than "why should I contact them?" — the current product's core value is squarely the latter.
+
+**Already partially covered — do not duplicate:** deterministic department/contact suggestion (`suggestedContact`/`recommendedBuyingTeam`/`likelyBuyers`) already flows into recommendations and Prepare for Call today, and uploaded contacts already reach the research prompt (`knownContacts`).
+
+**Genuinely new, if this ever gets picked up:** inferring a likely decision-maker when no contact was uploaded at all; contact-role confidence scoring; relationship history (who the rep has contacted before, whether that person replied); identifying internal champions; signal-specific contact suggestions (which contact fits *this particular* signal, not just the account generally).
+
+### Truthful research-result states — remaining correctness gaps
+
+**Surfaced by:** older printed roadmap notes, reconciled 2026-08-16 against current code.
+
+**Already shipped — do not reopen:** "View Research" only renders when `signalCount > 0` (the Manage Customer Accounts panel already gates on this — see its own "Beta correction" comment); a genuinely empty research result is already distinguished from "not yet researched" in the places this was checked.
+
+**Doctrine to hold going forward (already banked elsewhere, restated here as the standard this item measures against):** distinguish, everywhere a research result is shown — actionable priority opportunity found; valid secondary/non-priority signals found (still real, still worth showing in Research Details — a signal doesn't need a priority opportunity to be legitimate); nothing found (an honest true negative); research failed/retrying. CTA and copy must match the actual state, never imply more or less than what's true.
+
+**Unverified — narrow, possibly-still-open gaps, not confirmed either way:**
+- "Recently Researched"'s compact summary count going stale relative to what the underlying research modal actually shows once opened.
+- Account-level research-failure/retry messaging clarity.
+- List-level OpenAI-timeout messaging being generic/vague rather than a clear, actionable message.
+
+Bounded correctness audit if picked up — verify each bullet against current code before building anything; several research-result-state gaps in this general area have already been fixed (see above), so re-confirm before assuming these three are still open.
+
+### Dashboard card density / information hierarchy
+
+**Surfaced by:** older printed roadmap notes, reconciled 2026-08-16.
+
+**Preserve the principle, not stale literal guidance:** a compact priority card should quickly communicate Why Now, current status/timing, the Play, best ideas, a recommended contact, a concise approach, and a Prepare for Call CTA — deeper explanation belongs in Prepare for Call/detail surfaces, not the compact card.
+
+**Do not act on the old literal instruction to remove "Why It Could Grow"** — that field still exists in the current dashboard (`dashboard/index.html`) and there is no current Beta evidence it's causing density problems. Treat this whole entry as Beta-driven UX backlog: revisit if/when real usage shows the compact card is too dense, not as a standing polish sprint.
+
+### Manual research queue
+
+**Classification: DEFER.** Separate from the banked background monitoring Queue (Queue monitoring architecture, Full Beta Cutover) — this is about the *interactive* single/warm-account research flow.
+
+**Current behavior:** requesting research while another run is active for the same uploaded list fails outright ("Another research run is currently active for this uploaded list. Please wait for it to finish." — `dashboard/index.html`, `api/monitoring-lists.js`, `api/save-upload.js`), rather than queuing.
+
+**Desired eventual UX, only if Beta behavior proves this is a real friction point:** requesting research for account A, then B, then C while A is still running queues B and C instead of failing. Must preserve the existing authoritative run lock, the Stop control, bounded execution, and truthful progress reporting — this is additive queuing on top of the existing lock, not a redesign of it.
+
+**Do not build this from the old note alone** — defer until real concurrent-research friction is actually observed in Beta usage.
 
 ### Account Intelligence / account search
 
@@ -240,7 +323,7 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 
 **Depends on:** real behavioral/outcome evidence (Behavioral Learning V1) to be genuinely differentiated rather than a generic lookalike-company tool.
 
-**Eventual scope:** identify characteristics of successful existing accounts; combine that with actual behavioral/outcome evidence (not just firmographic similarity); find companies resembling accounts where the organization actually wins; surface timely reasons to approach those companies.
+**Eventual scope:** identify characteristics of successful existing accounts; combine that with actual behavioral/outcome evidence (not just firmographic similarity); find companies resembling accounts where the organization actually wins; surface timely reasons to approach those companies. Deeper research capability belongs here specifically, not in current Core: Hussey-style deep-research depth, business-model mapping, dealer/channel network mapping, campaign/program-level research, multi-signal synthesis across a prospect, and bespoke concept generation — all explicitly a future Expansion/prospect-research surface, not something to fold into the existing monitored-customer Core workflow.
 
 **Economic discipline:** keep Expansion/prospect research economically separate from monitored-customer capacity. Customer monitoring subscription tiers must not silently make unlimited large-scale prospect research free. When Expansion research scales, define a separate research allowance/economic model for it — do not let it ride on the existing monitoring-capacity guardrails (see "Monitoring Economics founder telemetry" under NOW).
 
@@ -263,6 +346,16 @@ Preserve validation examples for eventual use as sales/customer-story proof rath
 Explicitly backlog, do not build now: SMS; Slack; instant notifications; custom delivery times; sophisticated manager/team digests; advanced per-signal notification toggles.
 
 House Accounts remains the canonical state; notification channels are transport only, never a second source of truth. See the Notification & Outcome Loop V1 architecture doctrine this constraint comes from.
+
+### Historical Business Activity reinterpretation (conditional — verify before building)
+
+**Surfaced by:** older printed roadmap notes, reconciled 2026-08-16.
+
+**Candidate bounded enrichment:** re-run current commercial interpretation logic only against already-grounded, already-persisted signal evidence created under older reasoning generations — no new web searches, no Firecrawl, no rediscovery, no identity mutation, and never a silent bulk rewrite.
+
+**Only worth doing if a real gap is confirmed:** this is worth building only if old-generation persisted intelligence can still materially surface to current users today and degrade their experience relative to what current reasoning would produce for the same evidence. Verify that before scoping further — do not build speculatively.
+
+**If retained, frame correctly:** a founder-approved, explicit one-time enrichment operation with a clear before/after evidence trail — never an ongoing background reinterpretation system.
 
 ### Longer-term / older parked ideas
 
