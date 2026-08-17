@@ -10,30 +10,49 @@
 // learning layers, and this file is ONLY one of them:
 //
 //   Layer A — Global HA intelligence (NOT this file, NOT built yet):
-//     House Accounts may eventually improve globally from aggregated,
-//     de-identified feedback about the INTELLIGENCE SYSTEM ITSELF — signal/
-//     source quality, event classification accuracy, timing/actionability
-//     accuracy, systemic false-positive/false-negative patterns. This would
-//     be keyed by properties of the SIGNAL/SOURCE ITSELF (canonicalEventType,
-//     source domain, identity-confidence tier, coverage classification —
-//     see the "future global layer" note at the bottom of this file), never
-//     by which organization felt what. If ever built, it lives in a
-//     SEPARATE module and NEVER reads this file's output.
+//     House Accounts MAY eventually improve globally by learning from
+//     aggregated, de-identified feedback ACROSS MANY organizations about
+//     the INTELLIGENCE SYSTEM ITSELF — e.g. many users across many
+//     organizations marking a type of signal useful/not useful; systemic
+//     source-quality patterns; recurring false-positive identity patterns;
+//     general timing/actionability accuracy; whether certain signal
+//     classifications or commercial interpretations consistently perform
+//     poorly or well. This is a real, permitted future capability, NOT
+//     forbidden by anything in this file — what's forbidden is narrower and
+//     specific (see the two rules below). If ever built, Layer A is a
+//     SEPARATE module, keyed by properties of the SIGNAL/SOURCE ITSELF
+//     (canonicalEventType, source domain, identity-confidence tier,
+//     coverage classification — see the "future global layer" note at the
+//     bottom of this file), reading raw ha_signal_events rows directly.
 //
 //   Layer B — Private organization intelligence (THIS FILE):
 //     How a specific organization sells and wins — which signal/opportunity
 //     families it tends to value, based on ITS OWN reps' feedback and
-//     outcomes. This is proprietary to that one organization (see
-//     api/signal-events.js's own header doctrine: "raw rep behavior captured
-//     here is proprietary to the organization that generated it and is
-//     never pooled, benchmarked, or exposed across organizations" — this
-//     file inherits and enforces that same rule for the derived preference
-//     weights it computes, not just the raw events).
+//     outcomes. THIS COMPUTED PREFERENCE PROFILE is proprietary to that one
+//     organization and must never cross organizations.
+//
+// The exact boundary between the two layers (founder-confirmed):
+//   1. A future Layer A MAY consume aggregated/de-identified raw feedback
+//      signals (signal_useful/not_useful, etc.) pooled across many
+//      organizations — that is global signal-quality learning, not private
+//      selling-behavior learning, and is allowed.
+//   2. A future Layer A must NOT consume another organization's COMPUTED
+//      preference adjustment (this file's computeOrgSignalPreferences()
+//      return value) as an input. Raw de-identified events are a legitimate
+//      Layer A input; this file's derived per-org output is not.
+//   3. An org-specific preference weight must never be copied, averaged, or
+//      transferred into another organization's ranking, by any layer.
+//   4. Future global-learning work must remain a separate module/system
+//      from this one.
 //
 // "House Accounts gets better at understanding signals globally, while the
 // way your team sells becomes private intelligence for your organization."
-// This file is the second half of that sentence. It must never become, or
-// be extended into, the first half.
+// This file is the second half of that sentence — it computes ONLY private,
+// organization-scoped preference weights, and must never itself pool
+// evidence or output across organizations. It does not, by existing,
+// prevent HA from ever learning globally elsewhere; a hypothetical global
+// module simply may never read what THIS file produces, and this file may
+// never read or blend in what another organization produced.
 //
 // STRUCTURAL GUARANTEE (not just documentation): computeOrgSignalPreferences()
 // below takes an explicit organizationId and DEFENSIVELY filters its input
@@ -94,6 +113,15 @@
 // aggregation logic stays generic and doesn't need to know which family it
 // came from.
 
+// Reused, not reinvented: this is the SAME "latest report wins" primitive
+// api/lib/outcome-prompts.js already established for exactly this append-
+// only-history problem (an outreach's CURRENT outcome is always whatever
+// was reported most recently). Design-review finding: without this, a
+// single outreach that a rep first reported 'engaged' on and later updated
+// to 'progressed' would count as TWO independent successful examples
+// instead of one outreach attempt with an updated status.
+import { latestOutcomeEvent } from './outcome-prompts.js';
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Cold-start / sample-size guardrails (architecture proposal §5). Kept as
@@ -128,6 +156,20 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function latestByCreatedAt(rows) {
+  return rows.reduce((latest, row) => (!latest || new Date(row.created_at).getTime() > new Date(latest.created_at).getTime()) ? row : latest, null);
+}
+function groupBy(rows, keyFn) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = keyFn(row);
+    if (key === null || key === undefined) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return groups;
+}
+
 // Pure. Takes an explicit organizationId plus an already-fetched array of
 // ha_signal_events rows (any shape/scope the caller happened to fetch --
 // this function is the one place responsible for narrowing to exactly one
@@ -140,23 +182,35 @@ function clamp(value, min, max) {
 // Default behavior with insufficient evidence for a given dimension key is
 // NO adjustment (0) -- this is also what every organization gets on day
 // one, by construction, before any real Beta feedback accumulates.
+//
+// UNIT OF EVIDENCE (design-review correction, before Phase 2 wiring): the
+// event system deliberately preserves changed feedback and updated
+// outcomes as real history (see api/signal-events.js's semantic-dedupe
+// doctrine and outcome_reported's own append-only doctrine) -- but that
+// full history is the wrong thing to count directly here. A rep flipping
+// Useful -> Not Useful on ONE signal is a single CURRENT opinion, not two
+// independent votes; an outreach first reported 'engaged' and later
+// updated to 'progressed' is ONE successful outreach attempt, not two.
+// Both are collapsed to "only the latest state counts" BEFORE counting,
+// using the exact same grouping key each doctrine already uses elsewhere
+// (user_id + event_fingerprint for a rep's own opinion on one signal --
+// matching api/signal-events.js's own semantic-dedupe query scope; and
+// parent_event_id for one outreach attempt's outcome history -- reusing
+// api/lib/outcome-prompts.js's latestOutcomeEvent() directly rather than
+// re-deriving it). Two DIFFERENT reps judging the same signal, or two
+// DIFFERENT real outreach attempts on the same signal, remain two
+// legitimately separate pieces of evidence -- only a single rep's/single
+// attempt's own history collapses.
 export function computeOrgSignalPreferences(organizationId, events, { now = new Date() } = {}) {
   const orgId = String(organizationId || '');
   const allEvents = Array.isArray(events) ? events : [];
 
   // Structural cross-org guarantee: never trust the caller's own query
-  // scoping alone.
+  // scoping alone. Unfiltered by recency here -- resolving each rep's/
+  // outreach's true LATEST state requires the full history; recency is
+  // applied afterward, to that resolved latest state's own timestamp (see
+  // below), not to the raw rows before collapsing.
   const orgEvents = orgId ? allEvents.filter(e => String(e?.organization_id || '') === orgId) : [];
-  const recentEvents = orgEvents.filter(e => e?.created_at && withinRecencyWindow(e.created_at, now, RECENCY_WINDOW_DAYS));
-
-  // outcome_reported rows carry no snapshot of their own (payload is just
-  // {outcomeStatus, note?}) -- their dimension key is resolved via their
-  // parent outreach_made/opportunity_outreach_made event's own snapshot.
-  // Built from the FULL org event set (not just the recency-windowed one),
-  // since an in-window outcome report can legitimately reference an
-  // out-of-window outreach event; the outcome report's own created_at is
-  // what the recency filter above already applied to decide whether the
-  // outcome itself counts.
   const eventsById = new Map(orgEvents.map(e => [e.id, e]));
 
   const buckets = new Map(); // dimensionKey -> { qualityPositiveCount, qualityNegativeCount, outcomePositiveCount }
@@ -165,28 +219,38 @@ export function computeOrgSignalPreferences(organizationId, events, { now = new 
     return buckets.get(key);
   }
 
-  for (const event of recentEvents) {
-    const eventType = event?.event_type;
-    if (QUALITY_POSITIVE_TYPES.has(eventType) || QUALITY_NEGATIVE_TYPES.has(eventType)) {
-      const key = dimensionKeyForSnapshot(event.payload || {});
-      if (!key) continue;
-      const bucket = bucketFor(key);
-      if (QUALITY_POSITIVE_TYPES.has(eventType)) bucket.qualityPositiveCount += 1;
-      else bucket.qualityNegativeCount += 1;
-      continue;
-    }
-    if (eventType === 'outcome_reported') {
-      const status = event.payload?.outcomeStatus;
-      if (!OUTCOME_POSITIVE_STATUSES.has(status)) continue; // went_nowhere/no_response_yet: never counted, by design
-      const parent = event.parent_event_id ? eventsById.get(event.parent_event_id) : null;
-      if (!parent || !OUTREACH_TYPES.has(parent.event_type)) continue;
-      const key = dimensionKeyForSnapshot(parent.payload || {});
-      if (!key) continue;
-      bucketFor(key).outcomePositiveCount += 1;
-    }
-    // Every other event type (selected, prepare_call_opened, outreach_made
-    // itself, approach_shared) is intentionally never counted as evidence
-    // — see the EVIDENCE DOCTRINE header comment.
+  // Quality feedback: one vote per (user_id, event_fingerprint) -- this
+  // rep's CURRENT opinion on this signal, not their full opinion history.
+  const qualityEvents = orgEvents.filter(e => QUALITY_POSITIVE_TYPES.has(e?.event_type) || QUALITY_NEGATIVE_TYPES.has(e?.event_type));
+  const qualityGroups = groupBy(qualityEvents, e => `${e.user_id}::${e.event_fingerprint}`);
+  for (const group of qualityGroups.values()) {
+    const latest = latestByCreatedAt(group);
+    if (!latest?.created_at || !withinRecencyWindow(latest.created_at, now, RECENCY_WINDOW_DAYS)) continue;
+    const key = dimensionKeyForSnapshot(latest.payload || {});
+    if (!key) continue;
+    const bucket = bucketFor(key);
+    if (QUALITY_POSITIVE_TYPES.has(latest.event_type)) bucket.qualityPositiveCount += 1;
+    else bucket.qualityNegativeCount += 1;
+  }
+
+  // Outcome evidence: one vote per outreach ATTEMPT (parent_event_id) --
+  // that attempt's CURRENT reported status, not every status it ever
+  // passed through. outcome_reported rows carry no snapshot of their own
+  // (payload is just {outcomeStatus, note?}); the dimension key is
+  // resolved via the attempt's own outreach_made/opportunity_outreach_made
+  // event snapshot.
+  const outcomeEvents = orgEvents.filter(e => e?.event_type === 'outcome_reported' && e?.parent_event_id);
+  const outcomeGroups = groupBy(outcomeEvents, e => e.parent_event_id);
+  for (const group of outcomeGroups.values()) {
+    const latest = latestOutcomeEvent(group);
+    if (!latest?.created_at || !withinRecencyWindow(latest.created_at, now, RECENCY_WINDOW_DAYS)) continue;
+    const status = latest.payload?.outcomeStatus;
+    if (!OUTCOME_POSITIVE_STATUSES.has(status)) continue; // went_nowhere/no_response_yet: never counted, by design
+    const parent = eventsById.get(latest.parent_event_id);
+    if (!parent || !OUTREACH_TYPES.has(parent.event_type)) continue;
+    const key = dimensionKeyForSnapshot(parent.payload || {});
+    if (!key) continue;
+    bucketFor(key).outcomePositiveCount += 1;
   }
 
   const result = {};
