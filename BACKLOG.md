@@ -34,7 +34,7 @@ Merged to `main` at `03bd7ee9679a5b37345dadeaa98d09b200eb4073` (merge commit, `f
 - Durable delivery history (`ha_notification_deliveries`) and fail-safe transport semantics (an isolated per-user Resend failure never blocks other users' sends; an unknown/failed send is logged, not silently dropped, and never advances the watermark).
 - Activation was fail-closed at banking time — both `NOTIFICATION_ENABLED_ORGANIZATION_IDS` and `QUEUE_MANAGED_ORGANIZATION_IDS` were empty/unset in Production as of this merge. Both are now populated — see "Full Beta Monitoring + Notification Cutover" immediately below for the completed Production activation.
 
-**Important limitation — preserve, do not overstate:** House Accounts captures durable behavioral evidence today (`ha_signal_events`: feedback, selections, outreach, approach notes, and now outcome reports), but **Behavioral Learning does not yet exist** — none of this accumulated evidence currently changes future recommendation ranking, account prioritization, signal-type weighting, or rep/org behavioral profiles. Do not claim otherwise in product messaging, sales conversations, or future work until Behavioral Learning V1 (see NEXT below) is actually built. Production monitoring + notification activation (the prerequisite this item was sequenced behind) is now complete — Behavioral Learning V1 is the immediate next product-intelligence priority. It has not been started.
+**Important limitation — preserve, do not overstate (updated 2026-08-17):** House Accounts captures durable behavioral evidence today (`ha_signal_events`: feedback, selections, outreach, approach notes, and now outcome reports). As of 2026-08-17, dashboard recommendation ranking consumes a first, bounded slice of this evidence — see "Behavioral Learning V1 — Dashboard Foundation" below. Notification ordering, account prioritization eligibility, and rep/org behavioral profiles still do not consume it. Do not claim broader behavioral learning than what is actually banked — see that entry for the precise shipped/not-shipped boundary.
 
 - **Notification preferences UX** (Part A4): a simple Daily / Weekly / In-app only control lives in Settings, backed by `POST /api/settings` `action:'update-notification-preference'` and the existing `ha_users.notification_preference` field. No new settings architecture — reused the existing preference field/API pattern verbatim.
 - **Notification deep link — unresolved outreach** (Part A3, CTA hierarchy strengthened in later live-QA rounds): see the banked capability list above for full detail.
@@ -51,7 +51,35 @@ Merged to `main` at `8bb8f3469fbf85bdf1d83808f16e895b7a9df593`, founder-approved
 
 **Founder determination — do not reopen or further optimize this infrastructure absent a confirmed Production failure or meaningful scale evidence.** Queue monitoring + independent notification is the canonical Production architecture going forward; the legacy weekly architecture is not retained as a fallback. Continue tracking monitoring cost/coverage as real usage accumulates (see "Monitoring Economics founder telemetry" below), but do not tune anything off this initial single-target sample.
 
-**Behavioral Learning V1 still does not exist** and must not be represented as existing — see the note above and the NEXT entry below. It is now the high-priority next product-intelligence capability, unblocked by this cutover.
+**Behavioral Learning V1's dashboard foundation is now shipped** (2026-08-17) — see "Behavioral Learning V1 — Dashboard Foundation" below for the precise, bounded scope. Notification-learning wiring and richer learning are deliberately deferred until real Beta usage accumulates.
+
+### Behavioral Learning V1 — Dashboard Foundation — COMPLETED / BANKED (2026-08-17)
+
+Merged to `main` at `4b62e3308028832ae4779843a4c82092f5a21cd5` (merge commit, `feature/behavioral-learning-v1-phase1` → `main`), founder-approved after live Preview QA (deployment `dpl_9oatWvhP5Lva4JYmXxYWv7JLPwDq`, matching commit `34b7ce0`) and a code/privacy review. Deterministic suite: 157/157 passing before and after merge.
+
+**Two-layer doctrine (preserve):** House Accounts gets better at understanding signals globally, while the way a specific team sells becomes private intelligence for that organization. This ships the **private organization layer only** (Layer B). The global cross-customer layer (Layer A) remains future work and is not implemented — see `api/lib/org-preference-learning.js`'s own header comment for the exact boundary rules.
+
+**Shipped:**
+- Private, organization-scoped behavioral preference learning (`api/lib/org-preference-learning.js`), structurally isolated per organization — one org's evidence can never influence another's adjustment.
+- Three canonical evidence families: `FOLLOW_UP`, `REPEAT_PATTERN`, `BUSINESS_ACTIVITY` (any signal-type business activity, pooled — not the ~25 raw signal-type labels).
+- Two evidence streams: direct `useful`/`not_useful` quality feedback, and conservative outcome evidence (`outcome_reported` status `engaged`/`progressed` only — `no_response_yet`/`went_nowhere` never count as evidence).
+- Latest-opinion and latest-outcome dedup semantics — a changed rep judgment or a sequential outcome update on the same outreach counts once, not as multiple independent votes.
+- N=5 minimum evidence floor per family before any adjustment applies; 90-day evidence recency window.
+- Bounded ±8 additive ranking adjustment — one term added to the existing dashboard score, never a rewrite of baseline scoring weights.
+- Dashboard "This Week's Priorities" ranking consumes the learned adjustment (`api/get-dashboard.js` computes it once per request server-side; `dashboard/index.html`'s `calculateOpportunityScore()` applies it).
+- Insufficient evidence (the real state for every current Beta org as of banking) leaves ranking byte-identical to baseline — proven both by deterministic tests and by live Preview QA.
+- Truth/identity/actionability gates (`classifyMonitoringSignalEligibility()`/`classifyLegacySignalActionability()`) remain entirely upstream and untouched — learning only reorders already-eligible candidates, never changes what's eligible.
+- Fail-closed: any preference fetch/compute failure falls back to baseline dashboard ranking and logs the failure — never a dashboard error.
+
+**Not shipped — do not overstate:**
+- Notification ranking does not consume Behavioral Learning yet.
+- No rep-level personalization (organization-level only).
+- No manager-learning dashboard.
+- No richer event-type/industry/contact dimensions beyond the three families above.
+- No global cross-customer learning implementation (Layer A remains future work).
+- Current Beta organizations do not yet have enough accumulated evidence to produce any active (non-zero) adjustment in Production.
+
+**Founder sequencing decision (2026-08-17) — do not begin notification-learning wiring next.** Deliberately let real users accumulate genuine behavioral evidence first. Do not tune N=5, ±8, the 90-day window, or evidence weights, and do not add new dimensions, based on fixtures or this founder QA round. Revisit after meaningful Beta usage accumulates, and decide from real data whether thresholds/weights are sensible, preferences are emerging, ranking changes look commercially correct, notification ordering should consume the same learning primitive, and richer dimensions are warranted.
 
 ---
 
@@ -132,42 +160,28 @@ Bounded, near-term work that directly completes or polishes what's already live.
 
 Work that makes House Accounts' recommendations get better over time, not just visible. Build in this order — the second item explicitly depends on the first.
 
-**Current priority framing (2026-08-16 founder reconciliation of older printed roadmap notes against live product state):** 1) Behavioral Learning V1; 2) real Beta usage / selling; 3) adoption-critical integrations where demand is proven; 4) selected seller-UX correctness fixes driven by observed friction; 5) Manager Intelligence / team reporting, once enough behavior/outcome data exists; 6) Expansion. Not a permanent frozen order — a current framing that supersedes older printed sequences (e.g. any older ordering that put UX cleanup, card compression, or a CRM ahead of Behavioral Learning). Older cleanup/hardening ideas do not displace Behavioral Learning V1 unless they represent a genuine sell-the-product blocker.
+**Current priority framing (updated 2026-08-17 after Behavioral Learning V1's dashboard foundation shipped):** 1) real Beta usage / selling — deliberately let real users accumulate genuine behavioral evidence before extending Behavioral Learning further; 2) adoption-critical integrations where demand is proven; 3) selected seller-UX correctness fixes driven by observed friction; 4) Behavioral Learning V1 remaining work (notification-learning wiring, richer dimensions), once meaningful Beta usage has accumulated — see the entry below; 5) Manager Intelligence / team reporting, once enough behavior/outcome data exists; 6) Expansion. Not a permanent frozen order. Older cleanup/hardening ideas still do not displace real Beta usage/selling unless they represent a genuine sell-the-product blocker.
 
-### Behavioral Learning V1 — close the recommendation → outcome → better recommendation loop
+### Behavioral Learning V1 — remaining work (notification wiring, richer dimensions)
 
-**Priority: High — immediate next product-intelligence capability.** Its prerequisite (Production monitoring + notification activation, Notification & Outcome Loop V1's own Steps 4–6) is now complete — see "Full Beta Monitoring + Notification Cutover" under Recently completed above. Not started.
+**Priority: deliberately paused, not high.** The dashboard-ranking foundation is shipped and banked — see "Behavioral Learning V1 — Dashboard Foundation" under Recently completed above for exactly what exists today. **Founder sequencing decision (2026-08-17): do not begin notification-learning wiring or any of the items below until real Beta usage has accumulated meaningful evidence.** This is an explicit pause, not a forgotten dependency — do not resume it absent that evidence or a specific founder decision to do so.
 
-**Two distinct kinds of evidence this system must keep separate, not collapse into one signal:**
-- **Direct signal-quality feedback** — `signal_useful`/`signal_not_useful` and the reason a rep gives when marking a signal not useful (e.g. "Already knew this," "Wrong account," "Too late," "Not actionable"). This is a rep's judgment on the *signal itself* — its accuracy, timing, and relevance to the account — independent of whether anyone ever acted on it.
-- **Outcome evidence** — `outreach_made`/`opportunity_outreach_made` → `outcome_reported` (`no_response_yet`/`engaged`/`progressed`/`went_nowhere`), plus `approach_shared`. This is evidence about what happened *after a rep acted* on a signal.
+**Two distinct kinds of evidence this system keeps separate, not collapsed into one signal** — already encoded in the shipped dashboard foundation and equally applicable to any future notification wiring: direct signal-quality feedback (`signal_useful`/`signal_not_useful`, a rep's judgment on the *signal itself*) vs. outcome evidence (`outreach_made`/`opportunity_outreach_made` → `outcome_reported`, what happened *after a rep acted*). A signal can be good and never acted on; a rep can act on a good signal and get no response. Do not blend these into one score — see `api/lib/org-preference-learning.js` for the live implementation of this separation.
 
-These must not be conflated: a signal can be good and simply never acted on (no outcome evidence exists, but that says nothing bad about the signal); a rep can act on a good signal and get no response (weak/absent outcome evidence, but that does not prove the signal was bad — timing, the specific outreach approach, or plain bad luck could explain it just as well). Behavioral Learning V1's design must model these as two related but distinct evidence streams feeding recommendation quality, not one blended "was this good" score.
+**Organization-level learning before rep-level personalization** — the shipped foundation models how an *organization* wins, not individual reps. Rep-level personalization remains a later refinement, not assumed as the next step, unless a future reconciliation says otherwise.
 
-**No separate "internal learning database" project** — `ha_signal_events` (feedback, selections, outreach, approach notes, outcome reports) is already the durable event/data foundation this system needs. Behavioral Learning V1 is the reasoning/weighting layer built on top of that existing table, not a new data-capture project.
+**Remaining scope, once resumed (do not build ahead of the founder sequencing decision above):**
+- **Notification-learning wiring** — have `api/notification-scheduler.js`'s digest ordering consume the same `computeOrgSignalPreferences()` primitive the dashboard already uses, rather than inventing a second ranking notion.
+- **Richer learning dimensions** — beyond the three current families (`FOLLOW_UP`/`REPEAT_PATTERN`/`BUSINESS_ACTIVITY`), once real usage shows the pooled `BUSINESS_ACTIVITY` bucket is too coarse to be commercially useful.
+- **Rep-level personalization**, once the organization-level foundation has real signal to build on.
+- **Manager-learning views** — see "Manager intelligence / organizational insights" below, which depends on this.
+- **Global cross-customer learning (Layer A)** — a separate module from the private org layer; not started, not scoped yet. See the two-layer doctrine note under the Dashboard Foundation entry above.
 
-**Organization-level learning before rep-level personalization** — model how an *organization* wins first (which signal types it acts on, which lead to real engagement, what its own behavioral pattern looks like); rep-level personalization is explicitly a later refinement on top of that foundation, not a parallel first phase, unless a future reconciliation of the roadmap says otherwise.
-
-**Do not build a parallel opportunity-scoring system alongside this** — any future "more sophisticated opportunity scoring and explanation" idea belongs inside Behavioral Learning V1's own data model and weighting design (see below), not as a separate scoring project built next to it.
-
-**Surfaced by:** Notification & Outcome Loop V1 live outcome QA, downstream-consumer audit (2026-08-16) — see the read-only trace of every consumer of `ha_signal_events`/`outcome_reported` performed during that sprint.
-
-**Confirmed gap:** `ha_signal_events` already durably captures rep behavioral evidence — signal feedback (`signal_useful`/`signal_not_useful`), selections (`signal_selected`/`opportunity_selected`), outreach (`outreach_made`/`opportunity_outreach_made`), approach notes (`approach_shared`), and now outcome reports (`outcome_reported`: `no_response_yet`/`engaged`/`progressed`/`went_nowhere`). None of this accumulated evidence currently influences:
-- future recommendation ranking
-- account prioritization
-- signal-type weighting
-- rep/org-level behavioral profiles
-- Expansion (which accounts/signals surface as expansion opportunities, e.g. the "Why It Could Grow" surface)
-
-The audit traced every real consumer of this data: `classifyMonitoringSignalEligibility()`/`classifyLegacySignalActionability()` (priority/secondary/hidden policy) derive entirely from a signal's own research payload; Organizational Learning V1B (`api/lib/account-opportunities.js`) derives account-history opportunities entirely from raw purchase history. Neither reads `ha_signal_events` at all. The table's own foundational commit (V1A, `1ec79ad`) explicitly describes it as being built "so House Accounts can **eventually** learn how a specific organization sells" — a deliberate foundation for future work, not a live learning system. Today, `outcome_reported`'s only functional effect is stopping the notification/dashboard nag loop (`api/lib/outcome-prompts.js`) — nothing more.
-
-**What Behavioral Learning V1 should eventually do:** close the loop — `recommendation → rep action → outcome → better future recommendation` — using the behavioral evidence already being captured, without inventing ad-hoc weights mid-sprint. Design as its own deliberate system (data model, what "better" means, how weights/profiles are computed and applied, how they interact with the existing priority/secondary eligibility policy) rather than layering scoring logic onto an unrelated sprint. This must eventually support the strategic promise that House Accounts learns how an organization wins — see the "Why House Accounts vs. ChatGPT/Claude" positioning entry under LATER, which explicitly depends on this.
-
-**Explicitly not started:** no scoring, weighting, ranking, or profile logic has been implemented. This entry exists so the gap the audit confirmed doesn't get silently re-litigated or re-discovered — it's a known, named, prioritized next system, not a surprise.
+Do not build a parallel opportunity-scoring system alongside any of this — it belongs inside this same data model and weighting design, not a separate scoring project.
 
 ### Manager intelligence / organizational insights
 
-**Depends on:** Behavioral Learning V1 above — do not build as a separate analytics feature ahead of or instead of that foundation. Also sequenced behind real Beta usage and adoption-critical integrations (see the current priority framing above) — this is a post-Behavioral-Learning track, not the immediate next sprint even once Behavioral Learning ships.
+**Depends on:** Behavioral Learning V1's remaining work above (richer dimensions, real accumulated evidence) — do not build as a separate analytics feature ahead of or instead of that foundation. Also sequenced behind real Beta usage and adoption-critical integrations (see the current priority framing above) — the dashboard-ranking foundation shipping does not itself unblock this; meaningful behavioral data actually needs to accumulate first.
 
 **Surfaced by:** founder backlog reconciliation (2026-08-16); reconciled again (2026-08-16) against older printed roadmap notes describing rep activity/follow-up visibility, opportunities being worked, meetings, quotes, wins, revenue, adoption by rep, ignored/aging opportunities, team-level ROI, and executive summaries — folded into this single entry rather than becoming a separate project.
 
