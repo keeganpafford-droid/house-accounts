@@ -156,6 +156,7 @@ const REAL_SOURCE = [
   fn('mergeBusinessSignalInitiatives'), fn('clusterBusinessSignalOpportunities'),
   fn('isWebResearchSignal'), fn('signalLayerLabel'), fn('normalizeSignalLayerType'),
   fn('isRecentAccountActivity'), fn('assignOpportunityScore'), fn('getOpportunityScore'),
+  fn('currentOrgPreferences'), fn('ORG_PREFERENCE_FAMILY_BY_SIGNAL_LAYER'), fn('getOrgPreferenceAdjustmentForOpportunity'),
   fn('calculateOpportunityScore'), fn('normalizedConfidenceValue'), fn('scoreFromFreshness'),
   fn('evidenceCount'), fn('getOpportunityPlanningWindow'), fn('classifyMonthWindow'),
   fn('inferPurchaseMonth'), fn('monthIndexFromName'), fn('monthDistanceFromNow'),
