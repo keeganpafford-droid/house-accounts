@@ -38,6 +38,14 @@ import { classifyMonitoringSignalEligibility, buildTargetIdentityIndex, lookupTa
 // Details/Recently Researched on the client) is the single shared
 // canonicalization boundary this round's forensic review required.
 import { resolveOpportunityEvents } from './signal-intelligence.js';
+// Behavioral Learning V1, Phase 2 (dashboard-only wiring, founder-approved):
+// the ONE private, organization-scoped preference computation -- see that
+// module's own two-layer-doctrine header comment. Called at most once per
+// request (fetchOrgSignalPreferences() below), never per-opportunity, and
+// never trusted with anything but this endpoint's own server-derived
+// user.organization_id (see resolveDashboardUser() above) -- a client can
+// never influence which organization's preferences are computed.
+import { computeOrgSignalPreferences, canonicalPreferenceFamily, RECENCY_WINDOW_DAYS } from './lib/org-preference-learning.js';
 
 function json(res, status, body){ return res.status(status).json(body); }
 function clean(v=''){ return String(v || '').trim(); }
@@ -186,7 +194,27 @@ function confidenceWord(score){
   if(n >= 55) return 'Medium';
   return 'Low';
 }
-function rowToSignal(row){
+// Behavioral Learning V1, Phase 2: the minimal explainable metadata object
+// attached per-signal (correctness/auditability only -- no user-facing
+// explanation component reads this yet). Returns null when the family has
+// no computed entry at all (zero evidence for that family this request),
+// so a consumer can trivially tell "no data" apart from "data present."
+function orgPreferenceMetadataFor(payload, orgPreferences){
+  const family = canonicalPreferenceFamily(payload || {});
+  if(!family) return null;
+  const entry = orgPreferences?.[family];
+  if(!entry) return null;
+  return {
+    family,
+    adjustment: entry.adjustment,
+    sufficientEvidence: entry.sufficientEvidence,
+    totalEvidenceCount: entry.totalEvidenceCount,
+    qualityPositiveCount: entry.qualityPositiveCount,
+    qualityNegativeCount: entry.qualityNegativeCount,
+    outcomePositiveCount: entry.outcomePositiveCount
+  };
+}
+function rowToSignal(row, orgPreferences={}){
   const rawPayload = row.payload || {};
   // QA round 2, item 1: normalize actionability ONCE, here, for every signal
   // this endpoint ever returns. classifyLegacySignalActionability() passes
@@ -234,7 +262,14 @@ function rowToSignal(row){
     cleanSourceName: row.source_domain || payload.cleanSourceName || sourceDomain(sourceUrl),
     publishedDate: row.published_at || payload.publishedDate || payload.publicationDate || '',
     firstSeenAt: row.first_seen_at,
-    lastSeenAt: row.last_seen_at
+    lastSeenAt: row.last_seen_at,
+    // Behavioral Learning V1, Phase 2: correctness/auditability metadata
+    // only -- the dashboard's own scoring integration does NOT read this
+    // field (it looks up currentOrgPreferences by signalLayerType instead,
+    // see dashboard/index.html's getOrgPreferenceAdjustmentForOpportunity());
+    // this exists so a request/response can be inspected to answer "what
+    // preference data applied to this signal," independent of scoring.
+    orgPreference: orgPreferenceMetadataFor({ signalType: row.signal_type || payload.signalType }, orgPreferences)
   };
 }
 
@@ -732,6 +767,34 @@ function buildAccountsFromRows(accountRows, signalRows, accountOpportunityRows, 
   };
 }
 
+// Behavioral Learning V1, Phase 2: fetches exactly the ha_signal_events
+// rows computeOrgSignalPreferences() needs for ONE organization, once per
+// request. Bounded to a window generous enough to correctly resolve
+// evidence recency AND its parent-event lookups: quality-feedback and
+// outcome_reported rows only need the model's own RECENCY_WINDOW_DAYS
+// (90d) to matter for scoring, but an in-window outcome_reported row can
+// legitimately reference an outreach_made/opportunity_outreach_made parent
+// that is itself older than that -- fetching parents over a wider window
+// (2x, not unbounded) avoids silently losing that evidence to a missed
+// parent lookup without ever fetching this organization's full history.
+// Fails closed: any error here (missing env, a bad query, Supabase being
+// unreachable) is caught by the caller, never allowed to fail the whole
+// dashboard request -- see its own try/catch below.
+const ORG_PREFERENCE_EVENT_TYPES = ['signal_useful', 'signal_not_useful', 'opportunity_useful', 'opportunity_not_useful', 'outcome_reported'];
+const ORG_PREFERENCE_PARENT_EVENT_TYPES = ['outreach_made', 'opportunity_outreach_made'];
+async function fetchOrgSignalPreferences(organizationId){
+  if(!organizationId) return {};
+  const now = new Date();
+  const evidenceWindowStart = new Date(now.getTime() - RECENCY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const parentWindowStart = new Date(now.getTime() - (RECENCY_WINDOW_DAYS * 2) * 24 * 60 * 60 * 1000).toISOString();
+  const [evidenceRows, parentRows] = await Promise.all([
+    supabase(`ha_signal_events?organization_id=eq.${encodeURIComponent(organizationId)}&event_type=in.(${ORG_PREFERENCE_EVENT_TYPES.join(',')})&created_at=gte.${encodeURIComponent(evidenceWindowStart)}&select=id,organization_id,user_id,event_type,event_fingerprint,parent_event_id,payload,created_at&limit=5000`, {method:'GET'}),
+    supabase(`ha_signal_events?organization_id=eq.${encodeURIComponent(organizationId)}&event_type=in.(${ORG_PREFERENCE_PARENT_EVENT_TYPES.join(',')})&created_at=gte.${encodeURIComponent(parentWindowStart)}&select=id,organization_id,user_id,event_type,event_fingerprint,parent_event_id,payload,created_at&limit=5000`, {method:'GET'})
+  ]);
+  const events = [...(Array.isArray(evidenceRows) ? evidenceRows : []), ...(Array.isArray(parentRows) ? parentRows : [])];
+  return computeOrgSignalPreferences(organizationId, events, {now});
+}
+
 export default async function handler(req, res){
   if(req.method !== 'GET') return json(res, 405, {error:'Method not allowed'});
   try{
@@ -933,6 +996,24 @@ export default async function handler(req, res){
       return actionabilityStatus?.isPriorityEligible !== false;
     }).map(signalToOpportunity);
 
+    // Behavioral Learning V1, Phase 2 (dashboard-only, founder-approved):
+    // computed ONCE for this request, from this endpoint's own server-
+    // derived user.organization_id -- never a client-supplied value.
+    // Fails closed and LOCALLY: any error here must never fail the whole
+    // dashboard request (this is an enhancement, not a dashboard
+    // dependency) -- caught and logged here, not left to the outer
+    // handler's catch block, which would turn it into a 500 for
+    // everything. An empty {} result (the safe default on any failure)
+    // makes every downstream lookup resolve to "no adjustment," so the
+    // dashboard renders with its unmodified baseline ranking.
+    let orgPreferences = {};
+    try{
+      orgPreferences = await fetchOrgSignalPreferences(user.organization_id);
+    }catch(err){
+      console.error('[get-dashboard] org preference computation failed -- falling back to baseline ranking', { organizationId: user.organization_id, message: err?.message });
+      orgPreferences = {};
+    }
+
     return json(res, 200, {
       ok:true,
       user,
@@ -940,9 +1021,17 @@ export default async function handler(req, res){
       upload: upload || {},
       summary: upload?.summary || {},
       accounts: accountList,
-      signals: (uniqueSignals || []).map(rowToSignal),
+      signals: (uniqueSignals || []).map(row => rowToSignal(row, orgPreferences)),
       weeklyRuns: weeklyRuns || [],
       newThisWeek,
+      // Behavioral Learning V1, Phase 2: the complete per-family result,
+      // keyed by canonical family ('FOLLOW_UP'/'REPEAT_PATTERN'/
+      // 'BUSINESS_ACTIVITY') -- the one shared lookup table the dashboard
+      // client applies uniformly to every opportunity, including the
+      // Follow-Up/Repeat-Pattern ones it synthesizes client-side and never
+      // round-trips through this endpoint as discrete objects (see
+      // dashboard/index.html's getOrgPreferenceAdjustmentForOpportunity()).
+      orgPreferences,
       dashboardScope: viewMode === 'team' ? 'organization' : 'user',
       viewMode,
       canViewTeam: teamAllowed,
@@ -962,5 +1051,6 @@ export {
   rowToSignal, signalToOpportunity, uniqueSignalRows, uniqueAccountRows,
   buildAccountsFromRows, canonicalizeAccountOpportunities, isWebResearchSignal,
   buildAccountHistoryOpportunityRefs, stampAccountHistoryOpportunityRefs,
-  buildTargetIdentityIndex, lookupTargetIdentity
+  buildTargetIdentityIndex, lookupTargetIdentity,
+  fetchOrgSignalPreferences, orgPreferenceMetadataFor
 };

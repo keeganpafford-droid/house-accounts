@@ -2717,6 +2717,14 @@ let currentUploadId = null;
 let currentUploadName = '';
 let saveInProgress = false;
 let currentDashboardData = null;
+// Behavioral Learning V1, Phase 2 (dashboard-only wiring): the org-scoped
+// preference result api/get-dashboard.js computed ONCE for this request,
+// keyed by canonical family ('FOLLOW_UP'/'REPEAT_PATTERN'/'BUSINESS_ACTIVITY').
+// Read-only client-side lookup table -- getOrgPreferenceAdjustmentForOpportunity()
+// is the only thing that consults it. Never mutated here; a missing/failed
+// server-side computation is already normalized to {} before it reaches
+// this variable, so every lookup safely resolves to "no adjustment" (0).
+let currentOrgPreferences = {};
 // QA correction 4 (Northern Pool 0-vs-25 finding): window.accountRadarAccounts
 // is populated the instant a CSV is parsed client-side, BEFORE the server
 // save even runs, and is never reconciled against what the server actually
@@ -4615,6 +4623,12 @@ async function fetchAndRenderAggregateDashboard(email, {silent = false} = {}){
       return {ok:true, stale:true};
     }
     currentDashboardData = data;
+    // Behavioral Learning V1, Phase 2: fail-safe on the client too, not just
+    // the server -- a missing/malformed field here (any shape other than a
+    // plain object) must never throw during scoring, so it collapses to {}
+    // (every lookup then resolves to "no adjustment") rather than being
+    // trusted as-is.
+    currentOrgPreferences = (data.orgPreferences && typeof data.orgPreferences === 'object' && !Array.isArray(data.orgPreferences)) ? data.orgPreferences : {};
     dashboardCanViewTeam = !!data.canViewTeam;
     dashboardViewMode = data.viewMode || dashboardViewMode || defaultDashboardView();
     renderDashboardViewSwitcher();
@@ -12279,6 +12293,45 @@ function recommendationOneLine(opp){
   return why || 'This account has a specific reason to be contacted this week.';
 }
 
+// Behavioral Learning V1, Phase 2 (dashboard-only, downstream of eligibility):
+// maps an opportunity's own signalLayerType -- the SAME 3-value field every
+// opportunity already carries by the time scoring runs, regardless of
+// whether it came from a fresh ha_signals row, an account-embedded
+// snapshot, or a freshly client-synthesized Follow-Up/Repeat-Pattern item
+// (see the assignment sites this relies on: 'Business Activity Signal',
+// 'Follow-Up Signal', 'Repeat / Pattern Signal') -- to the same three
+// canonical family keys api/lib/org-preference-learning.js's
+// computeOrgSignalPreferences() uses server-side. This one small map is
+// what lets a single server-computed orgPreferences table apply uniformly
+// to every opportunity type without needing per-item server round-trips
+// for the client-synthesized ones.
+const ORG_PREFERENCE_FAMILY_BY_SIGNAL_LAYER = {
+  'Business Activity Signal': 'BUSINESS_ACTIVITY',
+  'Follow-Up Signal': 'FOLLOW_UP',
+  'Repeat / Pattern Signal': 'REPEAT_PATTERN'
+};
+// Pure, defensive lookup -- NEVER throws, NEVER returns anything outside
+// the server's own already-bounded [-8, 8] adjustment, and returns exactly
+// 0 (no effect on ranking) for every failure/missing-data case: no
+// preferences loaded yet, an unrecognized signalLayerType, a family with no
+// entry in the table (zero evidence), or a family entry whose own
+// sufficientEvidence is false (below the 5-event floor). This is the ONE
+// place a malformed/missing behavioral-preferences response can be trusted
+// not to change ranking -- see calculateOpportunityScore()'s own call site.
+function getOrgPreferenceAdjustmentForOpportunity(opp){
+  try{
+    const family = ORG_PREFERENCE_FAMILY_BY_SIGNAL_LAYER[opp?.signalLayerType];
+    if(!family) return 0;
+    const entry = currentOrgPreferences?.[family];
+    if(!entry || !entry.sufficientEvidence) return 0;
+    const adjustment = Number(entry.adjustment);
+    if(!Number.isFinite(adjustment)) return 0;
+    return Math.max(-8, Math.min(8, adjustment));
+  }catch{
+    return 0;
+  }
+}
+
 function calculateOpportunityScore(opp){
   if(!opp) return 0;
   const layer = signalLayerLabel(opp);
@@ -12324,6 +12377,17 @@ function calculateOpportunityScore(opp){
   if(evidenceCount(opp) === 0 && !opp.sourceUrl) score -= 12;
   if(confidence && confidence < 45) score -= 8;
   if(!opp.reasonToReachOut && !opp.whyNow) score -= 10;
+
+  // Behavioral Learning V1, Phase 2: ONE small additive term, applied last,
+  // after every baseline weight above -- this opportunity already cleared
+  // eligibility/actionability upstream (this function only ever runs on
+  // already-eligible candidates); this term can only reorder among those,
+  // never promote something that wasn't already valid. Bounded to [-8, 8]
+  // by the server, re-clamped defensively here too. Defaults to 0 (no
+  // effect) when no preferences are loaded, evidence is insufficient, or
+  // anything about the lookup fails -- see
+  // getOrgPreferenceAdjustmentForOpportunity()'s own doc comment.
+  score += getOrgPreferenceAdjustmentForOpportunity(opp);
 
   return clampScore(score);
 }

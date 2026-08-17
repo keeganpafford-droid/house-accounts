@@ -63,6 +63,9 @@ const SRC = [
   extractRange(DASHBOARD_SRC, 'function isClosedHistoricalRecord(record){', 'function sumRevenue(records){'),
   extractFn(DASHBOARD_SRC, 'normalizeSignalLayerType'),
   extractRange(DASHBOARD_SRC, 'function daysSinceDate(value){', 'function getRecommendationType(opp){'),
+  extractFn(DASHBOARD_SRC, 'currentOrgPreferences'),
+  extractFn(DASHBOARD_SRC, 'ORG_PREFERENCE_FAMILY_BY_SIGNAL_LAYER'),
+  extractFn(DASHBOARD_SRC, 'getOrgPreferenceAdjustmentForOpportunity'),
   extractRange(DASHBOARD_SRC, 'function calculateOpportunityScore(opp){', 'function assignOpportunityScore(opp, account){'),
   extractRange(DASHBOARD_SRC, 'function monthIndexFromName(name){', 'function opportunityMatchesTimebox(opp, timebox){'),
   // Prepare for Call grounding -- required tests 4/5/6/7: proves the

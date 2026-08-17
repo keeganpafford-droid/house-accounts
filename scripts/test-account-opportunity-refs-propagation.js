@@ -111,6 +111,9 @@ const SRC = [
   extractRange(DASHBOARD_SRC, 'function estimateFutureValue(account, opportunityType){', 'function getPriorityTier(opp){'),
   extractFn(DASHBOARD_SRC, 'normalizeSignalLayerType'),
   extractRange(DASHBOARD_SRC, 'function daysSinceDate(value){', 'function getRecommendationType(opp){'),
+  extractFn(DASHBOARD_SRC, 'currentOrgPreferences'),
+  extractFn(DASHBOARD_SRC, 'ORG_PREFERENCE_FAMILY_BY_SIGNAL_LAYER'),
+  extractFn(DASHBOARD_SRC, 'getOrgPreferenceAdjustmentForOpportunity'),
   extractRange(DASHBOARD_SRC, 'function calculateOpportunityScore(opp){', 'function assignOpportunityScore(opp, account){'),
   extractRange(DASHBOARD_SRC, 'function monthIndexFromName(name){', 'function opportunityMatchesTimebox(opp, timebox){')
 ].join('\n\n');
