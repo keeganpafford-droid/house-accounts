@@ -1,40 +1,62 @@
 // Account Intelligence destination -- REAL-BROWSER navigation coverage.
-// Founder correction (2026-08-19): Preview QA reported that clicking either
-// entry point ("the account name" in the accordion list, "View Account" in
-// the Manage Customer Accounts modal) appeared to do nothing. Deterministic
-// vm-sandbox assertions on extracted source (scripts/test-dashboard-orchestration.js,
-// scripts/test-research-run-reattachment.js) couldn't have caught this --
-// they check markup/state, never physically click a real DOM element in a
-// real browser and watch what actually happens on screen.
+//
+// Round 1 (founder correction, 2026-08-19): Preview QA reported that
+// clicking either entry point ("the account name" in the accordion list,
+// "View Account" in the Manage Customer Accounts modal) appeared to do
+// nothing. Deterministic vm-sandbox assertions on extracted source
+// (scripts/test-dashboard-orchestration.js, scripts/test-research-run-reattachment.js)
+// couldn't have caught this -- they check markup/state, never physically
+// click a real DOM element in a real browser and watch what actually
+// happens on screen.
 //
 // Root-cause reproduction (this file's method): load the REAL, unmodified
-// dashboard/index.html via file://, stub only the network boundary
-// (auth-client.js, /api/get-dashboard, /api/monitoring-lists,
-// /api/whitespace-map) so the page boots through its own real code path,
-// then physically click the real rendered elements and observe
-// window.location.hash, the hashchange event, the resulting DOM, and
-// window.scrollY -- exactly what a rep's browser does.
+// dashboard/index.html, stub only the network boundary (auth-client.js,
+// /api/get-dashboard, /api/monitoring-lists, /api/whitespace-map) so the
+// page boots through its own real code path, then physically click the
+// real rendered elements and observe window.location.hash, the hashchange
+// event, the resulting DOM, and window.scrollY -- exactly what a rep's
+// browser does. Tested against BOTH file:// and a real local http://
+// server (see SERVE_MODES below) to rule out any protocol-specific
+// navigation quirk.
 //
-// Finding: the click chain itself (click -> hash change -> hashchange event
-// -> handleMvpDashboardRoute() -> renderDetailedAccountViews() entering
-// focused mode) worked correctly end to end. The actual defect: nothing
-// ever moved the viewport. #account=<name> is not a real element id, so
-// the browser's native "jump to #fragment" scroll never fires (unlike an
-// ordinary named-anchor link), #accountList can sit far down the page below
-// Priorities/KPIs, and closing the modal reveals the background page at ITS
-// OWN prior scroll position. The DOM genuinely updated; the viewport never
-// moved -- indistinguishable from the click doing nothing. Fixed with an
-// explicit scrollIntoView() when entering focus mode (see
-// handleMvpDashboardRoute()'s own comment).
+// Finding (round 1): the click chain itself (click -> hash change ->
+// hashchange event -> handleMvpDashboardRoute() -> renderDetailedAccountViews()
+// entering focused mode) worked correctly end to end. The actual defect:
+// nothing ever moved the viewport. #account=<name> is not a real element
+// id, so the browser's native "jump to #fragment" scroll never fires
+// (unlike an ordinary named-anchor link), #accountList can sit far down
+// the page below Priorities/KPIs, and closing the modal reveals the
+// background page at ITS OWN prior scroll position. The DOM genuinely
+// updated; the viewport never moved -- indistinguishable from the click
+// doing nothing. Fixed with an explicit scrollIntoView() when entering
+// focus mode (see handleMvpDashboardRoute()'s own comment).
+//
+// Round 2 (founder correction, 2026-08-19, commit e9ab6c0): founder
+// suspected an encoded-fragment mismatch (encodeURIComponent('anchor
+// brewing supply') producing anchor%20brewing%20supply vs. an un-decoded
+// comparison) for a real multi-word account name. Reproduced with
+// multi-word ("Anchor Brewing Supply") and punctuation ("A&B's Diner")
+// names specifically, over both file:// and a real http:// server, for
+// BOTH entry points -- accountIntelligenceHref()'s encodeURIComponent()
+// and currentAccountIntelligenceFocusKey()'s decodeURIComponent() proved
+// symmetric in every configuration tested; the match, focused render, and
+// scroll all succeeded. This file's ACCOUNT_FIXTURES below codify exactly
+// those three names (plus the original single-word Acme case) as
+// permanent regression coverage, run against both entry points and both
+// serve modes, so this class of bug is caught here even if a future
+// change breaks the symmetry.
 //
 // Usage: node scripts/test-account-intelligence-live-navigation.js
 import { chromium } from 'playwright';
 import path from 'path';
+import http from 'http';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..');
-const DASHBOARD_URL = 'file://' + path.join(REPO_ROOT, 'dashboard', 'index.html');
+const DASHBOARD_HTML = readFileSync(path.join(REPO_ROOT, 'dashboard', 'index.html'), 'utf8');
+const DASHBOARD_FILE_URL = 'file://' + path.join(REPO_ROOT, 'dashboard', 'index.html');
 
 let failures = 0;
 function assert(condition, message){
@@ -43,8 +65,7 @@ function assert(condition, message){
 }
 
 function resolveChromiumExecutablePath(){
-  const candidate = '/opt/pw-browsers/chromium';
-  return { executablePath: candidate };
+  return { executablePath: '/opt/pw-browsers/chromium' };
 }
 
 const AUTH_CLIENT_STUB = `
@@ -55,14 +76,20 @@ window.HouseAuth = {
 };
 `;
 
+// The exact scenarios the founder asked for: a single-word baseline, a
+// real multi-word name (the specific case that triggered round 2), and a
+// name with punctuation/apostrophes.
+const ACCOUNT_FIXTURES = ['Acme', 'Anchor Brewing Supply', "A&B's Diner"];
+
 function dashboardResponse(){
   return {
     ok: true,
     personalEmpty: false,
-    accounts: [
-      { account_name: 'Acme Corp', industry: 'Promotional Products', contact_name: '', contact_email: '', metrics: { revenue: 45210, activePipelineValue: 8200, orderCount: 12, activePipelineCount: 2 }, raw_data: { records: [] }, upload_id: 'upload-1' },
-      { account_name: 'Globex Inc', industry: 'Industrial', contact_name: '', contact_email: '', metrics: { revenue: 12000, activePipelineValue: 0, orderCount: 4, activePipelineCount: 0 }, raw_data: { records: [] }, upload_id: 'upload-1' }
-    ],
+    accounts: ACCOUNT_FIXTURES.map((name, i) => ({
+      account_name: name, industry: 'Test Industry', contact_name: '', contact_email: '',
+      metrics: { revenue: 10000 + i * 1000, activePipelineValue: 0, orderCount: i + 1, activePipelineCount: 0 },
+      raw_data: { records: [] }, upload_id: 'upload-1'
+    })),
     upload: { id: 'upload-1', upload_name: 'QA Fixture' },
     user: { email: 'test@example.com', name: 'Test User', company: '', role: '', house_accounts: '', crm_erp: '' },
     canViewTeam: false,
@@ -75,17 +102,17 @@ function monitoringListsResponse(uploadId){
   if(!uploadId){
     return {
       ok: true, scope: 'user', role: 'owner',
-      lists: { customer: [ { id: 'upload-1', type: 'customer', name: 'QA Fixture', status: 'active', companyCount: 2, activeCount: 2, pausedCount: 0, everResearched: false, lastUpload: '2026-08-01T00:00:00Z', lastScan: '', signalCount: 0, researchRunState: { status: 'idle' } } ], prospect: [] },
-      summary: { activeCustomers: 2, pausedCustomers: 0, activeProspects: 0, pausedProspects: 0, monitoringCadence: 'Ongoing', monitoringStatus: 'Active' }
+      lists: { customer: [ { id: 'upload-1', type: 'customer', name: 'QA Fixture', status: 'active', companyCount: ACCOUNT_FIXTURES.length, activeCount: ACCOUNT_FIXTURES.length, pausedCount: 0, everResearched: false, lastUpload: '2026-08-01T00:00:00Z', lastScan: '', signalCount: 0, researchRunState: { status: 'idle' } } ], prospect: [] },
+      summary: { activeCustomers: ACCOUNT_FIXTURES.length, pausedCustomers: 0, activeProspects: 0, pausedProspects: 0, monitoringCadence: 'Ongoing', monitoringStatus: 'Active' }
     };
   }
   return {
     ok: true, uploadId,
-    accounts: [
-      { id: 'acct-1', uploadId, name: 'Acme Corp', industry: 'Promotional Products', monitoringStatus: 'active', researchStatus: 'uploaded', lastResearchedAt: '', domain: '', dateAdded: '2026-01-01T00:00:00Z', hasActionableAlert: false },
-      { id: 'acct-2', uploadId, name: 'Globex Inc', industry: 'Industrial', monitoringStatus: 'active', researchStatus: 'uploaded', lastResearchedAt: '', domain: '', dateAdded: '2026-01-01T00:00:00Z', hasActionableAlert: false }
-    ],
-    pageInfo: { limit: 50, hasMore: false, nextCursor: null, total: 2, search: '' }
+    accounts: ACCOUNT_FIXTURES.map((name, i) => ({
+      id: `acct-${i}`, uploadId, name, industry: 'Test Industry', monitoringStatus: 'active', researchStatus: 'uploaded',
+      lastResearchedAt: '', domain: '', dateAdded: '2026-01-01T00:00:00Z', hasActionableAlert: false
+    })),
+    pageInfo: { limit: 50, hasMore: false, nextCursor: null, total: ACCOUNT_FIXTURES.length, search: '' }
   };
 }
 
@@ -109,97 +136,146 @@ async function routeApi(page){
   });
 }
 
+// SERVE_MODES: exercised over both a plain file:// load AND a real local
+// HTTP server, so a protocol-specific navigation/hash-encoding quirk (the
+// founder's suspicion) can't hide behind "well it's only file://".
+async function withDashboardUrl(mode, fn){
+  if(mode === 'file'){
+    return fn(DASHBOARD_FILE_URL);
+  }
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(DASHBOARD_HTML);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try{
+    return await fn(`http://127.0.0.1:${port}/dashboard/`);
+  } finally {
+    server.close();
+  }
+}
+
+async function testEntryPoint1(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    const pageErrors = [];
+    page.on('pageerror', err => pageErrors.push(String(err)));
+    await routeApi(page);
+    await page.goto(dashboardUrl);
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+
+    for(const accountName of ACCOUNT_FIXTURES){
+      const label = `[${mode}/name-click/"${accountName}"]`;
+
+      // Reset to All Accounts and land scrolled down at the account list,
+      // matching a real rep who has scrolled past Priorities/KPIs -- the
+      // exact condition that hid the round-1 bug from a screenshot taken
+      // at scrollY=0.
+      await page.evaluate(() => { window.location.hash = ''; });
+      await page.waitForTimeout(150);
+      await page.evaluate(() => {
+        document.getElementById('accountList')?.scrollIntoView({ block: 'start' });
+        window.scrollBy(0, -50);
+      });
+      const scrollYBefore = await page.evaluate(() => window.scrollY);
+
+      const nameLink = page.locator(`.account-card[data-account-name="${accountName.replace(/"/g, '\\"')}"] .acct-name a`);
+      const href = await nameLink.getAttribute('href');
+      // Round 2 REQUIRED check: the href must be a validly percent-encoded
+      // fragment whose decoded form round-trips to the exact normalized key
+      // -- proves encodeURIComponent() at generation time is symmetric with
+      // decodeURIComponent() at parse time for real multi-word/punctuation
+      // names, not just single-word ones.
+      const expectedNormalized = await page.evaluate(name => normalizeCompanyNameForLimit(name), accountName);
+      const decodedFromHref = href ? decodeURIComponent(href.replace(/^#account=/, '')) : null;
+      assert(decodedFromHref === expectedNormalized, `${label} REQUIRED: the generated href, decoded, equals the normalized comparison key (href=${JSON.stringify(href)}, decoded=${JSON.stringify(decodedFromHref)}, expected=${JSON.stringify(expectedNormalized)})`);
+
+      await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
+      await nameLink.click();
+      await page.waitForTimeout(500);
+
+      const hashAfter = await page.evaluate(() => window.location.hash);
+      const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
+      const cardCount = await page.locator('#accountList .account-card').count();
+      const focusedName = await page.locator('#accountList .account-card').first().getAttribute('data-account-name').catch(() => null);
+      const backLinkPresent = await page.locator('.account-intelligence-back').count();
+      const scrollYAfter = await page.evaluate(() => window.scrollY);
+
+      assert(hashAfter === href, `${label} REQUIRED: clicking the account name changes window.location.hash to the link's own href (after=${JSON.stringify(hashAfter)}, expected=${JSON.stringify(href)})`);
+      assert(hashchangeFired === true, `${label} REQUIRED: a real hashchange event fires as a result of the click`);
+      assert(cardCount === 1, `${label} REQUIRED: renderDetailedAccountViews() enters focused mode -- exactly one card renders (got ${cardCount})`);
+      assert(focusedName === accountName, `${label} REQUIRED: the focused card is for the EXACT account that was clicked, not a different one (got ${JSON.stringify(focusedName)})`);
+      assert(backLinkPresent === 1, `${label} REQUIRED: the back-to-All-Accounts link renders once focused mode is active`);
+      assert(scrollYAfter !== scrollYBefore, `${label} REQUIRED: the viewport scrolls to the destination (before=${scrollYBefore}, after=${scrollYAfter})`);
+    }
+
+    assert(pageErrors.length === 0, `[${mode}/name-click] REQUIRED: no uncaught page errors across any fixture account (got: ${JSON.stringify(pageErrors)})`);
+    await page.close();
+  });
+}
+
+async function testEntryPoint2(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    const pageErrors = [];
+    page.on('pageerror', err => pageErrors.push(String(err)));
+    await routeApi(page);
+    await page.goto(dashboardUrl);
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+
+    for(const accountName of ACCOUNT_FIXTURES){
+      const label = `[${mode}/view-account/"${accountName}"]`;
+
+      await page.evaluate(() => { window.location.hash = ''; window.scrollTo(0, 0); });
+      await page.waitForTimeout(150);
+
+      await page.locator('#manageCustomerAccountsBtn').click();
+      await page.waitForSelector('#accountManagerModal', { state: 'visible', timeout: 15000 });
+      // Expand only if not already expanded from a prior fixture in this
+      // same page/loop -- the toggle flips state, so clicking it while
+      // already expanded would collapse the list instead.
+      const alreadyExpanded = await page.locator('[data-view-account-act="account"]').count() > 0;
+      if(!alreadyExpanded){
+        await page.locator('[data-list-expand-toggle]').first().click();
+        await page.waitForSelector('[data-view-account-act="account"]', { state: 'attached', timeout: 15000 });
+      }
+
+      const viewAccountBtn = page.locator(`button[data-view-account-act="account"][data-account-name="${accountName.replace(/"/g, '\\"')}"]`);
+      assert(await viewAccountBtn.count() === 1, `${label} REQUIRED: the modal renders a real "View Account" button for this exact account`);
+
+      const expectedHref = await page.evaluate(name => accountIntelligenceHref(name), accountName);
+
+      await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
+      await viewAccountBtn.click();
+      await page.waitForTimeout(500);
+
+      const hashAfter = await page.evaluate(() => window.location.hash);
+      const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
+      const modalDisplay = await page.evaluate(() => { const m = document.getElementById('accountManagerModal'); return m ? getComputedStyle(m).display : 'MISSING'; });
+      const cardCount = await page.locator('#accountList .account-card').count();
+      const focusedName = await page.locator('#accountList .account-card').first().getAttribute('data-account-name').catch(() => null);
+      const scrollYAfter = await page.evaluate(() => window.scrollY);
+
+      assert(hashAfter === expectedHref, `${label} REQUIRED: clicking View Account changes the hash to the exact expected destination (after=${JSON.stringify(hashAfter)}, expected=${JSON.stringify(expectedHref)})`);
+      assert(hashchangeFired === true, `${label} REQUIRED: a real hashchange event fires as a result of clicking View Account`);
+      assert(modalDisplay === 'none', `${label} REQUIRED: the modal closes so the destination is actually visible, not left behind the backdrop`);
+      assert(cardCount === 1, `${label} REQUIRED: the underlying page enters focused mode for the clicked account (got ${cardCount} cards)`);
+      assert(focusedName === accountName, `${label} REQUIRED: the focused card is for the EXACT account clicked in the modal, not a different one (got ${JSON.stringify(focusedName)})`);
+      assert(scrollYAfter > 0, `${label} REQUIRED: the page scrolls down to reveal the focused card after the modal closes (scrollY after=${scrollYAfter})`);
+    }
+
+    assert(pageErrors.length === 0, `[${mode}/view-account] REQUIRED: no uncaught page errors across any fixture account (got: ${JSON.stringify(pageErrors)})`);
+    await page.close();
+  });
+}
+
 async function main(){
   const browser = await chromium.launch(resolveChromiumExecutablePath());
-
-  // =========================================================================
-  // Entry point 1: clicking the account name in the accordion list.
-  // =========================================================================
-  {
-    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
-    const pageErrors = [];
-    page.on('pageerror', err => pageErrors.push(String(err)));
-    await routeApi(page);
-    await page.goto(DASHBOARD_URL);
-    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
-
-    // Land scrolled down at the account list, matching a real rep who has
-    // scrolled past Priorities/KPIs -- the exact condition that hid the bug
-    // from a screenshot taken at scrollY=0.
-    await page.evaluate(() => {
-      document.getElementById('accountList')?.scrollIntoView({ block: 'start' });
-      window.scrollBy(0, -50);
-    });
-    const scrollYBefore = await page.evaluate(() => window.scrollY);
-
-    const nameLink = page.locator('.account-card .acct-name a').first();
-    const href = await nameLink.getAttribute('href');
-    assert(/^#account=/.test(href || ''), `REQUIRED: the account name is a real link to the Account Intelligence destination (got href=${JSON.stringify(href)})`);
-
-    const hashBefore = await page.evaluate(() => window.location.hash);
-    assert(hashBefore === '', `sanity: no #account= hash before the click (got ${JSON.stringify(hashBefore)})`);
-
-    await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
-    await nameLink.click();
-    await page.waitForTimeout(500);
-
-    const hashAfter = await page.evaluate(() => window.location.hash);
-    const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
-    const cardCount = await page.locator('#accountList .account-card').count();
-    const backLinkPresent = await page.locator('.account-intelligence-back').count();
-    const scrollYAfter = await page.evaluate(() => window.scrollY);
-
-    assert(hashAfter === href, `REQUIRED: clicking the account name actually changes window.location.hash to the link's own href (before=${JSON.stringify(hashBefore)}, after=${JSON.stringify(hashAfter)})`);
-    assert(hashchangeFired === true, 'REQUIRED: a real hashchange event fires as a result of the click (proves handleMvpDashboardRoute() runs, not just a same-document href rewrite)');
-    assert(cardCount === 1, `REQUIRED: renderDetailedAccountViews() enters focused mode -- exactly one card renders, not the full list (got ${cardCount})`);
-    assert(backLinkPresent === 1, 'REQUIRED: the back-to-All-Accounts link renders once focused mode is active');
-    assert(scrollYAfter !== scrollYBefore, `REQUIRED (the actual founder-reported bug): the viewport scrolls to the destination -- a click that only changes the DOM off-screen is indistinguishable from doing nothing (scrollY before=${scrollYBefore}, after=${scrollYAfter})`);
-    assert(pageErrors.length === 0, `REQUIRED: no uncaught page errors during this flow (got: ${JSON.stringify(pageErrors)})`);
-
-    await page.close();
+  for(const mode of ['file', 'http']){
+    await testEntryPoint1(browser, mode);
+    await testEntryPoint2(browser, mode);
   }
-
-  // =========================================================================
-  // Entry point 2: "View Account" inside the Manage Customer Accounts modal.
-  // =========================================================================
-  {
-    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
-    const pageErrors = [];
-    page.on('pageerror', err => pageErrors.push(String(err)));
-    await routeApi(page);
-    await page.goto(DASHBOARD_URL);
-    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
-
-    await page.locator('#manageCustomerAccountsBtn').click();
-    await page.waitForSelector('#accountManagerModal', { state: 'visible', timeout: 15000 });
-    await page.locator('[data-list-expand-toggle]').first().click();
-    await page.waitForSelector('[data-view-account-act="account"]', { state: 'attached', timeout: 15000 });
-
-    const viewAccountBtn = page.locator('button[data-view-account-act="account"]').first();
-    assert(await viewAccountBtn.count() === 1, 'REQUIRED: the Manage Customer Accounts modal renders a real "View Account" button');
-
-    await page.evaluate(() => window.scrollTo(0, 0));
-    const hashBefore = await page.evaluate(() => window.location.hash);
-    await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
-    await viewAccountBtn.click();
-    await page.waitForTimeout(500);
-
-    const hashAfter = await page.evaluate(() => window.location.hash);
-    const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
-    const modalDisplay = await page.evaluate(() => { const m = document.getElementById('accountManagerModal'); return m ? getComputedStyle(m).display : 'MISSING'; });
-    const cardCount = await page.locator('#accountList .account-card').count();
-    const scrollYAfter = await page.evaluate(() => window.scrollY);
-
-    assert(hashBefore === '' && /^#account=/.test(hashAfter), `REQUIRED: clicking View Account changes the hash to a real #account= destination (before=${JSON.stringify(hashBefore)}, after=${JSON.stringify(hashAfter)})`);
-    assert(hashchangeFired === true, 'REQUIRED: a real hashchange event fires as a result of clicking View Account');
-    assert(modalDisplay === 'none', 'REQUIRED: the modal closes so the destination is actually visible, not left behind the backdrop');
-    assert(cardCount === 1, `REQUIRED: the underlying page enters focused mode for the clicked account (got ${cardCount} cards)`);
-    assert(scrollYAfter > 0, `REQUIRED (the actual founder-reported bug): the page scrolls down to reveal the focused card after the modal closes -- otherwise the rep is left staring at whatever was behind the modal, with no visible sign anything happened (scrollY after=${scrollYAfter})`);
-    assert(pageErrors.length === 0, `REQUIRED: no uncaught page errors during this flow (got: ${JSON.stringify(pageErrors)})`);
-
-    await page.close();
-  }
-
   await browser.close();
 }
 
