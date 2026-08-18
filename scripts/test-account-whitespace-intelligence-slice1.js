@@ -130,7 +130,7 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   const hr = matrix.rows.find(r => r.center === 'HR / People');
   assert(hr.cells.every(c => c.status === 'whitespace'), 'REQUIRED: HR / People x Apparel never reaches covered, even though HR is the only contact and Apparel is the only category purchased');
   assert(hr.metaLine === 'Jane Doe · known contact', 'REQUIRED: the contact still produces real row-level known-relationship metadata');
-  assert(matrix.unattributed.length === 1 && matrix.unattributed.includes('Apparel'), `REQUIRED: Apparel still surfaces as an account-wide purchase not yet attributed, never as a false HR intersection (got ${JSON.stringify(matrix.unattributed)})`);
+  assert(matrix.unattributed.length === 1 && matrix.unattributed.includes('Apparel'), `REQUIRED: Apparel still surfaces as an account-wide purchase not fully attributed, never as a false HR intersection (got ${JSON.stringify(matrix.unattributed)})`);
 }
 {
   // Even the PREVIOUS (now-superseded) standard's positive case -- a

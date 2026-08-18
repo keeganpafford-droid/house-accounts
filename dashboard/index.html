@@ -1192,6 +1192,16 @@
   .rank{
     font-family:var(--mono); font-size:1.1rem; color:var(--muted);
   }
+  /* Account Intelligence focused view (founder correction, 2026-08-19):
+     the rank badge is omitted here (accountCardHtml()), so the grid needs
+     one fewer leading track -- without this, the name/meta block was
+     silently squeezed into the 60px column meant for the rank badge,
+     collapsing "Acme Corp" and its meta line into an unreadably narrow
+     wrap. Same column proportions otherwise, just without the leading
+     60px track. */
+  .account-head-focused{
+    grid-template-columns:1fr auto auto auto;
+  }
   .acct-name{font-family:var(--display); font-weight:700; font-size:1.3rem;}
   .acct-meta{font-family:var(--mono); font-size:0.75rem; color:var(--muted); margin-top:2px;}
 
@@ -1889,6 +1899,7 @@
     .opportunities-grid{grid-template-columns:1fr;}
     .signals-grid{grid-template-columns:1fr;}
     .account-head{grid-template-columns:40px 1fr; }
+    .account-head-focused{grid-template-columns:1fr; }
     .score-bar-wrap{display:none;}
     .score-blocks{flex-direction:column; gap:12px;}
     .breakdown{grid-template-columns:repeat(2,1fr);}
@@ -10575,8 +10586,12 @@ function getRelationshipMode(account){
 //     known contact"), never painted across an entire row's cells --
 //     it describes the buying center, not any specific offering.
 //   - Real category purchases with no attributable buying center render
-//     in a separate "Account-wide purchases not yet attributed" panel,
+//     in a separate "Account-wide purchases not fully attributed" panel,
 //     outside the organizational grid -- never a fake buying-center row.
+//     ("Not fully" rather than "not yet," 2026-08-19: mapping one real
+//     intersection later does not prove the category's ENTIRE historical
+//     purchase volume is now attributed to that buying center -- other,
+//     still-unattributed buying centers may also have bought it.)
 //     Since no automatic attribution exists (see the Covered rule
 //     above), every real purchased category an account has always lands
 //     here today.
@@ -10781,7 +10796,7 @@ function renderUnattributedPurchasesPanel(categories){
   const pills = categories.map(cat => `<span class="ws-unattributed-pill">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</span>`).join('');
   return `
     <div class="ws-unattributed-panel">
-      <div class="ws-unattributed-title">Account-wide purchases not yet attributed</div>
+      <div class="ws-unattributed-title">Account-wide purchases not fully attributed</div>
       <div class="ws-unattributed-sub">These categories have real purchase history, but House Accounts can't yet tell which part of the account they came through.</div>
       <div class="ws-unattributed-pills">${pills}</div>
     </div>
@@ -13500,7 +13515,7 @@ function accountCardHtml(a, idx, opts = {}){
   const focused = !!opts.focused;
   return `
     <div class="account-card" data-account-name="${escapeHtml(a.name)}" data-upload-id="${escapeHtml(a.uploadId || '')}">
-      <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
+      <div class="account-head${focused ? ' account-head-focused' : ''}" onclick="this.nextElementSibling.classList.toggle('open')">
         ${focused ? '' : `<div class="rank">#${idx + 1}</div>`}
         <div>
           <div class="acct-name"><a href="${accountIntelligenceHref(a.name)}">${escapeHtml(a.name)}</a></div>

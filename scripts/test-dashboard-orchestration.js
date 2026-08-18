@@ -942,6 +942,13 @@ async function testAccountIntelligenceDestination(){
     assert(!/class="rank"/.test(focused.html), 'k) focused: the rank badge is omitted in the focused single-account view (out of place outside a ranked list)');
     assert(focused.html.includes('account-intelligence-back'), 'k) REQUIRED: a back link to All Accounts renders in focused mode');
     assert(/href="#"[^>]*>.*All Accounts/.test(focused.html) || /All Accounts/.test(focused.html), 'k) focused: the back link is labeled All Accounts');
+    // Founder correction (2026-08-19): omitting the rank badge without also
+    // adjusting the grid's column count left the name/meta block squeezed
+    // into the 60px track meant for the rank badge -- "Acme Corp" and its
+    // meta line collapsed into an unreadably narrow wrap in Preview. The
+    // focused header must carry the account-head-focused class, which
+    // supplies the corrected (one-fewer-track) grid-template-columns.
+    assert(/class="account-head account-head-focused"/.test(focused.html), 'k) REQUIRED: the focused card header carries account-head-focused, the CSS hook that gives the name/meta block its full-width column instead of the rank badge\'s narrow 60px track');
   }
 
   // A hash matching no currently-loaded account -> graceful "not found"
