@@ -1222,10 +1222,16 @@
   .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
 
   .ws-subtitle{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:14px;}
+  /* Founder correction (2026-08-19): fixed-width columns intentionally
+     never shrink to fit a laptop-width container -- the matrix scrolls
+     horizontally instead, with the Buying Center column pinned via
+     position:sticky so a rep never loses track of which row they're
+     looking at while scrolled right. */
   .ws-matrix-scroll{overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
-  .ws-matrix{display:grid; grid-template-columns:160px repeat(11,60px); gap:4px; align-items:stretch;}
+  .ws-matrix{display:grid; grid-template-columns:168px repeat(11,68px); gap:4px; align-items:stretch; width:max-content; min-width:100%;}
+  .ws-corner{position:sticky; left:0; z-index:2; background:#fafaf6;}
   .ws-colhead{font-family:var(--body); font-size:0.62rem; font-weight:600; color:var(--muted); text-align:center; line-height:1.2; padding:0 2px 6px; align-self:end;}
-  .ws-rowhead{padding:8px 10px 8px 0; display:flex; flex-direction:column; justify-content:center;}
+  .ws-rowhead{position:sticky; left:0; z-index:2; background:#fafaf6; padding:8px 10px 8px 0; display:flex; flex-direction:column; justify-content:center;}
   .ws-rowhead-name{font-family:var(--display); font-weight:700; font-size:0.88rem; color:var(--ink);}
   .ws-rowhead-meta{font-family:var(--body); font-size:0.68rem; color:var(--muted); margin-top:2px;}
   .ws-cell{border-radius:6px; min-height:38px; display:flex; align-items:center; justify-content:center; background:#fff; border:1px solid var(--line);}
@@ -1243,6 +1249,8 @@
   .ws-map-chip{font-family:var(--body); font-size:0.8rem; color:var(--ink); background:#fafaf6; border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer;}
   .ws-map-chip:hover{border-color:var(--radar);}
   .ws-map-chip.selected{background:rgba(31,183,174,0.14); border-color:var(--radar); color:var(--radar); font-weight:700;}
+  .ws-map-chip.pending{opacity:0.55; cursor:wait;}
+  .ws-map-chip:disabled{cursor:not-allowed;}
   .ws-map-prompt-hint{font-family:var(--body); font-size:0.7rem; color:var(--muted); margin-top:10px;}
   .ws-unattributed-panel{margin-top:18px; padding-top:14px; border-top:1px solid var(--line);}
   .ws-unattributed-title{font-family:var(--body); font-weight:700; font-size:0.82rem; color:var(--ink); margin-bottom:3px;}
@@ -10480,25 +10488,37 @@ function getRelationshipMode(account){
 
 // ============================================================================
 // Account Expansion / Whitespace Intelligence -- matrix presentation
-// (Buying Center rows × Offering columns). Replaces the earlier two-list
-// chip view. No grounded Active Expansion Play logic and no durable,
-// cross-device cell-level confirmation persistence exist yet -- see
-// BACKLOG.md's "Account Expansion / Whitespace Intelligence / Growth Map"
-// entry. Only two cell states ever render from real evidence: covered and
-// whitespace. Not-applicable and active-play have reserved markup/CSS
-// (renderWhitespaceCell() below) but computeAccountWhitespaceMatrix()
-// never assigns them -- no synthetic/fake cells in a real account.
+// (Buying Center rows × Offering columns). No grounded Active Expansion
+// Play logic exists yet -- see BACKLOG.md's "Account Expansion /
+// Whitespace Intelligence / Growth Map" entry. Only two cell states ever
+// render from real evidence: covered and whitespace. Not-applicable and
+// active-play have reserved markup/CSS (renderWhitespaceCell() below) but
+// computeAccountWhitespaceMatrix() never assigns them -- no synthetic/fake
+// cells in a real account.
 //
 // Doctrine:
 //   - Absence of evidence is never rendered as confirmed absence -- a
 //     cell with no linked evidence is whitespace, never a claim either
 //     way.
 //   - A known CONTACT does not by itself prove covered buying-center
-//     coverage. A cell only reaches covered when a SINGLE order row
-//     carries both a transaction-evidenced signal (hasOrderHistoryEvidence())
-//     and a classifiable department AND that same row's own category --
-//     never two independent account-level facts (a department contact
-//     somewhere + a category purchase somewhere) stitched together.
+//     coverage.
+//   - Same-row co-occurrence is NOT sufficient by itself. Founder
+//     correction (2026-08-19): real exports can repeat one account
+//     contact across every order row regardless of category, which would
+//     make row-level co-occurrence just as unreliable as account-level
+//     co-occurrence -- the row-level check alone cannot tell "this
+//     contact is genuinely tied to this specific purchase" apart from
+//     "this contact is the account's static default and happens to sit
+//     on every row." A cell reaches covered only when a transaction-
+//     evidenced, department-classified contact's OWN evidenced rows span
+//     EXACTLY ONE category -- i.e. the contact is genuinely discriminating,
+//     never a blanket contact reused across everything the account ever
+//     bought. A contact spanning multiple categories still contributes
+//     real row-level "known relationship" metadata; it just never backs a
+//     specific cell. This is a deliberately conservative standard --
+//     rep confirmation or future integration data (a real per-order
+//     buyer field) is how a legitimate multi-category contact eventually
+//     earns real cell coverage, not a looser inference rule.
 //   - Known-relationship context lives on the ROW label ("Jane Doe ·
 //     known contact"), never painted across an entire row's cells --
 //     it describes the buying center, not any specific offering.
@@ -10511,11 +10531,17 @@ function getRelationshipMode(account){
 //     mapping prompt instead of a near-empty matrix -- House Accounts
 //     builds the map wherever it has evidence; the rep supplies only a
 //     small correction (which buying centers apply here), never
-//     per-cell data entry. That confirmation is stored client-side only
-//     (localStorage, the same established pattern as
-//     dismissedResearchNamespace() elsewhere in this file) -- NOT the
-//     durable, cross-device, org-shared persistence a future slice still
-//     needs to design.
+//     per-cell data entry.
+//   - Founder correction (2026-08-19): that confirmation is durable,
+//     organization-scoped, cross-device state (api/whitespace-map.js +
+//     supabase-schema-migration-24-whitespace-confirmations.sql), not a
+//     browser preference -- a rep confirming a relationship must be
+//     visible to every authorized member of the organization, on any
+//     device. Keyed by (organization_id, normalizeCompanyName(accountName)),
+//     the same identity convention ha_monitoring_targets already
+//     established, without a hard foreign-key coupling to that table's
+//     monitoring-cadence lifecycle (see the migration's own header
+//     comment).
 // ============================================================================
 
 // The explicit department taxonomy to grid whitespace against -- reuses
@@ -10535,6 +10561,57 @@ const WHITESPACE_CATEGORIES = ['Apparel', 'Headwear', 'Drinkware', 'Event / Give
 // (used for matching/evidence) is never altered.
 const WHITESPACE_CATEGORY_DISPLAY = { 'Wellness / Employee Engagement': 'Wellness / Engagement' };
 
+// Durable, organization-scoped confirmations, fetched once per page load
+// from api/whitespace-map.js and cached here (normalizeCompanyNameForLimit(name)
+// -> array of confirmed buying centers) -- never per-account/per-render
+// requests. See loadWhitespaceConfirmations() below.
+let whitespaceConfirmationsByAccount = {};
+let whitespaceConfirmationsLoadState = 'unloaded'; // 'unloaded' | 'loading' | 'loaded'
+
+async function loadWhitespaceConfirmations(){
+  if(whitespaceConfirmationsLoadState !== 'unloaded') return;
+  whitespaceConfirmationsLoadState = 'loading';
+  try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : null;
+    if(!headers){ whitespaceConfirmationsLoadState = 'unloaded'; return; }
+    const resp = await fetch('/api/whitespace-map', { method:'GET', headers });
+    const data = await resp.json().catch(() => null);
+    whitespaceConfirmationsByAccount = (resp.ok && data?.confirmations && typeof data.confirmations === 'object' && !Array.isArray(data.confirmations)) ? data.confirmations : {};
+  }catch(err){
+    console.warn('[Account Whitespace] failed to load buying-center confirmations -- rendering with no confirmations this pass', { message: err && err.message });
+    whitespaceConfirmationsByAccount = {};
+  }
+  whitespaceConfirmationsLoadState = 'loaded';
+  // Real data just arrived after at least one section may have already
+  // rendered against an empty cache -- refresh the visible list once so
+  // any account that needed a rep confirmation to clear "insufficient
+  // evidence" reflects it without a manual reload.
+  if(Array.isArray(window.accountRadarAccounts) && window.accountRadarAccounts.length && typeof renderDetailedAccountViews === 'function'){
+    renderDetailedAccountViews(window.accountRadarAccounts);
+  }
+}
+
+function confirmedCentersForAccount(accountName){
+  const key = normalizeCompanyNameForLimit(accountName || '');
+  const list = whitespaceConfirmationsByAccount[key];
+  return Array.isArray(list) ? list.filter(c => WHITESPACE_DEPARTMENTS.includes(c)) : [];
+}
+
+// Posts a toggle to the durable endpoint and updates the local cache from
+// its authoritative response (never assumes the toggle direction
+// client-side -- a concurrent teammate edit could have changed the real
+// state between this click and the response).
+async function toggleWhitespaceMapConfirmation(accountName, center){
+  const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : null;
+  if(!headers) return confirmedCentersForAccount(accountName);
+  const resp = await fetch('/api/whitespace-map', { method:'POST', headers, body: JSON.stringify({ accountName, buyingCenter: center }) });
+  const data = await resp.json().catch(() => null);
+  if(!resp.ok || !Array.isArray(data?.confirmedCenters)) return confirmedCentersForAccount(accountName);
+  const key = normalizeCompanyNameForLimit(accountName || '');
+  whitespaceConfirmationsByAccount = { ...whitespaceConfirmationsByAccount, [key]: data.confirmedCenters };
+  return data.confirmedCenters;
+}
+
 // A contact is transaction-linked when at least one of its source CSV rows
 // (matched by the SAME name+email+title key importedContactsFromRecords()
 // already dedupes contacts by) also carries real order-history evidence.
@@ -10549,64 +10626,36 @@ function contactIsTransactionLinked(contact, allRecords){
   });
 }
 
-// Client-local (NOT server-durable) record of which buying centers a rep
-// has confirmed a relationship in for a given account, used only when
-// House Accounts has no evidence of its own. Mirrors
-// dismissedResearchNamespace()'s exact per-user namespacing/fail-safe
-// convention (see below in this file) -- a lightweight browser
-// preference, not the org-shared persistence layer a future slice still
-// needs to design.
-const WHITESPACE_MAP_STORAGE_PREFIX = 'ha_whitespace_map_v1::';
-function whitespaceMapNamespace(){
-  try{
-    const user = (window.HouseAuth && typeof HouseAuth.getUser === 'function') ? HouseAuth.getUser() : null;
-    const raw = user && (user.auth_user_id || user.id || user.email);
-    return raw ? String(raw).trim().toLowerCase() : 'anonymous';
-  }catch(err){ return 'anonymous'; }
-}
-function whitespaceMapStorageKey(accountName){
-  return `${WHITESPACE_MAP_STORAGE_PREFIX}${whitespaceMapNamespace()}::${String(accountName || '').trim().toLowerCase()}`;
-}
-function readWhitespaceMapConfirmations(accountName){
-  try{
-    const raw = localStorage.getItem(whitespaceMapStorageKey(accountName));
-    if(!raw) return [];
-    const parsed = JSON.parse(raw);
-    // Corrupt/unexpected shape, or a stale center name from a taxonomy
-    // change -- fail safe to "nothing confirmed" rather than letting a
-    // bad stored value break rendering.
-    return Array.isArray(parsed) ? parsed.filter(c => WHITESPACE_DEPARTMENTS.includes(c)) : [];
-  }catch(err){ return []; }
-}
-function writeWhitespaceMapConfirmations(accountName, centers){
-  try{ localStorage.setItem(whitespaceMapStorageKey(accountName), JSON.stringify(centers)); }
-  catch(err){ /* best-effort only -- localStorage may be unavailable/full/corrupt */ }
-}
-function toggleWhitespaceMapConfirmation(accountName, center){
-  const current = readWhitespaceMapConfirmations(accountName);
-  const next = current.includes(center) ? current.filter(c => c !== center) : [...current, center];
-  writeWhitespaceMapConfirmations(accountName, next);
-  return next;
-}
-
-// Pure function (given the confirmedCenters array the caller already read
-// from storage): (account, confirmedCenters) -> matrix. Reads only
-// already-stored account fields plus the supplied confirmation list --
-// invents nothing, calls no provider, persists nothing itself.
+// Pure function (given the confirmedCenters array the caller already
+// resolved from the durable cache): (account, confirmedCenters) -> matrix.
+// Reads only already-stored account fields plus the supplied confirmation
+// list -- invents nothing, calls no provider, persists nothing itself.
 function computeAccountWhitespaceMatrix(account, confirmedCenters){
   const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
   const allRecords = Array.isArray(account?.allRecords) ? account.allRecords : [];
   const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
   const confirmed = new Set(Array.isArray(confirmedCenters) ? confirmedCenters : []);
 
-  // Same-row co-occurrence only -- a department and a category are never
-  // linked just because each is true SOMEWHERE for this account.
-  const linkedPairs = new Set();
+  // Group each transaction-evidenced, department-classified contact's OWN
+  // rows by the distinct categories they appear against. A contact is
+  // only genuinely discriminating evidence for ONE category if that is
+  // literally the only category they're ever tied to -- a contact spread
+  // across multiple categories is exactly the "static/repeated account
+  // contact" shape the founder flagged as untrustworthy for cell-level
+  // linkage (see the module doctrine comment above).
+  const categoriesByContact = new Map(); // contactKey -> {dept, categories:Set}
   for(const r of allRecords){
     if(!hasOrderHistoryEvidence(r)) continue;
     const dept = departmentFromText(r?.contactDepartment || r?.contactTitle || '');
     const cat = r?.category;
-    if(dept && cat && WHITESPACE_CATEGORIES.includes(cat)) linkedPairs.add(`${dept}||${cat}`);
+    if(!dept || !cat || !WHITESPACE_CATEGORIES.includes(cat)) continue;
+    const contactKey = `${r?.contactName || ''}|${r?.contactEmail || ''}|${r?.contactTitle || ''}`.toLowerCase();
+    if(!categoriesByContact.has(contactKey)) categoriesByContact.set(contactKey, { dept, categories: new Set() });
+    categoriesByContact.get(contactKey).categories.add(cat);
+  }
+  const linkedPairs = new Set();
+  for(const { dept, categories } of categoriesByContact.values()){
+    if(categories.size === 1) linkedPairs.add(`${dept}||${[...categories][0]}`);
   }
 
   const attributedCategories = new Set([...linkedPairs].map(p => p.split('||')[1]));
@@ -10661,7 +10710,7 @@ function renderWhitespaceMatrix(rows){
     </div>
     ${r.cells.map(renderWhitespaceCell).join('')}
   `).join('');
-  return `<div class="ws-matrix-scroll"><div class="ws-matrix"><div></div>${colHeaders}${bodyRows}</div></div>`;
+  return `<div class="ws-matrix-scroll"><div class="ws-matrix"><div class="ws-corner"></div>${colHeaders}${bodyRows}</div></div>`;
 }
 
 function renderWhitespaceMappingPrompt(confirmedCenters){
@@ -10691,7 +10740,12 @@ function renderUnattributedPurchasesPanel(categories){
 
 function renderAccountWhitespaceSection(account){
   const accountName = account?.name || '';
-  const confirmedCenters = readWhitespaceMapConfirmations(accountName);
+  // Fire-and-forget: kicks off the one-time durable-confirmations fetch on
+  // first render, then triggers a single whole-list re-render when it
+  // resolves (see loadWhitespaceConfirmations() above). Safe to call on
+  // every render -- a no-op once loading/loaded.
+  loadWhitespaceConfirmations();
+  const confirmedCenters = confirmedCentersForAccount(accountName);
   const matrix = computeAccountWhitespaceMatrix(account, confirmedCenters);
   const body = matrix.hasAnyBuyingCenterEvidence
     ? renderWhitespaceMatrix(matrix.rows)
@@ -10706,12 +10760,14 @@ function renderAccountWhitespaceSection(account){
   `;
 }
 
-// Client-local only (see WHITESPACE_MAP_STORAGE_PREFIX above) -- toggles
-// the clicked buying center and re-renders just this account's whitespace
-// section from window.accountRadarAccounts, the same established
-// in-memory account source every other post-render lookup in this file
-// already reads from (e.g. buyingOpportunityIdentity()'s account lookup).
-document.addEventListener('click', (event) => {
+// Durable (see the module doctrine comment above) -- toggles the clicked
+// buying center via api/whitespace-map.js, then re-renders just this
+// account's whitespace section from window.accountRadarAccounts, the same
+// established in-memory account source every other post-render lookup in
+// this file already reads from (e.g. buyingOpportunityIdentity()'s account
+// lookup). The chip shows a brief pending state so a slow connection
+// doesn't look like a dropped click.
+document.addEventListener('click', async (event) => {
   const chip = event.target.closest('.ws-map-chip');
   if(!chip) return;
   const section = event.target.closest('.account-whitespace-section');
@@ -10719,9 +10775,18 @@ document.addEventListener('click', (event) => {
   const accountName = section.dataset.accountName;
   const center = chip.dataset.buyingCenter;
   if(!accountName || !center) return;
-  toggleWhitespaceMapConfirmation(accountName, center);
-  const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
-  if(account) section.outerHTML = renderAccountWhitespaceSection(account);
+  if(chip.disabled) return;
+  chip.disabled = true;
+  chip.classList.add('pending');
+  try{
+    await toggleWhitespaceMapConfirmation(accountName, center);
+    const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
+    if(account) section.outerHTML = renderAccountWhitespaceSection(account);
+  }catch(err){
+    console.warn('[Account Whitespace] failed to save buying-center confirmation', { message: err && err.message });
+    chip.disabled = false;
+    chip.classList.remove('pending');
+  }
 });
 
 function getOpportunityType(account, signalBased=false){
