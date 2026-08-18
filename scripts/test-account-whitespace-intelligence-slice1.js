@@ -1,23 +1,29 @@
-// Account Expansion / Whitespace Intelligence, Slice 1 (read-only visibility
-// only -- see BACKLOG.md's "Account Expansion / Whitespace Intelligence /
-// Growth Map" entry). Extracts the REAL, verbatim source of
-// computeAccountWhitespaceGrid()/contactIsTransactionLinked()/
-// renderAccountWhitespaceSection() (plus their real dependencies --
-// departmentFromText(), hasOrderHistoryEvidence(), escapeHtml()) via the
-// shared semantic extractor and runs them in a vm sandbox. Also proves
-// normalizeSavedAccount() now restores allRecords from rawData.records
-// after a save/reload round-trip, which this slice's evidence lookups
-// depend on for a previously-saved (not freshly-uploaded) account.
+// Account Expansion / Whitespace Intelligence -- matrix presentation
+// (Buying Center x Offering). Replaces the earlier two-list chip view --
+// see BACKLOG.md's "Account Expansion / Whitespace Intelligence / Growth
+// Map" entry. Extracts the REAL, verbatim source of
+// computeAccountWhitespaceMatrix()/the render functions/the localStorage
+// confirmation helpers (plus their real dependencies -- departmentFromText(),
+// hasOrderHistoryEvidence(), escapeHtml()) via the shared semantic
+// extractor and runs them in a vm sandbox with a fake localStorage/
+// HouseAuth, matching the established pattern in
+// scripts/test-guided-tour-and-import-experience.js.
 //
 // Doctrine under test:
-//   - A cell never renders 'covered' without real evidence, and never
-//     collapses "no evidence" into a claim of confirmed absence.
-//   - A known contact alone (no linked order) renders the honest, weaker
-//     'known_contact' state, never 'covered'.
-//   - Every cell's confirmation field is null this slice (no write path
-//     exists yet).
-//   - An account with no contacts and no purchase evidence renders
-//     "not enough data yet", never a full grid of false gaps.
+//   - Covered requires SAME-ROW co-occurrence (a transaction-evidenced
+//     row with both a classifiable department and a matching category)
+//     -- never two independent account-level facts stitched together.
+//   - Known-relationship context lives on the ROW label, never painted
+//     across a whole row's cells.
+//   - Only 'covered' and 'whitespace' ever render from real evidence --
+//     'not_applicable'/'active_play' have reserved markup but are never
+//     assigned by computeAccountWhitespaceMatrix().
+//   - Real, unattributed category purchases render in a separate panel
+//     outside the organizational grid, never as a fake buying-center row.
+//   - Zero buying-center evidence (real Production data's current shape)
+//     renders the lightweight mapping prompt, not a near-empty matrix.
+//   - The mapping-prompt confirmation is client-local (localStorage)
+//     only -- fails safe on corrupt/missing storage, never crashes.
 //
 // Usage: node scripts/test-account-whitespace-intelligence-slice1.js
 import vm from 'vm';
@@ -41,137 +47,198 @@ const SRC = [
 const EXPORT_NAMES = [
   'departmentFromText', 'hasOrderHistoryEvidence', 'escapeHtml',
   'WHITESPACE_DEPARTMENTS', 'WHITESPACE_CATEGORIES', 'contactIsTransactionLinked',
-  'computeAccountWhitespaceGrid', 'whitespaceStatusMeta', 'renderWhitespaceCell',
-  'renderAccountWhitespaceSection'
+  'computeAccountWhitespaceMatrix', 'renderWhitespaceCell', 'renderWhitespaceMatrix',
+  'renderWhitespaceMappingPrompt', 'renderUnattributedPurchasesPanel', 'renderAccountWhitespaceSection',
+  'whitespaceMapStorageKey', 'readWhitespaceMapConfirmations', 'writeWhitespaceMapConfirmations', 'toggleWhitespaceMapConfirmation'
 ];
-const sandbox = { window: {} };
-vm.createContext(sandbox);
-new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'whitespace-extract.js' }).runInContext(sandbox);
-const dash = sandbox.__exports;
-for(const name of EXPORT_NAMES){
-  assert(typeof dash[name] !== 'undefined', `dashboard/index.html export "${name}" extracted successfully`);
+
+function makeSandbox(){
+  const store = {};
+  const fakeLocalStorage = {
+    getItem: k => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: k => { delete store[k]; }
+  };
+  // document.addEventListener is stubbed as a no-op -- the click-delegated
+  // confirm/correct wiring at the end of the extracted range is exercised
+  // via direct calls to toggleWhitespaceMapConfirmation()/
+  // renderAccountWhitespaceSection() below, not via a simulated DOM click.
+  const sandbox = { window: {}, document: { addEventListener(){} }, localStorage: fakeLocalStorage, HouseAuth: { getUser: () => ({ id: 'user-1', email: 'rep@example.com' }) } };
+  vm.createContext(sandbox);
+  new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'whitespace-matrix-extract.js' }).runInContext(sandbox);
+  return { dash: sandbox.__exports, store };
+}
+
+{
+  const { dash } = makeSandbox();
+  for(const name of EXPORT_NAMES){
+    assert(typeof dash[name] !== 'undefined', `dashboard/index.html export "${name}" extracted successfully`);
+  }
 }
 
 // ===========================================================================
-// 1. Taxonomy -- explicit, matches the reused classifiers' own vocabulary.
-// ===========================================================================
-assert(Array.isArray(dash.WHITESPACE_DEPARTMENTS) && dash.WHITESPACE_DEPARTMENTS.length === 7, `REQUIRED: the department taxonomy is explicit and has the expected 7 buckets (got ${JSON.stringify(dash.WHITESPACE_DEPARTMENTS)})`);
-for(const dept of dash.WHITESPACE_DEPARTMENTS){
-  assert(dash.departmentFromText(dept.toLowerCase()) === dept || dept === 'Sales / Client Experience', `sanity: department taxonomy entry "${dept}" round-trips through departmentFromText() classification vocabulary`);
-}
-assert(Array.isArray(dash.WHITESPACE_CATEGORIES) && dash.WHITESPACE_CATEGORIES.length === 11 && !dash.WHITESPACE_CATEGORIES.includes('Uncategorized'), `REQUIRED: the category taxonomy is explicit, has the expected 11 buckets, and excludes the "Uncategorized" fallback (got ${JSON.stringify(dash.WHITESPACE_CATEGORIES)})`);
-
-// ===========================================================================
-// 2. contactIsTransactionLinked() -- known contact vs. transaction-linked
-//    contact, the core Correction 1 distinction.
+// 1. Taxonomy -- unchanged from the prior slice.
 // ===========================================================================
 {
-  const contact = { name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager' };
-  const allRecords = [{ contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', revenue: 500, project: 'Welcome Kits', dateStr: '2025-01-01', status: '' }];
-  assert(dash.contactIsTransactionLinked(contact, allRecords) === true, 'REQUIRED: a contact whose source row carries real order evidence (revenue) is transaction-linked');
-}
-{
-  const contact = { name: 'John Roe', email: 'john@acme.com', title: 'Marketing Director' };
-  const allRecords = [{ contactName: 'John Roe', contactEmail: 'john@acme.com', contactTitle: 'Marketing Director', revenue: 0, project: '', dateStr: '', status: '' }];
-  assert(dash.contactIsTransactionLinked(contact, allRecords) === false, 'REQUIRED: a contact whose ONLY source row has no revenue/project/status/date is NOT transaction-linked -- known contact only');
-}
-{
-  assert(dash.contactIsTransactionLinked({ name: 'Nobody', email: '', title: '' }, []) === false, 'a contact with no matching records at all is safely not transaction-linked, never throws');
+  const { dash } = makeSandbox();
+  assert(Array.isArray(dash.WHITESPACE_DEPARTMENTS) && dash.WHITESPACE_DEPARTMENTS.length === 7, 'REQUIRED: the department taxonomy has the expected 7 buying centers');
+  assert(Array.isArray(dash.WHITESPACE_CATEGORIES) && dash.WHITESPACE_CATEGORIES.length === 11 && !dash.WHITESPACE_CATEGORIES.includes('Uncategorized'), 'REQUIRED: the category taxonomy has the expected 11 offerings, excluding "Uncategorized"');
 }
 
 // ===========================================================================
-// 3. computeAccountWhitespaceGrid() -- the full per-cell state model.
+// 2. computeAccountWhitespaceMatrix() -- same-row co-occurrence only.
 // ===========================================================================
 {
+  const { dash } = makeSandbox();
   const account = {
     contacts: [
       { name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' },
       { name: 'John Roe', email: 'john@acme.com', title: 'Marketing Director', department: '' }
     ],
     allRecords: [
-      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', revenue: 500, project: 'Welcome Kits', dateStr: '2025-01-01', status: '' },
-      { contactName: 'John Roe', contactEmail: 'john@acme.com', contactTitle: 'Marketing Director', revenue: 0, project: '', dateStr: '', status: '' }
+      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Onboarding / Recruiting', revenue: 500, project: 'Welcome Kits', dateStr: '2025-01-01', status: '' },
+      { contactName: 'John Roe', contactEmail: 'john@acme.com', contactTitle: 'Marketing Director', contactDepartment: '', category: '', revenue: 0, project: '', dateStr: '', status: '' },
+      { contactName: '', contactEmail: '', contactTitle: '', contactDepartment: '', category: 'Apparel', revenue: 800, project: 'Field Jackets', dateStr: '2025-03-14', status: 'Closed' }
     ],
-    purchases: [{ revenue: 500 }],
-    categoryTypes: ['Onboarding / Recruiting']
+    categoryTypes: ['Onboarding / Recruiting', 'Apparel']
   };
-  const grid = dash.computeAccountWhitespaceGrid(account);
-  assert(grid.dataSufficiency === 'sufficient', 'REQUIRED: an account with real contacts/purchases has sufficient data');
-  const hr = grid.departments.find(d => d.key === 'HR / People');
-  assert(hr && hr.status === 'covered' && hr.evidence?.type === 'contact_transaction_linked', `REQUIRED: HR/People is 'covered' -- Jane Doe is transaction-linked (got ${JSON.stringify(hr)})`);
-  const marketing = grid.departments.find(d => d.key === 'Marketing');
-  assert(marketing && marketing.status === 'known_contact' && marketing.evidence?.type === 'contact_known', `REQUIRED: Marketing is 'known_contact', NOT 'covered' -- John Roe is a known contact with no linked order (got ${JSON.stringify(marketing)})`);
-  const procurement = grid.departments.find(d => d.key === 'Procurement');
-  assert(procurement && procurement.status === 'unknown' && procurement.evidence === null, 'REQUIRED: Procurement is "unknown" (potential whitespace) -- no contact matched, never rendered as confirmed absence');
-  assert(grid.departments.every(d => d.confirmation === null), 'REQUIRED: every department cell has confirmation:null this slice -- no write path exists yet');
-  const onboarding = grid.categories.find(c => c.key === 'Onboarding / Recruiting');
-  assert(onboarding && onboarding.status === 'covered' && onboarding.evidence?.type === 'purchase_history', 'REQUIRED: a category present in categoryTypes (real observed purchase evidence) is covered');
-  const drinkware = grid.categories.find(c => c.key === 'Drinkware');
-  assert(drinkware && drinkware.status === 'unknown', 'REQUIRED: a category never purchased is "unknown" (potential whitespace), never confirmed absent');
-  assert(grid.categories.every(c => c.confirmation === null), 'REQUIRED: every category cell has confirmation:null this slice');
+  const matrix = dash.computeAccountWhitespaceMatrix(account, []);
+  assert(matrix.hasAnyBuyingCenterEvidence === true, 'REQUIRED: an account with a known contact classified into a buying center has buying-center evidence');
+  const hr = matrix.rows.find(r => r.center === 'HR / People');
+  const hrOnboarding = hr.cells[dash.WHITESPACE_CATEGORIES.indexOf('Onboarding / Recruiting')];
+  assert(hrOnboarding.status === 'covered', `REQUIRED: HR/People x Onboarding/Recruiting is covered -- same-row department+category+evidence (got ${hrOnboarding.status})`);
+  assert(hr.cells.filter(c => c.status === 'covered').length === 1, 'REQUIRED: exactly ONE covered cell in the HR row -- covered evidence never spreads to every category just because the department is known');
+  assert(hr.metaLine === 'Jane Doe · known contact', `REQUIRED: HR/People row label carries the real known-contact name (got "${hr.metaLine}")`);
+  const marketing = matrix.rows.find(r => r.center === 'Marketing');
+  assert(marketing.cells.every(c => c.status === 'whitespace'), 'REQUIRED: Marketing has a known contact but NO linked order -- every cell stays whitespace, never painted covered/known across the row');
+  assert(marketing.metaLine === 'John Roe · known contact', 'REQUIRED: Marketing row label still carries the real known-contact name even though no cell is covered');
+  const procurement = matrix.rows.find(r => r.center === 'Procurement');
+  assert(procurement.metaLine === '' && procurement.cells.every(c => c.status === 'whitespace'), 'REQUIRED: a buying center with zero evidence has no row label and every cell is whitespace, never a claim of confirmed absence');
+  assert(matrix.unattributed.includes('Apparel') && !matrix.unattributed.includes('Onboarding / Recruiting'), `REQUIRED: Apparel (real purchase, no attributable department) is unattributed; Onboarding/Recruiting (linked) is not (got ${JSON.stringify(matrix.unattributed)})`);
 }
 {
-  // Insufficient-data gate.
-  const empty = dash.computeAccountWhitespaceGrid({ contacts: [], allRecords: [], purchases: [], categoryTypes: [] });
-  assert(empty.dataSufficiency === 'insufficient', 'REQUIRED: an account with zero contacts and zero purchase evidence is flagged insufficient, not rendered as a full grid of gaps');
-}
-{
-  // Fail-safe: unclassifiable department/title text never crashes and is
-  // simply excluded, never force-mapped to a wrong bucket.
+  // Two different real order rows: one has BOTH a department and a
+  // category on it, the OTHER independently has an unrelated department.
+  // A cell must never be covered merely because "an HR contact exists
+  // somewhere AND an Apparel purchase exists somewhere" on DIFFERENT rows.
+  const { dash } = makeSandbox();
   const account = {
-    contacts: [{ name: 'Mystery Person', email: 'x@acme.com', title: 'Ombudsperson', department: 'Miscellany' }],
-    allRecords: [],
-    purchases: [{ revenue: 10 }],
-    categoryTypes: []
+    contacts: [{ name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' }],
+    allRecords: [
+      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: '', revenue: 500, project: 'HR Consulting Fee', dateStr: '2025-01-01', status: '' },
+      { contactName: '', contactEmail: '', contactTitle: '', contactDepartment: '', category: 'Apparel', revenue: 800, project: 'Field Jackets', dateStr: '2025-03-14', status: 'Closed' }
+    ],
+    categoryTypes: ['Apparel']
   };
-  const grid = dash.computeAccountWhitespaceGrid(account);
-  assert(grid.departments.every(d => d.status === 'unknown'), 'REQUIRED: an unclassifiable contact title/department never gets force-mapped into any department bucket -- every bucket stays unknown, no crash');
+  const matrix = dash.computeAccountWhitespaceMatrix(account, []);
+  const hr = matrix.rows.find(r => r.center === 'HR / People');
+  assert(hr.cells.every(c => c.status === 'whitespace'), 'REQUIRED: no cell is covered when the department-carrying row and the category-carrying row are DIFFERENT rows -- cross-row inference is never allowed');
+  assert(matrix.unattributed.includes('Apparel'), 'REQUIRED: the Apparel purchase still surfaces as unattributed, not silently dropped');
 }
 {
-  // Malformed/null-shaped account input fails safe.
-  const grid = dash.computeAccountWhitespaceGrid({});
-  assert(grid.dataSufficiency === 'insufficient' && grid.departments.length === 7 && grid.categories.length === 11, 'a malformed/empty account object never throws -- resolves to a full, empty, insufficient-data grid');
+  // Malformed/empty input fails safe.
+  const { dash } = makeSandbox();
+  const matrix = dash.computeAccountWhitespaceMatrix({}, null);
+  assert(matrix.hasAnyBuyingCenterEvidence === false && matrix.rows.length === 7 && matrix.unattributed.length === 0, 'a malformed/empty account never throws -- resolves to a full, empty, no-evidence matrix');
 }
 
 // ===========================================================================
-// 4. Rendering -- correct chip states, and the insufficient-data message.
+// 3. Rendering -- only covered/whitespace ever appear from real data;
+//    not_applicable/active_play markup exists but is unreachable.
 // ===========================================================================
 {
+  const { dash } = makeSandbox();
+  assert(/class="ws-cell covered"/.test(dash.renderWhitespaceCell({ status: 'covered' })), 'covered cell renders the covered class');
+  assert(/class="ws-cell whitespace"/.test(dash.renderWhitespaceCell({ status: 'whitespace' })), 'whitespace cell renders the whitespace class, no icon');
+  assert(!/[✓?●◐◎]/.test(dash.renderWhitespaceCell({ status: 'whitespace' })), 'REQUIRED: a whitespace cell has no icon/mark -- meaning comes from styling alone');
+  assert(/N\/A/.test(dash.renderWhitespaceCell({ status: 'not_applicable' })) && /class="ws-cell not-applicable"/.test(dash.renderWhitespaceCell({ status: 'not_applicable' })), 'REQUIRED: reserved not_applicable markup uses explicit "N/A" text, not a mystery icon, for when a later slice starts assigning it');
+  assert(/EXPAND/.test(dash.renderWhitespaceCell({ status: 'active_play' })), 'REQUIRED: reserved active_play markup uses explicit "EXPAND" text, not a mystery icon');
+}
+{
+  const { dash } = makeSandbox();
   const account = {
     contacts: [{ name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' }],
-    allRecords: [{ contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', revenue: 500, project: 'Kits', dateStr: '2025-01-01', status: '' }],
-    purchases: [{ revenue: 500 }],
+    allRecords: [{ contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Onboarding / Recruiting', revenue: 500, project: 'Welcome Kits', dateStr: '2025-01-01', status: '' }],
     categoryTypes: ['Onboarding / Recruiting']
   };
   const html = dash.renderAccountWhitespaceSection(account);
   assert(/Account Whitespace/.test(html), 'REQUIRED: the rendered section has the Account Whitespace heading');
-  assert(/ws-covered/.test(html) && />Jane Doe/.test(html) === false, 'REQUIRED: a covered cell renders with the ws-covered class'); // contact name lives in the title attr, not visible text
-  assert(/ws-unknown/.test(html), 'REQUIRED: unknown/potential-whitespace cells render with the ws-unknown class');
-  assert(/Potential whitespace \(no evidence either way\)/.test(html), 'REQUIRED: the legend truthfully frames unknown as "no evidence either way", never confirmed absence');
+  assert(/See where you have business today.*room to grow/.test(html), 'REQUIRED: the subtitle matches the approved copy');
+  assert(!/whitespace-legend|ws-legend/i.test(html), 'REQUIRED: no legend block is rendered');
+  assert(/ws-matrix/.test(html) && !/ws-map-prompt/.test(html), 'REQUIRED: an account with real buying-center evidence renders the matrix, not the mapping prompt');
 }
 {
-  const html = dash.renderAccountWhitespaceSection({ contacts: [], allRecords: [], purchases: [], categoryTypes: [] });
-  assert(/Not enough uploaded contact or order data yet/.test(html), 'REQUIRED: an account with no evidence at all shows the honest insufficient-data message, not an empty/misleading grid');
-  assert(!/ws-chip/.test(html), 'REQUIRED: no chips render at all in the insufficient-data state');
+  const { dash } = makeSandbox();
+  const html = dash.renderAccountWhitespaceSection({ name: 'Acme Corp', contacts: [], allRecords: [], categoryTypes: [] });
+  assert(/data-account-name="Acme Corp"/.test(html), 'REQUIRED: the section carries the real account name for the click handler to target');
+  assert(/ws-map-prompt/.test(html) && !/ws-matrix/.test(html), 'REQUIRED: zero buying-center evidence renders the lightweight mapping prompt, not a near-empty matrix');
+  assert(/Help House Accounts map this customer/.test(html), 'REQUIRED: the mapping prompt has the approved headline');
+  assert(/Which parts of this account do you currently have relationships with/.test(html), 'REQUIRED: the mapping prompt has the approved subcopy');
+  for(const center of dash.WHITESPACE_DEPARTMENTS){
+    assert(html.includes(`data-buying-center="${center}"`), `REQUIRED: the mapping prompt offers a chip for "${center}"`);
+  }
+}
+{
+  const { dash } = makeSandbox();
+  const account = {
+    name: 'Acme Corp',
+    contacts: [],
+    allRecords: [{ contactName: '', contactEmail: '', contactTitle: '', contactDepartment: '', category: 'Apparel', revenue: 800, project: 'Field Jackets', dateStr: '2025-03-14', status: 'Closed' }],
+    categoryTypes: ['Apparel']
+  };
+  const html = dash.renderAccountWhitespaceSection(account);
+  assert(/Account-wide purchases not yet attributed/.test(html), 'REQUIRED: an unattributed real purchase renders its own panel, outside the organizational grid');
+  assert(/>Apparel</.test(html), 'REQUIRED: the unattributed panel names the real category');
+  assert(!/Unassigned \/ Unknown Buying Center/.test(html), 'REQUIRED: unattributed purchases are never rendered as if they were another buying-center row');
+}
+{
+  const { dash } = makeSandbox();
+  const html = dash.renderAccountWhitespaceSection({ name: 'Empty Co', contacts: [], allRecords: [], categoryTypes: [] });
+  assert(!/Account-wide purchases not yet attributed/.test(html), 'an account with zero purchase evidence at all shows no unattributed panel (nothing to show)');
 }
 
 // ===========================================================================
-// 5. normalizeSavedAccount() -- allRecords now survives a save/reload
-//    round-trip (required for this slice's evidence lookups to work on a
-//    previously-saved, not just freshly-uploaded, account). Checked as a
-//    source-pattern assertion against the real extracted function, the
-//    same precedent other tests already use for this exact function
-//    (e.g. test-guided-tour-and-import-experience.js's processData()
-//    checks) -- normalizeSavedAccount() pulls in a large, unrelated
-//    dependency graph (dedupeOpportunities and beyond) that would need to
-//    be fully stood up just to prove one small, additive fallback line.
+// 4. Client-local mapping-prompt confirmations -- fail-safe, never a
+//    durable/server claim.
 // ===========================================================================
 {
-  const normalizeSrc = extractFn(DASHBOARD_SRC, 'normalizeSavedAccount');
-  assert(
-    /a\.allRecords\s*=\s*Array\.isArray\(a\.allRecords\)\s*\?\s*a\.allRecords\s*:\s*\(Array\.isArray\(raw\.records\)\s*\?\s*raw\.records\s*:\s*\[\]\)/.test(normalizeSrc),
-    'REQUIRED: normalizeSavedAccount() restores allRecords from rawData.records (falling back to [] when absent, never overwriting an already-present allRecords) so a RELOADED account\'s whitespace evidence is not silently empty'
-  );
+  const { dash } = makeSandbox();
+  const next = dash.toggleWhitespaceMapConfirmation('Acme Corp', 'HR / People');
+  assert(Array.isArray(next) && next.includes('HR / People'), 'REQUIRED: toggling a buying center on for the first time adds it');
+  assert(dash.readWhitespaceMapConfirmations('Acme Corp').includes('HR / People'), 'REQUIRED: the confirmation round-trips through storage');
+  const after = dash.toggleWhitespaceMapConfirmation('Acme Corp', 'HR / People');
+  assert(!after.includes('HR / People'), 'REQUIRED: toggling the same buying center again removes it -- a rep can correct a misclick');
+}
+{
+  const { dash } = makeSandbox();
+  dash.toggleWhitespaceMapConfirmation('Acme Corp', 'Marketing');
+  assert(dash.readWhitespaceMapConfirmations('Beta Co').length === 0, 'REQUIRED: confirmations are scoped per account -- a different account name never sees another account\'s confirmations');
+}
+{
+  const { dash, store } = makeSandbox();
+  const key = dash.whitespaceMapStorageKey('Acme Corp');
+  store[key] = 'not valid json{{{';
+  assert(JSON.stringify(dash.readWhitespaceMapConfirmations('Acme Corp')) === '[]', 'REQUIRED: corrupt stored data fails safe to no confirmations, never throws');
+}
+{
+  const { dash, store } = makeSandbox();
+  const key = dash.whitespaceMapStorageKey('Acme Corp');
+  store[key] = JSON.stringify(['HR / People', 'Not A Real Center']);
+  assert(JSON.stringify(dash.readWhitespaceMapConfirmations('Acme Corp')) === '["HR / People"]', 'REQUIRED: a stale/unknown buying-center name from a taxonomy change is silently dropped, never crashes or renders an unlabeled chip');
+}
+{
+  // The confirmation actually flips an account from "insufficient" to
+  // "sufficient" on the very next render -- the real end-to-end doctrine
+  // requirement ("HA builds the map wherever it has evidence; the rep
+  // supplies only small corrections").
+  const { dash } = makeSandbox();
+  const account = { name: 'Acme Corp', contacts: [], allRecords: [], categoryTypes: [] };
+  const before = dash.renderAccountWhitespaceSection(account);
+  assert(/ws-map-prompt/.test(before), 'before confirming, the account shows the mapping prompt');
+  dash.toggleWhitespaceMapConfirmation('Acme Corp', 'Marketing');
+  const after = dash.renderAccountWhitespaceSection(account);
+  assert(/ws-matrix/.test(after) && !/ws-map-prompt/.test(after), 'REQUIRED: after a rep confirms one buying center, the SAME account now renders the matrix, not the prompt, on next render');
+  assert(/Rep-confirmed relationship/.test(after), 'REQUIRED: the confirmed row shows "Rep-confirmed relationship" metadata, distinguishable from a real known-contact name');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

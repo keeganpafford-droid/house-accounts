@@ -136,7 +136,7 @@ const EXPORT_NAMES = [
   'opportunityHeadline', 'businessSignalKind'
 ];
 
-const sandbox = { window: {}, console };
+const sandbox = { window: {}, console, document: { addEventListener(){} } };
 vm.createContext(sandbox);
 new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'round5-extract.js' }).runInContext(sandbox);
 const dash = sandbox.__exports;

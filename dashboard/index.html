@@ -1221,15 +1221,34 @@
   .bd-item .lbl{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);}
   .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
 
-  .whitespace-grid{display:flex; flex-direction:column; gap:10px; margin-bottom:8px;}
-  .whitespace-row{display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap;}
-  .whitespace-row-label{font-family:var(--mono); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); width:90px; flex-shrink:0; padding-top:5px;}
-  .whitespace-chips{display:flex; flex-wrap:wrap; gap:6px;}
-  .ws-chip{display:inline-block; border-radius:999px; padding:4px 10px; font-size:0.78rem; border:1px solid var(--line); background:#fff; cursor:default;}
-  .ws-chip.ws-covered{border-color:var(--radar); background:rgba(31,183,174,0.08); color:var(--radar);}
-  .ws-chip.ws-known-contact{border-color:var(--signal); background:rgba(245,166,35,0.08); color:#8a5a10;}
-  .ws-chip.ws-unknown{color:var(--muted);}
-  .whitespace-legend{font-family:var(--mono); font-size:0.65rem; color:var(--muted); margin-top:6px; margin-bottom:4px;}
+  .ws-subtitle{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:14px;}
+  .ws-matrix-scroll{overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
+  .ws-matrix{display:grid; grid-template-columns:160px repeat(11,60px); gap:4px; align-items:stretch;}
+  .ws-colhead{font-family:var(--body); font-size:0.62rem; font-weight:600; color:var(--muted); text-align:center; line-height:1.2; padding:0 2px 6px; align-self:end;}
+  .ws-rowhead{padding:8px 10px 8px 0; display:flex; flex-direction:column; justify-content:center;}
+  .ws-rowhead-name{font-family:var(--display); font-weight:700; font-size:0.88rem; color:var(--ink);}
+  .ws-rowhead-meta{font-family:var(--body); font-size:0.68rem; color:var(--muted); margin-top:2px;}
+  .ws-cell{border-radius:6px; min-height:38px; display:flex; align-items:center; justify-content:center; background:#fff; border:1px solid var(--line);}
+  .ws-cell.whitespace{background:#fff; border-color:#eceef1;}
+  .ws-cell.covered{background:rgba(31,183,174,0.14); border-color:rgba(31,183,174,0.55);}
+  .ws-cell.covered .ws-mark{color:var(--radar); font-size:1rem; font-weight:800;}
+  .ws-cell.not-applicable{background:#eef0f2; border-color:#e1e4e8;}
+  .ws-cell.not-applicable .ws-mark.small{color:#9aa2af; font-family:var(--mono); font-size:0.56rem; font-weight:700; letter-spacing:0.03em;}
+  .ws-cell.active-play{background:var(--signal); border-color:#c97e0e; box-shadow:0 2px 6px rgba(245,166,35,0.45);}
+  .ws-cell.active-play .ws-mark.strong{color:#fff; font-family:var(--mono); font-size:0.58rem; font-weight:800; letter-spacing:0.05em;}
+  .ws-map-prompt{background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px;}
+  .ws-map-prompt-title{font-family:var(--display); font-weight:700; font-size:0.95rem; color:var(--ink); margin-bottom:4px;}
+  .ws-map-prompt-sub{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:12px;}
+  .ws-map-chips{display:flex; flex-wrap:wrap; gap:8px;}
+  .ws-map-chip{font-family:var(--body); font-size:0.8rem; color:var(--ink); background:#fafaf6; border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer;}
+  .ws-map-chip:hover{border-color:var(--radar);}
+  .ws-map-chip.selected{background:rgba(31,183,174,0.14); border-color:var(--radar); color:var(--radar); font-weight:700;}
+  .ws-map-prompt-hint{font-family:var(--body); font-size:0.7rem; color:var(--muted); margin-top:10px;}
+  .ws-unattributed-panel{margin-top:18px; padding-top:14px; border-top:1px solid var(--line);}
+  .ws-unattributed-title{font-family:var(--body); font-weight:700; font-size:0.82rem; color:var(--ink); margin-bottom:3px;}
+  .ws-unattributed-sub{font-family:var(--body); font-size:0.75rem; color:var(--muted); margin-bottom:10px; max-width:520px;}
+  .ws-unattributed-pills{display:flex; gap:8px; flex-wrap:wrap;}
+  .ws-unattributed-pill{font-family:var(--body); font-size:0.75rem; color:var(--ink); background:#fafaf6; border:1px solid var(--line); border-radius:999px; padding:5px 12px;}
 
   .section-title{
     font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--label-amber);
@@ -10460,30 +10479,43 @@ function getRelationshipMode(account){
 }
 
 // ============================================================================
-// Account Expansion / Whitespace Intelligence, Slice 1: read-only visibility
-// only. No confirmation write path exists yet, and this module does not
-// change Relationship Expansion opportunity generation -- see BACKLOG.md's
-// "Account Expansion / Whitespace Intelligence / Growth Map" entry.
+// Account Expansion / Whitespace Intelligence -- matrix presentation
+// (Buying Center rows × Offering columns). Replaces the earlier two-list
+// chip view. No grounded Active Expansion Play logic and no durable,
+// cross-device cell-level confirmation persistence exist yet -- see
+// BACKLOG.md's "Account Expansion / Whitespace Intelligence / Growth Map"
+// entry. Only two cell states ever render from real evidence: covered and
+// whitespace. Not-applicable and active-play have reserved markup/CSS
+// (renderWhitespaceCell() below) but computeAccountWhitespaceMatrix()
+// never assigns them -- no synthetic/fake cells in a real account.
 //
-// Doctrine this slice enforces:
-//   - Absence of evidence is never rendered as confirmed absence. A cell
-//     with no observed evidence is 'unknown' ("potential whitespace"),
-//     never a claim that the department/category doesn't exist here or
-//     that an opportunity is available.
-//   - A known CONTACT does not by itself prove a covered department
-//     relationship -- it only proves House Accounts knows a person there.
-//     A department only reaches 'covered' when at least one contact in
-//     that department is linked to a real transaction-evidenced row
-//     (hasOrderHistoryEvidence()); otherwise it renders as the honest,
-//     weaker 'known_contact' state. Category coverage was already
-//     strictly evidence-gated before this slice (account.categoryTypes is
-//     built from hasOrderHistoryEvidence()-passing closed orders only,
-//     see processData()) -- reused verbatim here, not recomputed.
-//   - This module never reads or infers Confirmed-whitespace / Not-
-//     applicable states -- those are rep-asserted states with no write
-//     path yet (a later slice). Every cell already carries a
-//     `confirmation` field (always null this slice) so that slice can
-//     attach rep state without changing this shape.
+// Doctrine:
+//   - Absence of evidence is never rendered as confirmed absence -- a
+//     cell with no linked evidence is whitespace, never a claim either
+//     way.
+//   - A known CONTACT does not by itself prove covered buying-center
+//     coverage. A cell only reaches covered when a SINGLE order row
+//     carries both a transaction-evidenced signal (hasOrderHistoryEvidence())
+//     and a classifiable department AND that same row's own category --
+//     never two independent account-level facts (a department contact
+//     somewhere + a category purchase somewhere) stitched together.
+//   - Known-relationship context lives on the ROW label ("Jane Doe ·
+//     known contact"), never painted across an entire row's cells --
+//     it describes the buying center, not any specific offering.
+//   - Real category purchases with no attributable buying center render
+//     in a separate "Account-wide purchases not yet attributed" panel,
+//     outside the organizational grid -- never a fake buying-center row.
+//   - Production recon (2026-08-18): real Beta order-history uploads
+//     currently populate contact department/title at ~0%. An account
+//     with zero classifiable buying centers renders a lightweight
+//     mapping prompt instead of a near-empty matrix -- House Accounts
+//     builds the map wherever it has evidence; the rep supplies only a
+//     small correction (which buying centers apply here), never
+//     per-cell data entry. That confirmation is stored client-side only
+//     (localStorage, the same established pattern as
+//     dismissedResearchNamespace() elsewhere in this file) -- NOT the
+//     durable, cross-device, org-shared persistence a future slice still
+//     needs to design.
 // ============================================================================
 
 // The explicit department taxonomy to grid whitespace against -- reuses
@@ -10498,6 +10530,10 @@ const WHITESPACE_DEPARTMENTS = ['HR / People', 'Events', 'Marketing', 'Operation
 // fallback is deliberately excluded: it is not a real category to grid
 // whitespace against.
 const WHITESPACE_CATEGORIES = ['Apparel', 'Headwear', 'Drinkware', 'Event / Giveaway', 'Recognition / Awards', 'Print / Stationery', 'Onboarding / Recruiting', 'Safety', 'Wellness / Employee Engagement', 'Client Gifts', 'Sales Incentive'];
+// Display-only shortening for the one column header too long to wrap
+// cleanly at matrix column width -- the underlying taxonomy string
+// (used for matching/evidence) is never altered.
+const WHITESPACE_CATEGORY_DISPLAY = { 'Wellness / Employee Engagement': 'Wellness / Engagement' };
 
 // A contact is transaction-linked when at least one of its source CSV rows
 // (matched by the SAME name+email+title key importedContactsFromRecords()
@@ -10513,73 +10549,180 @@ function contactIsTransactionLinked(contact, allRecords){
   });
 }
 
-// Pure function: (account) -> whitespace grid. Reads only already-stored
-// account fields (contacts, allRecords, categoryTypes, purchases) --
-// invents nothing, calls no provider, persists nothing.
-function computeAccountWhitespaceGrid(account){
+// Client-local (NOT server-durable) record of which buying centers a rep
+// has confirmed a relationship in for a given account, used only when
+// House Accounts has no evidence of its own. Mirrors
+// dismissedResearchNamespace()'s exact per-user namespacing/fail-safe
+// convention (see below in this file) -- a lightweight browser
+// preference, not the org-shared persistence layer a future slice still
+// needs to design.
+const WHITESPACE_MAP_STORAGE_PREFIX = 'ha_whitespace_map_v1::';
+function whitespaceMapNamespace(){
+  try{
+    const user = (window.HouseAuth && typeof HouseAuth.getUser === 'function') ? HouseAuth.getUser() : null;
+    const raw = user && (user.auth_user_id || user.id || user.email);
+    return raw ? String(raw).trim().toLowerCase() : 'anonymous';
+  }catch(err){ return 'anonymous'; }
+}
+function whitespaceMapStorageKey(accountName){
+  return `${WHITESPACE_MAP_STORAGE_PREFIX}${whitespaceMapNamespace()}::${String(accountName || '').trim().toLowerCase()}`;
+}
+function readWhitespaceMapConfirmations(accountName){
+  try{
+    const raw = localStorage.getItem(whitespaceMapStorageKey(accountName));
+    if(!raw) return [];
+    const parsed = JSON.parse(raw);
+    // Corrupt/unexpected shape, or a stale center name from a taxonomy
+    // change -- fail safe to "nothing confirmed" rather than letting a
+    // bad stored value break rendering.
+    return Array.isArray(parsed) ? parsed.filter(c => WHITESPACE_DEPARTMENTS.includes(c)) : [];
+  }catch(err){ return []; }
+}
+function writeWhitespaceMapConfirmations(accountName, centers){
+  try{ localStorage.setItem(whitespaceMapStorageKey(accountName), JSON.stringify(centers)); }
+  catch(err){ /* best-effort only -- localStorage may be unavailable/full/corrupt */ }
+}
+function toggleWhitespaceMapConfirmation(accountName, center){
+  const current = readWhitespaceMapConfirmations(accountName);
+  const next = current.includes(center) ? current.filter(c => c !== center) : [...current, center];
+  writeWhitespaceMapConfirmations(accountName, next);
+  return next;
+}
+
+// Pure function (given the confirmedCenters array the caller already read
+// from storage): (account, confirmedCenters) -> matrix. Reads only
+// already-stored account fields plus the supplied confirmation list --
+// invents nothing, calls no provider, persists nothing itself.
+function computeAccountWhitespaceMatrix(account, confirmedCenters){
   const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
   const allRecords = Array.isArray(account?.allRecords) ? account.allRecords : [];
   const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
+  const confirmed = new Set(Array.isArray(confirmedCenters) ? confirmedCenters : []);
 
-  const hasAnyContact = contacts.length > 0;
-  const hasAnyPurchaseEvidence = (Array.isArray(account?.purchases) ? account.purchases.length > 0 : false) || categoryTypes.size > 0;
-  const dataSufficiency = (hasAnyContact || hasAnyPurchaseEvidence) ? 'sufficient' : 'insufficient';
-
-  const departments = WHITESPACE_DEPARTMENTS.map(dept => {
-    const matched = contacts.filter(c => departmentFromText(c?.department || c?.title || '') === dept);
-    if(!matched.length){
-      return { key: dept, status: 'unknown', confirmation: null, evidence: null };
-    }
-    const linked = matched.find(c => contactIsTransactionLinked(c, allRecords)) || null;
-    if(linked){
-      return { key: dept, status: 'covered', confirmation: null, evidence: { type: 'contact_transaction_linked', contactName: linked.name || '', contactTitle: linked.title || '' } };
-    }
-    return { key: dept, status: 'known_contact', confirmation: null, evidence: { type: 'contact_known', contactName: matched[0].name || '', contactTitle: matched[0].title || '' } };
-  });
-
-  const categories = WHITESPACE_CATEGORIES.map(cat => {
-    if(categoryTypes.has(cat)){
-      return { key: cat, status: 'covered', confirmation: null, evidence: { type: 'purchase_history' } };
-    }
-    return { key: cat, status: 'unknown', confirmation: null, evidence: null };
-  });
-
-  return { dataSufficiency, departments, categories };
-}
-
-function whitespaceStatusMeta(status){
-  if(status === 'covered') return { icon: '✓', label: 'Covered', cls: 'ws-covered' };
-  if(status === 'known_contact') return { icon: '●', label: 'Known contact', cls: 'ws-known-contact' };
-  return { icon: '?', label: 'Potential whitespace', cls: 'ws-unknown' };
-}
-
-function renderWhitespaceCell(cell){
-  const meta = whitespaceStatusMeta(cell.status);
-  let title = `${meta.label} — no evidence either way yet`;
-  if(cell.evidence?.type === 'contact_transaction_linked'){
-    title = `${meta.label} — ${cell.evidence.contactName || 'a known contact'}${cell.evidence.contactTitle ? ` (${cell.evidence.contactTitle})` : ''}, linked to a real order`;
-  } else if(cell.evidence?.type === 'contact_known'){
-    title = `${meta.label} — ${cell.evidence.contactName || 'a contact is known'}${cell.evidence.contactTitle ? ` (${cell.evidence.contactTitle})` : ''}, not yet linked to an order`;
-  } else if(cell.evidence?.type === 'purchase_history'){
-    title = `${meta.label} — observed in your uploaded order history`;
+  // Same-row co-occurrence only -- a department and a category are never
+  // linked just because each is true SOMEWHERE for this account.
+  const linkedPairs = new Set();
+  for(const r of allRecords){
+    if(!hasOrderHistoryEvidence(r)) continue;
+    const dept = departmentFromText(r?.contactDepartment || r?.contactTitle || '');
+    const cat = r?.category;
+    if(dept && cat && WHITESPACE_CATEGORIES.includes(cat)) linkedPairs.add(`${dept}||${cat}`);
   }
-  return `<span class="ws-chip ${meta.cls}" title="${escapeHtml(title)}">${meta.icon} ${escapeHtml(cell.key)}</span>`;
+
+  const attributedCategories = new Set([...linkedPairs].map(p => p.split('||')[1]));
+  const unattributed = [...categoryTypes].filter(cat => WHITESPACE_CATEGORIES.includes(cat) && !attributedCategories.has(cat));
+
+  const knownContactsByCenter = new Map();
+  for(const c of contacts){
+    const dept = departmentFromText(c?.department || c?.title || '');
+    if(!dept || !c?.name) continue;
+    if(!knownContactsByCenter.has(dept)) knownContactsByCenter.set(dept, []);
+    const names = knownContactsByCenter.get(dept);
+    if(!names.includes(c.name)) names.push(c.name);
+  }
+
+  let hasAnyBuyingCenterEvidence = false;
+  const rows = WHITESPACE_DEPARTMENTS.map(center => {
+    const names = knownContactsByCenter.get(center) || [];
+    if(names.length || confirmed.has(center)) hasAnyBuyingCenterEvidence = true;
+    let metaLine = '';
+    if(names.length){
+      metaLine = `${names[0]}${names.length > 1 ? ` +${names.length - 1} more` : ''} · known contact${names.length > 1 ? 's' : ''}`;
+    } else if(confirmed.has(center)){
+      metaLine = 'Rep-confirmed relationship';
+    }
+    return {
+      center,
+      metaLine,
+      cells: WHITESPACE_CATEGORIES.map(cat => ({ status: linkedPairs.has(`${center}||${cat}`) ? 'covered' : 'whitespace' }))
+    };
+  });
+
+  return { rows, unattributed, hasAnyBuyingCenterEvidence };
+}
+
+// 'not-applicable'/'active-play' markup below is reserved structure for
+// later slices (rep confirm/correct persistence, grounded expansion-play
+// logic) -- computeAccountWhitespaceMatrix() above never produces these
+// statuses today, so this branch is currently unreachable from real data.
+function renderWhitespaceCell(cell){
+  if(cell.status === 'covered') return `<div class="ws-cell covered" title="Covered — real, linked evidence"><span class="ws-mark">✓</span></div>`;
+  if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" title="Not applicable"><span class="ws-mark small">N/A</span></div>`;
+  if(cell.status === 'active_play') return `<div class="ws-cell active-play" title="Active Expansion Play"><span class="ws-mark strong">EXPAND</span></div>`;
+  return `<div class="ws-cell whitespace" title="Whitespace — no evidence either way"></div>`;
+}
+
+function renderWhitespaceMatrix(rows){
+  const colHeaders = WHITESPACE_CATEGORIES.map(cat => `<div class="ws-colhead">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</div>`).join('');
+  const bodyRows = rows.map(r => `
+    <div class="ws-rowhead">
+      <div class="ws-rowhead-name">${escapeHtml(r.center)}</div>
+      ${r.metaLine ? `<div class="ws-rowhead-meta">${escapeHtml(r.metaLine)}</div>` : ''}
+    </div>
+    ${r.cells.map(renderWhitespaceCell).join('')}
+  `).join('');
+  return `<div class="ws-matrix-scroll"><div class="ws-matrix"><div></div>${colHeaders}${bodyRows}</div></div>`;
+}
+
+function renderWhitespaceMappingPrompt(confirmedCenters){
+  const confirmed = new Set(confirmedCenters || []);
+  const chips = WHITESPACE_DEPARTMENTS.map(center => `<button type="button" class="ws-map-chip${confirmed.has(center) ? ' selected' : ''}" data-buying-center="${escapeHtml(center)}" aria-pressed="${confirmed.has(center)}">${escapeHtml(center)}</button>`).join('');
+  return `
+    <div class="ws-map-prompt">
+      <div class="ws-map-prompt-title">Help House Accounts map this customer</div>
+      <div class="ws-map-prompt-sub">Which parts of this account do you currently have relationships with?</div>
+      <div class="ws-map-chips">${chips}</div>
+      <div class="ws-map-prompt-hint">Tap any that apply — you can change these anytime.</div>
+    </div>
+  `;
+}
+
+function renderUnattributedPurchasesPanel(categories){
+  if(!categories.length) return '';
+  const pills = categories.map(cat => `<span class="ws-unattributed-pill">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</span>`).join('');
+  return `
+    <div class="ws-unattributed-panel">
+      <div class="ws-unattributed-title">Account-wide purchases not yet attributed</div>
+      <div class="ws-unattributed-sub">These categories have real purchase history, but House Accounts can't yet tell which part of the account they came through.</div>
+      <div class="ws-unattributed-pills">${pills}</div>
+    </div>
+  `;
 }
 
 function renderAccountWhitespaceSection(account){
-  const grid = computeAccountWhitespaceGrid(account);
-  if(grid.dataSufficiency === 'insufficient'){
-    return `<div class="section-title">🗺️ Account Whitespace</div><div class="no-signals-message">Not enough uploaded contact or order data yet to show department/category coverage for this account.</div>`;
-  }
+  const accountName = account?.name || '';
+  const confirmedCenters = readWhitespaceMapConfirmations(accountName);
+  const matrix = computeAccountWhitespaceMatrix(account, confirmedCenters);
+  const body = matrix.hasAnyBuyingCenterEvidence
+    ? renderWhitespaceMatrix(matrix.rows)
+    : renderWhitespaceMappingPrompt(confirmedCenters);
   return `
-    <div class="section-title">🗺️ Account Whitespace</div>
-    <div class="whitespace-grid">
-      <div class="whitespace-row"><div class="whitespace-row-label">Departments</div><div class="whitespace-chips">${grid.departments.map(renderWhitespaceCell).join('')}</div></div>
-      <div class="whitespace-row"><div class="whitespace-row-label">Categories</div><div class="whitespace-chips">${grid.categories.map(renderWhitespaceCell).join('')}</div></div>
+    <div class="account-whitespace-section" data-account-name="${escapeHtml(accountName)}">
+      <div class="section-title">🗺️ Account Whitespace</div>
+      <div class="ws-subtitle">See where you have business today — and where there may be room to grow.</div>
+      ${body}
+      ${renderUnattributedPurchasesPanel(matrix.unattributed)}
     </div>
-    <div class="whitespace-legend">✓ Covered (real evidence) &nbsp; ● Known contact (not yet linked to an order) &nbsp; ? Potential whitespace (no evidence either way)</div>
   `;
 }
+
+// Client-local only (see WHITESPACE_MAP_STORAGE_PREFIX above) -- toggles
+// the clicked buying center and re-renders just this account's whitespace
+// section from window.accountRadarAccounts, the same established
+// in-memory account source every other post-render lookup in this file
+// already reads from (e.g. buyingOpportunityIdentity()'s account lookup).
+document.addEventListener('click', (event) => {
+  const chip = event.target.closest('.ws-map-chip');
+  if(!chip) return;
+  const section = event.target.closest('.account-whitespace-section');
+  if(!section) return;
+  const accountName = section.dataset.accountName;
+  const center = chip.dataset.buyingCenter;
+  if(!accountName || !center) return;
+  toggleWhitespaceMapConfirmation(accountName, center);
+  const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
+  if(account) section.outerHTML = renderAccountWhitespaceSection(account);
+});
 
 function getOpportunityType(account, signalBased=false){
   if(signalBased) return 'SIGNAL-DRIVEN';

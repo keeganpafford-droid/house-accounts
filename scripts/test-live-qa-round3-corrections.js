@@ -56,7 +56,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     extractFn(DASHBOARD_SRC, 'findAccountForOpp'),
     extractFn(DASHBOARD_SRC, 'realPriorCategories')
   ].join('\n\n');
-  const sandbox = { window: {}, console };
+  const sandbox = { window: {}, console, document: { addEventListener(){} } };
   vm.createContext(sandbox);
   new vm.Script(SRC, { filename: 'find-account-extract.js' }).runInContext(sandbox);
   const { findAccountForOpp } = sandbox;
@@ -94,7 +94,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     extractRange(DASHBOARD_SRC, 'const CANONICAL_KIND_BY_EVENT_TYPE = {', 'function canonicalSignalKind(opp){'),
     extractFn(DASHBOARD_SRC, 'getReasonToReachOutTitle')
   ].join('\n\n');
-  const sandbox = { window: {}, console };
+  const sandbox = { window: {}, console, document: { addEventListener(){} } };
   vm.createContext(sandbox);
   new vm.Script(SRC, { filename: 'reason-title-extract.js' }).runInContext(sandbox);
   const { getReasonToReachOutTitle } = sandbox;
@@ -216,7 +216,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     extractFn(DASHBOARD_SRC, 'pluralize'),
     extractFn(DASHBOARD_SRC, 'feedSummary')
   ].join('\n\n');
-  const sandbox = { window: {}, console };
+  const sandbox = { window: {}, console, document: { addEventListener(){} } };
   vm.createContext(sandbox);
   new vm.Script(`${SRC}\nthis.__exports = { parseCSV, generateFutureOpportunities, feedSummary, opportunityMatchesTimebox };`, { filename: 'meridian-count-extract.js' }).runInContext(sandbox);
   const dash = sandbox.__exports;

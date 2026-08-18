@@ -104,7 +104,7 @@ const DASHBOARD_SRC = loadDashboardSource();
       // same object because non-module top-level scripts attach every global
       // to window, but this minimal sandbox needs both bindings set explicitly.
       HouseAuth: houseAuth,
-      document: { getElementById: id => els[id] || null },
+      document: { getElementById: id => els[id] || null, addEventListener(){} },
       fetch: async () => ({ ok:true, json: async () => ({ personalEmpty:true }) }),
       currentDashboardData: null,
       dashboardCanViewTeam: false,
@@ -218,7 +218,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     const sandbox = {
       console,
       CSS: { escape: s => s },
-      document: { querySelector: () => statusEl, createTextNode: t => ({text:t}) },
+      document: { querySelector: () => statusEl, createTextNode: t => ({text:t}), addEventListener(){} },
       load: async () => { loadCalls.push(true); },
       researchListFromManageModal: async () => {
         if(researchThrows) throw new Error(researchThrows);
@@ -365,7 +365,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     'primaryCategoryFromOpportunity', 'collapseDuplicateGenericRepeatSignals', 'collapseDuplicateAccountHistorySignals',
     'accountOpportunityCluster', 'additionalOpportunitiesFor', 'opportunityHeadline', 'getDailyReasonScore'
   ];
-  const sandbox = { window: {}, console };
+  const sandbox = { window: {}, console, document: { addEventListener(){} } };
   vm.createContext(sandbox);
   new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'round6-dominance.js' }).runInContext(sandbox);
   const dash = sandbox.__exports;

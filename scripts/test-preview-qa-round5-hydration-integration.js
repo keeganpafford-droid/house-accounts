@@ -58,7 +58,7 @@ function makeSandbox(){
   const sandbox = {
     console,
     window: { accountRadarAccounts: [] },
-    document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [] },
+    document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [], addEventListener(){} },
     isWarmAccount: () => false,
     URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON
   };

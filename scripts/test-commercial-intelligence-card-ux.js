@@ -81,6 +81,7 @@ function makeSandbox(){
     document: {
       getElementById: () => ({ textContent: '', innerHTML: '', style: {} }),
       querySelectorAll: () => [],
+      addEventListener(){},
       body: {
         insertAdjacentHTML(pos, html){ sandbox.__lastSalesPlayHtml = html; },
         get lastElementChild(){ return fakeModal; }
