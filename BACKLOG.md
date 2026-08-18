@@ -81,9 +81,9 @@ Merged to `main` at `4b62e3308028832ae4779843a4c82092f5a21cd5` (merge commit, `f
 
 **Founder sequencing decision (2026-08-17) — do not begin notification-learning wiring next.** Deliberately let real users accumulate genuine behavioral evidence first. Do not tune N=5, ±8, the 90-day window, or evidence weights, and do not add new dimensions, based on fixtures or this founder QA round. Revisit after meaningful Beta usage accumulates, and decide from real data whether thresholds/weights are sensible, preferences are emerging, ranking changes look commercially correct, notification ordering should consume the same learning primitive, and richer dimensions are warranted.
 
-### Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix — IN PROGRESS, NOT YET BANKED (build started 2026-08-18; two founder correction rounds, 2026-08-19)
+### Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix — MERGED TO MAIN, PENDING PRODUCTION VERIFICATION (build started 2026-08-18; two founder correction rounds, 2026-08-19; merged 2026-08-19)
 
-**Status: awaiting founder approval, not merged to `main`.** Preview verified READY at commit `ba34cf5` (deployment `dpl_8fNcLjqp6H5nEJx1uYuUX1bL494o`); Production remains on the pre-correction `99b9fa1`. Do not bank this entry or merge to `main` until the founder explicitly signs off — noted here mid-flight only so the audit trail of two correction rounds isn't lost, not as a claim of completion.
+**Status: founder approved round 2 and directed the merge.** Fast-forward merged to `main` at `da777c6` (was Preview `dpl_AETUG4T8kjMZJYWrjbPWraKiUwy2`, READY). Merged-`main` suite reconfirmed 160/160 locally after the merge. **Not yet marked BANKED**: the founder's instruction was to bank only after Production is verified, and this session has no Vercel API/dashboard access to independently confirm the resulting Production deployment reached READY — every prior Preview/Production verification in this engagement was performed by the founder's own Vercel access, not this session's tooling. Awaiting that confirmation before flipping this line to BANKED.
 
 **Product reframe this sprint (founder/Vantage review):** "Expansion" was being used for two different sales motions that must not be conflated. **Account Expansion / Growth Map** — how much of an *existing* customer do we currently own, and where is the whitespace (departments, product/program categories) — is the near-term priority below. **Find More Like Them / Lookalike Expansion** — net-new companies resembling accounts we already win with — is a separate, later capability; see its own entry under LATER.
 
@@ -200,7 +200,7 @@ Work that makes House Accounts' recommendations get better over time, not just v
 
 ### Account Expansion / Whitespace Intelligence / Growth Map — remaining work
 
-**Priority: near-term — the Buying Center × Offering matrix is built and in Preview, awaiting founder approval before merge/banking, see "Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix" under Recently completed above.** No Behavioral Learning dependency — this track reuses the existing contact/order/category foundation directly.
+**Priority: near-term — the Buying Center × Offering matrix is merged to `main`, pending Production verification before it's marked banked, see "Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix" under Recently completed above.** No Behavioral Learning dependency — this track reuses the existing contact/order/category foundation directly.
 
 **CRM boundary (standing constraint on all future slices):** House Accounts answers "where can I grow this account," never "what happened and when." No activity/call logging, deal/pipeline stages, task/reminder management, email history/sync, or custom-field CRM configuration. The whitespace grid must stay a derived, evidence-backed inference with rep correction — never a form a rep is expected to keep up to date from memory.
 
