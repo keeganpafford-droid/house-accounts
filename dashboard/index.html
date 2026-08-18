@@ -4399,6 +4399,23 @@ function handleMvpDashboardRoute(){
   // "wait for data" logic here.
   if(Array.isArray(window.accountRadarAccounts) && typeof renderDetailedAccountViews === 'function'){
     renderDetailedAccountViews(window.accountRadarAccounts);
+    // Founder correction (2026-08-19): the click chain (hash change ->
+    // route handler -> focused render) was confirmed working end-to-end in
+    // real-browser reproduction, but nothing ever moved the viewport --
+    // #account=<name> is not a real element id, so the browser's native
+    // "jump to #fragment" scrolling never triggers, unlike an ordinary
+    // named-anchor link. #accountList can sit far down the page (below
+    // Priorities/KPIs), and closing Manage Customer Accounts reveals the
+    // background page at ITS OWN prior scroll position -- so the DOM
+    // genuinely updated, but a rep watching the viewport would see no
+    // visible change at all, indistinguishable from the click doing
+    // nothing. Only scroll when actually entering (or switching within)
+    // the focused destination -- never on an ordinary "All Accounts" hash
+    // clear, which shouldn't yank the page around.
+    if(typeof currentAccountIntelligenceFocusKey === 'function' && currentAccountIntelligenceFocusKey()){
+      const section = document.querySelector('.account-intelligence-section');
+      if(section) section.scrollIntoView({behavior:'smooth', block:'start'});
+    }
   }
 }
 window.addEventListener('hashchange', handleMvpDashboardRoute);
