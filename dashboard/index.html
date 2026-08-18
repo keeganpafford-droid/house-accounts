@@ -1242,7 +1242,11 @@
   .ws-colhead{font-family:var(--body); font-size:0.62rem; font-weight:600; color:var(--muted); text-align:center; line-height:1.2; padding:0 2px 6px; align-self:end;}
   .ws-rowhead{position:sticky; left:0; z-index:2; background:#fafaf6; padding:8px 10px 8px 0; display:flex; flex-direction:column; justify-content:center;}
   .ws-rowhead-name{font-family:var(--display); font-weight:700; font-size:0.88rem; color:var(--ink);}
-  .ws-rowhead-meta{font-family:var(--body); font-size:0.68rem; color:var(--muted); margin-top:2px;}
+  /* .ws-rowhead-meta is a <button> as of the relationship-detail popover
+     (founder correction round 2, 2026-08-19) -- reset to look like the
+     plain metadata text it always has, not a browser default button. */
+  .ws-rowhead-meta{font-family:var(--body); font-size:0.68rem; color:var(--muted); margin-top:2px; background:none; border:none; padding:0; cursor:pointer; text-align:left;}
+  .ws-rowhead-meta:hover,.ws-rowhead-meta:focus-visible{text-decoration:underline;}
   /* Founder correction (2026-08-19): "Known relationship" is subtle
      positive metadata -- a small teal tint on the existing quiet metadata
      line, not a badge/pill/loud color block. */
@@ -1277,6 +1281,25 @@
   .ws-cell-popover-option.selected{color:var(--radar); font-weight:700;}
   .ws-cell-popover-option-check{color:var(--radar); font-weight:800; opacity:0;}
   .ws-cell-popover-option.selected .ws-cell-popover-option-check{opacity:1;}
+  /* Relationship-detail popover (founder correction round 2, 2026-08-19):
+     "who do I know here, and why does HA think so" -- answers this on
+     click, off the matrix's own quiet row metadata, rather than stuffing
+     contact cards into the rows themselves. Same position:fixed/box-shadow
+     language as .ws-cell-popover above, kept as its own class family since
+     its content shape (a list of evidence entries, not three fixed
+     options) is genuinely different. */
+  .ws-rel-popover{position:fixed; min-width:240px; max-width:300px; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 14px 34px rgba(23,55,94,.18); padding:12px; z-index:10050; display:none;}
+  .ws-rel-popover.open{display:block;}
+  .ws-rel-popover-title{font-family:var(--display); font-weight:700; font-size:.85rem; color:var(--ink); margin-bottom:8px;}
+  .ws-rel-popover-entry{padding:8px 0; border-top:1px solid var(--line);}
+  .ws-rel-popover-entry:first-of-type{border-top:none; padding-top:0;}
+  .ws-rel-popover-entry-name{font-family:var(--body); font-weight:700; font-size:.82rem; color:var(--ink);}
+  .ws-rel-popover-entry-detail{font-family:var(--body); font-size:.76rem; color:var(--muted); margin-top:1px;}
+  .ws-rel-popover-remove{font-family:var(--body); font-size:.72rem; font-weight:700; color:var(--danger); background:none; border:none; padding:4px 0 0; margin:0; cursor:pointer; text-align:left;}
+  .ws-rel-popover-remove:hover,.ws-rel-popover-remove:focus-visible{text-decoration:underline;}
+  .ws-rel-popover-note{font-family:var(--body); font-size:.76rem; color:var(--muted); margin-top:8px; padding-top:8px; border-top:1px solid var(--line);}
+  .ws-rel-popover-edit-contact{font-family:var(--body); font-size:.76rem; font-weight:700; color:var(--radar); background:none; border:none; padding:0; margin-top:8px; cursor:pointer; text-align:left;}
+  .ws-rel-popover-edit-contact:hover,.ws-rel-popover-edit-contact:focus-visible{text-decoration:underline;}
   .ws-map-prompt{background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px;}
   .ws-map-prompt-title{font-family:var(--display); font-weight:700; font-size:0.95rem; color:var(--ink); margin-bottom:4px;}
   .ws-map-prompt-sub{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:12px;}
@@ -10902,26 +10925,34 @@ async function saveWhitespaceCellAnswer(accountName, buyingCenter, category, ans
 // so every existing call site that predates this slice (and every
 // existing test) is unaffected: every cell is whitespace, exactly as
 // before.
-function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
+// Every known contact classified into `center`'s department bucket, deduped
+// by name, in their original account.contacts order. Shared by
+// computeAccountWhitespaceMatrix() (row summary) and
+// openWsRelationshipPopover() below (the relationship-detail popover's
+// full contact list) -- one evidence-detection rule, not two copies of it.
+function contactsKnownForBuyingCenter(account, center){
   const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
+  const seen = new Set();
+  const result = [];
+  for(const c of contacts){
+    const dept = departmentFromText(c?.department || c?.title || '');
+    if(dept !== center || !c?.name || seen.has(c.name)) continue;
+    seen.add(c.name);
+    result.push(c);
+  }
+  return result;
+}
+
+function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
   const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
   const confirmed = new Set(Array.isArray(confirmedCenters) ? confirmedCenters : []);
   const answers = (cellAnswers && typeof cellAnswers === 'object' && !Array.isArray(cellAnswers)) ? cellAnswers : {};
 
   const unattributed = [...categoryTypes].filter(cat => WHITESPACE_CATEGORIES.includes(cat));
 
-  const knownContactsByCenter = new Map();
-  for(const c of contacts){
-    const dept = departmentFromText(c?.department || c?.title || '');
-    if(!dept || !c?.name) continue;
-    if(!knownContactsByCenter.has(dept)) knownContactsByCenter.set(dept, []);
-    const names = knownContactsByCenter.get(dept);
-    if(!names.includes(c.name)) names.push(c.name);
-  }
-
   let hasAnyBuyingCenterEvidence = false;
   const rows = WHITESPACE_DEPARTMENTS.map(center => {
-    const names = knownContactsByCenter.get(center) || [];
+    const rowContacts = contactsKnownForBuyingCenter(account, center);
     const cells = WHITESPACE_CATEGORIES.map(category => {
       const rawAnswer = answers[whitespaceCellKey(center, category)];
       const answer = (rawAnswer === 'covered' || rawAnswer === 'whitespace' || rawAnswer === 'not_applicable') ? rawAnswer : null;
@@ -10936,34 +10967,34 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     // writing to ha_whitespace_confirmations (a cell answer and a buying-
     // center confirmation remain two independent facts).
     const hasAnsweredCell = cells.some(c => !!c.answer);
-    if(names.length || confirmed.has(center) || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
+    const isTeamConfirmed = confirmed.has(center);
+    if(rowContacts.length || isTeamConfirmed || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
     // Founder correction (2026-08-19): the row's PRIMARY visible copy must
     // answer the user-facing question ("do we have a relationship here?"),
-    // never describe HA's internal evidence model. "Rep-confirmed
-    // relationship" and "Buying center known from offering mapping" were
-    // both real, but implementation-facing -- a rep's first reaction was
-    // "what buying center? what is offering mapping?". Every non-contact
-    // evidence source now collapses to the SAME plain-language metaLine
-    // ("Known relationship"); the distinction between sources is preserved
-    // as metaTitle -- a secondary, human-language tooltip
-    // (renderWhitespaceMatrix() below renders it as a title="" attribute),
-    // never the default-visible text.
+    // never describe HA's internal evidence model. Every non-contact
+    // evidence source collapses to the SAME plain-language metaLine
+    // ("Known relationship"). Multiple legitimate sources can coexist for
+    // one row (e.g. a known contact AND an explicit team confirmation) --
+    // `evidenceSources` (founder round 2, 2026-08-19) preserves all of
+    // them, not just whichever one metaLine happens to summarize, so the
+    // relationship-detail popover (openWsRelationshipPopover() below) can
+    // show every legitimate source, plain-language, on click -- "who do I
+    // know here, and why does HA think so" -- rather than the row itself
+    // ever being stuffed with that detail.
+    const evidenceSources = [];
+    if(rowContacts.length) evidenceSources.push('contact');
+    if(isTeamConfirmed) evidenceSources.push('team-confirmed');
+    if(hasAnsweredCell) evidenceSources.push('cell-mapping');
     let metaLine = '';
-    let metaTitle = '';
     let metaKind = '';
-    if(names.length){
-      metaLine = `${names[0]}${names.length > 1 ? ` +${names.length - 1} more` : ''} · known contact${names.length > 1 ? 's' : ''}`;
+    if(rowContacts.length){
+      metaLine = `${rowContacts[0].name}${rowContacts.length > 1 ? ` +${rowContacts.length - 1} more` : ''} · known contact${rowContacts.length > 1 ? 's' : ''}`;
       metaKind = 'contact';
-    } else if(confirmed.has(center)){
+    } else if(evidenceSources.length){
       metaLine = 'Known relationship';
-      metaTitle = 'Confirmed by your team';
-      metaKind = 'relationship';
-    } else if(hasAnsweredCell){
-      metaLine = 'Known relationship';
-      metaTitle = 'Known from your account mapping';
       metaKind = 'relationship';
     }
-    return { center, metaLine, metaTitle, metaKind, cells };
+    return { center, metaLine, metaKind, evidenceSources, cells };
   });
 
   return { rows, unattributed, hasAnyBuyingCenterEvidence };
@@ -10989,18 +11020,20 @@ function renderWhitespaceCell(cell){
   return `<div class="ws-cell whitespace" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: ${answer === 'whitespace' ? 'Confirmed whitespace' : 'Whitespace, no answer yet'} — click to answer" title="${whitespaceTitle}"></div>`;
 }
 
-// A row with real evidence shows its plain-language metaLine (optionally
-// with a secondary, human-language metaTitle tooltip -- see
-// computeAccountWhitespaceMatrix()'s own comment on why the visible text
-// and the evidence-source detail are deliberately kept separate). A row
-// with NO evidence at all -- reachable here because the matrix as a whole
-// is already visible once ANY row has evidence, so a genuinely-unknown
-// sibling row still needs something to show -- gets a quiet, discoverable
+// A row with real evidence shows its plain-language metaLine as a
+// clickable control -- clicking it opens the relationship-detail popover
+// (openWsRelationshipPopover() below), never toggles anything off
+// directly (founder correction round 2, 2026-08-19: an accidental click
+// must not silently remove a real confirmation). A row with NO evidence
+// at all -- reachable here because the matrix as a whole is already
+// visible once ANY row has evidence, so a genuinely-unknown sibling row
+// still needs something to show -- gets a quiet, discoverable
 // "+ Add relationship" control instead of a blank space or a negative
 // "No relationship" claim (founder doctrine: unknown is never the same
-// claim as absent). It reuses the exact same durable buying-center
-// confirmation toggle the "Help House Accounts map this customer" prompt
-// already uses (see the delegated click listener below) -- no new
+// claim as absent). That control directly adds the confirmation (a single
+// unambiguous action, unlike removal) via the exact same durable buying-
+// center confirmation toggle the "Help House Accounts map this customer"
+// prompt already uses (see the delegated click listener below) -- no new
 // persistence, just a second, always-available entry point to it.
 function renderWhitespaceMatrix(rows){
   const colHeaders = WHITESPACE_CATEGORIES.map(cat => `<div class="ws-colhead">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</div>`).join('');
@@ -11008,7 +11041,7 @@ function renderWhitespaceMatrix(rows){
     <div class="ws-rowhead">
       <div class="ws-rowhead-name">${escapeHtml(r.center)}</div>
       ${r.metaLine
-        ? `<div class="ws-rowhead-meta${r.metaKind === 'relationship' ? ' ws-rowhead-known-relationship' : ''}"${r.metaTitle ? ` title="${escapeHtml(r.metaTitle)}"` : ''}>${r.metaKind === 'relationship' ? '✓ ' : ''}${escapeHtml(r.metaLine)}</div>`
+        ? `<button type="button" class="ws-rowhead-meta${r.metaKind === 'relationship' ? ' ws-rowhead-known-relationship' : ''}" data-buying-center="${escapeHtml(r.center)}">${r.metaKind === 'relationship' ? '✓ ' : ''}${escapeHtml(r.metaLine)}</button>`
         : `<button type="button" class="ws-rowhead-add-relationship" data-buying-center="${escapeHtml(r.center)}">+ Add relationship</button>`}
     </div>
     ${r.cells.map(renderWhitespaceCell).join('')}
@@ -11134,9 +11167,62 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  // "Remove confirmation" inside the relationship-detail popover -- toggles
+  // OFF the SAME durable buying-center confirmation "+ Add relationship"
+  // toggles on (see toggleWhitespaceMapConfirmation()'s own doc comment).
+  // Removes ONLY that one evidence source: the re-render below recomputes
+  // the row fresh from all three sources, so a known contact or cell-
+  // mapping-implied evidence, if either is also present, keeps the row at
+  // "Known relationship" rather than regressing to "+ Add relationship".
+  const removeBtn = event.target.closest('.ws-rel-popover-remove');
+  if(removeBtn){
+    const target = wsRelPopoverTarget;
+    closeWsRelPopover();
+    if(!target) return;
+    try{
+      await toggleWhitespaceMapConfirmation(target.accountName, removeBtn.dataset.buyingCenter);
+      const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === target.accountName.toLowerCase());
+      const section = document.querySelector(`.account-whitespace-section[data-account-name="${CSS.escape(target.accountName)}"]`);
+      if(account && section) section.outerHTML = renderAccountWhitespaceSection(account);
+    }catch(err){
+      console.warn('[Whitespace Intelligence] failed to remove buying-center confirmation', { message: err && err.message });
+    }
+    return;
+  }
+
+  // "Edit Contact Info" inside the relationship-detail popover -- reuses
+  // the account card's own single existing contact-edit affordance
+  // (toggleAccountMetadataEdit(), wired via the delegated
+  // .toggle-account-edit-btn listener elsewhere in this file) rather than
+  // building any new per-buying-center contact editor. V1 scope note:
+  // House Accounts has one editable contact per ACCOUNT today, not one
+  // per buying center -- this opens that same single editor, it does not
+  // (and cannot yet) target a specific buying center's contact.
+  const editContactBtn = event.target.closest('.ws-rel-popover-edit-contact');
+  if(editContactBtn){
+    closeWsRelPopover();
+    const card = editContactBtn.closest('.account-card') || document.querySelector('.account-card');
+    const toggleBtn = card && card.querySelector('.toggle-account-edit-btn');
+    if(toggleBtn){
+      toggleBtn.click();
+      toggleBtn.scrollIntoView({behavior:'smooth', block:'center'});
+    }
+    return;
+  }
+
+  // A row's "Known relationship"/known-contact metadata was clicked --
+  // open the relationship-detail popover (never toggles anything off
+  // directly; see openWsRelationshipPopover()'s own doc comment for why).
+  const relTrigger = event.target.closest('.ws-rowhead-meta[data-buying-center]');
+  if(relTrigger){
+    openWsRelationshipPopover(relTrigger);
+    return;
+  }
+
   // Outside click closes an open popover, unless the click landed inside
   // the popover itself (handled by the branches above).
   if(wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+  if(wsRelPopoverEl && wsRelPopoverEl.classList.contains('open')) closeWsRelPopover();
 });
 
 // Keyboard support for the cell popover: Enter/Space opens it from a
@@ -11146,18 +11232,27 @@ document.addEventListener('click', async (event) => {
 // (closeAllMenus() in the modal IIFE) for a consistent feel across the
 // app's two independent popover/menu implementations.
 document.addEventListener('keydown', (event) => {
-  if((event.key === 'Enter' || event.key === ' ') && event.target.closest && event.target.closest('.ws-cell[data-buying-center]')){
-    event.preventDefault();
-    openWsCellPopover(event.target.closest('.ws-cell[data-buying-center]'));
-    return;
+  // Only the .ws-cell grid tiles need manual Enter/Space handling -- they
+  // are role="button" <div>s, which get no native keyboard activation.
+  // .ws-rowhead-meta/.ws-rowhead-add-relationship are real <button>
+  // elements (see renderWhitespaceMatrix()) -- the browser already
+  // dispatches a click event for them on Enter/Space, so handling them
+  // here too would double-fire the popover/toggle.
+  if((event.key === 'Enter' || event.key === ' ') && event.target.closest){
+    const cellTarget = event.target.closest('.ws-cell[data-buying-center]');
+    if(cellTarget){ event.preventDefault(); openWsCellPopover(cellTarget); return; }
   }
-  if(event.key === 'Escape' && wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+  if(event.key === 'Escape'){
+    if(wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+    if(wsRelPopoverEl && wsRelPopoverEl.classList.contains('open')) closeWsRelPopover();
+  }
 });
 // Position is not tracked live -- same "close rather than show a stale/
 // misplaced menu" posture as the Manage Customer Accounts kebab menu's own
 // scroll handling.
 window.addEventListener('scroll', () => {
   if(wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+  if(wsRelPopoverEl && wsRelPopoverEl.classList.contains('open')) closeWsRelPopover();
 }, true);
 
 // Lazily created once, reused for every cell click (at most one Account
@@ -11229,6 +11324,117 @@ function openWsCellPopover(cell){
   });
   popover.classList.add('open');
   positionWsCellPopover(popover, cell);
+}
+
+// Relationship-detail popover (founder correction round 2, 2026-08-19):
+// opened by clicking a row's "Known relationship"/known-contact metadata
+// (never by clicking "+ Add relationship", which directly adds a
+// confirmation instead -- see the delegated click listener's own
+// comment). Answers "who do I know here, and why does HA think so,"
+// listing every legitimate evidence source for that row (a row can
+// legitimately have more than one at once), and -- ONLY for an explicit
+// team confirmation -- offers "Remove confirmation". Removing it deletes
+// ONLY that one source; a known contact or cell-mapping-implied evidence,
+// if present, is untouched, so the row can never regress from
+// "Known relationship" to "+ Add relationship" while real evidence still
+// exists (see the delegated click listener's re-render, which always
+// recomputes fresh from all three independent sources, never assumes the
+// row's new state).
+let wsRelPopoverEl = null;
+let wsRelPopoverTarget = null; // { accountName, buyingCenter } | null
+
+function ensureWsRelPopover(){
+  if(wsRelPopoverEl) return wsRelPopoverEl;
+  const el = document.createElement('div');
+  el.className = 'ws-rel-popover';
+  el.setAttribute('role', 'dialog');
+  document.body.appendChild(el);
+  wsRelPopoverEl = el;
+  return el;
+}
+
+function closeWsRelPopover(){
+  if(wsRelPopoverEl) wsRelPopoverEl.classList.remove('open');
+  wsRelPopoverTarget = null;
+}
+
+function positionWsRelPopover(popover, trigger){
+  const r = trigger.getBoundingClientRect();
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const popoverWidth = popover.offsetWidth || 240;
+  const popoverHeight = popover.offsetHeight || 160;
+  let left = r.left;
+  if(left + popoverWidth > vw - 8) left = Math.max(8, vw - popoverWidth - 8);
+  let top = r.bottom + 6;
+  if(top + popoverHeight > vh - 8) top = Math.max(8, r.top - popoverHeight - 6);
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+// Builds the popover body from the SAME evidence facts
+// computeAccountWhitespaceMatrix() already detected for this row
+// (contacts, whether the buying center is explicitly team-confirmed,
+// whether any cell in the row has been answered) -- plain-language per
+// source, never the row's own internal evidence-model vocabulary. Contact
+// detail (title/email/phone) is real, already-uploaded account data --
+// nothing new is invented or fetched.
+function renderWsRelPopoverContent(center, contacts, isTeamConfirmed, isCellMappingKnown){
+  const entries = [];
+  contacts.forEach(c => {
+    const details = [c.title, c.email, c.phone].filter(Boolean);
+    entries.push(`
+      <div class="ws-rel-popover-entry">
+        <div class="ws-rel-popover-entry-name">${escapeHtml(c.name)}</div>
+        ${details.map(d => `<div class="ws-rel-popover-entry-detail">${escapeHtml(d)}</div>`).join('')}
+      </div>
+    `);
+  });
+  if(isTeamConfirmed){
+    entries.push(`
+      <div class="ws-rel-popover-entry">
+        <div class="ws-rel-popover-entry-name">Confirmed by your team</div>
+        <button type="button" class="ws-rel-popover-remove" data-buying-center="${escapeHtml(center)}">Remove confirmation</button>
+      </div>
+    `);
+  }
+  if(isCellMappingKnown){
+    entries.push(`
+      <div class="ws-rel-popover-entry">
+        <div class="ws-rel-popover-entry-name">Known from your account mapping</div>
+      </div>
+    `);
+  }
+  const noContactNote = contacts.length ? '' : `<div class="ws-rel-popover-note">No contact mapped to this buying center yet.</div>`;
+  return `
+    <div class="ws-rel-popover-title">${escapeHtml(center)}</div>
+    ${entries.join('')}
+    ${noContactNote}
+    <button type="button" class="ws-rel-popover-edit-contact">Edit Contact Info</button>
+  `;
+}
+
+function openWsRelationshipPopover(trigger){
+  const section = trigger.closest('.account-whitespace-section');
+  if(!section) return;
+  const accountName = section.dataset.accountName;
+  const center = trigger.dataset.buyingCenter;
+  if(!accountName || !center) return;
+  const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
+  if(!account) return;
+  const contacts = contactsKnownForBuyingCenter(account, center);
+  const isTeamConfirmed = confirmedCentersForAccount(accountName).includes(center);
+  const cellAnswers = cellAnswersForAccount(accountName);
+  const isCellMappingKnown = WHITESPACE_CATEGORIES.some(cat => !!cellAnswers[whitespaceCellKey(center, cat)]);
+  // Nothing legitimate to show (e.g. a stale click after the last
+  // evidence source was just removed elsewhere) -- decline to open rather
+  // than show an empty/misleading popover.
+  if(!contacts.length && !isTeamConfirmed && !isCellMappingKnown) return;
+  const popover = ensureWsRelPopover();
+  wsRelPopoverTarget = { accountName, buyingCenter: center };
+  popover.innerHTML = renderWsRelPopoverContent(center, contacts, isTeamConfirmed, isCellMappingKnown);
+  popover.classList.add('open');
+  positionWsRelPopover(popover, trigger);
 }
 
 function getOpportunityType(account, signalBased=false){

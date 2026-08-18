@@ -423,10 +423,96 @@ async function main(){
 
     const procurementMetaEl = procurementRow.locator('.ws-rowhead-meta');
     assert((await procurementMetaEl.innerText()) === '✓ Known relationship', `8) REQUIRED: after confirming, the row shows the founder-specified "✓ Known relationship" text, never "Rep-confirmed relationship" or similar internal phrasing (got "${await procurementMetaEl.innerText()}")`);
-    const tooltip = await procurementMetaEl.getAttribute('title');
-    assert(tooltip === 'Confirmed by your team', `8) REQUIRED: the evidence source ("who confirmed this") is available as a secondary tooltip, not the primary text (got "${tooltip}")`);
 
     assert(pageErrors.length === 0, `8) no uncaught page errors on the relationship-copy flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 9) Relationship-detail popover (founder round 2, 2026-08-19): clicking
+  //    a "Known relationship"/known-contact row opens a popover showing
+  //    every legitimate evidence source, plain-language -- "who do I know
+  //    here, and why does HA think so." Removing an explicit team
+  //    confirmation removes ONLY that source; a known contact and cell-
+  //    mapping-implied evidence, both also present here, keep the row at
+  //    "Known relationship" rather than regressing to "+ Add relationship".
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = { 'Marketing||Apparel': 'covered' };
+    // Pre-seed a team confirmation alongside the fixture's real Marketing
+    // contact, so this one row legitimately has all three coexisting
+    // evidence sources at once (contact + team-confirmed + cell-mapping).
+    confirmedCenterStore = ['Marketing'];
+    await gotoFocusedAccount(page, baseUrl);
+
+    const marketingRow = page.locator('.ws-rowhead', {hasText: 'Marketing'});
+    await marketingRow.locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+
+    const popoverText = await page.locator('.ws-rel-popover').innerText();
+    assert(/Jordan Reyes/.test(popoverText) && /Marketing Manager/.test(popoverText), `9) REQUIRED: the known contact's real name and title appear in the popover, plain-language (got "${popoverText}")`);
+    assert(/Confirmed by your team/.test(popoverText), '9) REQUIRED: the explicit team confirmation appears as its own entry');
+    assert(/Known from your account mapping/.test(popoverText), '9) REQUIRED: the cell-mapping-implied evidence appears as its own entry');
+    assert(!/No contact mapped/.test(popoverText), '9) REQUIRED: no "no contact mapped" note when a real contact exists');
+    assert(/Edit Contact Info/.test(popoverText), '9) REQUIRED: an Edit Contact Info action is offered');
+
+    // Remove the explicit team confirmation -- wait for the real network
+    // round trip (not just the popover closing, which happens
+    // synchronously and BEFORE the request even starts) so the assertions
+    // below observe the post-removal state, not a race.
+    await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/whitespace-map') && resp.request().method() === 'POST'),
+      page.click('.ws-rel-popover-remove')
+    ]);
+    await page.waitForSelector('.ws-rel-popover', {state: 'hidden'});
+    assert(!confirmedCenterStore.includes('Marketing'), '9) REQUIRED: "Remove confirmation" persists the removal server-side, via the real migration-24 endpoint');
+
+    // The row must STILL read "Known relationship" via its contact --
+    // removing one evidence source never regresses a row that has others.
+    const marketingMetaAfterRemoval = await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').innerText();
+    assert(/Jordan Reyes/.test(marketingMetaAfterRemoval) && /known contact/.test(marketingMetaAfterRemoval), `9) REQUIRED: after removing the team confirmation, the row still shows "Known relationship" via its remaining contact evidence, never regressing to "+ Add relationship" (got "${marketingMetaAfterRemoval}")`);
+    const addRelationshipStillAbsent = await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-add-relationship').count();
+    assert(addRelationshipStillAbsent === 0, '9) REQUIRED: the row never shows "+ Add relationship" while any legitimate evidence remains');
+
+    // Reopening confirms the team-confirmation entry is gone, but the
+    // OTHER two independent sources survived the removal untouched.
+    await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+    const popoverTextAfter = await page.locator('.ws-rel-popover').innerText();
+    assert(!/Confirmed by your team/.test(popoverTextAfter), '9) REQUIRED: the removed team confirmation no longer appears in the popover');
+    assert(/Jordan Reyes/.test(popoverTextAfter), '9) REQUIRED: the known contact still appears -- removal of one source never erases another');
+    assert(/Known from your account mapping/.test(popoverTextAfter), '9) REQUIRED: the cell-mapping-implied evidence still appears -- removal of the team confirmation never touches it');
+
+    // "Edit Contact Info" reuses the account's real, existing single-
+    // contact editor.
+    await page.click('.ws-rel-popover-edit-contact');
+    await page.waitForSelector('.account-metadata-edit-form', {state: 'visible'});
+    assert(await page.locator('.ws-rel-popover.open').count() === 0, '9) REQUIRED: clicking Edit Contact Info closes the relationship popover');
+
+    assert(pageErrors.length === 0, `9) no uncaught page errors on the relationship-detail popover flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 10) Relationship popover dismissal: outside click and Escape both
+  //     close it without any side effect (no removal, no navigation).
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = {};
+    confirmedCenterStore = ['Marketing'];
+    await gotoFocusedAccount(page, baseUrl);
+
+    await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+    await page.mouse.click(10, 10);
+    await page.waitForSelector('.ws-rel-popover', {state: 'hidden'});
+    assert(confirmedCenterStore.includes('Marketing'), '10) REQUIRED: an outside click closes the relationship popover without removing anything');
+
+    await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.ws-rel-popover', {state: 'hidden'});
+    assert(confirmedCenterStore.includes('Marketing'), '10) REQUIRED: Escape closes the relationship popover without removing anything');
+
+    assert(pageErrors.length === 0, `10) no uncaught page errors dismissing the relationship popover (got: ${JSON.stringify(pageErrors)})`);
   });
 
   await server.close();

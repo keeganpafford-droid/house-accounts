@@ -58,10 +58,12 @@ const SRC = [
 
 const EXPORT_NAMES = [
   'WHITESPACE_DEPARTMENTS', 'WHITESPACE_CATEGORIES', 'WHITESPACE_CELL_ANSWERS', 'WHITESPACE_CELL_ANSWER_LABELS',
-  'whitespaceCellKey', 'computeAccountWhitespaceMatrix', 'renderWhitespaceCell', 'renderWhitespaceMatrix',
+  'whitespaceCellKey', 'contactsKnownForBuyingCenter', 'computeAccountWhitespaceMatrix', 'renderWhitespaceCell', 'renderWhitespaceMatrix',
   'renderAccountWhitespaceSection', 'renderUnattributedPurchasesPanel',
+  'loadWhitespaceConfirmations', 'confirmedCentersForAccount',
   'loadWhitespaceCellAnswers', 'cellAnswersForAccount', 'saveWhitespaceCellAnswer',
-  'ensureWsCellPopover', 'openWsCellPopover', 'closeWsCellPopover', 'positionWsCellPopover'
+  'ensureWsCellPopover', 'openWsCellPopover', 'closeWsCellPopover', 'positionWsCellPopover',
+  'ensureWsRelPopover', 'openWsRelationshipPopover', 'closeWsRelPopover', 'positionWsRelPopover', 'renderWsRelPopoverContent'
 ];
 
 // A minimal fake DOM element -- just enough for document.createElement()/
@@ -142,13 +144,13 @@ function makeFakeElement(tag){
   return el;
 }
 
-function makeSandbox({ fetchImpl, hasAuth = true } = {}){
+function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   const calls = [];
   const fetchFn = fetchImpl || (async () => ({ ok: true, json: async () => ({ ok: true, answers: {} }) }));
   const houseAuth = hasAuth ? { authHeadersAsync: async (extra) => ({ ...extra, Authorization: 'Bearer test-token' }) } : undefined;
   const bodyEl = makeFakeElement('body');
   const sandbox = {
-    window: { HouseAuth: houseAuth, addEventListener(){}, innerWidth: 1400, innerHeight: 1000 },
+    window: { HouseAuth: houseAuth, addEventListener(){}, innerWidth: 1400, innerHeight: 1000, accountRadarAccounts: accounts },
     document: {
       addEventListener(){},
       body: bodyEl,
@@ -239,8 +241,36 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   assert(matrix.hasAnyBuyingCenterEvidence === true, 'REQUIRED: a cell-level answer alone is sufficient row-level evidence for the matrix to render (not fall back to the mapping prompt)');
   const leadership = matrix.rows.find(r => r.center === 'Leadership');
   assert(leadership.metaLine === 'Known relationship', `REQUIRED: the row's PRIMARY visible copy is the same plain-language "Known relationship" text as every other non-contact evidence source -- never internal phrasing like "offering mapping" (got "${leadership.metaLine}")`);
-  assert(leadership.metaTitle === 'Known from your account mapping', `REQUIRED: the offering-mapping evidence source is preserved as a secondary tooltip (metaTitle), distinguishable from a known contact or a buying-center confirmation, just never the default-visible text (got "${leadership.metaTitle}")`);
+  assert(JSON.stringify(leadership.evidenceSources) === '["cell-mapping"]', `REQUIRED (founder round 2, 2026-08-19): the offering-mapping evidence source is preserved structurally as evidenceSources for the relationship-detail popover, distinguishable from a known contact or a buying-center confirmation, just never the default-visible metaLine text (got ${JSON.stringify(leadership.evidenceSources)})`);
   assert(leadership.metaKind === 'relationship', 'REQUIRED: metaKind marks this as the relationship (non-contact) case, so rendering applies the subtle teal treatment, not the plain contact styling');
+}
+{
+  // Multiple legitimate evidence sources can coexist for one row (founder
+  // round 2 doctrine) -- evidenceSources lists every one of them, not just
+  // whichever the metaLine happens to summarize.
+  const { dash } = makeSandbox();
+  const account = { contacts: [{ name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing' }], categoryTypes: [] };
+  const cellAnswers = { [dash.whitespaceCellKey('Marketing', 'Apparel')]: 'covered' };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, ['Marketing'], cellAnswers);
+  const marketing = matrix.rows.find(r => r.center === 'Marketing');
+  assert(JSON.stringify(marketing.evidenceSources) === '["contact","team-confirmed","cell-mapping"]', `REQUIRED: all three coexisting evidence sources are preserved, not collapsed to just one (got ${JSON.stringify(marketing.evidenceSources)})`);
+  assert(marketing.metaLine === 'Jordan Reyes · known contact', 'sanity: the primary visible copy still prefers the contact name when one exists, even with other evidence also present');
+}
+{
+  // contactsKnownForBuyingCenter() -- the shared helper the relationship-
+  // detail popover reuses -- returns full contact objects (not just
+  // names), deduped, and scoped to the exact buying center.
+  const { dash } = makeSandbox();
+  const account = { contacts: [
+    { name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing', email: 'jordan@example.com' },
+    { name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing', email: 'jordan@example.com' },
+    { name: 'Sam Lee', title: 'HR Director', department: 'HR' }
+  ] };
+  const marketingContacts = dash.contactsKnownForBuyingCenter(account, 'Marketing');
+  assert(marketingContacts.length === 1 && marketingContacts[0].name === 'Jordan Reyes' && marketingContacts[0].email === 'jordan@example.com', `REQUIRED: contactsKnownForBuyingCenter() dedupes by name and preserves full contact detail (email/title), not just the name (got ${JSON.stringify(marketingContacts)})`);
+  const hrContacts = dash.contactsKnownForBuyingCenter(account, 'HR / People');
+  assert(hrContacts.length === 1 && hrContacts[0].name === 'Sam Lee', 'REQUIRED: contactsKnownForBuyingCenter() scopes strictly to the requested buying center');
+  assert(dash.contactsKnownForBuyingCenter(account, 'Procurement').length === 0, 'REQUIRED: a buying center with no matching contacts returns an empty array, never throws');
 }
 {
   // A malformed/omitted cellAnswers argument (every pre-existing call
@@ -386,6 +416,101 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   let threw = false;
   try{ dash.openWsCellPopover(orphanCell); }catch(e){ threw = true; }
   assert(!threw, 'REQUIRED: opening the popover against a cell with no owning .account-whitespace-section never throws');
+}
+
+// ===========================================================================
+// 6. Relationship-detail popover (founder round 2, 2026-08-19): "who do I
+//    know here, and why does HA think so." Opened from a row's
+//    "Known relationship"/known-contact metadata -- never from clicking
+//    "+ Add relationship", which adds directly instead (a single
+//    unambiguous action vs. correction, which needs the extra step).
+// ===========================================================================
+{
+  // Multiple coexisting evidence sources all appear -- contact detail
+  // (title/email), the team-confirmation entry with its Remove action,
+  // and the cell-mapping entry -- and since a contact exists, no
+  // "no contact mapped" note.
+  const account = {
+    name: 'Acme Corp',
+    contacts: [{ name: 'Jordan Reyes', title: 'Marketing Manager', email: 'jordan@example.com', department: 'Marketing' }]
+  };
+  const { dash } = makeSandbox({
+    accounts: [account],
+    fetchImpl: async (url) => {
+      if(url === '/api/whitespace-map') return { ok: true, json: async () => ({ ok: true, confirmations: { 'acme': ['Marketing'] } }) };
+      return { ok: true, json: async () => ({ ok: true, answers: { 'acme': { 'Marketing||Apparel': 'covered' } } }) };
+    }
+  });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Marketing';
+
+  dash.openWsRelationshipPopover(trigger);
+  const popover = dash.ensureWsRelPopover();
+  assert(popover.classList.contains('open'), 'REQUIRED: opening the relationship popover against a row makes it visible');
+  const html = popover.innerHTML;
+  assert(/Jordan Reyes/.test(html) && /Marketing Manager/.test(html) && /jordan@example\.com/.test(html), `REQUIRED: the known contact's real name, title, and email all appear, plain-language (got ${html})`);
+  assert(/Confirmed by your team/.test(html), 'REQUIRED: the explicit team confirmation appears as its own plain-language entry');
+  assert(/Remove confirmation/.test(html), 'REQUIRED: the team-confirmation entry offers "Remove confirmation"');
+  assert(/Known from your account mapping/.test(html), 'REQUIRED: the cell-mapping-implied evidence appears as its own plain-language entry');
+  assert(!/No contact mapped to this buying center yet/.test(html), 'REQUIRED: no "no contact mapped" note when a real contact exists');
+  assert(/Edit Contact Info/.test(html), 'REQUIRED: an "Edit Contact Info" action is offered, reusing the existing single-contact editor');
+  assert(!/buying center known from offering mapping|cell answer/i.test(html), 'REQUIRED: no internal evidence-model phrasing leaks into the popover either');
+
+  dash.closeWsRelPopover();
+  assert(!popover.classList.contains('open'), 'REQUIRED: closeWsRelPopover() hides the popover');
+}
+{
+  // Explicit confirmation, no contact -- the "no contact mapped" note
+  // appears, and there is exactly one Remove action (not one per source).
+  const { dash } = makeSandbox({
+    accounts: [{ name: 'Acme Corp', contacts: [] }],
+    fetchImpl: async (url) => {
+      if(url === '/api/whitespace-map') return { ok: true, json: async () => ({ ok: true, confirmations: { 'acme': ['Procurement'] } }) };
+      return { ok: true, json: async () => ({ ok: true, answers: {} }) };
+    }
+  });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Procurement';
+  dash.openWsRelationshipPopover(trigger);
+  const html = dash.ensureWsRelPopover().innerHTML;
+  assert(/Confirmed by your team/.test(html), 'sanity: the team confirmation still appears');
+  assert(/No contact mapped to this buying center yet/.test(html), 'REQUIRED: with no contact, the popover explicitly says so, plain-language');
+  assert((html.match(/Remove confirmation/g) || []).length === 1, 'REQUIRED: exactly one "Remove confirmation" action, not duplicated per evidence source');
+}
+{
+  // No legitimate evidence at all (a stale click, e.g. right after the
+  // last source was removed elsewhere) -- declines to open rather than
+  // show an empty/misleading popover.
+  const { dash } = makeSandbox({ accounts: [{ name: 'Acme Corp', contacts: [] }] });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Leadership';
+  dash.openWsRelationshipPopover(trigger);
+  const popover = dash.ensureWsRelPopover();
+  assert(!popover.classList.contains('open'), 'REQUIRED: with no legitimate evidence for the row, the popover declines to open at all');
+}
+{
+  // Missing context never throws.
+  const { dash } = makeSandbox({ accounts: [{ name: 'Acme Corp', contacts: [] }] });
+  const orphanTrigger = makeFakeElement('button');
+  orphanTrigger.dataset.buyingCenter = 'Marketing';
+  let threw = false;
+  try{ dash.openWsRelationshipPopover(orphanTrigger); }catch(e){ threw = true; }
+  assert(!threw, 'REQUIRED: opening the relationship popover with no owning .account-whitespace-section never throws');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
