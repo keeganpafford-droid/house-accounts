@@ -238,7 +238,9 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   const matrix = dash.computeAccountWhitespaceMatrix(account, [], cellAnswers);
   assert(matrix.hasAnyBuyingCenterEvidence === true, 'REQUIRED: a cell-level answer alone is sufficient row-level evidence for the matrix to render (not fall back to the mapping prompt)');
   const leadership = matrix.rows.find(r => r.center === 'Leadership');
-  assert(leadership.metaLine === 'Buying center known from offering mapping', `REQUIRED: the row's metaLine explains it is known ONLY via offering mapping, distinguishable from a known contact or a buying-center confirmation (got "${leadership.metaLine}")`);
+  assert(leadership.metaLine === 'Known relationship', `REQUIRED: the row's PRIMARY visible copy is the same plain-language "Known relationship" text as every other non-contact evidence source -- never internal phrasing like "offering mapping" (got "${leadership.metaLine}")`);
+  assert(leadership.metaTitle === 'Known from your account mapping', `REQUIRED: the offering-mapping evidence source is preserved as a secondary tooltip (metaTitle), distinguishable from a known contact or a buying-center confirmation, just never the default-visible text (got "${leadership.metaTitle}")`);
+  assert(leadership.metaKind === 'relationship', 'REQUIRED: metaKind marks this as the relationship (non-contact) case, so rendering applies the subtle teal treatment, not the plain contact styling');
 }
 {
   // A malformed/omitted cellAnswers argument (every pre-existing call

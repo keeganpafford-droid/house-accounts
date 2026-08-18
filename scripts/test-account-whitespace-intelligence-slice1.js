@@ -171,7 +171,8 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   const account = { contacts: [], categoryTypes: ['Apparel'] };
   const matrix = dash.computeAccountWhitespaceMatrix(account, ['Marketing']);
   const marketing = matrix.rows.find(r => r.center === 'Marketing');
-  assert(marketing.metaLine === 'Rep-confirmed relationship', 'sanity: the buying-center confirmation still produces row-level metadata');
+  assert(marketing.metaLine === 'Known relationship', 'sanity: the buying-center confirmation still produces row-level metadata (founder correction 2026-08-19: plain-language copy, not "Rep-confirmed relationship")');
+  assert(marketing.metaTitle === 'Confirmed by your team', 'REQUIRED: the evidence-source detail (who/how) is preserved as a secondary tooltip, not the primary visible text');
   assert(marketing.cells.every(c => c.status === 'whitespace'), 'REQUIRED: a buying-center-level rep confirmation never marks any specific offering cell covered -- that would assume an intersection the rep was never asked about');
   assert(matrix.unattributed.includes('Apparel'), 'REQUIRED: Apparel remains unattributed regardless of the unrelated Marketing confirmation');
 }
@@ -197,6 +198,26 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   const { dash } = makeSandbox();
   const html = dash.renderWhitespaceMatrix([{ center: 'HR / People', metaLine: '', cells: dash.WHITESPACE_CATEGORIES.map(() => ({ status: 'whitespace' })) }]);
   assert(/class="ws-corner"/.test(html), 'REQUIRED: the matrix header includes the sticky corner cell for the row-label column');
+  assert(/class="ws-rowhead-add-relationship" data-buying-center="HR \/ People">\+ Add relationship</.test(html), 'REQUIRED (founder correction 2026-08-19): a row with no metaLine at all renders the quiet, discoverable "+ Add relationship" control, never a blank space');
+}
+{
+  // The primary visible copy is plain-language and identical for every
+  // non-contact evidence source; the evidence-source detail is a
+  // secondary tooltip (title=""), never exposed as the default text.
+  const { dash } = makeSandbox();
+  const html = dash.renderWhitespaceMatrix([{ center: 'Marketing', metaLine: 'Known relationship', metaTitle: 'Confirmed by your team', metaKind: 'relationship', cells: dash.WHITESPACE_CATEGORIES.map(() => ({ status: 'whitespace' })) }]);
+  assert(/Known relationship/.test(html) && !/Rep-confirmed|offering mapping|cell answer/i.test(html), 'REQUIRED: the rendered row shows the plain-language "Known relationship" text, never internal evidence-model phrasing');
+  assert(/title="Confirmed by your team"/.test(html), 'REQUIRED: the evidence source is rendered as a secondary title="" tooltip, not the primary text');
+  assert(/ws-rowhead-known-relationship/.test(html), 'REQUIRED: the relationship metaLine gets the subtle teal treatment (a class modifier), not the same plain gray styling a known contact gets');
+}
+{
+  // A known-contact row is untouched by this correction -- still the
+  // plain contact metadata, no teal class, no tooltip needed (the name is
+  // already the detail).
+  const { dash } = makeSandbox();
+  const html = dash.renderWhitespaceMatrix([{ center: 'Marketing', metaLine: 'Jordan Reyes · known contact', metaTitle: '', metaKind: 'contact', cells: dash.WHITESPACE_CATEGORIES.map(() => ({ status: 'whitespace' })) }]);
+  assert(/Jordan Reyes · known contact/.test(html), 'sanity: a known-contact row keeps its existing plain-language treatment');
+  assert(!/ws-rowhead-known-relationship/.test(html), 'REQUIRED: a known-contact row does NOT get the relationship teal-tint class -- that is reserved for the no-named-contact case');
 }
 
 // ===========================================================================
@@ -274,7 +295,8 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   await dash.toggleWhitespaceMapConfirmation('Acme Corp', 'Marketing');
   const after = dash.renderAccountWhitespaceSection(account);
   assert(/ws-matrix/.test(after) && !/ws-map-prompt/.test(after), 'REQUIRED: after a rep confirms one buying center, the SAME account now renders the matrix, not the prompt, on next render');
-  assert(/Rep-confirmed relationship/.test(after), 'REQUIRED: the confirmed row shows "Rep-confirmed relationship" metadata, distinguishable from a real known-contact name');
+  assert(/Known relationship/.test(after), 'REQUIRED: the confirmed row shows plain-language "Known relationship" metadata, distinguishable from a real known-contact name');
+  assert(/\+ Add relationship/.test(after), 'REQUIRED: a sibling row with no evidence at all shows the quiet "+ Add relationship" control, never a blank space or a negative "no relationship" claim');
 }
 
 // ===========================================================================

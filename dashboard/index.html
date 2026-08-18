@@ -1243,6 +1243,13 @@
   .ws-rowhead{position:sticky; left:0; z-index:2; background:#fafaf6; padding:8px 10px 8px 0; display:flex; flex-direction:column; justify-content:center;}
   .ws-rowhead-name{font-family:var(--display); font-weight:700; font-size:0.88rem; color:var(--ink);}
   .ws-rowhead-meta{font-family:var(--body); font-size:0.68rem; color:var(--muted); margin-top:2px;}
+  /* Founder correction (2026-08-19): "Known relationship" is subtle
+     positive metadata -- a small teal tint on the existing quiet metadata
+     line, not a badge/pill/loud color block. */
+  .ws-rowhead-meta.ws-rowhead-known-relationship{color:var(--radar); font-weight:700;}
+  .ws-rowhead-add-relationship{font-family:var(--body); font-size:0.68rem; font-weight:700; color:var(--muted); background:none; border:none; padding:0; margin-top:2px; cursor:pointer; text-align:left;}
+  .ws-rowhead-add-relationship:hover,.ws-rowhead-add-relationship:focus-visible{color:var(--radar); text-decoration:underline;}
+  .ws-rowhead-add-relationship:disabled{cursor:wait; opacity:0.6;}
   .ws-cell{border-radius:6px; min-height:38px; display:flex; align-items:center; justify-content:center; background:#fff; border:1px solid var(--line);}
   .ws-cell.whitespace{background:#fff; border-color:#eceef1;}
   .ws-cell.covered{background:rgba(31,183,174,0.14); border-color:rgba(31,183,174,0.55);}
@@ -10930,15 +10937,33 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     // center confirmation remain two independent facts).
     const hasAnsweredCell = cells.some(c => !!c.answer);
     if(names.length || confirmed.has(center) || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
+    // Founder correction (2026-08-19): the row's PRIMARY visible copy must
+    // answer the user-facing question ("do we have a relationship here?"),
+    // never describe HA's internal evidence model. "Rep-confirmed
+    // relationship" and "Buying center known from offering mapping" were
+    // both real, but implementation-facing -- a rep's first reaction was
+    // "what buying center? what is offering mapping?". Every non-contact
+    // evidence source now collapses to the SAME plain-language metaLine
+    // ("Known relationship"); the distinction between sources is preserved
+    // as metaTitle -- a secondary, human-language tooltip
+    // (renderWhitespaceMatrix() below renders it as a title="" attribute),
+    // never the default-visible text.
     let metaLine = '';
+    let metaTitle = '';
+    let metaKind = '';
     if(names.length){
       metaLine = `${names[0]}${names.length > 1 ? ` +${names.length - 1} more` : ''} · known contact${names.length > 1 ? 's' : ''}`;
+      metaKind = 'contact';
     } else if(confirmed.has(center)){
-      metaLine = 'Rep-confirmed relationship';
+      metaLine = 'Known relationship';
+      metaTitle = 'Confirmed by your team';
+      metaKind = 'relationship';
     } else if(hasAnsweredCell){
-      metaLine = 'Buying center known from offering mapping';
+      metaLine = 'Known relationship';
+      metaTitle = 'Known from your account mapping';
+      metaKind = 'relationship';
     }
-    return { center, metaLine, cells };
+    return { center, metaLine, metaTitle, metaKind, cells };
   });
 
   return { rows, unattributed, hasAnyBuyingCenterEvidence };
@@ -10964,12 +10989,27 @@ function renderWhitespaceCell(cell){
   return `<div class="ws-cell whitespace" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: ${answer === 'whitespace' ? 'Confirmed whitespace' : 'Whitespace, no answer yet'} — click to answer" title="${whitespaceTitle}"></div>`;
 }
 
+// A row with real evidence shows its plain-language metaLine (optionally
+// with a secondary, human-language metaTitle tooltip -- see
+// computeAccountWhitespaceMatrix()'s own comment on why the visible text
+// and the evidence-source detail are deliberately kept separate). A row
+// with NO evidence at all -- reachable here because the matrix as a whole
+// is already visible once ANY row has evidence, so a genuinely-unknown
+// sibling row still needs something to show -- gets a quiet, discoverable
+// "+ Add relationship" control instead of a blank space or a negative
+// "No relationship" claim (founder doctrine: unknown is never the same
+// claim as absent). It reuses the exact same durable buying-center
+// confirmation toggle the "Help House Accounts map this customer" prompt
+// already uses (see the delegated click listener below) -- no new
+// persistence, just a second, always-available entry point to it.
 function renderWhitespaceMatrix(rows){
   const colHeaders = WHITESPACE_CATEGORIES.map(cat => `<div class="ws-colhead">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</div>`).join('');
   const bodyRows = rows.map(r => `
     <div class="ws-rowhead">
       <div class="ws-rowhead-name">${escapeHtml(r.center)}</div>
-      ${r.metaLine ? `<div class="ws-rowhead-meta">${escapeHtml(r.metaLine)}</div>` : ''}
+      ${r.metaLine
+        ? `<div class="ws-rowhead-meta${r.metaKind === 'relationship' ? ' ws-rowhead-known-relationship' : ''}"${r.metaTitle ? ` title="${escapeHtml(r.metaTitle)}"` : ''}>${r.metaKind === 'relationship' ? '✓ ' : ''}${escapeHtml(r.metaLine)}</div>`
+        : `<button type="button" class="ws-rowhead-add-relationship" data-buying-center="${escapeHtml(r.center)}">+ Add relationship</button>`}
     </div>
     ${r.cells.map(renderWhitespaceCell).join('')}
   `).join('');
@@ -11032,9 +11072,14 @@ function renderAccountWhitespaceSection(account){
 // established in-memory account source every other post-render lookup in
 // this file already reads from (e.g. buyingOpportunityIdentity()'s account
 // lookup). The chip shows a brief pending state so a slow connection
-// doesn't look like a dropped click.
+// doesn't look like a dropped click. Handles BOTH entry points to the
+// same durable toggle -- the mapping prompt's chips (shown only in the
+// zero-evidence empty state) and each row's own "+ Add relationship"
+// control (shown for any still-unknown row once the matrix itself is
+// already visible) -- since both carry the identical data-buying-center
+// contract and call the exact same function.
 document.addEventListener('click', async (event) => {
-  const chip = event.target.closest('.ws-map-chip');
+  const chip = event.target.closest('.ws-map-chip, .ws-rowhead-add-relationship');
   if(chip){
     const section = event.target.closest('.account-whitespace-section');
     if(!section) return;

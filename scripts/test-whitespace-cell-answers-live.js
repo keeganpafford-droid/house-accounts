@@ -86,6 +86,7 @@ function getDashboardPayload(){
 }
 
 let cellAnswerStore = {}; // cellKey -> answer, mutated by the mocked POST route
+let confirmedCenterStore = []; // buying centers, mutated by the mocked /api/whitespace-map POST route
 
 async function withPage(baseUrl, run){
   const browser = await chromium.launch({executablePath: resolveChromiumExecutablePath()});
@@ -115,7 +116,20 @@ async function withPage(baseUrl, run){
     await page.route('**/api/get-dashboard**', route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(getDashboardPayload())}));
     await page.route('**/api/usage**', route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, organization: {plan: 'free'}, usage: {}})}));
     await page.route('**/api/unresolved-outreach**', route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, items: []})}));
-    await page.route('**/api/whitespace-map**', route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, confirmations: {}, confirmedCenters: []})}));
+    // Stateful, matching the real api/whitespace-map.js toggle contract --
+    // GET (batch, no accountName) returns the current org-wide map; POST
+    // toggles the requested buying center and returns the account's
+    // updated confirmedCenters, exactly like the real endpoint.
+    await page.route('**/api/whitespace-map**', async route => {
+      const req = route.request();
+      if(req.method() === 'POST'){
+        const body = JSON.parse(req.postData() || '{}');
+        const idx = confirmedCenterStore.indexOf(body.buyingCenter);
+        if(idx === -1) confirmedCenterStore.push(body.buyingCenter); else confirmedCenterStore.splice(idx, 1);
+        return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, confirmedCenters: [...confirmedCenterStore]})});
+      }
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, confirmations: {[ 'anchor brewing supply' ]: [...confirmedCenterStore]}, confirmedCenters: [...confirmedCenterStore]})});
+    });
     await page.route('**/api/monitoring-lists**', route => {
       const url = new URL(route.request().url());
       if(url.searchParams.get('uploadId')){
@@ -173,6 +187,7 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
 
     const hasMvpClass = await page.evaluate(() => document.documentElement.classList.contains('ha-mvp'));
@@ -195,6 +210,7 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
 
     const marketingRow = page.locator('.ws-rowhead', {hasText: 'Marketing'});
@@ -232,6 +248,7 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
 
     const cell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Apparel"]');
@@ -302,6 +319,7 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
 
     const cell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
@@ -333,6 +351,7 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
 
     const cell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Safety"]');
@@ -357,12 +376,57 @@ async function main(){
   // =========================================================================
   await withPage(baseUrl, async (page, pageErrors) => {
     cellAnswerStore = {};
+    confirmedCenterStore = [];
     await gotoFocusedAccount(page, baseUrl);
     const overflowX = await page.locator('.ws-matrix-scroll').evaluate(el => getComputedStyle(el).overflowX);
     assert(overflowX === 'auto', '7) the matrix still scrolls horizontally rather than shrinking to fit');
     const rowheadPosition = await page.locator('.ws-rowhead').first().evaluate(el => getComputedStyle(el).position);
     assert(rowheadPosition === 'sticky', '7) the Buying Center row-label column is still pinned via position:sticky');
     assert(pageErrors.length === 0, `7) no uncaught page errors (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 8) Founder copy/interaction correction (2026-08-19): the row's
+  //    PRIMARY visible copy is plain-language ("Known relationship"/
+  //    "+ Add relationship"), never internal evidence-model phrasing --
+  //    and the "+ Add relationship" control is a real, working entry point
+  //    into the SAME durable buying-center confirmation the mapping
+  //    prompt already uses.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = {};
+    confirmedCenterStore = [];
+    await gotoFocusedAccount(page, baseUrl);
+
+    // Marketing has a real contact fixture -- untouched by this
+    // correction, still the plain contact treatment.
+    const marketingMeta = await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').innerText();
+    assert(/Jordan Reyes/.test(marketingMeta) && /known contact/.test(marketingMeta), `8) sanity: a known-contact row is untouched by this correction (got "${marketingMeta}")`);
+
+    // Procurement has no evidence at all -- shows the quiet, discoverable
+    // "+ Add relationship" control, never a blank space.
+    const procurementRow = page.locator('.ws-rowhead', {hasText: 'Procurement'});
+    const addRelationshipBtn = procurementRow.locator('.ws-rowhead-add-relationship');
+    assert((await addRelationshipBtn.innerText()) === '+ Add relationship', '8) REQUIRED: an unmapped row shows the exact "+ Add relationship" copy');
+    assert(!(await procurementRow.locator('.ws-rowhead-meta').count()), '8) REQUIRED: an unmapped row never shows a negative "No relationship" claim -- no metadata line at all until confirmed');
+
+    // Clicking it confirms the buying center via the REAL durable
+    // migration-24 endpoint (api/whitespace-map.js) -- the same one the
+    // mapping prompt's chips already use.
+    await addRelationshipBtn.click();
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('.ws-rowhead')];
+      const row = rows.find(r => r.textContent.includes('Procurement'));
+      return row && row.querySelector('.ws-rowhead-known-relationship');
+    });
+    assert(confirmedCenterStore.includes('Procurement'), '8) REQUIRED: clicking "+ Add relationship" persists a real buying-center confirmation server-side, via the existing migration-24 endpoint');
+
+    const procurementMetaEl = procurementRow.locator('.ws-rowhead-meta');
+    assert((await procurementMetaEl.innerText()) === '✓ Known relationship', `8) REQUIRED: after confirming, the row shows the founder-specified "✓ Known relationship" text, never "Rep-confirmed relationship" or similar internal phrasing (got "${await procurementMetaEl.innerText()}")`);
+    const tooltip = await procurementMetaEl.getAttribute('title');
+    assert(tooltip === 'Confirmed by your team', `8) REQUIRED: the evidence source ("who confirmed this") is available as a secondary tooltip, not the primary text (got "${tooltip}")`);
+
+    assert(pageErrors.length === 0, `8) no uncaught page errors on the relationship-copy flow (got: ${JSON.stringify(pageErrors)})`);
   });
 
   await server.close();
