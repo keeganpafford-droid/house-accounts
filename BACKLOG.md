@@ -105,7 +105,7 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 - **V1 Covered truth rule (current, standing — round 2, 2026-08-19, supersedes round 1's per-contact-discrimination rule above).** A cell may render Covered only when (1) source data explicitly proves a specific buying center purchased a specific offering, or (2) a rep explicitly confirms they sell that offering into that buying center. Co-occurrence, uniqueness, repetition patterns, and single-category discrimination are all explicitly insufficient — none of them prove the intersection, only two independent facts (a known buying-center relationship; an account-wide observed purchase). Neither condition exists in this codebase today: no CSV field carries per-offering buying-center-purchase semantics, and today's durable rep confirmation is buying-center-level only, never offering-specific. Result: zero automatic Covered intersections is the correct, accepted current state — not a defect to work around.
 - **Known-relationship context is row-level metadata, not a cell state.** Knowing a contact in a buying center describes that row's label (e.g. "Jane Doe · known contact"), never paints every cell in that row — and a buying-center-level rep confirmation is exactly the same: row-level only, never implies coverage of any specific offering cell.
 - **Whitespace is not automatically an opportunity.** A recommended Active Expansion Play (not built yet) will require grounded commercial rationale (a real signal, a recurring/program pattern, an introduction path as supporting evidence only) in addition to a whitespace cell existing — an industry template alone remains insufficient.
-- **Only real-evidence states render in Production.** Whitespace is the only cell state real computation assigns today. Covered, Not-Applicable, and Active-Expansion-Play have reserved markup/CSS (explicit "✓"/"N/A"/"EXPAND", no mystery icons) but are never assigned without a real per-offering source field, a cell-level rep confirmation mechanism (not built), or grounded expansion-play logic — no synthetic/demo cells in a real account.
+- **Only real-evidence states render in Production.** Covered, Not-Applicable, and Active-Expansion-Play have reserved markup/CSS (explicit "✓"/"N/A"/"EXPAND", no mystery icons) but are never assigned without a real per-offering source field, a real cell-level rep confirmation (now built — see Cell-Level Buying Center × Offering Confirmation / Correction V1, folded into "Relationship Footprint + Multi-Contact / Contact Durability V1" below), or grounded expansion-play logic — no synthetic/demo cells in a real account.
 - **Unattributed purchases are never a fake buying-center row.** Every real category purchase renders in a separate "Account-wide purchases not yet attributed" panel, outside the organizational grid, since no automatic attribution exists under the current truth rule.
 - **`(organization_id, normalized_company_name)` is a V1 account-resolution key, not an immutable account identifier.** See round 2's persistence-identity finding above for the full rename/re-upload safety analysis.
 
@@ -116,7 +116,7 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 - **Lightweight buying-center mapping prompt** for the current real-world common case (zero classifiable buying centers): "Help House Accounts map this customer" + clickable buying-center chips, matching the doctrine that HA builds the map wherever it has evidence and the rep supplies only small corrections — never per-cell manual data entry.
 - **Durable persistence:** `ha_whitespace_confirmations` (migration 24) — keyed by `(organization_id, normalizeCompanyName(account_name), buying_center)`, reusing `ha_monitoring_targets`'s identity convention deliberately without a hard FK to that table's row (different lifecycle; not every account has a matching monitoring target). `api/whitespace-map.js` — Bearer-token-authenticated, server-derived `organization_id` only; `GET` with no `accountName` returns the whole org's confirmations in one batched map (`{confirmations:{normalizedName:[...]}}`, one bounded request per render, matching the `org-preference-learning.js` fetch doctrine), `GET ?accountName=` returns one account's array for callers that only need one, `POST {accountName, buyingCenter}` toggles (insert/delete, existence-then-write, concurrent-insert races on the unique constraint treated as success not error). Confirmations are cross-device and visible to every authorized org member, not a per-browser preference.
 - Fixed a real, narrow gap this work depended on: `normalizeSavedAccount()` never restored `allRecords` from `rawData.records` after a save/reload, so a previously-saved (not just freshly-uploaded) account would have silently shown empty per-row evidence. Purely additive.
-- **Explicitly not built yet:** grounded Active Expansion Play generation, any change to Relationship Expansion opportunity-generation logic, cell-level (as opposed to buying-center-level) confirm/correct — the second condition of the V1 Covered truth rule above. Full suite: 160/160.
+- **Explicitly not built yet:** grounded Active Expansion Play generation, any change to Relationship Expansion opportunity-generation logic. (Cell-level confirm/correct — the second condition of the V1 Covered truth rule above — was not yet built at the time of this entry; it has since shipped and is banked separately, see "Relationship Footprint + Multi-Contact / Contact Durability V1" below.) Full suite: 160/160.
 - **Ingestion recon finding (2026-08-18, real production query):** widening CSV department/title column aliases has low expected yield — commonsku/Facilis/Antera/generic-Excel order-history exports generally don't contain these fields at all; the real levers are future integration contact APIs (Antera's confirmed schema already exposes per-contact title data) and the rep-confirm loop this entry ships.
 
 ### Account Intelligence V1 — COMPLETED / BANKED / LIVE IN PRODUCTION (2026-08-19)
@@ -134,6 +134,27 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 **Terminology:** the per-account "Account Whitespace" section label was renamed to "Whitespace Intelligence" in the same merge (copy-only; subtitle unchanged) — see the Whitespace Intelligence entry above.
 
 **Explicitly not built / not started:** cell-level Buying Center × Offering confirm/correct, Active Expansion Plays, Prospecting, broader legacy-markup cleanup beyond what this change required.
+
+### Relationship Footprint + Multi-Contact / Contact Durability V1 — COMPLETED / BANKED / LIVE IN PRODUCTION (2026-08-19)
+
+**Status: BANKED.** Fast-forward merged to `main` at `0bee156` (built on `7f27c88`, which itself banks the Cell-Level Buying Center × Offering Confirmation / Correction V1 slice — see the fold-in note below), founder-confirmed live in Production via independent Vercel verification (deployment `dpl_EeEAw9q9WNvbA56R2khCsxNkJEKg`, READY). Merged-`main` suite: 165/165. Founder personally click-tested the real deployed Preview (Add Contact from a Buying Center; correct Buying Center preselection; save succeeds; new contact appears in both the relationship footprint and the Contacts section; multiple contacts supported; per-contact editing works; state survives normal navigation/refresh) before approval — automated coverage was prerequisite evidence, not the approval itself.
+
+**Folds in a prior un-banked slice:** Cell-Level Buying Center × Offering Confirmation / Correction V1 (migration 25, `api/whitespace-cell-answers.js`) shipped and was founder-approved at `7f27c88` but was never separately recorded in this file — banked now, retroactively. It is the second condition of the V1 Covered truth rule (see the Whitespace Intelligence entry above): a cell can now render Covered via a real cell-level rep answer, not only a future per-offering source field. This corrects the "not built" / "currently in scoping" language for cell-level confirm/correct that had gone stale elsewhere in this file (see the Growth Map entry under NEXT).
+
+**Shipped, this entry:**
+- Durable multiple contacts per account (`account.contacts[]`) — already existed as a data shape; now the actual UI surface, replacing the old single bottom-of-account "Contact: ..." line.
+- Durable per-contact `id` and a machine-safe `origin` (`upload` | `manual`), backfilled automatically for contacts saved before this field existed.
+- Conservative re-upload reconciliation (`reconcileImportedContacts()`): matches an incoming CSV row to an existing contact by exact email, or by an unambiguous normalized name only — a genuinely ambiguous same-name match is refused rather than guessed at (a false duplicate is an accepted cost; incorrectly merging two real people is not).
+- Manually added and manually edited contacts survive a later CSV re-upload untouched, even when that upload no longer mentions the person.
+- Buying Center relationship footprint, with correctable explicit team confirmations — a rep can undo a misclick without erasing any other legitimate evidence for that row.
+- Relationship-detail popover ("who do I know here, and why does HA think so") listing every legitimate evidence source in plain language, never internal evidence-model phrasing.
+- Multiple contacts per Buying Center, each independently editable.
+- Context-aware Add Contact (Buying Center preselected from the row the rep opened it from) and per-contact editing — one shared modal, bounded to name/title/Buying Center/email/phone.
+- Strict non-CRM boundary held throughout: no activity timeline, notes, call logs, tasks, reminders, email history, or custom fields.
+
+**Non-blocking performance observation (2026-08-19, founder Preview click-test):** one manual contact save took roughly 10 seconds before completing successfully. Every account edit in this app, including this one, goes through `saveCurrentUpload()` → `/api/save-upload` → `replace_ha_accounts_snapshot()`, which rewrites the full account snapshot for the upload inside a `pg_advisory_xact_lock(hashtext(upload_id))`-serialized transaction — pre-existing shared architecture, not introduced by this work. Two plausible causes follow directly from that, no measurement performed: a full-snapshot rewrite proportional to account-list size, and/or serialization behind a concurrent operation holding the same per-upload lock. **Do not investigate further absent repeated real-user evidence of material latency.**
+
+**Explicitly not built:** contact deletion, any CRM feature (activity/notes/call logs/tasks/reminders/email history/custom fields), Active Expansion Plays, Prospecting.
 
 ---
 
@@ -218,12 +239,13 @@ Work that makes House Accounts' recommendations get better over time, not just v
 
 ### Account Expansion / Whitespace Intelligence / Growth Map — remaining work
 
-**Priority: near-term — the Buying Center × Offering matrix is banked and live in Production, see "Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix" under Recently completed above. Cell-level confirm/correct (below) is the active next workstream, currently in scoping.** No Behavioral Learning dependency — this track reuses the existing contact/order/category foundation directly.
+**Priority: near-term.** The Buying Center × Offering matrix, cell-level confirm/correct, and the Relationship Footprint / multi-contact layer are all banked and live in Production — see "Account Expansion / Whitespace Intelligence — Buying Center × Offering Matrix" and "Relationship Footprint + Multi-Contact / Contact Durability V1" under Recently completed above. Slice 3 (below) is the active next workstream. No Behavioral Learning dependency — this track reuses the existing contact/order/category foundation directly.
 
 **CRM boundary (standing constraint on all future slices):** House Accounts answers "where can I grow this account," never "what happened and when." No activity/call logging, deal/pipeline stages, task/reminder management, email history/sync, or custom-field CRM configuration. The whitespace grid must stay a derived, evidence-backed inference with rep correction — never a form a rep is expected to keep up to date from memory.
 
+**Shipped, no longer remaining:** cell-level confirm/correct (Covered / Whitespace / Not applicable) — the second, real condition of the V1 Covered truth rule — shipped and is banked; see "Relationship Footprint + Multi-Contact / Contact Durability V1" under Recently completed above. A cell can now render Covered in Production via a genuine rep answer, not only a future per-offering source field.
+
 **Remaining scope, sequenced:**
-- **Cell-level confirm/correct — now the ONLY rep-driven path to a Covered cell.** Durable, org-shared buying-center-level confirmation persistence shipped 2026-08-19 (see the entry above — `ha_whitespace_confirmations` / `api/whitespace-map.js`), but per the round-2 founder correction (2026-08-19), buying-center-level confirmation alone can never mark any offering cell Covered — only a real per-offering source field or a genuine cell-level (buying center × offering) rep confirmation can. Remaining: extend beyond the buying-center-level prompt to real cell-level confirm/correct (Covered / Whitespace / Confirmed whitespace / Not applicable), once the row-level flow has real usage to learn from. Until this ships (or a real integration field arrives), the matrix will legitimately show zero automatic Covered cells in Production — that is accepted, not a defect to route around.
 - **Slice 3 — rework Relationship Expansion opportunity generation.** Today's `generateFutureOpportunities()` industry-template gate (`if(industry === 'Automotive...') if(cats.has('Apparel'))...`) must stop being a standalone trigger. A recommended expansion play requires an evidence-backed whitespace cell (non-confirmed-absent) PLUS at least one grounded commercial trigger — a real public signal, a detected recurring/program pattern (`findRepeatPatternGroups()`), or a rep-supplied introduction path (`suggestedIntroductionPath()`). An industry template alone becomes necessary-but-not-sufficient, never sufficient by itself. This touches live, revenue-relevant opportunity-generation logic with existing test dependencies — the highest-risk slice, do carefully with a full regression pass.
 - **Location/subsidiary/division whitespace** — explicitly deferred. Current data (a flat city/state string) cannot support this dimension truthfully; would need richer CSV input or a live integration (see Integrations) before it's worth building.
 - Rep confirmations should eventually feed the existing private org-scoped Behavioral Learning event foundation's *pattern* (not necessarily its literal table) — a confirm/correct action is structurally similar to the quality-feedback events `org-preference-learning.js` already consumes.
@@ -256,6 +278,18 @@ Do not build a parallel opportunity-scoring system alongside any of this — it 
 **Explicitly not a CRM:** House Accounts is not becoming a full CRM (no generic meeting/quote/win/revenue tracking system of its own) — any of the above that requires data House Accounts doesn't already capture stays out of scope until there's a specific, evidence-backed reason to capture it.
 
 **Permission role vs. selling role stay separate** — see "Manager/team workflow" under SOON below, which already establishes this distinction; do not conflate the two here either.
+
+### Product Cohesion / canonical Account Intelligence workspace — hypothesis to evaluate (not started)
+
+**Surfaced by:** founder's own real-product usage (2026-08-19), directly after using the Relationship Footprint / Contact Durability feature (see Recently completed above).
+
+**Founder observation:** Dashboard tells the rep where to go; Account Intelligence is where the rep works the customer. **Supporting principle: centralize the context, not necessarily the clicks.**
+
+**Hypothesis to evaluate — not decided, not built:** Account Intelligence should become the canonical customer workspace / source of truth for customer-specific context, potentially containing reasons to reach out, relationship footprint, contacts, Whitespace Intelligence, purchase/order evidence, business signals/research, Active Expansion Plays, and Prepare for Call context all in one place. Fast actions can remain accessible directly from Dashboard/Priorities, but should ideally deep-link into the appropriate account/play state rather than creating competing mini account experiences.
+
+**Scope of the eventual audit:** explicitly review the current duplication/fragmentation across View Account, View Research, Research Again, Research Account inside Account Intelligence, Dashboard Priority cards, Prepare for Call, and future Active Expansion Plays. Specifically evaluate whether separate View Research / Research Again experiences remain necessary once Account Intelligence is complete — research should conceptually become something performed *on an account*, with the result living in that account's workspace, not a parallel destination.
+
+**Priority: after Account Expansion V1 (banked — see Recently completed above), before Find More Like Them / Prospecting.** Do not execute this cleanup now — this is a hypothesis to evaluate, not an approved redesign.
 
 ---
 
@@ -418,6 +452,19 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 **Future messaging direction:** general assistants wait for prompts; House Accounts is persistent, proactive, account-aware, workflow-native, organization-specific, continuously watching the customer book, and remembers what happened.
 
 **Explicit constraint:** once Behavioral Learning is truly wired, add the stronger claim that House Accounts improves based on how the organization actually wins. **Do not claim behavioral learning publicly before it exists** — this messaging must trail the real capability, never lead it.
+
+### Demo Booking + Guided Customer Activation (future, not built)
+
+**Surfaced by:** founder direction (2026-08-19).
+
+**Direction:**
+- Support "Book a Demo" for prospects who want help before purchasing.
+- Do not make a demo mandatory for someone ready to self-serve signup/checkout.
+- After signup/purchase, strongly prompt "Book Your Setup Call" / onboarding.
+- Early onboarding should be founder-led/high-touch so the team can watch customers activate and learn where they struggle.
+- Eventual setup flow should help a customer: upload/connect their book; understand Priorities; open Account Intelligence; map relationships/contacts; understand Whitespace Intelligence; act on their first recommendation; understand what ongoing monitoring will do.
+
+**Do not build scheduling/integration infrastructure now.**
 
 ### Customer proof / stories
 
