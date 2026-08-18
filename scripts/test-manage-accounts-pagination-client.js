@@ -144,6 +144,16 @@ function researchTrackerSnapshot(){ return null; }
 function researchTrackerAccountState(){ return null; }
 function researchProgressPanel(){ return ''; }
 function requestResearchStop(){}
+// Account Intelligence destination (founder correction, 2026-08-19):
+// accountRow() now links the account name and its "View Account" button
+// out to the main dashboard's hash-routed destination -- another
+// out-of-scope-for-this-file main-dashboard call, stubbed the same way as
+// the research/refresh functions above. The real navigation behavior
+// (hash focus mode, back link, not-found handling) is covered by
+// scripts/test-account-intelligence-destination.js against the real,
+// unstubbed function.
+function accountIntelligenceHref(name){ return '#account=stub'; }
+function goToAccountIntelligence(){}
 </script>
 <script>${MODAL_IIFE_SRC}</script>
 </body></html>`;

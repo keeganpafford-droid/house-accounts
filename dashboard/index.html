@@ -1698,6 +1698,33 @@
     border-left:3px solid var(--signal);
     padding:10px 12px;
   }
+  .account-intelligence-back{
+    margin-bottom:16px;
+    font-family:var(--mono);
+    font-size:0.82rem;
+  }
+  .account-intelligence-back a{
+    color:var(--radar);
+    text-decoration:none;
+    font-weight:700;
+  }
+  .account-intelligence-back a:hover{
+    text-decoration:underline;
+  }
+  .acct-name a{
+    color:inherit;
+    text-decoration:none;
+  }
+  .acct-name a:hover{
+    text-decoration:underline;
+  }
+  .acct-mgr-name a{
+    color:inherit;
+    text-decoration:none;
+  }
+  .acct-mgr-name a:hover{
+    text-decoration:underline;
+  }
 
 
   .research-controls{
@@ -2727,7 +2754,7 @@
 
     <!-- Detailed Account Cards -->
     <div class="opportunities-section account-intelligence-section">
-      <div class="section-header">Account Intelligence</div>
+      <div class="section-header">Accounts</div>
       <div id="accountList"></div>
     </div>
 
@@ -4349,6 +4376,18 @@ function handleMvpDashboardRoute(){
   // it (required: "returning users must not be blocked by the tour").
   if(window.location.hash === '#restart-tour'){
     window.setTimeout(launchGuidedTour, 0);
+  }
+  // Account Intelligence destination (#account=<normalized-name>): re-render
+  // the account list/focused card whenever the hash changes -- covers
+  // clicking a "View Account" link while already on the dashboard, and the
+  // "All Accounts" back link clearing the hash. A no-op (skipped, not an
+  // error) before accounts have loaded; the initial-load render path
+  // (fetchAndRenderAggregateDashboard -> refreshOpportunityViews ->
+  // renderDetailedAccountViews) already reads the hash itself once real
+  // data arrives, so a bookmarked/shared link works with no separate
+  // "wait for data" logic here.
+  if(Array.isArray(window.accountRadarAccounts) && typeof renderDetailedAccountViews === 'function'){
+    renderDetailedAccountViews(window.accountRadarAccounts);
   }
 }
 window.addEventListener('hashchange', handleMvpDashboardRoute);
@@ -13412,20 +13451,59 @@ function feedSummary(opps){
   return `${pluralize(business, 'business trigger')} · ${pluralize(repeat, 'reorder opportunity', 'reorder opportunities')} · ${pluralize(follow, 'follow-up')}`;
 }
 
-function renderDetailedAccountViews(accounts){
-  const accountList = document.getElementById('accountList');
-  if(!accountList) return;
-  const safeAccounts = (accounts || []).map(normalizeSavedAccount).map(a => {
-    a.futureOpportunities = sortDailyReasons((a.futureOpportunities || []).map(o => assignOpportunityScore(o, a)));
-    return a;
-  });
-  const detailedAccounts = safeAccounts.slice(0, 10);
-  accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => `
+// Account Intelligence destination (founder correction, 2026-08-19): a
+// first-class, bookmarkable single-account view -- reusing the exact same
+// card content every account already had inline (Reasons to Reach Out,
+// Whitespace, orders, pipeline, signals, contact editing), just given a
+// real address (#account=<normalized-name>) and an entry point from every
+// surface that lists accounts. No new content panels, no new backend/
+// schema -- this is navigation on top of what already existed.
+//
+// Route identity: normalizeCompanyNameForLimit(name), NOT ha_accounts.id.
+// ha_accounts.id IS a real UUID, but recon confirmed it is regenerated on
+// every CSV re-upload (replace_ha_accounts_snapshot() deletes and
+// re-inserts every row for the upload, relying on gen_random_uuid()'s
+// default -- see supabase-schema.sql's replace_ha_accounts_snapshot()).
+// A bookmarked/shared link keyed by that id would break on the very next
+// routine re-upload -- worse than the normalized-name compromise already
+// documented for ha_whitespace_confirmations, not better. Same identity
+// convention, same graceful-failure posture: if the hash's normalized
+// name matches no currently-loaded account (renamed, removed, or two
+// accounts across different uploads sharing a name -- first match wins,
+// same as accountCardFor()'s existing name-only lookup), this renders an
+// explicit "not found" state with a link back to all accounts -- never a
+// blank page or a stale/wrong account.
+function accountIntelligenceHref(name){
+  return `#account=${encodeURIComponent(normalizeCompanyNameForLimit(name || ''))}`;
+}
+function currentAccountIntelligenceFocusKey(){
+  const match = /^#account=(.+)$/.exec(window.location.hash || '');
+  return match ? decodeURIComponent(match[1]) : null;
+}
+// Closes Manage Customer Accounts first (if open) so the destination is
+// actually visible, not left behind the modal backdrop -- same pattern
+// openResearchedAccountOpportunities() already uses before opening its own
+// result view.
+function goToAccountIntelligence(name){
+  if(window.HouseAccountManager && typeof window.HouseAccountManager.isOpen === 'function' && window.HouseAccountManager.isOpen() && typeof window.HouseAccountManager.close === 'function'){
+    window.HouseAccountManager.close();
+  }
+  window.location.hash = accountIntelligenceHref(name);
+}
+
+// Renders one account's full card -- identical content whether it appears
+// inline in the all-accounts list or as the sole card on the focused
+// Account Intelligence destination. `idx` is this account's real position
+// in the full, already-sorted account list (used for element ids and the
+// rank badge), not a position within whatever slice is being rendered.
+function accountCardHtml(a, idx, opts = {}){
+  const focused = !!opts.focused;
+  return `
     <div class="account-card" data-account-name="${escapeHtml(a.name)}" data-upload-id="${escapeHtml(a.uploadId || '')}">
       <div class="account-head" onclick="this.nextElementSibling.classList.toggle('open')">
-        <div class="rank">#${idx + 1}</div>
+        ${focused ? '' : `<div class="rank">#${idx + 1}</div>`}
         <div>
-          <div class="acct-name">${escapeHtml(a.name)}</div>
+          <div class="acct-name"><a href="${accountIntelligenceHref(a.name)}">${escapeHtml(a.name)}</a></div>
           <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Opportunities${a.signals && a.signals.length ? ` · ${dedupeFoundSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
         </div>
         <div class="score-block">
@@ -13439,7 +13517,7 @@ function renderDetailedAccountViews(accounts){
           <div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${(a.subscores?.recency || 0) * 100}%"></div></div></div><div class="score-label">Recency</div>
         </div>
       </div>
-      <div class="account-body">
+      <div class="account-body${focused ? ' open' : ''}">
         ${isWarmAccount(a) ? `<div class="no-signals-message" style="text-align:left;"><strong>Warm assigned account</strong><br>You have an existing account or contact relationship, but no order history was included. House Accounts will prioritize verified public business signals and the contact context from your upload.</div>
         <div class="breakdown">
           <div class="bd-item"><div class="lbl">Account Type</div><div class="val" style="font-size:1rem;">Warm Assigned</div></div>
@@ -13480,7 +13558,36 @@ function renderDetailedAccountViews(accounts){
         </div>
       </div>
     </div>
-  `).join('');
+  `;
+}
+
+const ACCOUNT_INTELLIGENCE_BACK_LINK = `<div class="account-intelligence-back"><a href="#" onclick="window.location.hash='';return false;">&larr; All Accounts</a></div>`;
+
+function renderDetailedAccountViews(accounts){
+  const accountList = document.getElementById('accountList');
+  if(!accountList) return;
+  const safeAccounts = (accounts || []).map(normalizeSavedAccount).map(a => {
+    a.futureOpportunities = sortDailyReasons((a.futureOpportunities || []).map(o => assignOpportunityScore(o, a)));
+    return a;
+  });
+  const sectionHeader = document.querySelector('.account-intelligence-section .section-header');
+  const focusKey = currentAccountIntelligenceFocusKey();
+
+  if(focusKey){
+    if(sectionHeader) sectionHeader.textContent = 'Account Intelligence';
+    const focusIndex = safeAccounts.findIndex(a => normalizeCompanyNameForLimit(a.name) === focusKey);
+    if(focusIndex === -1){
+      accountList.innerHTML = `${ACCOUNT_INTELLIGENCE_BACK_LINK}<div class="no-signals-message">This account could not be found. It may have been renamed, removed, or belongs to a different account list. Try All Accounts.</div>`;
+      return;
+    }
+    accountList.innerHTML = ACCOUNT_INTELLIGENCE_BACK_LINK + accountCardHtml(safeAccounts[focusIndex], focusIndex, {focused:true});
+    hydrateSignalFeedbackButtons(accountList);
+    return;
+  }
+
+  if(sectionHeader) sectionHeader.textContent = 'Accounts';
+  const detailedAccounts = safeAccounts.slice(0, 10);
+  accountList.innerHTML = `${safeAccounts.length > 10 ? `<div class="limit-note">Showing the top 10 account views from ${safeAccounts.length} uploaded accounts. Research Top Accounts scans the highest-ranked accounts first so large uploads stay manageable.</div>` : ''}` + detailedAccounts.map((a, idx) => accountCardHtml(a, idx, {focused:false})).join('');
   hydrateSignalFeedbackButtons(accountList);
 }
 
@@ -14701,13 +14808,20 @@ function escapeHtml(text){
    const viewResearchHtml = signalCount > 0
      ? `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">View Research</button>`
      : '';
+   // Account Intelligence destination (founder correction, 2026-08-19):
+   // this modal previously had no path at all to the account's own
+   // Reasons to Reach Out / Whitespace / orders / signals view -- the exact
+   // gap the founder hit in Production. Always shown (unlike View Research,
+   // which needs real research results to be worth showing) since the
+   // destination is useful even for a never-researched account.
+   const viewAccountHtml = `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-account-act="account" data-account-name="${esc(a.name)}">View Account</button>`;
    // Grouped into one wrapper so the row's existing 4-column grid
    // (.acct-mgr-row, including its own mobile breakpoint) never needs a 5th
    // column just because a second button now sometimes exists here.
-   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}</div>`;
+   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}${viewAccountHtml}</div>`;
    return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
-        <div class="acct-mgr-name">${esc(a.name)}${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
+        <div class="acct-mgr-name"><a href="${accountIntelligenceHref(a.name)}" data-view-account-act="account" data-account-name="${esc(a.name)}">${esc(a.name)}</a>${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
         <div class="acct-mgr-meta">${metaParts.join(' · ')}</div>
       </div>
       <button type="button" class="acct-mgr-toggle" data-account-act="${paused?'resume-account':'pause-account'}" data-account-id="${esc(a.id)}" data-account-name="${esc(a.name)}" aria-pressed="${paused?'false':'true'}" aria-label="${paused?'Resume monitoring for '+esc(a.name):'Pause monitoring for '+esc(a.name)}">
@@ -15580,6 +15694,20 @@ function escapeHtml(text){
      const vrAccountName = viewResearchBtn.dataset.accountName;
      const vrListId = viewResearchBtn.dataset.listId;
      if(typeof openResearchedAccountOpportunities === 'function') await openResearchedAccountOpportunities(vrListId, vrAccountName);
+     return;
+   }
+
+   // Account Intelligence destination (founder correction, 2026-08-19):
+   // both the "View Account" button and the account name link (rendered by
+   // accountRow() above) carry this same marker. Handled here rather than
+   // via the anchor's plain href so the modal reliably closes first --
+   // goToAccountIntelligence() is the same helper renderDetailedAccountViews()'s
+   // own account-name links use, so both entry points behave identically.
+   const viewAccountBtn = e.target.closest('[data-view-account-act="account"]');
+   if(viewAccountBtn){
+     e.preventDefault();
+     closeAllMenus();
+     if(typeof goToAccountIntelligence === 'function') goToAccountIntelligence(viewAccountBtn.dataset.accountName);
      return;
    }
 

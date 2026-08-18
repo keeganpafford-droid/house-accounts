@@ -138,6 +138,19 @@ const REAL_SOURCE = [
   // the function under test in the collision/duplicate-name scenarios
   // below.
   extractFn('researchAccountFromCard'),
+  // Account Intelligence destination (founder correction, 2026-08-19):
+  // renderDetailedAccountViews() now calls these directly (the per-card
+  // markup was factored out into accountCardHtml(), and the hash-focus
+  // routing needs its own two small helpers plus the back-link constant).
+  // accountIntelligenceHref() itself calls normalizeCompanyNameForLimit()
+  // (the same client-side identity-normalization function whitespace
+  // confirmations already use), which must be real, extracted source too.
+  extractFn('normalizeCompanyNameForLimit'),
+  extractFn('accountIntelligenceHref'),
+  extractFn('currentAccountIntelligenceFocusKey'),
+  extractFn('goToAccountIntelligence'),
+  extractFn('accountCardHtml'),
+  extractFn('ACCOUNT_INTELLIGENCE_BACK_LINK'),
   extractFn('renderDetailedAccountViews'),
   // Source-of-truth correction: serializeAccountForStorage() below now
   // calls isWebResearchSignal() to keep canonical business signals out of
@@ -884,6 +897,82 @@ async function testMarkupIdsNeverCollide(){
 }
 
 // ===========================================================================
+// Scenario (k) -- Account Intelligence destination (founder correction,
+// 2026-08-19): renderDetailedAccountViews() reads window.location.hash
+// (#account=<normalized-name>) and renders either the full list or a single
+// focused card. Same sandbox/extraction as every scenario above -- exercises
+// the REAL, unmodified function, not a re-implementation.
+// ===========================================================================
+function renderAccountsMarkupWithHash(accounts, hash){
+  const fetchImpl = makeFetch((call) => { throw new Error(`renderDetailedAccountViews() must never call fetch; got ${call.url}`); });
+  const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl});
+  sandbox.window.location.hash = hash || '';
+  sandbox.renderDetailedAccountViews(accounts);
+  return {html: sandbox.__accountListEl.innerHTML, sandbox};
+}
+
+async function testAccountIntelligenceDestination(){
+  const accounts = [
+    fixtureAccount('Acme Corp', {industry: 'Widgets'}),
+    fixtureAccount('Globex Inc', {industry: 'Gadgets'})
+  ];
+
+  // No hash -> ordinary full-list rendering, unchanged from before this
+  // feature: both cards render, collapsed (no 'open' class), with rank
+  // badges, and no back link.
+  {
+    const {html} = renderAccountsMarkupWithHash(accounts, '');
+    assert(html.includes('data-account-name="Acme Corp"') && html.includes('data-account-name="Globex Inc"'), 'k) no hash: both accounts render in the full list');
+    assert(!html.includes('account-intelligence-back'), 'k) no hash: no back link renders in the full-list view');
+    assert(/class="rank"/.test(html), 'k) no hash: the rank badge still renders in the full-list view');
+    assert(!/class="account-body open"/.test(html), 'k) no hash: cards render collapsed (no open class) in the full-list view, same as before this feature');
+  }
+
+  // A matching hash -> ONLY that one account's card renders, already
+  // expanded, with a back link and no rank badge -- the destination itself,
+  // not a scroll-assist within the full list.
+  {
+    const {html, sandbox} = renderAccountsMarkupWithHash(accounts, '');
+    const focusHash = sandbox.accountIntelligenceHref('Acme Corp');
+    assert(focusHash.startsWith('#account='), `k) sanity: accountIntelligenceHref() produces a real #account= hash (got ${focusHash})`);
+    const focused = renderAccountsMarkupWithHash(accounts, focusHash);
+    assert(focused.html.includes('data-account-name="Acme Corp"'), 'k) focused: the target account renders');
+    assert(!focused.html.includes('data-account-name="Globex Inc"'), 'k) REQUIRED: focused mode renders ONLY the target account -- the rest of the account list is not a scroll-assist, it is genuinely absent');
+    assert(/class="account-body open"/.test(focused.html), 'k) REQUIRED: the focused card is already expanded -- a rep following a bookmark/link never has to click to open it');
+    assert(!/class="rank"/.test(focused.html), 'k) focused: the rank badge is omitted in the focused single-account view (out of place outside a ranked list)');
+    assert(focused.html.includes('account-intelligence-back'), 'k) REQUIRED: a back link to All Accounts renders in focused mode');
+    assert(/href="#"[^>]*>.*All Accounts/.test(focused.html) || /All Accounts/.test(focused.html), 'k) focused: the back link is labeled All Accounts');
+  }
+
+  // A hash matching no currently-loaded account -> graceful "not found"
+  // state, never a blank page, a crash, or (worse) silently falling back to
+  // the full list as if nothing was wrong.
+  {
+    const {html} = renderAccountsMarkupWithHash(accounts, '#account=some-account-that-does-not-exist');
+    assert(/not.*found|could not be found/i.test(html), 'k) REQUIRED: an unmatched #account= hash renders an explicit not-found message, not a blank/crashed page');
+    assert(html.includes('account-intelligence-back'), 'k) not-found: a back link to All Accounts still renders so the rep is never stuck');
+    assert(!html.includes('data-account-name="Acme Corp"') && !html.includes('data-account-name="Globex Inc"'), 'k) REQUIRED: an unmatched hash never falls back to silently showing an unrelated account');
+  }
+
+  // An account outside the normal top-10 slice must still resolve in
+  // focused mode -- the destination is not limited by the full-list's
+  // display cap.
+  {
+    const manyAccounts = Array.from({length: 15}, (_, i) => fixtureAccount(`Account ${i}`, {industry: 'Test'}));
+    const {html: listHtml} = renderAccountsMarkupWithHash(manyAccounts, '');
+    assert(!listHtml.includes('data-account-name="Account 14"'), 'k) sanity: the 15th account is outside the full list\'s top-10 display cap');
+    const {sandbox} = renderAccountsMarkupWithHash(manyAccounts, '');
+    const focusHash = sandbox.accountIntelligenceHref('Account 14');
+    const focused = renderAccountsMarkupWithHash(manyAccounts, focusHash);
+    assert(focused.html.includes('data-account-name="Account 14"'), 'k) REQUIRED: an account ranked outside the top 10 still resolves correctly in focused mode -- the destination is not limited by the full list\'s display cap');
+  }
+  // accountRow() (Manage Customer Accounts modal) exposing its own entry
+  // points is covered in scripts/test-research-run-reattachment.js, which
+  // already extracts accountRow() and its full dependency chain -- not
+  // duplicated here.
+}
+
+// ===========================================================================
 // Scenario (j): clicking "Research Account" on one card researches THAT
 // account, not a different one, even when another rendered account's name
 // collides with it under the OLD (removed) accountDomId() scheme.
@@ -1364,6 +1453,7 @@ async function main(){
   await testAccountMetadataEditHandlerFailure();
   await testMarkupNeverContainsExecutableAccountNames();
   await testMarkupIdsNeverCollide();
+  await testAccountIntelligenceDestination();
   await testResearchButtonTargetsCorrectAccountUnderCollision();
   await testResearchButtonCrossUploadDuplicateNameIndependence();
   await testEditFormTargetsCorrectAccountUnderCollision();

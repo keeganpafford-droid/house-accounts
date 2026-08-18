@@ -367,6 +367,13 @@ const REAL_SOURCE = [
   extractFn(DASHBOARD_SRC, 'fmt'),
   extractFn(DASHBOARD_SRC, 'esc'),
   extractFn(DASHBOARD_SRC, 'request'),
+  // Account Intelligence destination (founder correction, 2026-08-19):
+  // accountRow() now links the account name and a "View Account" button
+  // out to accountIntelligenceHref(), which itself calls
+  // normalizeCompanyNameForLimit() -- both must be real, extracted source
+  // for accountRow() to render without throwing.
+  extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit'),
+  extractFn(DASHBOARD_SRC, 'accountIntelligenceHref'),
   extractFn(DASHBOARD_SRC, 'accountRow'),
   extractFn(DASHBOARD_SRC, 'researchRunBanner'),
   extractFn(DASHBOARD_SRC, 'listCard'),
@@ -726,6 +733,26 @@ async function runClientTests(){
     assert(/failed/i.test(bannerHtml) && /L\.L\.Bean/.test(bannerHtml) && /Research failed\. Please try again\./.test(bannerHtml), '4) a failed run shows a clear, branded failure banner naming the account and the real error message');
     const rowHtml = sandbox.accountRow(list, account);
     assert(!/disabled/.test(rowHtml), '4) retry (the Research button itself) is available once the prior run is no longer active (status is failed, not active)');
+  }
+
+  // ---------------------------------------------------------------------
+  // Account Intelligence destination (founder correction, 2026-08-19):
+  // accountRow() exposes an explicit "View Account" action AND makes the
+  // account name a real link, both pointing at the same #account=<key>
+  // destination renderDetailedAccountViews() reads -- the gap the founder
+  // hit directly in Production (no path at all from this modal to the
+  // account's own Reasons to Reach Out / Whitespace / signals view).
+  // ---------------------------------------------------------------------
+  {
+    const sandbox = createSandbox({ accounts: [], currentUploadId: 'upload-1' });
+    const list = { id: 'upload-1', name: 'QA List', status: 'active', companyCount: 1, researchRunState: { status: 'idle' } };
+    const account = { id: 'a1', name: 'L.L.Bean', monitoringStatus: 'active', lastResearchedAt: null };
+    const rowHtml = sandbox.accountRow(list, account);
+    const expectedHref = sandbox.accountIntelligenceHref('L.L.Bean');
+    assert(expectedHref.startsWith('#account='), `AI destination: sanity -- accountIntelligenceHref() produces a real #account= hash (got ${expectedHref})`);
+    assert(rowHtml.includes('data-view-account-act="account" data-account-name="L.L.Bean"'), 'AI destination REQUIRED: the row exposes an explicit "View Account" action, present even for a never-researched account');
+    assert(rowHtml.includes(`href="${expectedHref}"`), 'AI destination REQUIRED: the account name in the row links to the exact same Account Intelligence destination hash');
+    assert(!/onclick="[^"]*L\.L\.Bean/.test(rowHtml), 'AI destination: the account name is never interpolated into an inline onclick attribute -- navigation goes through the real href/data attributes only');
   }
 
   // ---------------------------------------------------------------------
