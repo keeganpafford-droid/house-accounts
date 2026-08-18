@@ -177,7 +177,7 @@ async function withState(fn){
 const DASHBOARD_SRC = loadDashboardSource();
 function fn(name){ return extractFn(DASHBOARD_SRC, name); }
 const REAL_SOURCE = [
-  fn('normalizeSavedAccount'), fn('dedupeOpportunities'), fn('opportunityDedupeKey'),
+  fn('generateContactId'), fn('normalizeSavedAccount'), fn('dedupeOpportunities'), fn('opportunityDedupeKey'),
   fn('buyingOpportunityIdentity'), fn('cleanOpportunityToken'),
   fn('mergeBusinessSignalInitiatives'), fn('clusterBusinessSignalOpportunities'),
   fn('isWebResearchSignal'), fn('signalLayerLabel'), fn('normalizeSignalLayerType'),

@@ -79,6 +79,7 @@ const SRC = [
   extractFn(DASHBOARD_SRC, 'generateSimulatedSignals'),
   extractFn(DASHBOARD_SRC, 'importedContactsFromRecords'),
   extractFn(DASHBOARD_SRC, 'serializeAccountForStorage'),
+  extractFn(DASHBOARD_SRC, 'generateContactId'),
   extractFn(DASHBOARD_SRC, 'normalizeSavedAccount'),
   extractFn(DASHBOARD_SRC, 'dedupeOpportunities'),
   extractFn(DASHBOARD_SRC, 'dedupeFoundSignals'),

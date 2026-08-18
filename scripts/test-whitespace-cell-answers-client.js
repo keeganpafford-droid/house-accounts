@@ -432,7 +432,7 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   // "no contact mapped" note.
   const account = {
     name: 'Acme Corp',
-    contacts: [{ name: 'Jordan Reyes', title: 'Marketing Manager', email: 'jordan@example.com', department: 'Marketing' }]
+    contacts: [{ id: 'contact-jordan', name: 'Jordan Reyes', title: 'Marketing Manager', email: 'jordan@example.com', department: 'Marketing' }]
   };
   const { dash } = makeSandbox({
     accounts: [account],
@@ -458,7 +458,10 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(/Remove confirmation/.test(html), 'REQUIRED: the team-confirmation entry offers "Remove confirmation"');
   assert(/Known from your account mapping/.test(html), 'REQUIRED: the cell-mapping-implied evidence appears as its own plain-language entry');
   assert(!/No contact mapped to this buying center yet/.test(html), 'REQUIRED: no "no contact mapped" note when a real contact exists');
-  assert(/Edit Contact Info/.test(html), 'REQUIRED: an "Edit Contact Info" action is offered, reusing the existing single-contact editor');
+  assert(/data-contact-id="contact-jordan"/.test(html), 'REQUIRED (multi-contact V1): the known contact carries its own durable id on its Edit action, addressable independently of any other contact');
+  assert(/class="ws-rel-popover-contact-edit"/.test(html), 'REQUIRED (multi-contact V1): the known contact has its own per-contact Edit action');
+  assert(/\+ Add contact/.test(html), 'REQUIRED (multi-contact V1): "+ Add contact" is always offered, even when a contact already exists -- a Buying Center can have more than one known contact');
+  assert(!/Edit Contact Info/.test(html), 'REQUIRED: the old blanket single-account "Edit Contact Info" action is retired');
   assert(!/buying center known from offering mapping|cell answer/i.test(html), 'REQUIRED: no internal evidence-model phrasing leaks into the popover either');
 
   dash.closeWsRelPopover();
@@ -486,6 +489,31 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(/Confirmed by your team/.test(html), 'sanity: the team confirmation still appears');
   assert(/No contact mapped to this buying center yet/.test(html), 'REQUIRED: with no contact, the popover explicitly says so, plain-language');
   assert((html.match(/Remove confirmation/g) || []).length === 1, 'REQUIRED: exactly one "Remove confirmation" action, not duplicated per evidence source');
+}
+{
+  // Multi-contact V1 (founder round, 2026-08-19): a Buying Center can
+  // legitimately have MORE than one known contact -- both must appear,
+  // each with its own independently addressable Edit action.
+  const account = {
+    name: 'Acme Corp',
+    contacts: [
+      { id: 'contact-jordan', name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing' },
+      { id: 'contact-sarah', name: 'Sarah Kim', title: 'VP Marketing', department: 'Marketing' }
+    ]
+  };
+  const { dash } = makeSandbox({ accounts: [account] });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Marketing';
+  dash.openWsRelationshipPopover(trigger);
+  const html = dash.ensureWsRelPopover().innerHTML;
+  assert(/Jordan Reyes/.test(html) && /Sarah Kim/.test(html), `REQUIRED: both known contacts in the same Buying Center appear (got ${html})`);
+  assert(/data-contact-id="contact-jordan"/.test(html) && /data-contact-id="contact-sarah"/.test(html), 'REQUIRED: each contact carries its OWN durable id on its Edit action, independently addressable');
+  assert((html.match(/class="ws-rel-popover-contact-edit"/g) || []).length === 2, 'REQUIRED: exactly one Edit action per contact, not shared/deduplicated away');
 }
 {
   // No legitimate evidence at all (a stale click, e.g. right after the

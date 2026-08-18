@@ -1298,8 +1298,10 @@
   .ws-rel-popover-remove{font-family:var(--body); font-size:.72rem; font-weight:700; color:var(--danger); background:none; border:none; padding:4px 0 0; margin:0; cursor:pointer; text-align:left;}
   .ws-rel-popover-remove:hover,.ws-rel-popover-remove:focus-visible{text-decoration:underline;}
   .ws-rel-popover-note{font-family:var(--body); font-size:.76rem; color:var(--muted); margin-top:8px; padding-top:8px; border-top:1px solid var(--line);}
-  .ws-rel-popover-edit-contact{font-family:var(--body); font-size:.76rem; font-weight:700; color:var(--radar); background:none; border:none; padding:0; margin-top:8px; cursor:pointer; text-align:left;}
-  .ws-rel-popover-edit-contact:hover,.ws-rel-popover-edit-contact:focus-visible{text-decoration:underline;}
+  .ws-rel-popover-contact-edit{font-family:var(--body); font-size:.7rem; font-weight:700; color:var(--radar); background:none; border:none; padding:2px 0 0; margin:0; cursor:pointer; text-align:left;}
+  .ws-rel-popover-contact-edit:hover,.ws-rel-popover-contact-edit:focus-visible{text-decoration:underline;}
+  .ws-rel-popover-add-contact{font-family:var(--body); font-size:.76rem; font-weight:700; color:var(--radar); background:none; border:none; padding:0; margin-top:8px; cursor:pointer; text-align:left;}
+  .ws-rel-popover-add-contact:hover,.ws-rel-popover-add-contact:focus-visible{text-decoration:underline;}
   .ws-map-prompt{background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px;}
   .ws-map-prompt-title{font-family:var(--display); font-weight:700; font-size:0.95rem; color:var(--ink); margin-bottom:4px;}
   .ws-map-prompt-sub{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:12px;}
@@ -1334,7 +1336,14 @@
     text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
   }
   .projects-table th{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em;}
-  .contact{font-family:var(--mono); font-size:0.8rem; color:var(--muted); margin-top:16px;}
+  .account-contacts-list{margin-top:16px; display:flex; flex-direction:column; gap:10px;}
+  .account-contact-row{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:10px 12px; background:#fafaf6; border:1px solid var(--line); border-radius:6px;}
+  .account-contact-main{font-family:var(--body); font-size:0.86rem; color:var(--ink);}
+  .account-contact-name{font-weight:700;}
+  .account-contact-title{color:var(--muted);}
+  .account-contact-meta{display:flex; gap:10px; flex-wrap:wrap; margin-top:3px; font-family:var(--body); font-size:0.76rem; color:var(--muted);}
+  .account-contact-meta a{color:var(--muted);}
+  .account-contact-edit-btn{flex-shrink:0;}
 
   footer{
     max-width:1200px; margin:40px auto 0; padding:24px 32px 0; border-top:1px solid var(--line);
@@ -2858,6 +2867,29 @@
   </div>
 </div>
 
+<!-- Contact durability V1 (2026-08-19): one shared Add/Edit Contact modal,
+     reused by both entry points -- the Contacts section's per-contact Edit
+     action, and the relationship-detail popover's "+ Add contact"/Edit
+     actions (see openContactEditor()). Static markup, populated dynamically
+     on open; same fixed-overlay pattern as #accountManagerModal above.
+     Fields are deliberately bounded to name/title/Buying Center/email/
+     phone -- no CRM-style fields. -->
+<div id="contactEditorModal" role="dialog" aria-modal="true" aria-labelledby="contactEditorTitle" style="display:none;position:fixed;inset:0;background:rgba(10,25,45,.55);z-index:9999;padding:24px;overflow:auto;">
+  <div style="max-width:420px;margin:8vh auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 24px 70px rgba(0,0,0,.25);">
+    <h3 id="contactEditorTitle" style="margin:0 0 16px;font-family:var(--display);">Add Contact</h3>
+    <label style="display:block;margin-bottom:10px;">Name<br><input type="text" id="contactEditorName" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;"></label>
+    <label style="display:block;margin-bottom:10px;">Title<br><input type="text" id="contactEditorTitleInput" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;"></label>
+    <label style="display:block;margin-bottom:10px;">Buying Center / Department<br><select id="contactEditorDepartment" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;"></select></label>
+    <label style="display:block;margin-bottom:10px;">Email<br><input type="email" id="contactEditorEmail" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;"></label>
+    <label style="display:block;margin-bottom:16px;">Phone<br><input type="text" id="contactEditorPhone" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;"></label>
+    <div class="contact-editor-error" id="contactEditorError" style="display:none;color:#B3261E;margin-bottom:12px;font-size:0.85rem;"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-secondary btn-mini" type="button" id="contactEditorSaveBtn">Save</button>
+      <button class="btn btn-ghost btn-mini" type="button" id="contactEditorCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 
 <footer><div>House Accounts — know which house accounts deserve a call this week, and why.</div><div class="footer-links"><a href="/pricing.html">Pricing</a><a href="/faq.html">FAQ</a><a href="/security.html">Data Security</a><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms</a><a href="/contact.html">Contact</a></div></footer>
 
@@ -3236,6 +3268,22 @@ async function captureLead(stage, payload){
 // (user_id, clientEventId) server-side, so a replayed id is a safe no-op,
 // never a duplicate learning event.
 function generateClientEventId(){
+  try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch(e){}
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// Contact durability V1 (2026-08-19 founder architecture round): every
+// contact needs a durable House Accounts identity that survives reloads,
+// saves, and re-uploads (see reconcileImportedContacts() below) -- this is
+// the one id-minting primitive for that identity. Same fallback pattern as
+// generateClientEventId() above, kept as its own small function rather than
+// reused directly: contact ids and client-event ids are unrelated concepts
+// that happen to share an implementation, and this file's convention is
+// small self-contained helpers over shared abstractions.
+function generateContactId(){
   try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch(e){}
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0;
@@ -3665,6 +3713,30 @@ function normalizeSavedAccount(account){
   a.assignedRep = a.assignedRep || raw.assignedRep || raw.assigned_rep || '';
   a.contacts = Array.isArray(a.contacts) ? a.contacts : (Array.isArray(raw.contacts) ? raw.contacts : []);
   if(!a.contacts.length && (a.contactName || a.contactEmail)) a.contacts = [{name:a.contactName,title:a.contactTitle,department:a.contactDepartment,email:a.contactEmail,phone:a.contactPhone,source:'From your uploaded account list'}];
+  // Contact durability V1: every contact must carry a stable `id` and an
+  // `origin` ('upload' | 'manual') -- reconcileImportedContacts() (see
+  // importedContactsFromRecords()'s own header) depends on both for re-
+  // upload matching, and origin is deliberately a machine-safe enum, never
+  // derived from the human-readable `source` display string. Backfills
+  // both for contacts saved before this field existed (defaults to
+  // 'upload', the only origin that could have existed then). Idempotent --
+  // a contact that already carries an id/origin from a prior normalize
+  // pass or a real save is left untouched, so this is safe to run on every
+  // render.
+  a.contacts = a.contacts.map(c => ({
+    ...c,
+    id: c.id || generateContactId(),
+    origin: c.origin === 'manual' ? 'manual' : 'upload'
+  }));
+  // contactName/contactEmail are now a read-only, backwards-compatible
+  // echo of the first known contact, never written to directly (see
+  // saveAccountMetadataEdit()'s own comment) -- contacts[0] is the real
+  // source of truth. Falls back to whatever was already set (e.g. a
+  // legacy saved value) only when there is no contact at all to echo.
+  if(a.contacts.length){
+    a.contactName = a.contacts[0].name || a.contactName || '';
+    a.contactEmail = a.contacts[0].email || a.contactEmail || '';
+  }
   // Account Expansion / Whitespace Intelligence, Slice 1: raw CSV rows are
   // never persisted under the "allRecords" key (see
   // serializeAccountForStorage() -- it echoes them as rawData.records,
@@ -11190,23 +11262,29 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  // "Edit Contact Info" inside the relationship-detail popover -- reuses
-  // the account card's own single existing contact-edit affordance
-  // (toggleAccountMetadataEdit(), wired via the delegated
-  // .toggle-account-edit-btn listener elsewhere in this file) rather than
-  // building any new per-buying-center contact editor. V1 scope note:
-  // House Accounts has one editable contact per ACCOUNT today, not one
-  // per buying center -- this opens that same single editor, it does not
-  // (and cannot yet) target a specific buying center's contact.
-  const editContactBtn = event.target.closest('.ws-rel-popover-edit-contact');
-  if(editContactBtn){
+  // Multi-contact V1: a specific contact's "Edit" inside the relationship-
+  // detail popover -- opens the shared contact editor addressed by that
+  // contact's own durable id (openContactEditor()), never the old single
+  // account-wide contact field.
+  const contactEditBtn = event.target.closest('.ws-rel-popover-contact-edit');
+  if(contactEditBtn){
+    const target = wsRelPopoverTarget;
     closeWsRelPopover();
-    const card = editContactBtn.closest('.account-card') || document.querySelector('.account-card');
-    const toggleBtn = card && card.querySelector('.toggle-account-edit-btn');
-    if(toggleBtn){
-      toggleBtn.click();
-      toggleBtn.scrollIntoView({behavior:'smooth', block:'center'});
-    }
+    if(!target) return;
+    openContactEditor(target.accountName, contactEditBtn.dataset.contactId);
+    return;
+  }
+
+  // "+ Add contact" inside the relationship-detail popover -- opens the
+  // same shared contact editor with no contactId (adding) and this row's
+  // Buying Center preselected, per the founder's explicit requirement that
+  // the center is already chosen since the rep opened this from that row.
+  const addContactBtn = event.target.closest('.ws-rel-popover-add-contact');
+  if(addContactBtn){
+    const target = wsRelPopoverTarget;
+    closeWsRelPopover();
+    if(!target) return;
+    openContactEditor(target.accountName, null, addContactBtn.dataset.buyingCenter);
     return;
   }
 
@@ -11379,6 +11457,16 @@ function positionWsRelPopover(popover, trigger){
 // source, never the row's own internal evidence-model vocabulary. Contact
 // detail (title/email/phone) is real, already-uploaded account data --
 // nothing new is invented or fetched.
+// Multi-contact V1 (2026-08-19 founder round): a Buying Center can
+// legitimately have more than one known contact (e.g. a Marketing Manager
+// AND a VP Marketing) -- this already looped over every entry in `contacts`
+// with no cap before this round, it just had nothing to display beyond
+// name/title/email/phone. Each contact now gets its own Edit action
+// (openContactEditor(), addressed by that contact's durable id), and
+// "+ Add contact" is always offered (not just when zero contacts exist) so
+// a rep can add a SECOND contact to a center that already has one --
+// replaces the old blanket "Edit Contact Info", which edited one single
+// account-wide contact field, not a specific person.
 function renderWsRelPopoverContent(center, contacts, isTeamConfirmed, isCellMappingKnown){
   const entries = [];
   contacts.forEach(c => {
@@ -11387,6 +11475,7 @@ function renderWsRelPopoverContent(center, contacts, isTeamConfirmed, isCellMapp
       <div class="ws-rel-popover-entry">
         <div class="ws-rel-popover-entry-name">${escapeHtml(c.name)}</div>
         ${details.map(d => `<div class="ws-rel-popover-entry-detail">${escapeHtml(d)}</div>`).join('')}
+        <button type="button" class="ws-rel-popover-contact-edit" data-contact-id="${escapeHtml(c.id || '')}">Edit</button>
       </div>
     `);
   });
@@ -11410,7 +11499,7 @@ function renderWsRelPopoverContent(center, contacts, isTeamConfirmed, isCellMapp
     <div class="ws-rel-popover-title">${escapeHtml(center)}</div>
     ${entries.join('')}
     ${noContactNote}
-    <button type="button" class="ws-rel-popover-edit-contact">Edit Contact Info</button>
+    <button type="button" class="ws-rel-popover-add-contact" data-buying-center="${escapeHtml(center)}">+ Add contact</button>
   `;
 }
 
@@ -14158,13 +14247,11 @@ function accountCardHtml(a, idx, opts = {}){
         <button class="btn btn-secondary research-account-btn" type="button">Research Account</button>
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
         <div class="signal-research-panel" id="signals-${idx}">${renderVerifiedSignals(a.signals)}</div>
-        ${a.contactEmail ? `<div class="contact">Contact: <a href="mailto:${escapeHtml(a.contactEmail)}">${escapeHtml(a.contactName)}</a></div>` : ''}
+        ${renderAccountContactsSection(a)}
         <div class="account-metadata-edit">
-          <button class="btn btn-ghost btn-mini toggle-account-edit-btn" type="button" data-ui-key="${idx}">Edit Contact Info</button>
+          <button class="btn btn-ghost btn-mini toggle-account-edit-btn" type="button" data-ui-key="${idx}">Edit Industry</button>
           <div class="account-metadata-edit-form" id="acctEditForm-${idx}" style="display:none;margin-top:8px;">
             <label style="display:block;margin-bottom:6px;">Industry<br><input type="text" id="acctEditIndustry-${idx}" value="${escapeHtml(a.industry || '')}"></label>
-            <label style="display:block;margin-bottom:6px;">Contact Name<br><input type="text" id="acctEditContactName-${idx}" value="${escapeHtml(a.contactName || '')}"></label>
-            <label style="display:block;margin-bottom:6px;">Contact Email<br><input type="email" id="acctEditContactEmail-${idx}" value="${escapeHtml(a.contactEmail || '')}"></label>
             <button class="btn btn-secondary btn-mini save-account-edit-btn" type="button" id="acctEditSaveBtn-${idx}" data-ui-key="${idx}">Save</button>
             <button class="btn btn-ghost btn-mini toggle-account-edit-btn" type="button" data-ui-key="${idx}">Cancel</button>
             <div class="account-metadata-edit-error" id="acctEditError-${idx}" style="display:none;color:#B3261E;margin-top:6px;"></div>
@@ -14174,6 +14261,157 @@ function accountCardHtml(a, idx, opts = {}){
     </div>
   `;
 }
+
+// Contact durability V1 (2026-08-19): replaces the old single bottom-of-
+// account "Contact: ..." line/editor, which read only account.contactName/
+// account.contactEmail -- two singular legacy fields that predate
+// account.contacts[] and were never revisited when Whitespace Intelligence
+// started using the plural array (see the founder contact-model audit,
+// 2026-08-19). Lists every real known contact -- account-expansion context
+// only (name/title/Buying Center/email/phone/Edit), deliberately not a
+// CRM contact-management screen: no activity timeline, no notes, no
+// per-field history. Each row's Edit action opens the same shared contact
+// editor the relationship popover's "+ Add contact"/"Edit" actions use
+// (openContactEditor()), addressed by the contact's durable id.
+function renderAccountContactsSection(account){
+  const contacts = Array.isArray(account.contacts) ? account.contacts : [];
+  const rows = contacts.length ? contacts.map(c => `
+    <div class="account-contact-row" data-contact-id="${escapeHtml(c.id || '')}">
+      <div class="account-contact-main">
+        <span class="account-contact-name">${escapeHtml(c.name || 'Unnamed contact')}</span>
+        ${c.title ? `<span class="account-contact-title"> — ${escapeHtml(c.title)}</span>` : ''}
+      </div>
+      <div class="account-contact-meta">
+        ${c.department ? `<span class="account-contact-dept">${escapeHtml(c.department)}</span>` : ''}
+        ${c.email ? `<span class="account-contact-email"><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></span>` : ''}
+        ${c.phone ? `<span class="account-contact-phone">${escapeHtml(c.phone)}</span>` : ''}
+      </div>
+      <button type="button" class="btn btn-ghost btn-mini account-contact-edit-btn" data-contact-id="${escapeHtml(c.id || '')}">Edit</button>
+    </div>
+  `).join('') : `<div class="no-signals-message">No contacts yet.</div>`;
+  return `
+    <div class="section-title">👤 Contacts</div>
+    <div class="account-contacts-list">${rows}</div>
+  `;
+}
+
+// Contact durability V1 (2026-08-19): the ONE shared Add/Edit Contact
+// editor -- opened from the Contacts section's per-contact Edit action AND
+// from the relationship-detail popover's "+ Add contact"/Edit actions (see
+// that popover's own delegated click-listener branches). contactId null
+// means "adding a new contact"; presetDepartment lets the relationship
+// popover's "+ Add contact" pre-select the Buying Center the rep opened it
+// from, per the founder's explicit requirement. Fields are deliberately
+// bounded to name/title/department/email/phone -- no CRM fields.
+let contactEditorState = null; // { accountName, contactId } | null while open
+
+function openContactEditor(accountName, contactId, presetDepartment){
+  const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
+  if(!account) return;
+  const contact = contactId ? (account.contacts || []).find(c => c.id === contactId) : null;
+  contactEditorState = { accountName, contactId: contact ? contact.id : null };
+
+  const titleEl = document.getElementById('contactEditorTitle');
+  if(titleEl) titleEl.textContent = contact ? 'Edit Contact' : 'Add Contact';
+  const nameInput = document.getElementById('contactEditorName');
+  if(nameInput) nameInput.value = contact?.name || '';
+  const titleInput = document.getElementById('contactEditorTitleInput');
+  if(titleInput) titleInput.value = contact?.title || '';
+  const deptSelect = document.getElementById('contactEditorDepartment');
+  if(deptSelect){
+    deptSelect.innerHTML = `<option value="">Not specified</option>` + WHITESPACE_DEPARTMENTS.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+    deptSelect.value = contact?.department || presetDepartment || '';
+  }
+  const emailInput = document.getElementById('contactEditorEmail');
+  if(emailInput) emailInput.value = contact?.email || '';
+  const phoneInput = document.getElementById('contactEditorPhone');
+  if(phoneInput) phoneInput.value = contact?.phone || '';
+  const errorEl = document.getElementById('contactEditorError');
+  if(errorEl){ errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+  const modal = document.getElementById('contactEditorModal');
+  if(modal) modal.style.display = 'block';
+}
+
+function closeContactEditor(){
+  contactEditorState = null;
+  const modal = document.getElementById('contactEditorModal');
+  if(modal) modal.style.display = 'none';
+}
+
+async function saveContactEditor(){
+  if(!contactEditorState) return;
+  const { accountName, contactId } = contactEditorState;
+  const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
+  const errorEl = document.getElementById('contactEditorError');
+  if(!account){
+    if(errorEl){ errorEl.style.display = 'block'; errorEl.textContent = 'Account not found.'; }
+    return;
+  }
+
+  const name = (document.getElementById('contactEditorName')?.value || '').trim();
+  const title = (document.getElementById('contactEditorTitleInput')?.value || '').trim();
+  const department = document.getElementById('contactEditorDepartment')?.value || '';
+  const email = (document.getElementById('contactEditorEmail')?.value || '').trim();
+  const phone = (document.getElementById('contactEditorPhone')?.value || '').trim();
+
+  if(!name && !email){
+    if(errorEl){ errorEl.style.display = 'block'; errorEl.textContent = 'Enter at least a name or email.'; }
+    return;
+  }
+
+  const previousContacts = Array.isArray(account.contacts) ? account.contacts : [];
+  // Editing an existing contact stamps manuallyEdited:true -- this is what
+  // protects a rep's correction from being silently overwritten by a later
+  // CSV re-upload of the same source row (see reconcileImportedContacts()'s
+  // own header comment for the full reconciliation doctrine this
+  // implements). Harmless no-op on an already-manual contact, since manual
+  // contacts are never touched by reconciliation matching at all.
+  const nextContacts = contactId
+    ? previousContacts.map(c => c.id === contactId ? { ...c, name, title, department, email, phone, manuallyEdited: true } : c)
+    : [...previousContacts, { id: generateContactId(), name, title, department, email, phone, origin: 'manual', source: 'Added by your team' }];
+  account.contacts = nextContacts;
+
+  const saveBtn = document.getElementById('contactEditorSaveBtn');
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  const result = await saveCurrentUpload('accounts_updated');
+  if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+
+  if(result && result.ok){
+    closeContactEditor();
+    refreshOpportunityViews();
+  } else {
+    account.contacts = previousContacts;
+    if(errorEl){
+      errorEl.style.display = 'block';
+      errorEl.textContent = `Could not save this contact: ${(result && result.error) || 'unknown error'}. Please try again.`;
+    }
+  }
+}
+
+// Delegated click handling for the contact editor modal -- Save/Cancel/
+// backdrop-click-to-close. Self-contained (not merged into the account-
+// card listener above or the whitespace-section listener below) since it
+// serves two otherwise-unrelated entry points.
+document.addEventListener('click', (event) => {
+  if(event.target.id === 'contactEditorSaveBtn'){ saveContactEditor(); return; }
+  if(event.target.id === 'contactEditorCancelBtn'){ closeContactEditor(); return; }
+  if(event.target.id === 'contactEditorModal'){ closeContactEditor(); return; }
+  const editBtn = event.target.closest('.account-contact-edit-btn');
+  if(editBtn){
+    const card = editBtn.closest('.account-card');
+    const accountName = card ? card.dataset.accountName : null;
+    const contactId = editBtn.dataset.contactId;
+    if(accountName && contactId) openContactEditor(accountName, contactId);
+    return;
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if(event.key === 'Escape'){
+    const modal = document.getElementById('contactEditorModal');
+    if(modal && modal.style.display !== 'none') closeContactEditor();
+  }
+});
 
 const ACCOUNT_INTELLIGENCE_BACK_LINK = `<div class="account-intelligence-back"><a href="#" onclick="window.location.hash='';return false;">&larr; Dashboard</a></div>`;
 
@@ -14219,8 +14457,15 @@ function serializeAccountForStorage(account, options = {}){
     name: account.name,
     _locked: !!account._locked,
     industry: account.industry || '',
-    contactName: account.contactName || '',
-    contactEmail: account.contactEmail || '',
+    // Legacy-field doctrine (contact durability V1, 2026-08-19): these two
+    // are no longer directly editable (see saveAccountMetadataEdit()'s own
+    // comment) -- contacts[0] is the real source of truth. Derived here,
+    // at the actual serialization boundary, rather than trusted from
+    // whatever normalizeSavedAccount() last echoed onto the in-memory
+    // object, so a save is correct even if it fires before a render cycle
+    // has had a chance to re-sync them.
+    contactName: (Array.isArray(account.contacts) && account.contacts[0]?.name) || account.contactName || '',
+    contactEmail: (Array.isArray(account.contacts) && account.contacts[0]?.email) || account.contactEmail || '',
     metrics: {
       revenue: account.revenue || 0,
       activePipelineValue: account.activePipelineValue || 0,
@@ -14499,6 +14744,15 @@ function toggleAccountMetadataEdit(uiKey){
 // and accountName (read from the account-card's data-account-name
 // attribute by the delegated click listener below, never interpolated
 // into markup) for locating the actual account object to mutate/save.
+// Contact durability V1 (2026-08-19): this form/handler no longer edits
+// contactName/contactEmail at all -- those are retired as directly-editable
+// fields (see serializeAccountForStorage()'s own comment on the read-only
+// derived echo they're kept as for backwards compatibility). Contact
+// editing now lives entirely in the Contacts section
+// (openContactEditor()/saveContactEditor()), which edits a SPECIFIC
+// contact by its durable id, into account.contacts[] -- not this single
+// account-wide pair of fields. Industry is unrelated account metadata and
+// keeps its own edit affordance here unchanged.
 async function saveAccountMetadataEdit(uiKey, accountName){
   const account = (window.accountRadarAccounts || []).find(a => a.name === accountName);
   const errorEl = document.getElementById(`acctEditError-${uiKey}`);
@@ -14507,14 +14761,10 @@ async function saveAccountMetadataEdit(uiKey, accountName){
   if(!account) return;
 
   const industryInput = document.getElementById(`acctEditIndustry-${uiKey}`);
-  const contactNameInput = document.getElementById(`acctEditContactName-${uiKey}`);
-  const contactEmailInput = document.getElementById(`acctEditContactEmail-${uiKey}`);
 
   // Snapshot so a failed save can be reverted in-memory without a re-fetch.
-  const previous = { industry: account.industry, contactName: account.contactName, contactEmail: account.contactEmail };
+  const previous = { industry: account.industry };
   if(industryInput) account.industry = industryInput.value.trim();
-  if(contactNameInput) account.contactName = contactNameInput.value.trim();
-  if(contactEmailInput) account.contactEmail = contactEmailInput.value.trim();
 
   if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
   const result = await saveCurrentUpload('accounts_updated');
@@ -14528,8 +14778,6 @@ async function saveAccountMetadataEdit(uiKey, accountName){
     // inline next to the form that produced it, rather than a background
     // console warning the user never sees.
     account.industry = previous.industry;
-    account.contactName = previous.contactName;
-    account.contactEmail = previous.contactEmail;
     if(errorEl){
       errorEl.style.display = 'block';
       errorEl.textContent = `Could not save this change: ${(result && result.error) || 'unknown error'}. Please try again.`;
@@ -14698,6 +14946,111 @@ function importedContactsFromRecords(records = []){
     if(seen.has(key)) return; seen.add(key); out.push(contact);
   });
   return out.slice(0,12);
+}
+
+// Contact durability V1 -- normalized string-match key for the name
+// fallback in reconcileImportedContacts() below. Deliberately just
+// trim+lowercase+collapse-whitespace, nothing fuzzy: House Accounts' trust
+// doctrine treats an incorrect merge of two real people as worse than a
+// false duplicate (founder instruction, 2026-08-19).
+function normalizeContactName(name){
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Contact durability V1 -- the smallest safe re-upload reconciliation for
+// account.contacts[]. Without this, processData() would rebuild contacts[]
+// from scratch on every fresh CSV drop, silently discarding anything not
+// reproduced by the new file -- including a manually added contact or a
+// rep's manual correction to an imported one. See the founder architecture
+// round (2026-08-19) this closes; existingContacts is the account's
+// PREVIOUSLY loaded contacts (before this upload), freshContacts is what
+// importedContactsFromRecords() just parsed from the new file (already
+// carrying provisional id/origin:'upload' -- see call site in
+// processData()).
+//
+// Matching (conservative, per founder instruction -- false duplicates are
+// safer than merging two real humans):
+//   1. case-insensitive exact email match, when both sides have one;
+//   2. normalized-name match, but ONLY when that name is unambiguous
+//      among the account's existing imported contacts (never merges two
+//      same-named people);
+//   3. no match at all -- fuzzy matching is explicitly out of scope.
+//
+// Reconciliation:
+//   - matched, not manuallyEdited -> refresh fields from the new upload,
+//     keep the existing durable id;
+//   - matched, manuallyEdited -> preserve the HA-edited contact exactly
+//     as-is (approved conservative tradeoff: some source fields may go
+//     stale after a manual edit -- no field-level override system yet);
+//   - unmatched, manuallyEdited -> still survives (an intentional
+//     correction must never be silently destroyed just because this
+//     particular upload doesn't mention that person);
+//   - unmatched because its normalized name was AMBIGUOUS (shared by more
+//     than one existing contact) and no email matched it either -> still
+//     survives untouched. Ambiguity means "we can't safely tell if this
+//     upload row is this person," never "this person is gone" -- treating
+//     it as gone would silently delete a real contact merely because two
+//     people share a name, which is the exact unsafe-merge risk this
+//     matching exists to prevent (a false duplicate is an acceptable cost;
+//     deleting or merging a real person is not);
+//   - unmatched for any other reason (genuinely not mentioned by this
+//     upload, name was unambiguous) -> dropped, matching today's existing
+//     behavior (a re-upload's imported-contact list reflects what THIS
+//     upload's rows say);
+//   - every origin:'manual' contact survives untouched, always -- there is
+//     no source correlation for a manual contact to be reconciled against.
+//   - no new fresh contact from this upload is ever dropped.
+function reconcileImportedContacts(existingContacts, freshContacts){
+  const existing = Array.isArray(existingContacts) ? existingContacts : [];
+  const fresh = Array.isArray(freshContacts) ? freshContacts : [];
+
+  const manual = existing.filter(c => c && c.origin === 'manual');
+  const importedExisting = existing.filter(c => c && c.origin !== 'manual');
+
+  const nameCounts = new Map();
+  importedExisting.forEach(c => {
+    const key = normalizeContactName(c.name);
+    if(key) nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+  });
+
+  const matchedExistingIds = new Set();
+  const reconciled = fresh.map(freshContact => {
+    const freshEmail = String(freshContact.email || '').trim().toLowerCase();
+    const freshNameKey = normalizeContactName(freshContact.name);
+
+    let match = null;
+    if(freshEmail){
+      match = importedExisting.find(c => !matchedExistingIds.has(c.id) && String(c.email || '').trim().toLowerCase() === freshEmail) || null;
+    }
+    if(!match && freshNameKey && nameCounts.get(freshNameKey) === 1){
+      match = importedExisting.find(c => !matchedExistingIds.has(c.id) && normalizeContactName(c.name) === freshNameKey) || null;
+    }
+
+    if(!match) return freshContact;
+    matchedExistingIds.add(match.id);
+    return match.manuallyEdited ? match : { ...freshContact, id: match.id, origin: 'upload' };
+  });
+
+  // An existing contact survives untouched, unmatched, when either:
+  //   - it was manually edited (an intentional correction, per the rule
+  //     above), or
+  //   - its normalized name was ambiguous among the account's existing
+  //     contacts (nameCounts > 1) and it wasn't matched by email either --
+  //     ambiguity means "we genuinely can't tell whether this upload's row
+  //     is this same person," not "this person is gone." Treating an
+  //     unresolved ambiguity as "no longer present" would silently delete
+  //     a real contact merely because two people happen to share a name --
+  //     exactly the unsafe-merge risk the founder's matching rules exist
+  //     to prevent (a false duplicate is an acceptable cost; an incorrect
+  //     merge or deletion of a real person is not).
+  const survivingProtected = importedExisting.filter(c => {
+    if(matchedExistingIds.has(c.id)) return false;
+    if(c.manuallyEdited) return true;
+    const key = normalizeContactName(c.name);
+    return !!key && nameCounts.get(key) > 1;
+  });
+
+  return [...manual, ...survivingProtected, ...reconciled];
 }
 
 function deriveAccountIntelligenceMode(accountOrRecords){
@@ -14877,6 +15230,22 @@ function showUploadFailureModal(message){
 }
 
 function processData(records){
+  // Contact durability V1: snapshot the currently-loaded accounts BEFORE
+  // this function rebuilds window.accountRadarAccounts from scratch below
+  // -- this is the reconciliation baseline reconcileImportedContacts()
+  // needs to preserve manually added/edited contacts across a fresh CSV
+  // upload for an account that already has known contacts (see that
+  // function's own header comment for the full reconciliation rules).
+  // normalizeCompanyNameForLimit() is the same normalization already used
+  // as the durable cross-upload account identity for Whitespace
+  // Intelligence (ha_whitespace_confirmations/ha_whitespace_cell_answers
+  // key on it too) -- reusing it here keeps "what counts as the same
+  // account" consistent across the app rather than inventing a second
+  // notion of account identity just for contacts.
+  const previousAccountsByName = new Map(
+    (window.accountRadarAccounts || []).map(a => [normalizeCompanyNameForLimit(a.name), a])
+  );
+
   // Group by client
   const clients = {};
 
@@ -14924,7 +15293,16 @@ function processData(records){
     const uploadedIndustry = allOrders.find(o => o.uploadedIndustry)?.uploadedIndustry || '';
     const industry = uploadedIndustry || inferIndustry(clientName, allProjects);
     const firstRecord = scoringOrders[0] || allOrders[0] || {};
-    const contacts = importedContactsFromRecords(allOrders);
+    // Contact durability V1: freshly parsed contacts always get a
+    // provisional id/origin here; reconcileImportedContacts() then either
+    // keeps that provisional id (genuinely new person) or replaces it with
+    // an existing durable id on a safe match (see that function's own
+    // header comment for the full matching/reconciliation rules) -- so a
+    // re-upload of the same account never loses a manually added contact
+    // or a rep's manual correction to an imported one.
+    const freshlyImportedContacts = importedContactsFromRecords(allOrders).map(c => ({...c, id: generateContactId(), origin: 'upload'}));
+    const previousAccount = previousAccountsByName.get(normalizeCompanyNameForLimit(clientName));
+    const contacts = previousAccount ? reconcileImportedContacts(previousAccount.contacts, freshlyImportedContacts) : freshlyImportedContacts;
     const intelligenceMode = deriveAccountIntelligenceMode(allOrders);
     const account = {
       name: clientName,

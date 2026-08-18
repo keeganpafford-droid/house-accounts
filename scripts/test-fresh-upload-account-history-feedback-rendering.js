@@ -53,7 +53,7 @@ function assert(condition, message){
 // nothing here is guessed or reimplemented).
 // ===========================================================================
 const REAL_SOURCE = [
-  fn('normalizeSavedAccount'), fn('dedupeOpportunities'), fn('opportunityDedupeKey'),
+  fn('generateContactId'), fn('normalizeSavedAccount'), fn('dedupeOpportunities'), fn('opportunityDedupeKey'),
   fn('buyingOpportunityIdentity'), fn('cleanOpportunityToken'),
   fn('mergeBusinessSignalInitiatives'), fn('clusterBusinessSignalOpportunities'),
   fn('isWebResearchSignal'), fn('signalLayerLabel'), fn('normalizeSignalLayerType'),

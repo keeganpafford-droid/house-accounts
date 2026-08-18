@@ -103,6 +103,7 @@ const REAL_SOURCE = [
   extractFn('duplicateCompanyResearchMessage'),
   extractFn('heartbeatCurrentResearchRun'),
   extractFn('reportResearchRunOutcome'),
+  extractFn('generateContactId'),
   extractFn('normalizeSavedAccount'),
   extractFn('accountCardFor'),
   extractFn('accountSignalsPanel'),
@@ -236,6 +237,13 @@ function renderPipelineTable(pipeline){ return ''; }
 // Real behavior has its own dedicated coverage in
 // scripts/test-account-whitespace-intelligence-slice1.js.
 function renderAccountWhitespaceSection(account){ return ''; }
+// Contact durability V1: accountCardHtml() now also calls this
+// unconditionally in place of the old single "Contact: ..." line -- same
+// stub rationale as renderAccountWhitespaceSection() just above (pure
+// best-effort DOM rendering, no bearing on this file's save/heartbeat/
+// markup-safety assertions). Real behavior has its own dedicated coverage
+// in the whitespace/contact test files.
+function renderAccountContactsSection(account){ return ''; }
 function fmtMoney(n){ return String(n); }
 function addSignalDerivedOpportunities(account, signals){}
 function getResearchDiagnostics(){ window.researchDiagnostics = window.researchDiagnostics || []; return window.researchDiagnostics; }
@@ -730,13 +738,16 @@ async function testAccountMetadataEditHandlerSuccess(){
     throw new Error(`unexpected fetch in testAccountMetadataEditHandlerSuccess: ${call.url} ${JSON.stringify(call.body)}`);
   });
   const uiKey = '0';
+  // Contact durability V1 (2026-08-19): this form no longer edits contact
+  // fields at all -- only industry (see saveAccountMetadataEdit()'s own
+  // comment; contact editing moved to the Contacts section's per-contact
+  // editor). No acctEditContactName-/acctEditContactEmail- elements exist
+  // in the real form anymore.
   const domElements = {
     [`acctEditForm-${uiKey}`]: {style:{display:'none'}},
     [`acctEditError-${uiKey}`]: {style:{display:'none'}, textContent:''},
     [`acctEditSaveBtn-${uiKey}`]: {disabled:false, textContent:'Save'},
-    [`acctEditIndustry-${uiKey}`]: {value:'New Industry'},
-    [`acctEditContactName-${uiKey}`]: {value:'New Name'},
-    [`acctEditContactEmail-${uiKey}`]: {value:'new@example.com'}
+    [`acctEditIndustry-${uiKey}`]: {value:'New Industry'}
   };
   const {card, saveBtn} = fakeAccountEditCard('Acme', uiKey);
   const root = new FakeEl('body', {}, [card]);
@@ -756,7 +767,12 @@ async function testAccountMetadataEditHandlerSuccess(){
   assert(saves[0].body.stage === 'accounts_updated', 'g) account edit: the save stage is "accounts_updated"');
   assert(!saves[0].body.researchRunId && !saves[0].body.attemptId, 'g) account edit: no research-output stage or attempt metadata is ever sent');
   const savedAccount = (saves[0].body.accounts || []).find(a => a.name === 'Acme');
-  assert(!!savedAccount && savedAccount.industry === 'New Industry' && savedAccount.contactName === 'New Name', 'g) account edit: the actual typed field values reach the save payload');
+  assert(!!savedAccount && savedAccount.industry === 'New Industry', 'g) account edit: the actual typed field value reaches the save payload');
+  // Contact durability V1: contactName is no longer directly editable via
+  // this form -- it remains the pre-edit legacy value, echoed read-only
+  // from serializeAccountForStorage() (contacts[0]?.name || contactName),
+  // untouched by an industry-only edit.
+  assert(savedAccount.contactName === 'Old Name', 'g) account edit: contactName is unaffected by this edit (no longer editable here, only a read-only echo)');
 
   // Render/filter actions must never issue a save.
   sandbox.refreshOpportunityViews();

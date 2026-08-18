@@ -53,6 +53,7 @@ const REAL_SOURCE = [
   fn('fetchAndRenderAggregateDashboard'),
   fn('refreshAggregateDashboard'),
   fn('loadSavedDashboard'),
+  fn('generateContactId'),
   fn('normalizeSavedAccount'),
   fn('dedupeOpportunities'),
   fn('opportunityDedupeKey'),

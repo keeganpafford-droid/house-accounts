@@ -70,11 +70,14 @@ function startStaticServer(){
 // real Apparel purchase gives the unattributed-purchases panel something
 // real to show throughout.
 const ACCOUNT_NAME = 'Anchor Brewing Supply';
-function getDashboardPayload(){
+// contacts param lets a specific section override the fixture's default
+// single-contact list (e.g. to test multiple contacts in one Buying
+// Center) without affecting every other section.
+function getDashboardPayload(contacts){
   return {
     accounts: [{
       name: ACCOUNT_NAME, industry: 'Promotional Products', revenue: 42000, orderCount: 6,
-      contacts: [{ name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing' }],
+      contacts: contacts || [{ name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing' }],
       categoryTypes: ['Apparel'],
       futureOpportunities: [], signals: [], purchases: []
     }],
@@ -87,6 +90,7 @@ function getDashboardPayload(){
 
 let cellAnswerStore = {}; // cellKey -> answer, mutated by the mocked POST route
 let confirmedCenterStore = []; // buying centers, mutated by the mocked /api/whitespace-map POST route
+let saveUploadCalls = []; // captured /api/save-upload POST bodies (contact durability V1 -- Contacts section/contact editor coverage)
 
 async function withPage(baseUrl, run){
   const browser = await chromium.launch({executablePath: resolveChromiumExecutablePath()});
@@ -161,6 +165,16 @@ async function withPage(baseUrl, run){
         return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, cellAnswers: {...cellAnswerStore}})});
       }
       return route.fulfill({status: 405, contentType: 'application/json', body: JSON.stringify({error: 'Method not allowed'})});
+    });
+    // Contact durability V1: the real save path saveContactEditor()/
+    // saveAccountMetadataEdit() go through (saveCurrentUpload() ->
+    // /api/save-upload). Captures each POST body so a test can assert on
+    // exactly what account.contacts[] shape was sent, matching the
+    // account-edit request contract api/save-upload.js actually expects.
+    await page.route('**/api/save-upload', async route => {
+      const body = JSON.parse(route.request().postData() || '{}');
+      saveUploadCalls.push(body);
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, uploadId: 'upload-ws-1'})});
     });
 
     await run(page, pageErrors);
@@ -453,7 +467,8 @@ async function main(){
     assert(/Confirmed by your team/.test(popoverText), '9) REQUIRED: the explicit team confirmation appears as its own entry');
     assert(/Known from your account mapping/.test(popoverText), '9) REQUIRED: the cell-mapping-implied evidence appears as its own entry');
     assert(!/No contact mapped/.test(popoverText), '9) REQUIRED: no "no contact mapped" note when a real contact exists');
-    assert(/Edit Contact Info/.test(popoverText), '9) REQUIRED: an Edit Contact Info action is offered');
+    assert(!/Edit Contact Info/.test(popoverText), '9) REQUIRED: the old blanket single-account "Edit Contact Info" action is retired');
+    assert(/Add contact/.test(popoverText), '9) REQUIRED (multi-contact V1): "+ Add contact" is always offered, even when a contact already exists');
 
     // Remove the explicit team confirmation -- wait for the real network
     // round trip (not just the popover closing, which happens
@@ -482,13 +497,121 @@ async function main(){
     assert(/Jordan Reyes/.test(popoverTextAfter), '9) REQUIRED: the known contact still appears -- removal of one source never erases another');
     assert(/Known from your account mapping/.test(popoverTextAfter), '9) REQUIRED: the cell-mapping-implied evidence still appears -- removal of the team confirmation never touches it');
 
-    // "Edit Contact Info" reuses the account's real, existing single-
-    // contact editor.
-    await page.click('.ws-rel-popover-edit-contact');
-    await page.waitForSelector('.account-metadata-edit-form', {state: 'visible'});
-    assert(await page.locator('.ws-rel-popover.open').count() === 0, '9) REQUIRED: clicking Edit Contact Info closes the relationship popover');
+    // Multi-contact V1: the contact's own "Edit" action opens the shared
+    // contact editor, pre-filled with THAT contact's real data, addressed
+    // by its durable id -- never the old single account-wide contact form.
+    saveUploadCalls = [];
+    await page.click('.ws-rel-popover-entry:has-text("Jordan Reyes") .ws-rel-popover-contact-edit');
+    await page.waitForSelector('#contactEditorModal', {state: 'visible'});
+    assert(await page.locator('.ws-rel-popover.open').count() === 0, '9) REQUIRED: clicking a contact\'s Edit action closes the relationship popover');
+    assert(await page.locator('#contactEditorTitle').innerText() === 'Edit Contact', '9) REQUIRED: the editor announces it is editing an existing contact');
+    assert(await page.locator('#contactEditorName').inputValue() === 'Jordan Reyes', '9) REQUIRED: the editor is pre-filled with the real contact\'s name');
+    assert(await page.locator('#contactEditorTitleInput').inputValue() === 'Marketing Manager', '9) REQUIRED: the editor is pre-filled with the real contact\'s title');
+    assert(await page.locator('#contactEditorDepartment').inputValue() === 'Marketing', '9) REQUIRED: the editor is pre-filled with the real contact\'s Buying Center');
+
+    await page.fill('#contactEditorTitleInput', 'VP Marketing');
+    await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/save-upload') && resp.request().method() === 'POST'),
+      page.click('#contactEditorSaveBtn')
+    ]);
+    await page.waitForSelector('#contactEditorModal', {state: 'hidden'});
+
+    assert(saveUploadCalls.length === 1, '9) REQUIRED: editing a contact produces exactly one save request');
+    const savedContacts = saveUploadCalls[0].accounts?.[0]?.rawData?.contacts || [];
+    const savedJordan = savedContacts.find(c => c.name === 'Jordan Reyes');
+    assert(!!savedJordan && savedJordan.title === 'VP Marketing', `9) REQUIRED: the edited field reaches the real save payload (got ${JSON.stringify(savedJordan)})`);
+    assert(savedJordan.manuallyEdited === true, '9) REQUIRED: editing a contact stamps manuallyEdited:true, protecting the correction from a future re-upload');
+    assert(!!savedJordan.id, '9) REQUIRED: the saved contact carries a durable id');
+
+    // The Contacts section (bottom of the account card) reflects the edit
+    // immediately -- both entry points read the same account.contacts[].
+    const contactsSectionText = await page.locator('.account-contacts-list').innerText();
+    assert(/VP Marketing/.test(contactsSectionText), `9) REQUIRED: the Contacts section reflects the edit immediately (got "${contactsSectionText}")`);
 
     assert(pageErrors.length === 0, `9) no uncaught page errors on the relationship-detail popover flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 9b) "+ Add contact" from the relationship popover (multi-contact V1):
+  //     the Buying Center is preselected since the rep opened the popover
+  //     from that row; saving appends a genuinely new, manually added
+  //     contact -- durable id, origin:'manual' -- without disturbing the
+  //     account's existing contact(s).
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = {};
+    confirmedCenterStore = ['Marketing'];
+    saveUploadCalls = [];
+    await gotoFocusedAccount(page, baseUrl);
+
+    await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+    await page.click('.ws-rel-popover-add-contact');
+    await page.waitForSelector('#contactEditorModal', {state: 'visible'});
+
+    assert(await page.locator('#contactEditorTitle').innerText() === 'Add Contact', '9b) REQUIRED: the editor announces it is adding a new contact');
+    assert(await page.locator('#contactEditorName').inputValue() === '', '9b) REQUIRED: a new contact\'s fields start empty');
+    assert(await page.locator('#contactEditorDepartment').inputValue() === 'Marketing', '9b) REQUIRED: the Buying Center is preselected to the row the rep opened this from');
+
+    await page.fill('#contactEditorName', 'Sarah Kim');
+    await page.fill('#contactEditorTitleInput', 'VP Marketing');
+    await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/save-upload') && resp.request().method() === 'POST'),
+      page.click('#contactEditorSaveBtn')
+    ]);
+    await page.waitForSelector('#contactEditorModal', {state: 'hidden'});
+
+    const savedContacts = saveUploadCalls[saveUploadCalls.length - 1].accounts?.[0]?.rawData?.contacts || [];
+    assert(savedContacts.length === 2, `9b) REQUIRED: the new contact is added alongside the existing one, not replacing it (got ${savedContacts.length})`);
+    const savedSarah = savedContacts.find(c => c.name === 'Sarah Kim');
+    assert(!!savedSarah && savedSarah.department === 'Marketing' && savedSarah.origin === 'manual', `9b) REQUIRED: the new contact saves with the preselected department and origin:"manual" (got ${JSON.stringify(savedSarah)})`);
+    assert(!!savedSarah.id, '9b) REQUIRED: the new contact receives a durable id');
+    assert(savedContacts.some(c => c.name === 'Jordan Reyes'), '9b) REQUIRED: the account\'s existing contact is untouched by adding a second one');
+
+    // Multiple contacts in the same Buying Center now render correctly in
+    // both surfaces (founder QA point 8/9): the relationship popover...
+    await page.locator('.ws-rowhead', {hasText: 'Marketing'}).locator('.ws-rowhead-meta').click();
+    await page.waitForSelector('.ws-rel-popover.open');
+    const popoverText = await page.locator('.ws-rel-popover').innerText();
+    assert(/Jordan Reyes/.test(popoverText) && /Sarah Kim/.test(popoverText), `9b) REQUIRED: both contacts in the same Buying Center appear in the relationship popover (got "${popoverText}")`);
+    // ...and the Contacts section.
+    const contactsSectionText = await page.locator('.account-contacts-list').innerText();
+    assert(/Jordan Reyes/.test(contactsSectionText) && /Sarah Kim/.test(contactsSectionText), `9b) REQUIRED: both contacts appear in the Account Intelligence Contacts section (got "${contactsSectionText}")`);
+
+    assert(pageErrors.length === 0, `9b) no uncaught page errors on the "+ Add contact" flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 9c) The Contacts section (bottom of the Account Intelligence card) is
+  //     its own independent entry point into the SAME shared contact
+  //     editor -- a rep does not have to open the relationship popover to
+  //     fix a contact's info.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = {};
+    confirmedCenterStore = [];
+    saveUploadCalls = [];
+    await gotoFocusedAccount(page, baseUrl);
+
+    const contactsSectionText = await page.locator('.account-contacts-list').innerText();
+    assert(/Jordan Reyes/.test(contactsSectionText) && /Marketing Manager/.test(contactsSectionText), `9c) REQUIRED: the Contacts section lists the account's real known contact(s) (got "${contactsSectionText}")`);
+
+    await page.click('.account-contact-row:has-text("Jordan Reyes") .account-contact-edit-btn');
+    await page.waitForSelector('#contactEditorModal', {state: 'visible'});
+    assert(await page.locator('#contactEditorName').inputValue() === 'Jordan Reyes', '9c) REQUIRED: opening Edit from the Contacts section pre-fills the same real contact data');
+
+    await page.fill('#contactEditorPhone', '555-0100');
+    await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/save-upload') && resp.request().method() === 'POST'),
+      page.click('#contactEditorSaveBtn')
+    ]);
+    await page.waitForSelector('#contactEditorModal', {state: 'hidden'});
+
+    const savedContacts = saveUploadCalls[saveUploadCalls.length - 1].accounts?.[0]?.rawData?.contacts || [];
+    const savedJordan = savedContacts.find(c => c.name === 'Jordan Reyes');
+    assert(!!savedJordan && savedJordan.phone === '555-0100', `9c) REQUIRED: an edit made from the Contacts section reaches the real save payload (got ${JSON.stringify(savedJordan)})`);
+
+    assert(pageErrors.length === 0, `9c) no uncaught page errors editing a contact from the Contacts section (got: ${JSON.stringify(pageErrors)})`);
   });
 
   // =========================================================================
