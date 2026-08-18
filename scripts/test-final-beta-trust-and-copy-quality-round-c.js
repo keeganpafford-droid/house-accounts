@@ -55,7 +55,7 @@ const REASON_AND_STARTER_BLOCK = extractRange(DASHBOARD_SRC, 'function getReason
 function makeSandbox() {
   const sandbox = {
     console,
-    window: { accountRadarAccounts: [] },
+    window: { addEventListener(){}, accountRadarAccounts: [] },
     document: { getElementById: () => ({ textContent: '', innerHTML: '', style: {} }), querySelectorAll: () => [], addEventListener(){} },
     isWarmAccount: () => false,
     URL, Array, Object, String, Number, Math, Date, RegExp, Map, Set, Boolean, JSON

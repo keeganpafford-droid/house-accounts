@@ -111,7 +111,7 @@ const EXPORT_NAMES = [
   'signalDateAndActionabilityLine'
 ];
 
-const sandbox = { window: {}, console, document: { addEventListener(){} } };
+const sandbox = { window: { addEventListener(){},}, console, document: { addEventListener(){} } };
 vm.createContext(sandbox);
 new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'live-pipeline-extract.js' }).runInContext(sandbox);
 const dash = sandbox.__exports;

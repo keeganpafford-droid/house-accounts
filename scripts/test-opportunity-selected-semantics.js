@@ -64,7 +64,7 @@ function makeSandbox({ fetchStatesImpl, logSignalEventImpl } = {}){
   const calls = { logSignalEvent: [] };
   const sandbox = {
     console,
-    window: { accountRadarAccounts: [], HouseAccountsHeader: { beginOverlay(){}, endOverlay(){} } },
+    window: { addEventListener(){}, accountRadarAccounts: [], HouseAccountsHeader: { beginOverlay(){}, endOverlay(){} } },
     document: {
       getElementById: () => ({ textContent: '', innerHTML: '', style: {} }),
       querySelectorAll: () => [],

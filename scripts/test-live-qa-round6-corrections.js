@@ -98,7 +98,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     const houseAuth = { authHeadersAsync: async () => ({Authorization:'Bearer test'}) };
     const sandbox = {
       console,
-      window: { accountRadarAccounts: [{name:'Stale Account'}], HouseAuth: houseAuth },
+      window: { addEventListener(){}, accountRadarAccounts: [{name:'Stale Account'}], HouseAuth: houseAuth },
       // The real code reads the bare identifier HouseAuth (not window.HouseAuth)
       // in its ternary's true branch -- on the real page these resolve to the
       // same object because non-module top-level scripts attach every global
@@ -266,7 +266,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     extractFn(DASHBOARD_SRC, 'monthIndexFromName')
   ].join('\n\n');
   const EXPORT_NAMES = ['reorderWindowEvidenceText', 'accountHistoryStatusLine', 'reorderWindowStatus'];
-  const sandbox = { window:{}, console };
+  const sandbox = { window:{ addEventListener(){},}, console };
   vm.createContext(sandbox);
   new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'round6-copy.js' }).runInContext(sandbox);
   const dash = sandbox.__exports;
@@ -365,7 +365,7 @@ const DASHBOARD_SRC = loadDashboardSource();
     'primaryCategoryFromOpportunity', 'collapseDuplicateGenericRepeatSignals', 'collapseDuplicateAccountHistorySignals',
     'accountOpportunityCluster', 'additionalOpportunitiesFor', 'opportunityHeadline', 'getDailyReasonScore'
   ];
-  const sandbox = { window: {}, console, document: { addEventListener(){} } };
+  const sandbox = { window: { addEventListener(){},}, console, document: { addEventListener(){} } };
   vm.createContext(sandbox);
   new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'round6-dominance.js' }).runInContext(sandbox);
   const dash = sandbox.__exports;

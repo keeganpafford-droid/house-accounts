@@ -80,7 +80,16 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   // required elsewhere in this test suite.
   const houseAuth = hasAuth ? { authHeadersAsync: async (extra) => ({ ...extra, Authorization: 'Bearer test-token' }) } : undefined;
   const sandbox = {
-    window: { HouseAuth: houseAuth },
+    // addEventListener(): a no-op is sufficient here -- this file tests
+    // computeAccountWhitespaceMatrix()/the render functions/the durable-
+    // confirmation fetch helpers, not the Cell-Level Confirmation/
+    // Correction V1 popover's click/keydown/scroll wiring or its
+    // document.createElement()-based popover element (dedicated coverage
+    // for that lives in scripts/test-whitespace-cell-answers-client.js and
+    // the real-browser regression test) -- this sandbox only needs the
+    // module's real top-level `window.addEventListener(...)` registration
+    // call to not throw while the extracted source loads.
+    window: { HouseAuth: houseAuth, addEventListener(){} },
     document: { addEventListener(){} },
     console,
     HouseAuth: houseAuth,

@@ -77,7 +77,7 @@ function makeSandbox(){
   const fakeModal = { querySelector: () => ({ focus(){} }), querySelectorAll: () => [] };
   const sandbox = {
     console,
-    window: { accountRadarAccounts: [], HouseAccountsHeader: { beginOverlay(){} } },
+    window: { addEventListener(){}, accountRadarAccounts: [], HouseAccountsHeader: { beginOverlay(){} } },
     document: {
       getElementById: () => ({ textContent: '', innerHTML: '', style: {} }),
       querySelectorAll: () => [],

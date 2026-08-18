@@ -95,7 +95,7 @@ const EXPORT_NAMES = [
   'classifyMonthWindow', 'monthDistanceFromNow', 'inferPurchaseMonth'
 ];
 
-const sandbox = { window: {}, document: { addEventListener(){} } };
+const sandbox = { window: { addEventListener(){},}, document: { addEventListener(){} } };
 vm.createContext(sandbox);
 new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'dashboard-extract.js' }).runInContext(sandbox);
 const dash = sandbox.__exports;

@@ -1251,6 +1251,25 @@
   .ws-cell.not-applicable .ws-mark.small{color:#9aa2af; font-family:var(--mono); font-size:0.56rem; font-weight:700; letter-spacing:0.03em;}
   .ws-cell.active-play{background:var(--signal); border-color:#c97e0e; box-shadow:0 2px 6px rgba(245,166,35,0.45);}
   .ws-cell.active-play .ws-mark.strong{color:#fff; font-family:var(--mono); font-size:0.58rem; font-weight:800; letter-spacing:0.05em;}
+  /* Cell-Level Buying Center x Offering Confirmation / Correction V1: every
+     real cell (covered/not-applicable/whitespace -- never the reserved,
+     still-unassigned active-play state) is clickable, opening
+     .ws-cell-popover. Confirmed Whitespace deliberately gets no extra
+     visual treatment here -- it must look identical to a never-answered
+     cell (see .ws-cell.whitespace above); the distinction lives only in
+     the durable data and in the popover's own selected-state indicator
+     when reopened. */
+  .ws-cell[data-buying-center]{cursor:pointer;}
+  .ws-cell[data-buying-center]:hover{box-shadow:0 0 0 2px rgba(31,183,174,0.35) inset;}
+  .ws-cell[data-buying-center]:focus-visible{outline:2px solid var(--radar); outline-offset:1px;}
+  .ws-cell-popover{position:fixed; min-width:220px; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 14px 34px rgba(23,55,94,.18); padding:6px; z-index:10050; display:none;}
+  .ws-cell-popover.open{display:block;}
+  .ws-cell-popover-title{font-family:var(--body); font-size:.72rem; font-weight:700; color:var(--muted); padding:6px 10px 4px; text-transform:uppercase; letter-spacing:.02em;}
+  .ws-cell-popover-option{display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; text-align:left; background:none; border:none; padding:9px 10px; border-radius:5px; font-size:.85rem; color:var(--ink); cursor:pointer; font-family:var(--body);}
+  .ws-cell-popover-option:hover,.ws-cell-popover-option:focus-visible{background:#F7F8FA;}
+  .ws-cell-popover-option.selected{color:var(--radar); font-weight:700;}
+  .ws-cell-popover-option-check{color:var(--radar); font-weight:800; opacity:0;}
+  .ws-cell-popover-option.selected .ws-cell-popover-option-check{opacity:1;}
   .ws-map-prompt{background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px;}
   .ws-map-prompt-title{font-family:var(--display); font-weight:700; font-size:0.95rem; color:var(--ink); margin-bottom:4px;}
   .ws-map-prompt-sub{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:12px;}
@@ -3646,7 +3665,21 @@ function normalizeSavedAccount(account){
   a.projects = rawProjects;
   a.allProjects = rawAllProjects;
   a.activePipeline = Array.isArray(a.activePipeline) ? a.activePipeline : (Array.isArray(raw.activePipeline) ? raw.activePipeline : []);
-  a.categoryTypes = new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : (Array.isArray(raw.historicalCategories) ? raw.historicalCategories : []));
+  // Idempotency fix (surfaced by Cell-Level Buying Center x Offering
+  // Confirmation / Correction V1, 2026-08-19): normalizeSavedAccount()
+  // mutates the same account object in place and is genuinely called more
+  // than once across a page's lifetime on the SAME accounts array (e.g.
+  // renderDetailedAccountViews() re-runs whenever loadWhitespaceConfirmations()/
+  // loadWhitespaceCellAnswers() resolve after the first render). Every
+  // OTHER field this function normalizes stays the same type across calls
+  // (array stays array), so re-checking Array.isArray() is safe -- but
+  // this line converts an array to a Set, so a second pass previously saw
+  // `Array.isArray(a.categoryTypes)` as false (it's a Set by then) and
+  // silently reset real evidence to an empty Set, discarding it. Guarding
+  // on `instanceof Set` first makes this idempotent: already-normalized
+  // data is preserved exactly, not re-derived from a raw payload that may
+  // not even be present on a second pass.
+  a.categoryTypes = a.categoryTypes instanceof Set ? a.categoryTypes : new Set(Array.isArray(a.categoryTypes) ? a.categoryTypes : (Array.isArray(raw.historicalCategories) ? raw.historicalCategories : []));
   const storedOpps = Array.isArray(a.futureOpportunities) ? a.futureOpportunities : [];
   const rawSignals = Array.isArray(raw.existingSignals) ? raw.existingSignals : [];
   const rawRepeats = Array.isArray(raw.repeatPatterns) ? raw.repeatPatterns : [];
@@ -10581,11 +10614,15 @@ function getRelationshipMode(account){
 // Account Expansion / Whitespace Intelligence -- matrix presentation
 // (Buying Center rows × Offering columns). No grounded Active Expansion
 // Play logic exists yet -- see BACKLOG.md's "Account Expansion /
-// Whitespace Intelligence / Growth Map" entry. Only two cell states ever
-// render from real evidence: covered and whitespace. Not-applicable and
-// active-play have reserved markup/CSS (renderWhitespaceCell() below) but
-// computeAccountWhitespaceMatrix() never assigns them -- no synthetic/fake
-// cells in a real account.
+// Whitespace Intelligence / Growth Map" entry. Three cell states render
+// from real evidence as of Cell-Level Buying Center x Offering
+// Confirmation / Correction V1 (2026-08-19): covered, not_applicable, and
+// whitespace -- all sourced from a rep's explicit cell-level answer
+// (condition 2 of the V1 Covered truth rule below), via
+// api/whitespace-cell-answers.js. active-play remains reserved markup/CSS
+// (renderWhitespaceCell() below) -- computeAccountWhitespaceMatrix() never
+// assigns it; Active Expansion Plays are a later, ungrounded-yet slice, not
+// this one.
 //
 // Doctrine:
 //   - Absence of evidence is never rendered as confirmed absence -- a
@@ -10615,23 +10652,32 @@ function getRelationshipMode(account){
 //     conservative (single-category-contact) form, because correlation
 //     within the data HA already has is still not the same as evidence
 //     that data was ever designed to carry. Result: computeAccountWhitespaceMatrix()
-//     never assigns 'covered' from source data today, and will
-//     legitimately produce zero automatic covered intersections for
-//     every real account until either a real integration field or a
-//     cell-level (not just buying-center-level) rep confirmation
-//     mechanism exists -- that is an accepted, honest V1 state, not a
-//     bug. 'covered' markup stays reserved in renderWhitespaceCell()
-//     for that future mechanism, the same way 'not_applicable'/
-//     'active_play' are reserved today.
+//     STILL never assigns 'covered' from source data (condition 1) --
+//     real Beta order-history uploads still carry no field with that
+//     meaning. Condition 2 (a cell-level rep confirmation mechanism) now
+//     exists (Cell-Level Buying Center x Offering Confirmation /
+//     Correction V1, 2026-08-19, api/whitespace-cell-answers.js +
+//     migration 25) -- a cell reaches 'covered'/'not_applicable' ONLY via
+//     that mechanism, an explicit answer from a real person for that
+//     exact cell, never inferred. An account a rep has never answered any
+//     cell for still shows zero automatic covered intersections; that
+//     remains an accepted, honest state, not a bug.
 //   - Known-relationship context lives on the ROW label ("Jane Doe ·
 //     known contact"), never painted across an entire row's cells --
-//     it describes the buying center, not any specific offering.
+//     it describes the buying center, not any specific offering. A
+//     cell-level answer is the one exception that legitimately implies
+//     row-level buying-center evidence (see computeAccountWhitespaceMatrix()'s
+//     own comment on hasAnsweredCell below) -- a rep cannot meaningfully
+//     answer a cell for a buying center that doesn't exist at this
+//     account.
 //   - Real category purchases with no attributable buying center render
-//     in a separate "Account-wide purchases not yet attributed" panel,
-//     outside the organizational grid -- never a fake buying-center row.
-//     Since no automatic attribution exists (see the Covered rule
-//     above), every real purchased category an account has always lands
-//     here today.
+//     in a separate "Account-wide purchases not fully attributed" panel,
+//     outside the organizational grid -- never a fake buying-center row,
+//     and never removed just because one specific cell became Covered
+//     (mapping one intersection does not prove every historical purchase
+//     in that category came through that same buying center). Since no
+//     automatic attribution exists (see the Covered rule above), every
+//     real purchased category an account has always lands here today.
 //   - Production recon (2026-08-18): real Beta order-history uploads
 //     currently populate contact department/title at ~0%. An account
 //     with zero classifiable buying centers renders a lightweight
@@ -10672,6 +10718,22 @@ function getRelationshipMode(account){
 //     unrelated company sharing a name. Graceful re-ask beats a clever
 //     guess. A real fix needs a stable, cross-upload account identity,
 //     which is a larger Canonical Account Identity project, not V1 scope.
+//   - Cell-Level Buying Center x Offering Confirmation / Correction V1
+//     (founder-approved, 2026-08-19): durable, organization-scoped, via
+//     api/whitespace-cell-answers.js + migration 25's
+//     ha_whitespace_cell_answers -- same (organization_id,
+//     normalized_company_name) V1 identity convention and the same
+//     accepted rename/re-upload exposure as above, and the same
+//     accountability-not-ownership posture (confirmed_by_user_id records
+//     who answered, but every answer is shared org intelligence). Answers
+//     are 'covered' | 'whitespace' | 'not_applicable' per (buying center,
+//     category) cell, upserted atomically ("latest answer wins," no
+//     read-then-write race). Distinct from, and never written by,
+//     ha_whitespace_confirmations above -- a buying-center confirmation
+//     never implies a cell answer, and a cell answer never writes a
+//     buying-center confirmation. These answers are private, per-account
+//     intelligence in V1: never emitted into ha_signal_events/Behavioral
+//     Learning, never aggregated across accounts or organizations.
 // ============================================================================
 
 // The explicit department taxonomy to grid whitespace against -- reuses
@@ -10690,6 +10752,18 @@ const WHITESPACE_CATEGORIES = ['Apparel', 'Headwear', 'Drinkware', 'Event / Give
 // cleanly at matrix column width -- the underlying taxonomy string
 // (used for matching/evidence) is never altered.
 const WHITESPACE_CATEGORY_DISPLAY = { 'Wellness / Employee Engagement': 'Wellness / Engagement' };
+
+// Cell-Level Buying Center x Offering Confirmation / Correction V1: the
+// three answers a rep can give for one (buying center, category) cell.
+// Matches api/whitespace-cell-answers.js's WHITESPACE_CELL_ANSWERS exactly
+// (server-side validation is the actual enforcement; this list drives the
+// popover UI and client-side guards).
+const WHITESPACE_CELL_ANSWERS = ['covered', 'whitespace', 'not_applicable'];
+const WHITESPACE_CELL_ANSWER_LABELS = {
+  covered: 'We sell this here',
+  whitespace: "We don't sell this here",
+  not_applicable: 'Not relevant'
+};
 
 // Durable, organization-scoped confirmations, fetched once per page load
 // from api/whitespace-map.js and cached here (normalizeCompanyNameForLimit(name)
@@ -10742,21 +10816,90 @@ async function toggleWhitespaceMapConfirmation(accountName, center){
   return data.confirmedCenters;
 }
 
-// Pure function (given the confirmedCenters array the caller already
-// resolved from the durable cache): (account, confirmedCenters) -> matrix.
-// Reads only already-stored account fields plus the supplied confirmation
-// list -- invents nothing, calls no provider, persists nothing itself.
+// Cell-Level Buying Center x Offering Confirmation / Correction V1
+// (founder-approved, 2026-08-19): the second, distinct condition of the
+// V1 Covered truth rule above -- "a rep explicitly confirms they sell
+// that offering into that buying center." Durable, organization-scoped,
+// via api/whitespace-cell-answers.js (migration 25's
+// ha_whitespace_cell_answers), never localStorage -- same posture as
+// confirmedCentersForAccount()/toggleWhitespaceMapConfirmation() above,
+// which this deliberately mirrors rather than reinventing.
 //
-// No source-data or account/buying-center-level confirmation signal is
-// ever sufficient to mark a cell covered -- see the V1 Covered truth rule
-// in the module doctrine comment above. Every cell is whitespace until a
-// real per-offering linkage exists (a source field this codebase doesn't
-// have today, or a future cell-level rep confirmation this codebase
-// doesn't have today either).
-function computeAccountWhitespaceMatrix(account, confirmedCenters){
+// Distinct from migration 24's buying-center confirmations: a cell answer
+// here is per (buying center, category) and can be 'covered', 'whitespace'
+// (an explicit "we don't sell this here," a real recorded fact -- not the
+// same as never having been asked), or 'not_applicable'. It never writes
+// to ha_whitespace_confirmations, and a buying-center confirmation never
+// implies any cell answer here.
+let whitespaceCellAnswersByAccount = {};
+let whitespaceCellAnswersLoadState = 'unloaded'; // 'unloaded' | 'loading' | 'loaded'
+
+// Matches api/whitespace-cell-answers.js's server-side cellKey() exactly.
+function whitespaceCellKey(buyingCenter, category){
+  return `${buyingCenter}||${category}`;
+}
+
+async function loadWhitespaceCellAnswers(){
+  if(whitespaceCellAnswersLoadState !== 'unloaded') return;
+  whitespaceCellAnswersLoadState = 'loading';
+  try{
+    const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : null;
+    if(!headers){ whitespaceCellAnswersLoadState = 'unloaded'; return; }
+    const resp = await fetch('/api/whitespace-cell-answers', { method:'GET', headers });
+    const data = await resp.json().catch(() => null);
+    whitespaceCellAnswersByAccount = (resp.ok && data?.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)) ? data.answers : {};
+  }catch(err){
+    console.warn('[Whitespace Intelligence] failed to load cell-level answers -- rendering with no answers this pass', { message: err && err.message });
+    whitespaceCellAnswersByAccount = {};
+  }
+  whitespaceCellAnswersLoadState = 'loaded';
+  if(Array.isArray(window.accountRadarAccounts) && window.accountRadarAccounts.length && typeof renderDetailedAccountViews === 'function'){
+    renderDetailedAccountViews(window.accountRadarAccounts);
+  }
+}
+
+function cellAnswersForAccount(accountName){
+  const key = normalizeCompanyNameForLimit(accountName || '');
+  const map = whitespaceCellAnswersByAccount[key];
+  return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+}
+
+// Upserts one cell's answer and updates the local cache from the server's
+// authoritative response -- never assumes the write succeeded or guesses
+// the resulting state client-side, same discipline as
+// toggleWhitespaceMapConfirmation() above.
+async function saveWhitespaceCellAnswer(accountName, buyingCenter, category, answer){
+  const headers = window.HouseAuth && HouseAuth.authHeadersAsync ? await HouseAuth.authHeadersAsync({'Content-Type':'application/json'}) : null;
+  if(!headers) return cellAnswersForAccount(accountName);
+  const resp = await fetch('/api/whitespace-cell-answers', { method:'POST', headers, body: JSON.stringify({ accountName, buyingCenter, category, answer }) });
+  const data = await resp.json().catch(() => null);
+  if(!resp.ok || !data?.cellAnswers || typeof data.cellAnswers !== 'object') return cellAnswersForAccount(accountName);
+  const key = normalizeCompanyNameForLimit(accountName || '');
+  whitespaceCellAnswersByAccount = { ...whitespaceCellAnswersByAccount, [key]: data.cellAnswers };
+  return data.cellAnswers;
+}
+
+// Pure function (given the confirmedCenters array and cellAnswers map the
+// caller already resolved from their respective durable caches):
+// (account, confirmedCenters, cellAnswers) -> matrix. Reads only already-
+// stored account fields plus the supplied confirmation/answer state --
+// invents nothing, calls no provider, persists nothing itself.
+//
+// V1 Covered truth rule: a cell is 'covered' or 'not_applicable' ONLY when
+// a real cell-level rep answer says so (cellAnswers, condition 2 of the
+// rule above) -- never inferred from a known contact, account-wide
+// category purchase history, same-row co-occurrence, an industry
+// template, or a buying-center confirmation alone (condition 1, a real
+// per-offering source field, still does not exist in this codebase).
+// `cellAnswers` is optional -- omitted/malformed resolves to "no answers,"
+// so every existing call site that predates this slice (and every
+// existing test) is unaffected: every cell is whitespace, exactly as
+// before.
+function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
   const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
   const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
   const confirmed = new Set(Array.isArray(confirmedCenters) ? confirmedCenters : []);
+  const answers = (cellAnswers && typeof cellAnswers === 'object' && !Array.isArray(cellAnswers)) ? cellAnswers : {};
 
   const unattributed = [...categoryTypes].filter(cat => WHITESPACE_CATEGORIES.includes(cat));
 
@@ -10772,35 +10915,53 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters){
   let hasAnyBuyingCenterEvidence = false;
   const rows = WHITESPACE_DEPARTMENTS.map(center => {
     const names = knownContactsByCenter.get(center) || [];
-    if(names.length || confirmed.has(center)) hasAnyBuyingCenterEvidence = true;
+    const cells = WHITESPACE_CATEGORIES.map(category => {
+      const rawAnswer = answers[whitespaceCellKey(center, category)];
+      const answer = (rawAnswer === 'covered' || rawAnswer === 'whitespace' || rawAnswer === 'not_applicable') ? rawAnswer : null;
+      const status = answer === 'covered' ? 'covered' : answer === 'not_applicable' ? 'not_applicable' : 'whitespace';
+      return { status, answer, center, category };
+    });
+    // A cell-level answer may imply the buying center is known one-way
+    // (founder note, 2026-08-19): a rep cannot meaningfully answer a cell
+    // for a buying center that doesn't exist at this account, so an
+    // answered cell counts as row-level evidence exactly like a known
+    // contact or a buying-center confirmation does -- without itself
+    // writing to ha_whitespace_confirmations (a cell answer and a buying-
+    // center confirmation remain two independent facts).
+    const hasAnsweredCell = cells.some(c => !!c.answer);
+    if(names.length || confirmed.has(center) || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
     let metaLine = '';
     if(names.length){
       metaLine = `${names[0]}${names.length > 1 ? ` +${names.length - 1} more` : ''} · known contact${names.length > 1 ? 's' : ''}`;
     } else if(confirmed.has(center)){
       metaLine = 'Rep-confirmed relationship';
+    } else if(hasAnsweredCell){
+      metaLine = 'Buying center known from offering mapping';
     }
-    return {
-      center,
-      metaLine,
-      cells: WHITESPACE_CATEGORIES.map(() => ({ status: 'whitespace' }))
-    };
+    return { center, metaLine, cells };
   });
 
   return { rows, unattributed, hasAnyBuyingCenterEvidence };
 }
 
-// 'covered'/'not-applicable'/'active-play' markup below is reserved
-// structure for later slices (a real per-offering source field or
-// cell-level rep confirm/correct persistence; grounded expansion-play
-// logic) -- computeAccountWhitespaceMatrix() above never produces any of
-// these statuses today (see the V1 Covered truth rule in the module
-// doctrine comment above), so these branches are currently unreachable
-// from real data.
+// 'active-play' markup below is reserved structure for a later slice
+// (grounded Active Expansion Play logic, not built yet -- explicitly out
+// of scope for this slice) -- computeAccountWhitespaceMatrix() above never
+// produces it, so that branch stays non-interactive (no data attributes,
+// no click target) and unreachable from real data. covered/not_applicable/
+// whitespace cells ARE real, interactive, real-data-driven states as of
+// this slice -- see the delegated click listener below for the popover
+// that answers/corrects them.
 function renderWhitespaceCell(cell){
-  if(cell.status === 'covered') return `<div class="ws-cell covered" title="Covered — real, linked evidence"><span class="ws-mark">✓</span></div>`;
-  if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" title="Not applicable"><span class="ws-mark small">N/A</span></div>`;
+  const center = cell?.center || '';
+  const category = cell?.category || '';
+  const answer = cell?.answer || '';
+  const cellLabel = (center && category) ? `${center} × ${category}` : 'this cell';
+  if(cell.status === 'covered') return `<div class="ws-cell covered" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Covered — click to change" title="Covered — rep-confirmed, click to change"><span class="ws-mark">✓</span></div>`;
+  if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Not applicable — click to change" title="Not applicable — click to change"><span class="ws-mark small">N/A</span></div>`;
   if(cell.status === 'active_play') return `<div class="ws-cell active-play" title="Active Expansion Play"><span class="ws-mark strong">EXPAND</span></div>`;
-  return `<div class="ws-cell whitespace" title="Whitespace — no evidence either way"></div>`;
+  const whitespaceTitle = answer === 'whitespace' ? 'Confirmed whitespace — click to change' : 'Whitespace — click to answer';
+  return `<div class="ws-cell whitespace" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: ${answer === 'whitespace' ? 'Confirmed whitespace' : 'Whitespace, no answer yet'} — click to answer" title="${whitespaceTitle}"></div>`;
 }
 
 function renderWhitespaceMatrix(rows){
@@ -10833,8 +10994,8 @@ function renderUnattributedPurchasesPanel(categories){
   const pills = categories.map(cat => `<span class="ws-unattributed-pill">${escapeHtml(WHITESPACE_CATEGORY_DISPLAY[cat] || cat)}</span>`).join('');
   return `
     <div class="ws-unattributed-panel">
-      <div class="ws-unattributed-title">Account-wide purchases not yet attributed</div>
-      <div class="ws-unattributed-sub">These categories have real purchase history, but House Accounts can't yet tell which part of the account they came through.</div>
+      <div class="ws-unattributed-title">Account-wide purchases not fully attributed</div>
+      <div class="ws-unattributed-sub">These categories have real purchase history, but House Accounts can't yet tell which part of the account they came through. Mapping one Buying Center × Offering cell doesn't prove every historical purchase in that category came through that same buying center -- this panel stays visible even after a cell becomes Covered.</div>
       <div class="ws-unattributed-pills">${pills}</div>
     </div>
   `;
@@ -10842,13 +11003,16 @@ function renderUnattributedPurchasesPanel(categories){
 
 function renderAccountWhitespaceSection(account){
   const accountName = account?.name || '';
-  // Fire-and-forget: kicks off the one-time durable-confirmations fetch on
-  // first render, then triggers a single whole-list re-render when it
-  // resolves (see loadWhitespaceConfirmations() above). Safe to call on
-  // every render -- a no-op once loading/loaded.
+  // Fire-and-forget: kicks off the one-time durable fetches on first
+  // render (buying-center confirmations, cell-level answers), then
+  // triggers a single whole-list re-render when either resolves (see
+  // loadWhitespaceConfirmations()/loadWhitespaceCellAnswers() above). Safe
+  // to call on every render -- a no-op once loading/loaded.
   loadWhitespaceConfirmations();
+  loadWhitespaceCellAnswers();
   const confirmedCenters = confirmedCentersForAccount(accountName);
-  const matrix = computeAccountWhitespaceMatrix(account, confirmedCenters);
+  const cellAnswers = cellAnswersForAccount(accountName);
+  const matrix = computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers);
   const body = matrix.hasAnyBuyingCenterEvidence
     ? renderWhitespaceMatrix(matrix.rows)
     : renderWhitespaceMappingPrompt(confirmedCenters);
@@ -10871,25 +11035,156 @@ function renderAccountWhitespaceSection(account){
 // doesn't look like a dropped click.
 document.addEventListener('click', async (event) => {
   const chip = event.target.closest('.ws-map-chip');
-  if(!chip) return;
-  const section = event.target.closest('.account-whitespace-section');
+  if(chip){
+    const section = event.target.closest('.account-whitespace-section');
+    if(!section) return;
+    const accountName = section.dataset.accountName;
+    const center = chip.dataset.buyingCenter;
+    if(!accountName || !center) return;
+    if(chip.disabled) return;
+    chip.disabled = true;
+    chip.classList.add('pending');
+    try{
+      await toggleWhitespaceMapConfirmation(accountName, center);
+      const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
+      if(account) section.outerHTML = renderAccountWhitespaceSection(account);
+    }catch(err){
+      console.warn('[Account Whitespace] failed to save buying-center confirmation', { message: err && err.message });
+      chip.disabled = false;
+      chip.classList.remove('pending');
+    }
+    return;
+  }
+
+  // Cell-Level Buying Center x Offering Confirmation / Correction V1:
+  // a popover option was clicked -- save the chosen answer, then re-render
+  // just this account's whitespace section (same pattern as the buying-
+  // center chip above), keyed off the target the popover was opened
+  // against (wsCellPopoverTarget), not off the DOM (the clicked cell may
+  // no longer exist by the time the save resolves, e.g. a fast second
+  // click elsewhere).
+  const popoverOption = event.target.closest('.ws-cell-popover-option');
+  if(popoverOption){
+    const target = wsCellPopoverTarget;
+    closeWsCellPopover();
+    if(!target || !WHITESPACE_CELL_ANSWERS.includes(popoverOption.dataset.cellAnswerChoice)) return;
+    try{
+      await saveWhitespaceCellAnswer(target.accountName, target.buyingCenter, target.category, popoverOption.dataset.cellAnswerChoice);
+      const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === target.accountName.toLowerCase());
+      const section = document.querySelector(`.account-whitespace-section[data-account-name="${CSS.escape(target.accountName)}"]`);
+      if(account && section) section.outerHTML = renderAccountWhitespaceSection(account);
+    }catch(err){
+      console.warn('[Whitespace Intelligence] failed to save cell-level answer', { message: err && err.message });
+    }
+    return;
+  }
+
+  // A real, real-data-driven cell was clicked (covered/not_applicable/
+  // whitespace -- never the reserved, inert active-play state, which
+  // carries no data-buying-center attribute) -- open the popover against
+  // it.
+  const cell = event.target.closest('.ws-cell[data-buying-center]');
+  if(cell){
+    openWsCellPopover(cell);
+    return;
+  }
+
+  // Outside click closes an open popover, unless the click landed inside
+  // the popover itself (handled by the branches above).
+  if(wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+});
+
+// Keyboard support for the cell popover: Enter/Space opens it from a
+// focused cell (role="button" tabindex="0" on each interactive .ws-cell),
+// matching native button semantics; Escape closes it, mirroring the
+// Manage Customer Accounts kebab menu's own close-on-Escape behavior
+// (closeAllMenus() in the modal IIFE) for a consistent feel across the
+// app's two independent popover/menu implementations.
+document.addEventListener('keydown', (event) => {
+  if((event.key === 'Enter' || event.key === ' ') && event.target.closest && event.target.closest('.ws-cell[data-buying-center]')){
+    event.preventDefault();
+    openWsCellPopover(event.target.closest('.ws-cell[data-buying-center]'));
+    return;
+  }
+  if(event.key === 'Escape' && wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+});
+// Position is not tracked live -- same "close rather than show a stale/
+// misplaced menu" posture as the Manage Customer Accounts kebab menu's own
+// scroll handling.
+window.addEventListener('scroll', () => {
+  if(wsCellPopoverEl && wsCellPopoverEl.classList.contains('open')) closeWsCellPopover();
+}, true);
+
+// Lazily created once, reused for every cell click (at most one Account
+// Intelligence card -- and therefore at most one whitespace matrix -- is
+// ever rendered at a time, see accountCardHtml()/#accountIntelligenceView).
+// Positioned as position:fixed near the clicked cell, following the exact
+// same getBoundingClientRect()-plus-viewport-clamp approach as the Manage
+// Customer Accounts modal's own positionMenu() (a separate, self-contained
+// implementation here since that one lives inside the modal's own IIFE
+// scope in the second inline <script> and is not reachable from this,
+// the main script).
+let wsCellPopoverEl = null;
+let wsCellPopoverTarget = null; // { accountName, buyingCenter, category } | null
+
+function ensureWsCellPopover(){
+  if(wsCellPopoverEl) return wsCellPopoverEl;
+  const el = document.createElement('div');
+  el.className = 'ws-cell-popover';
+  el.setAttribute('role', 'menu');
+  el.innerHTML = `
+    <div class="ws-cell-popover-title" data-ws-popover-title></div>
+    ${WHITESPACE_CELL_ANSWERS.map(answer => `<button type="button" class="ws-cell-popover-option" role="menuitemradio" data-cell-answer-choice="${answer}"><span>${escapeHtml(WHITESPACE_CELL_ANSWER_LABELS[answer])}</span><span class="ws-cell-popover-option-check">✓</span></button>`).join('')}
+  `;
+  document.body.appendChild(el);
+  wsCellPopoverEl = el;
+  return el;
+}
+
+function closeWsCellPopover(){
+  if(wsCellPopoverEl) wsCellPopoverEl.classList.remove('open');
+  wsCellPopoverTarget = null;
+}
+
+function positionWsCellPopover(popover, cell){
+  const r = cell.getBoundingClientRect();
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const popoverWidth = popover.offsetWidth || 220;
+  const popoverHeight = popover.offsetHeight || 160;
+  let left = r.left;
+  if(left + popoverWidth > vw - 8) left = Math.max(8, vw - popoverWidth - 8);
+  let top = r.bottom + 6;
+  if(top + popoverHeight > vh - 8) top = Math.max(8, r.top - popoverHeight - 6);
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+// Opens (or re-targets, if another cell's popover was already open) the
+// shared popover against the given cell, marking whichever answer is
+// currently stored (data-cell-answer, empty string for "never answered")
+// as selected -- so re-clicking an answered cell clearly shows its
+// existing answer, and the rep can correct it.
+function openWsCellPopover(cell){
+  const section = cell.closest('.account-whitespace-section');
   if(!section) return;
   const accountName = section.dataset.accountName;
-  const center = chip.dataset.buyingCenter;
-  if(!accountName || !center) return;
-  if(chip.disabled) return;
-  chip.disabled = true;
-  chip.classList.add('pending');
-  try{
-    await toggleWhitespaceMapConfirmation(accountName, center);
-    const account = (window.accountRadarAccounts || []).find(a => String(a?.name || '').toLowerCase() === accountName.toLowerCase());
-    if(account) section.outerHTML = renderAccountWhitespaceSection(account);
-  }catch(err){
-    console.warn('[Account Whitespace] failed to save buying-center confirmation', { message: err && err.message });
-    chip.disabled = false;
-    chip.classList.remove('pending');
-  }
-});
+  const buyingCenter = cell.dataset.buyingCenter;
+  const category = cell.dataset.category;
+  if(!accountName || !buyingCenter || !category) return;
+  const popover = ensureWsCellPopover();
+  wsCellPopoverTarget = { accountName, buyingCenter, category };
+  const titleEl = popover.querySelector('[data-ws-popover-title]');
+  if(titleEl) titleEl.textContent = `${buyingCenter} × ${category}`;
+  const currentAnswer = cell.dataset.cellAnswer || '';
+  popover.querySelectorAll('.ws-cell-popover-option').forEach(btn => {
+    const isSelected = btn.dataset.cellAnswerChoice === currentAnswer;
+    btn.classList.toggle('selected', isSelected);
+    btn.setAttribute('aria-checked', String(isSelected));
+  });
+  popover.classList.add('open');
+  positionWsCellPopover(popover, cell);
+}
 
 function getOpportunityType(account, signalBased=false){
   if(signalBased) return 'SIGNAL-DRIVEN';

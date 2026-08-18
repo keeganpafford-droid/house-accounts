@@ -121,7 +121,7 @@ const EXPORT_NAMES = [
   'findRepeatPatternGroups', 'createRepeatPatternOpportunities', 'categoryToPromoSuggestions',
   'generateFutureOpportunities', 'createOpportunity', 'signalLayerLabel', 'isWebResearchSignal'
 ];
-const sandbox = { window: {}, document: { addEventListener(){} } };
+const sandbox = { window: { addEventListener(){},}, document: { addEventListener(){} } };
 vm.createContext(sandbox);
 new vm.Script(`${SRC}\n\nthis.__exports = { ${EXPORT_NAMES.join(', ')} };`, { filename: 'ref-propagation-dashboard-extract.js' }).runInContext(sandbox);
 const dash = sandbox.__exports;
