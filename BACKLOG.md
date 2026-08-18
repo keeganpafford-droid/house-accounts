@@ -81,6 +81,26 @@ Merged to `main` at `4b62e3308028832ae4779843a4c82092f5a21cd5` (merge commit, `f
 
 **Founder sequencing decision (2026-08-17) — do not begin notification-learning wiring next.** Deliberately let real users accumulate genuine behavioral evidence first. Do not tune N=5, ±8, the 90-day window, or evidence weights, and do not add new dimensions, based on fixtures or this founder QA round. Revisit after meaningful Beta usage accumulates, and decide from real data whether thresholds/weights are sensible, preferences are emerging, ranking changes look commercially correct, notification ordering should consume the same learning primitive, and richer dimensions are warranted.
 
+### Account Expansion / Whitespace Intelligence — Slice 1 (Read-Only Growth Map) — COMPLETED / BANKED (2026-08-18)
+
+**Product reframe this sprint (founder/Vantage review):** "Expansion" was being used for two different sales motions that must not be conflated. **Account Expansion / Growth Map** — how much of an *existing* customer do we currently own, and where is the whitespace (departments, product/program categories) — is the near-term priority below. **Find More Like Them / Lookalike Expansion** — net-new companies resembling accounts we already win with — is a separate, later capability; see its own entry under LATER.
+
+**Doctrine (governs every future slice, not just this one):**
+- **Absence of evidence is never confirmed absence.** No known department contact does not mean the department is uncovered; no observed category purchase does not mean the category is available. A cell with no evidence is rendered "potential whitespace," never a claim of certainty either way.
+- **A known contact does not by itself prove a covered department relationship.** It proves House Accounts knows a person there. A department only reaches "Covered" when a contact in that department is linked to a real, transaction-evidenced order — otherwise it renders as the honest, weaker "Known contact" state.
+- **Whitespace is not automatically an opportunity.** A recommended expansion play (not built yet — see remaining work below) will require grounded commercial rationale (a real signal, a recurring/program pattern, another credible trigger) in addition to a whitespace cell existing. An industry template alone will remain insufficient once opportunity generation is reworked.
+- **State model reserves four distinct states**, not three collapsed into one: Covered/observed, Potential whitespace (no evidence either way), Confirmed whitespace (rep confirms the dimension exists but isn't owned), and Not applicable (rep confirms the dimension doesn't exist at this account). Confirmed whitespace must never collapse into Not applicable — a rep saying "Marketing exists here and I don't sell into it" is real, valuable private account knowledge, distinct from "this account has no Marketing department."
+
+**Shipped in Slice 1 (read-only visibility only):**
+- An explicit department taxonomy (7 buckets, reusing `departmentFromText()`'s existing classification vocabulary) and category taxonomy (11 buckets, reusing `inferPromoCategory()`'s existing vocabulary) — no new classification scheme invented.
+- `computeAccountWhitespaceGrid(account)` — a pure function producing a per-cell grid: department cells resolve to `covered` (contact linked to a real order), `known_contact` (contact known, not order-linked), or `unknown`; category cells resolve to `covered` (real observed purchase) or `unknown`. Every cell already carries a `confirmation` field (always `null` this slice, forward-compatible with the four-state model above).
+- A new "🗺️ Account Whitespace" section on the existing per-account expandable card (Manage Customer Accounts), positioned between "Reasons To Reach Out" and "Historical Orders" — reuses the existing account-card surface rather than a new page.
+- An account with no contacts and no purchase evidence renders an honest "not enough data yet" message instead of a full grid of false gaps.
+- Fixed a real, narrow gap this slice depended on: `normalizeSavedAccount()` never restored `allRecords` from `rawData.records` after a save/reload, so a previously-saved account (not just a freshly-uploaded one) would have silently shown empty per-contact evidence. Purely additive.
+- **Explicitly not built yet:** no confirmation write path (rep confirm/correct), no persistence, no change to Relationship Expansion opportunity-generation logic. Full suite: 159/159.
+
+**Architecture decision, made before any write path is built (not yet implemented):** future whitespace confirmations should NOT key by raw `account_name` — reuse the same durable `(organization/user scope, normalizeCompanyName(account_name))` identity convention Monitoring Identity V1 already established (`identityKey()`/`normalizeCompanyName()`), since this codebase has no separate durable account UUID. Confirmations are persistent account STATE, not a behavioral evidence stream — favor a small dedicated table over forcing them into `ha_signal_events` (whose signal/event-fingerprint shape doesn't cleanly fit generic per-dimension account state, and which would need a fragile synthetic-fingerprint scheme to reuse). Revisit only if a concrete reason emerges to prefer the event-sourced path.
+
 ---
 
 ## NOW — Activation & launch quality
@@ -160,7 +180,19 @@ Bounded, near-term work that directly completes or polishes what's already live.
 
 Work that makes House Accounts' recommendations get better over time, not just visible. Build in this order — the second item explicitly depends on the first.
 
-**Current priority framing (updated 2026-08-17 after Behavioral Learning V1's dashboard foundation shipped):** 1) real Beta usage / selling — deliberately let real users accumulate genuine behavioral evidence before extending Behavioral Learning further; 2) adoption-critical integrations where demand is proven; 3) selected seller-UX correctness fixes driven by observed friction; 4) Behavioral Learning V1 remaining work (notification-learning wiring, richer dimensions), once meaningful Beta usage has accumulated — see the entry below; 5) Manager Intelligence / team reporting, once enough behavior/outcome data exists; 6) Expansion. Not a permanent frozen order. Older cleanup/hardening ideas still do not displace real Beta usage/selling unless they represent a genuine sell-the-product blocker.
+**Current priority framing (updated 2026-08-18 after the Account Expansion / Find More Like Them product reframe):** 1) real Beta usage / selling; 2) adoption-critical integrations where demand is proven; 3) Account Expansion / Whitespace Intelligence remaining work (Slice 1 shipped — see Recently completed above) — reuses the existing account/order/contact foundation, no Behavioral Learning dependency; 4) selected seller-UX correctness fixes driven by observed friction; 5) Behavioral Learning V1 remaining work (notification-learning wiring, richer dimensions), once meaningful Beta usage has accumulated; 6) Manager Intelligence / team reporting, once enough behavior/outcome data exists; 7) Find More Like Them / Lookalike Expansion (see LATER), sequenced behind Account Expansion. Not a permanent frozen order. Older cleanup/hardening ideas still do not displace real Beta usage/selling unless they represent a genuine sell-the-product blocker.
+
+### Account Expansion / Whitespace Intelligence / Growth Map — remaining work
+
+**Priority: near-term — Slice 1 (read-only whitespace grid) is shipped and banked, see "Account Expansion / Whitespace Intelligence — Slice 1" under Recently completed above.** No Behavioral Learning dependency — this track reuses the existing contact/order/category foundation directly.
+
+**CRM boundary (standing constraint on all future slices):** House Accounts answers "where can I grow this account," never "what happened and when." No activity/call logging, deal/pipeline stages, task/reminder management, email history/sync, or custom-field CRM configuration. The whitespace grid must stay a derived, evidence-backed inference with rep correction — never a form a rep is expected to keep up to date from memory.
+
+**Remaining scope, sequenced:**
+- **Slice 2 — confirm/correct write path.** A lightweight per-cell interaction (confirm known / mark confirmed-whitespace / mark not-applicable), persisting all four states from Slice 1's doctrine (Covered, Potential whitespace, Confirmed whitespace, Not applicable — the last two must never collapse into each other). Architecture decision already made (see the Slice 1 banked entry): key by the existing durable `(organization/user scope, normalizeCompanyName(account_name))` identity convention, not raw account name; use a small dedicated table, not `ha_signal_events`.
+- **Slice 3 — rework Relationship Expansion opportunity generation.** Today's `generateFutureOpportunities()` industry-template gate (`if(industry === 'Automotive...') if(cats.has('Apparel'))...`) must stop being a standalone trigger. A recommended expansion play requires an evidence-backed whitespace cell (non-confirmed-absent) PLUS at least one grounded commercial trigger — a real public signal, a detected recurring/program pattern (`findRepeatPatternGroups()`), or a rep-supplied introduction path (`suggestedIntroductionPath()`). An industry template alone becomes necessary-but-not-sufficient, never sufficient by itself. This touches live, revenue-relevant opportunity-generation logic with existing test dependencies — the highest-risk slice, do carefully with a full regression pass.
+- **Location/subsidiary/division whitespace** — explicitly deferred. Current data (a flat city/state string) cannot support this dimension truthfully; would need richer CSV input or a live integration (see Integrations) before it's worth building.
+- Rep confirmations should eventually feed the existing private org-scoped Behavioral Learning event foundation's *pattern* (not necessarily its literal table) — a confirm/correct action is structurally similar to the quality-feedback events `org-preference-learning.js` already consumes.
 
 ### Behavioral Learning V1 — remaining work (notification wiring, richer dimensions)
 
@@ -331,15 +363,19 @@ Keep onboarding centered on existing customers, not cold prospecting — matches
 
 Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Several of these explicitly depend on Behavioral Learning V1 landing first — do not promote them ahead of that dependency.
 
-### Expansion / growth intelligence — "Companies like my customers"
+### Find More Like Them / Lookalike Expansion — "Companies like the customers you already win with"
 
-**Major strategic wedge — not generic prospecting.**
+**Major strategic wedge — not generic prospecting. Distinct from Account Expansion / Whitespace Intelligence (see NEXT) — that track grows existing accounts; this one finds net-new companies resembling them.** Do not conflate the two names or the two capabilities.
 
-**Depends on:** real behavioral/outcome evidence (Behavioral Learning V1) to be genuinely differentiated rather than a generic lookalike-company tool.
+**Sequenced behind Account Expansion / Whitespace Intelligence** (see NEXT) — not because it structurally requires it, but because Account Expansion reuses far more of the existing foundation and directly serves the existing-customer core loop first. Recon (2026-08-17) found the public-signal research/grounding/actionability engine this needs already exists (`research-batch.js`'s `prospect-intelligence` mode, currently feature-flagged off via `MVP_FEATURES.prospectIntelligence`) — the genuinely missing piece is candidate-company discovery, a bounded task, not a rebuild.
 
-**Eventual scope:** identify characteristics of successful existing accounts; combine that with actual behavioral/outcome evidence (not just firmographic similarity); find companies resembling accounts where the organization actually wins; surface timely reasons to approach those companies. Deeper research capability belongs here specifically, not in current Core: Hussey-style deep-research depth, business-model mapping, dealer/channel network mapping, campaign/program-level research, multi-signal synthesis across a prospect, and bespoke concept generation — all explicitly a future Expansion/prospect-research surface, not something to fold into the existing monitored-customer Core workflow.
+**No longer hard-gated on mature Behavioral Learning (corrected 2026-08-17):** Behavioral Learning should make this smarter about *how* an organization wins, as an optional future weighting input — it does not need to be the prerequisite that makes this possible at all. A conservative V1 can seed candidates from existing customer/order/account evidence already in hand (revenue, frequency, recency, category diversity — the same fields `getRelationshipStrength()` already computes) without waiting on Behavioral Learning evidence to clear its threshold.
 
-**Economic discipline:** keep Expansion/prospect research economically separate from monitored-customer capacity. Customer monitoring subscription tiers must not silently make unlimited large-scale prospect research free. When Expansion research scales, define a separate research allowance/economic model for it — do not let it ride on the existing monitoring-capacity guardrails (see "Monitoring Economics founder telemetry" under NOW).
+**Eventual scope:** identify characteristics of successful existing accounts from real order/account data; generate lookalike candidates from that profile (never from an open, rep-uploaded target list — that is Prospecting, stays separate); require every candidate to clear the same identity-grounding gate (`verifyCandidateCompanyGrounding()`) and carry a real, timely, dated reason to engage before ever surfacing — never similarity alone. Deeper research capability belongs here specifically, not in current Core: Hussey-style deep-research depth, business-model mapping, dealer/channel network mapping, campaign/program-level research, multi-signal synthesis across a prospect, and bespoke concept generation.
+
+**Economic discipline:** keep this research economically separate from monitored-customer capacity. The existing `monitoring-capacity.js` guardrail bounds global worker concurrency, not per-org spend — it does not by itself provide economic separation. Customer monitoring subscription tiers must not silently make unlimited large-scale lookalike research free; define a separate research allowance/economic model when this scales (see "Monitoring Economics founder telemetry" under NOW).
+
+**Explicitly separate from and does not unblock Prospecting** (universal any-company research, not customer-similarity-driven) — see "Longer-term / older parked ideas" below. Candidate sourcing here must stay system-generated from the winning-customer profile, never an open rep-uploaded list, or this quietly reopens the door to generic prospecting the product has deliberately stayed closed to.
 
 ### Website / positioning / commercialization — "Why House Accounts vs. ChatGPT / Claude?"
 
@@ -382,5 +418,5 @@ Kept clearly lower priority unless current strategy explicitly promotes one of t
 - AI-agent-like workflows
 - Chrome/mobile experiences
 - Public roadmap/voting
-- Universal any-company research (research on companies that are not existing customers at all — distinct from Account Intelligence/account search under SOON, which stays scoped to existing customer data, and distinct from Expansion above, which is customer-similarity-driven, not universal)
+- Universal any-company research (research on companies that are not existing customers at all — distinct from Account Intelligence/account search under SOON, which stays scoped to existing customer data, and distinct from Find More Like Them above, which is customer-similarity-driven, not universal)
 - More sophisticated enterprise permissions/admin

@@ -1221,6 +1221,16 @@
   .bd-item .lbl{font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);}
   .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
 
+  .whitespace-grid{display:flex; flex-direction:column; gap:10px; margin-bottom:8px;}
+  .whitespace-row{display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap;}
+  .whitespace-row-label{font-family:var(--mono); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); width:90px; flex-shrink:0; padding-top:5px;}
+  .whitespace-chips{display:flex; flex-wrap:wrap; gap:6px;}
+  .ws-chip{display:inline-block; border-radius:999px; padding:4px 10px; font-size:0.78rem; border:1px solid var(--line); background:#fff; cursor:default;}
+  .ws-chip.ws-covered{border-color:var(--radar); background:rgba(31,183,174,0.08); color:var(--radar);}
+  .ws-chip.ws-known-contact{border-color:var(--signal); background:rgba(245,166,35,0.08); color:#8a5a10;}
+  .ws-chip.ws-unknown{color:var(--muted);}
+  .whitespace-legend{font-family:var(--mono); font-size:0.65rem; color:var(--muted); margin-top:6px; margin-bottom:4px;}
+
   .section-title{
     font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--label-amber);
     margin-bottom:12px; margin-top:20px;
@@ -3510,6 +3520,14 @@ function normalizeSavedAccount(account){
   a.assignedRep = a.assignedRep || raw.assignedRep || raw.assigned_rep || '';
   a.contacts = Array.isArray(a.contacts) ? a.contacts : (Array.isArray(raw.contacts) ? raw.contacts : []);
   if(!a.contacts.length && (a.contactName || a.contactEmail)) a.contacts = [{name:a.contactName,title:a.contactTitle,department:a.contactDepartment,email:a.contactEmail,phone:a.contactPhone,source:'From your uploaded account list'}];
+  // Account Expansion / Whitespace Intelligence, Slice 1: raw CSV rows are
+  // never persisted under the "allRecords" key (see
+  // serializeAccountForStorage() -- it echoes them as rawData.records,
+  // truncated to 100), so a reloaded/saved account previously had no way
+  // to reach its own per-row contact/order evidence after a page refresh.
+  // Purely additive -- no prior consumer read account.allRecords on a
+  // reloaded account, since the field was always absent before this line.
+  a.allRecords = Array.isArray(a.allRecords) ? a.allRecords : (Array.isArray(raw.records) ? raw.records : []);
   a.intelligenceMode = a.intelligenceMode || raw.intelligenceMode || raw.intelligence_mode || (a.orderCount > 0 ? (a.contacts.length ? 'mixed' : 'historical') : 'warm');
   a.revenue = Number(a.revenue ?? metrics.revenue ?? 0) || 0;
   a.orderCount = Number(a.orderCount ?? metrics.orderCount ?? 0) || 0;
@@ -10441,6 +10459,128 @@ function getRelationshipMode(account){
   return 'Cold';
 }
 
+// ============================================================================
+// Account Expansion / Whitespace Intelligence, Slice 1: read-only visibility
+// only. No confirmation write path exists yet, and this module does not
+// change Relationship Expansion opportunity generation -- see BACKLOG.md's
+// "Account Expansion / Whitespace Intelligence / Growth Map" entry.
+//
+// Doctrine this slice enforces:
+//   - Absence of evidence is never rendered as confirmed absence. A cell
+//     with no observed evidence is 'unknown' ("potential whitespace"),
+//     never a claim that the department/category doesn't exist here or
+//     that an opportunity is available.
+//   - A known CONTACT does not by itself prove a covered department
+//     relationship -- it only proves House Accounts knows a person there.
+//     A department only reaches 'covered' when at least one contact in
+//     that department is linked to a real transaction-evidenced row
+//     (hasOrderHistoryEvidence()); otherwise it renders as the honest,
+//     weaker 'known_contact' state. Category coverage was already
+//     strictly evidence-gated before this slice (account.categoryTypes is
+//     built from hasOrderHistoryEvidence()-passing closed orders only,
+//     see processData()) -- reused verbatim here, not recomputed.
+//   - This module never reads or infers Confirmed-whitespace / Not-
+//     applicable states -- those are rep-asserted states with no write
+//     path yet (a later slice). Every cell already carries a
+//     `confirmation` field (always null this slice) so that slice can
+//     attach rep state without changing this shape.
+// ============================================================================
+
+// The explicit department taxonomy to grid whitespace against -- reuses
+// departmentFromText()'s exact bucket vocabulary rather than inventing a
+// second classification scheme. Any department/title text
+// departmentFromText() cannot classify is excluded from the grid entirely
+// (fail-safe: never force a guess into a bucket).
+const WHITESPACE_DEPARTMENTS = ['HR / People', 'Events', 'Marketing', 'Operations / Facilities', 'Procurement', 'Sales / Client Experience', 'Leadership'];
+
+// The explicit category taxonomy to grid whitespace against -- reuses
+// inferPromoCategory()'s exact bucket vocabulary. Its 'Uncategorized'
+// fallback is deliberately excluded: it is not a real category to grid
+// whitespace against.
+const WHITESPACE_CATEGORIES = ['Apparel', 'Headwear', 'Drinkware', 'Event / Giveaway', 'Recognition / Awards', 'Print / Stationery', 'Onboarding / Recruiting', 'Safety', 'Wellness / Employee Engagement', 'Client Gifts', 'Sales Incentive'];
+
+// A contact is transaction-linked when at least one of its source CSV rows
+// (matched by the SAME name+email+title key importedContactsFromRecords()
+// already dedupes contacts by) also carries real order-history evidence.
+// A contact-only upload row (no revenue/project/status/date at all) proves
+// House Accounts knows a person, never that business flows through them.
+function contactIsTransactionLinked(contact, allRecords){
+  const key = `${contact?.name || ''}|${contact?.email || ''}|${contact?.title || ''}`.toLowerCase();
+  return (allRecords || []).some(r => {
+    if(!hasOrderHistoryEvidence(r)) return false;
+    const rKey = `${r?.contactName || ''}|${r?.contactEmail || ''}|${r?.contactTitle || ''}`.toLowerCase();
+    return rKey === key;
+  });
+}
+
+// Pure function: (account) -> whitespace grid. Reads only already-stored
+// account fields (contacts, allRecords, categoryTypes, purchases) --
+// invents nothing, calls no provider, persists nothing.
+function computeAccountWhitespaceGrid(account){
+  const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
+  const allRecords = Array.isArray(account?.allRecords) ? account.allRecords : [];
+  const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
+
+  const hasAnyContact = contacts.length > 0;
+  const hasAnyPurchaseEvidence = (Array.isArray(account?.purchases) ? account.purchases.length > 0 : false) || categoryTypes.size > 0;
+  const dataSufficiency = (hasAnyContact || hasAnyPurchaseEvidence) ? 'sufficient' : 'insufficient';
+
+  const departments = WHITESPACE_DEPARTMENTS.map(dept => {
+    const matched = contacts.filter(c => departmentFromText(c?.department || c?.title || '') === dept);
+    if(!matched.length){
+      return { key: dept, status: 'unknown', confirmation: null, evidence: null };
+    }
+    const linked = matched.find(c => contactIsTransactionLinked(c, allRecords)) || null;
+    if(linked){
+      return { key: dept, status: 'covered', confirmation: null, evidence: { type: 'contact_transaction_linked', contactName: linked.name || '', contactTitle: linked.title || '' } };
+    }
+    return { key: dept, status: 'known_contact', confirmation: null, evidence: { type: 'contact_known', contactName: matched[0].name || '', contactTitle: matched[0].title || '' } };
+  });
+
+  const categories = WHITESPACE_CATEGORIES.map(cat => {
+    if(categoryTypes.has(cat)){
+      return { key: cat, status: 'covered', confirmation: null, evidence: { type: 'purchase_history' } };
+    }
+    return { key: cat, status: 'unknown', confirmation: null, evidence: null };
+  });
+
+  return { dataSufficiency, departments, categories };
+}
+
+function whitespaceStatusMeta(status){
+  if(status === 'covered') return { icon: '✓', label: 'Covered', cls: 'ws-covered' };
+  if(status === 'known_contact') return { icon: '●', label: 'Known contact', cls: 'ws-known-contact' };
+  return { icon: '?', label: 'Potential whitespace', cls: 'ws-unknown' };
+}
+
+function renderWhitespaceCell(cell){
+  const meta = whitespaceStatusMeta(cell.status);
+  let title = `${meta.label} — no evidence either way yet`;
+  if(cell.evidence?.type === 'contact_transaction_linked'){
+    title = `${meta.label} — ${cell.evidence.contactName || 'a known contact'}${cell.evidence.contactTitle ? ` (${cell.evidence.contactTitle})` : ''}, linked to a real order`;
+  } else if(cell.evidence?.type === 'contact_known'){
+    title = `${meta.label} — ${cell.evidence.contactName || 'a contact is known'}${cell.evidence.contactTitle ? ` (${cell.evidence.contactTitle})` : ''}, not yet linked to an order`;
+  } else if(cell.evidence?.type === 'purchase_history'){
+    title = `${meta.label} — observed in your uploaded order history`;
+  }
+  return `<span class="ws-chip ${meta.cls}" title="${escapeHtml(title)}">${meta.icon} ${escapeHtml(cell.key)}</span>`;
+}
+
+function renderAccountWhitespaceSection(account){
+  const grid = computeAccountWhitespaceGrid(account);
+  if(grid.dataSufficiency === 'insufficient'){
+    return `<div class="section-title">🗺️ Account Whitespace</div><div class="no-signals-message">Not enough uploaded contact or order data yet to show department/category coverage for this account.</div>`;
+  }
+  return `
+    <div class="section-title">🗺️ Account Whitespace</div>
+    <div class="whitespace-grid">
+      <div class="whitespace-row"><div class="whitespace-row-label">Departments</div><div class="whitespace-chips">${grid.departments.map(renderWhitespaceCell).join('')}</div></div>
+      <div class="whitespace-row"><div class="whitespace-row-label">Categories</div><div class="whitespace-chips">${grid.categories.map(renderWhitespaceCell).join('')}</div></div>
+    </div>
+    <div class="whitespace-legend">✓ Covered (real evidence) &nbsp; ● Known contact (not yet linked to an order) &nbsp; ? Potential whitespace (no evidence either way)</div>
+  `;
+}
+
 function getOpportunityType(account, signalBased=false){
   if(signalBased) return 'SIGNAL-DRIVEN';
   const strength = getRelationshipStrength(account);
@@ -13099,6 +13239,7 @@ function renderDetailedAccountViews(accounts){
         <ul class="opps">
           ${dedupeOpportunities(a.futureOpportunities || []).map(o => { const rec = recommendationBadgeMeta(o); return `<li><strong>${escapeHtml(rec.label)}</strong> — ${escapeHtml(buyingConversationLabel(o))}<br><span style="color:var(--muted);">${escapeHtml(recommendationOneLine(o))} · ${reasonListMeta(o)}</span>${suggestedIntroductionPath(o) ? `<br><span style="color:var(--muted);"><strong>Path:</strong> ${escapeHtml(suggestedIntroductionPath(o))}</span>` : ''}</li>`; }).join('') || (isWarmAccount(a) ? '<li>No current business signal was found. This account remains monitored for future activity.</li>' : '<li>No reasons to reach out generated from closed historical orders.</li>')}
         </ul>
+        ${renderAccountWhitespaceSection(a)}
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : `<div class="no-signals-message">${isWarmAccount(a) ? 'No historical orders were included for this account. Public business signals and uploaded contact context will drive recommendations.' : 'No closed/converted historical orders found for this account.'}</div>`}
         ${renderPipelineTable(a.activePipeline || [])}

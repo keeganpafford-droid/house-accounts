@@ -212,6 +212,14 @@ function recommendationOneLine(o){ return ''; }
 function reasonListMeta(o){ return ''; }
 function suggestedIntroductionPath(o){ return ''; }
 function renderPipelineTable(pipeline){ return ''; }
+// Account Expansion / Whitespace Intelligence, Slice 1: renderDetailedAccountViews()
+// now also calls this unconditionally -- pure best-effort DOM rendering
+// (a read-only coverage grid) with no bearing on save/heartbeat/claim
+// invocation counts or the markup-safety assertions this file checks, so
+// it's stubbed exactly like the other renderXxx() helpers above/below.
+// Real behavior has its own dedicated coverage in
+// scripts/test-account-whitespace-intelligence-slice1.js.
+function renderAccountWhitespaceSection(account){ return ''; }
 function fmtMoney(n){ return String(n); }
 function addSignalDerivedOpportunities(account, signals){}
 function getResearchDiagnostics(){ window.researchDiagnostics = window.researchDiagnostics || []; return window.researchDiagnostics; }
