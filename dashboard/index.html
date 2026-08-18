@@ -2196,6 +2196,35 @@
 .ha-mvp #customerMonitoringWorkspace,
 .ha-mvp .sales-dashboard,
 .ha-mvp .opportunities-section.account-intelligence-section{display:none !important;}
+/* Account Intelligence MODE (founder correction, 2026-08-19): a genuine
+   view-state switch, not "one focused card scrolled into view inside an
+   otherwise-unchanged Dashboard." When #account=<key> is active,
+   .ha-account-focus is set on <body> (see applyAccountIntelligenceModeClass()
+   in the main script) and every normal-Dashboard section hides via this
+   single rule -- the SAME established pattern as the (currently unused)
+   .ha-mvp rule directly above, just keyed to a different mode. Nothing is
+   removed from the DOM and no content is duplicated: renderDetailedAccountViews()
+   still writes into the exact same #accountList element every other render
+   path already uses (inside .account-intelligence-section, itself inside
+   #results) -- this is a display:none accounting change, not a second
+   account UI. Hidden elements are removed from layout flow, so once
+   everything ABOVE .account-intelligence-section within #results (and
+   every normal-Dashboard section above #results) is hidden, the account
+   view naturally becomes the first visible content beneath the persistent
+   site header, with no scroll dependency -- true at scrollY 0 by
+   construction, not by scrolling there afterward. */
+.ha-account-focus .mvp-dashboard-heading,
+.ha-account-focus .mvp-dashboard-notice,
+.ha-account-focus .checkout-success-notice,
+.ha-account-focus .unresolved-outreach-panel,
+.ha-account-focus #leadGate,
+.ha-account-focus .workflow-switcher,
+.ha-account-focus #customerMonitoringWorkspace,
+.ha-account-focus .dashboard-loading-skeleton,
+.ha-account-focus .example-opportunity,
+.ha-account-focus .saved-dashboard-banner,
+.ha-account-focus #results > *:not(.account-intelligence-section){display:none !important;}
+.ha-account-focus .account-intelligence-section{margin-top:24px;}
 .mvp-dashboard-heading{max-width:1136px;margin:24px auto 18px;display:none;align-items:flex-end;justify-content:space-between;gap:22px;padding-bottom:16px;border-bottom:1px solid var(--line);}
 .ha-mvp .mvp-dashboard-heading{display:flex;}
 .mvp-dashboard-heading h2{font-family:var(--display);font-size:2rem;line-height:1.05;color:var(--ink);margin:0 0 7px;}
@@ -4397,24 +4426,26 @@ function handleMvpDashboardRoute(){
   // renderDetailedAccountViews) already reads the hash itself once real
   // data arrives, so a bookmarked/shared link works with no separate
   // "wait for data" logic here.
+  //
+  // Founder correction round 2 (2026-08-19): a first attempt fixed this
+  // with scrollIntoView() alone -- that only solved the case where the rep
+  // had scrolled down; on a fresh page load (scrollY 0) or after closing
+  // the modal near the top of the page, the DOM updated correctly but
+  // stayed off-screen below the still-visible Priorities/KPIs, which read
+  // as "the click did nothing." Founder correction: Account Intelligence
+  // must be a real MODE, not a focused card inside an otherwise-unchanged
+  // Dashboard. renderDetailedAccountViews() now toggles .ha-account-focus
+  // on <body> itself (see that function's own comment, and the CSS rule
+  // under the same class) -- every normal-Dashboard section hides via
+  // display:none, so the account view becomes the first visible content
+  // beneath the header BY CONSTRUCTION, true even at scrollY 0. The
+  // scroll-to-top below is now just a courtesy for a rep who had scrolled
+  // down before clicking -- not the mechanism that makes navigation
+  // legible.
   if(Array.isArray(window.accountRadarAccounts) && typeof renderDetailedAccountViews === 'function'){
     renderDetailedAccountViews(window.accountRadarAccounts);
-    // Founder correction (2026-08-19): the click chain (hash change ->
-    // route handler -> focused render) was confirmed working end-to-end in
-    // real-browser reproduction, but nothing ever moved the viewport --
-    // #account=<name> is not a real element id, so the browser's native
-    // "jump to #fragment" scrolling never triggers, unlike an ordinary
-    // named-anchor link. #accountList can sit far down the page (below
-    // Priorities/KPIs), and closing Manage Customer Accounts reveals the
-    // background page at ITS OWN prior scroll position -- so the DOM
-    // genuinely updated, but a rep watching the viewport would see no
-    // visible change at all, indistinguishable from the click doing
-    // nothing. Only scroll when actually entering (or switching within)
-    // the focused destination -- never on an ordinary "All Accounts" hash
-    // clear, which shouldn't yank the page around.
     if(typeof currentAccountIntelligenceFocusKey === 'function' && currentAccountIntelligenceFocusKey()){
-      const section = document.querySelector('.account-intelligence-section');
-      if(section) section.scrollIntoView({behavior:'smooth', block:'start'});
+      window.scrollTo({top:0, behavior:'smooth'});
     }
   }
 }
@@ -13484,13 +13515,26 @@ function feedSummary(opps){
 }
 
 // Account Intelligence destination (founder correction, 2026-08-19): a
-// first-class, bookmarkable single-account view -- reusing the exact same
-// card content every account already had inline (Reasons to Reach Out,
-// Whitespace, orders, pipeline, signals, contact editing), just given a
-// real address (#account=<normalized-name>) and an entry point from every
-// surface that lists accounts. No new content panels, no new backend/
-// schema -- this is navigation on top of what already existed.
+// first-class, bookmarkable single-account VIEW STATE -- reusing the exact
+// same card content every account already had inline (Reasons to Reach
+// Out, Whitespace, orders, pipeline, signals, contact editing), just given
+// a real address (#account=<normalized-name>) and an entry point from
+// every surface that lists accounts. No new content panels, no new
+// backend/schema -- this is navigation on top of what already existed.
 //
+// DASHBOARD MODE vs. ACCOUNT INTELLIGENCE MODE (founder correction round
+// 2, 2026-08-19): the first cut rendered the focused card in its normal
+// position inside #accountList and relied on scrollIntoView() to bring it
+// into view. That read as broken -- on a fresh load, or after closing
+// Manage Customer Accounts near the top of the page, the DOM updated
+// correctly but stayed visually buried beneath the still-visible
+// Priorities/KPIs/multi-account sections. #account=<key> now puts the
+// whole dashboard SHELL into an explicit mode (document.body.classList
+// .toggle('ha-account-focus', ...) in renderDetailedAccountViews() below;
+// see the .ha-account-focus CSS rule's own comment for exactly what it
+// hides) rather than just changing what one card shows. True at scrollY 0
+// by construction -- nothing needs to scroll for the destination to be
+// the first visible thing beneath the persistent site header.
 // Route identity: normalizeCompanyNameForLimit(name), NOT ha_accounts.id.
 // ha_accounts.id IS a real UUID, but recon confirmed it is regenerated on
 // every CSV re-upload (replace_ha_accounts_snapshot() deletes and
@@ -13604,6 +13648,15 @@ function renderDetailedAccountViews(accounts){
   });
   const sectionHeader = document.querySelector('.account-intelligence-section .section-header');
   const focusKey = currentAccountIntelligenceFocusKey();
+  // Account Intelligence MODE (founder correction, 2026-08-19): a genuine
+  // dashboard-shell view-state switch (see the .ha-account-focus CSS rule's
+  // own comment), not a focused card scrolled into view inside an
+  // unchanged Dashboard. Set here -- inside the one function every render
+  // path (initial load, hashchange, post-research refresh, whitespace-
+  // confirmation reload) already funnels through -- so a direct page
+  // refresh on #account=... enters the mode immediately on first render,
+  // not only after a subsequent navigation event.
+  document.body.classList.toggle('ha-account-focus', !!focusKey);
 
   if(focusKey){
     if(sectionHeader) sectionHeader.textContent = 'Account Intelligence';

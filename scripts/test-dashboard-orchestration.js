@@ -435,7 +435,13 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
       },
       querySelector: (selector) => root.querySelector(selector),
       querySelectorAll: (selector) => root.querySelectorAll(selector),
-      addEventListener: (type, handler) => { if(type === 'click') sandbox.__clickHandler = handler; }
+      addEventListener: (type, handler) => { if(type === 'click') sandbox.__clickHandler = handler; },
+      // Account Intelligence MODE (founder correction round 2, 2026-08-19):
+      // renderDetailedAccountViews() toggles document.body.classList --
+      // a minimal real Set-backed stub so that call is genuinely exercised
+      // (and inspectable via sandbox.__bodyClasses) rather than just not
+      // throwing.
+      body: { classList: { toggle: (name, force) => { const has = sandbox.__bodyClasses.has(name); const shouldHave = force === undefined ? !has : !!force; if(shouldHave) sandbox.__bodyClasses.add(name); else sandbox.__bodyClasses.delete(name); }, contains: (name) => sandbox.__bodyClasses.has(name) } }
     },
     fetch: fetchImpl,
     console: {
@@ -447,6 +453,7 @@ function createSandbox({accounts, currentUploadId = 'upload-1', currentResearchR
     AbortController,
     setTimeout, clearTimeout
   };
+  sandbox.__bodyClasses = new Set();
   vm.createContext(sandbox);
   const initSource = buildInitSource({ currentLead: {email:'lead@example.com', name:'Test Lead', company:'Test Co'}, currentUploadId, currentResearchRunId, currentResearchAttemptId, currentDashboardData });
   const fullSource = `${initSource}\n${STUB_SOURCE}\n${REAL_SOURCE}\n`;

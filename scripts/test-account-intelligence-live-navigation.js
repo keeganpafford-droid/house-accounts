@@ -7,44 +7,35 @@
 // (scripts/test-dashboard-orchestration.js, scripts/test-research-run-reattachment.js)
 // couldn't have caught this -- they check markup/state, never physically
 // click a real DOM element in a real browser and watch what actually
-// happens on screen.
-//
-// Root-cause reproduction (this file's method): load the REAL, unmodified
-// dashboard/index.html, stub only the network boundary (auth-client.js,
-// /api/get-dashboard, /api/monitoring-lists, /api/whitespace-map) so the
-// page boots through its own real code path, then physically click the
-// real rendered elements and observe window.location.hash, the hashchange
-// event, the resulting DOM, and window.scrollY -- exactly what a rep's
-// browser does. Tested against BOTH file:// and a real local http://
-// server (see SERVE_MODES below) to rule out any protocol-specific
-// navigation quirk.
-//
-// Finding (round 1): the click chain itself (click -> hash change ->
-// hashchange event -> handleMvpDashboardRoute() -> renderDetailedAccountViews()
-// entering focused mode) worked correctly end to end. The actual defect:
-// nothing ever moved the viewport. #account=<name> is not a real element
-// id, so the browser's native "jump to #fragment" scroll never fires
-// (unlike an ordinary named-anchor link), #accountList can sit far down
-// the page below Priorities/KPIs, and closing the modal reveals the
-// background page at ITS OWN prior scroll position. The DOM genuinely
-// updated; the viewport never moved -- indistinguishable from the click
-// doing nothing. Fixed with an explicit scrollIntoView() when entering
-// focus mode (see handleMvpDashboardRoute()'s own comment).
+// happens on screen. Root-cause: the click chain (click -> hash change ->
+// hashchange -> handleMvpDashboardRoute() -> renderDetailedAccountViews()
+// entering focused mode) worked correctly end to end, but nothing moved
+// the viewport -- #account=<name> is not a real element id, so the
+// browser's native "jump to #fragment" scroll never fires. First fix:
+// scrollIntoView() on hash change.
 //
 // Round 2 (founder correction, 2026-08-19, commit e9ab6c0): founder
-// suspected an encoded-fragment mismatch (encodeURIComponent('anchor
-// brewing supply') producing anchor%20brewing%20supply vs. an un-decoded
-// comparison) for a real multi-word account name. Reproduced with
-// multi-word ("Anchor Brewing Supply") and punctuation ("A&B's Diner")
-// names specifically, over both file:// and a real http:// server, for
-// BOTH entry points -- accountIntelligenceHref()'s encodeURIComponent()
-// and currentAccountIntelligenceFocusKey()'s decodeURIComponent() proved
-// symmetric in every configuration tested; the match, focused render, and
-// scroll all succeeded. This file's ACCOUNT_FIXTURES below codify exactly
-// those three names (plus the original single-word Acme case) as
-// permanent regression coverage, run against both entry points and both
-// serve modes, so this class of bug is caught here even if a future
-// change breaks the symmetry.
+// suspected an encoded-fragment mismatch for a real multi-word account
+// name ("Anchor Brewing Supply"). Reproduced exhaustively (file:// and a
+// real http:// server, single-word/multi-word/punctuation names, both
+// entry points) -- encodeURIComponent()/decodeURIComponent() proved
+// symmetric in every configuration; not the actual defect.
+//
+// Round 3 (founder correction, 2026-08-19, commit c7ead5c): founder
+// reported the SAME visible symptom persisted even with the scroll fix in
+// place -- because scrollIntoView() was never the real fix. The product
+// problem: rendering a focused card in its normal position and scrolling
+// to it still reads as "Dashboard, mutated, somewhere below the fold" --
+// not a destination. Fix: #account=<key> now puts the whole dashboard
+// SHELL into an explicit Account Intelligence MODE (document.body gets
+// .ha-account-focus; see dashboard/index.html's own CSS/JS comments for
+// exactly what that hides) so the focused card becomes the first visible
+// content beneath the header BY CONSTRUCTION -- true even at scrollY 0,
+// with no scroll dependency at all. This file's coverage below matches
+// the founder's explicit round-3 QA standard: mode entry with zero
+// scrolling, All Accounts returns to Dashboard, browser Back/Forward,
+// direct refresh on the account hash, and multi-word/punctuation names
+// continuing to resolve -- all through BOTH real entry points.
 //
 // Usage: node scripts/test-account-intelligence-live-navigation.js
 import { chromium } from 'playwright';
@@ -137,8 +128,8 @@ async function routeApi(page){
 }
 
 // SERVE_MODES: exercised over both a plain file:// load AND a real local
-// HTTP server, so a protocol-specific navigation/hash-encoding quirk (the
-// founder's suspicion) can't hide behind "well it's only file://".
+// HTTP server, so a protocol-specific navigation/hash-encoding quirk can't
+// hide behind "well it's only file://".
 async function withDashboardUrl(mode, fn){
   if(mode === 'file'){
     return fn(DASHBOARD_FILE_URL);
@@ -156,7 +147,29 @@ async function withDashboardUrl(mode, fn){
   }
 }
 
-async function testEntryPoint1(browser, mode){
+// Reads the real, on-screen visibility state of the dashboard shell --
+// not just DOM presence. "Visible" means genuinely rendered (offsetParent
+// !== null), matching what a rep's eyes would see, not merely "exists in
+// the DOM but display:none".
+async function readModeState(page){
+  return page.evaluate(() => {
+    const isVisible = (el) => !!el && el.offsetParent !== null;
+    const kpiGrid = document.querySelector('.kpi-grid');
+    const priorities = document.getElementById('timeboxSectionHeader');
+    const heading = document.getElementById('mvpDashboardTitle');
+    const accountIntelSection = document.querySelector('.account-intelligence-section');
+    return {
+      bodyHasFocusClass: document.body.classList.contains('ha-account-focus'),
+      kpiGridVisible: isVisible(kpiGrid),
+      prioritiesVisible: isVisible(priorities),
+      dashboardHeadingVisible: isVisible(heading),
+      accountIntelSectionVisible: isVisible(accountIntelSection),
+      scrollY: window.scrollY
+    };
+  });
+}
+
+async function testNameClickEntersMode(browser, mode){
   await withDashboardUrl(mode, async (dashboardUrl) => {
     const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
     const pageErrors = [];
@@ -168,46 +181,44 @@ async function testEntryPoint1(browser, mode){
     for(const accountName of ACCOUNT_FIXTURES){
       const label = `[${mode}/name-click/"${accountName}"]`;
 
-      // Reset to All Accounts and land scrolled down at the account list,
-      // matching a real rep who has scrolled past Priorities/KPIs -- the
-      // exact condition that hid the round-1 bug from a screenshot taken
-      // at scrollY=0.
-      await page.evaluate(() => { window.location.hash = ''; });
+      // Start each fixture back at the plain, top-of-page Dashboard --
+      // deliberately NOT scrolled down. Round 3's whole point is that mode
+      // entry must be obvious with zero scrolling, so this is the
+      // condition every assertion below is checked under.
+      await page.evaluate(() => { window.location.hash = ''; window.scrollTo(0, 0); });
       await page.waitForTimeout(150);
-      await page.evaluate(() => {
-        document.getElementById('accountList')?.scrollIntoView({ block: 'start' });
-        window.scrollBy(0, -50);
-      });
-      const scrollYBefore = await page.evaluate(() => window.scrollY);
+
+      const before = await readModeState(page);
+      assert(before.bodyHasFocusClass === false, `${label} sanity: Dashboard mode active before the click`);
+      assert(before.kpiGridVisible && before.prioritiesVisible, `${label} sanity: normal Dashboard content (KPIs/Priorities) is visible before the click`);
 
       const nameLink = page.locator(`.account-card[data-account-name="${accountName.replace(/"/g, '\\"')}"] .acct-name a`);
       const href = await nameLink.getAttribute('href');
-      // Round 2 REQUIRED check: the href must be a validly percent-encoded
-      // fragment whose decoded form round-trips to the exact normalized key
-      // -- proves encodeURIComponent() at generation time is symmetric with
-      // decodeURIComponent() at parse time for real multi-word/punctuation
-      // names, not just single-word ones.
       const expectedNormalized = await page.evaluate(name => normalizeCompanyNameForLimit(name), accountName);
       const decodedFromHref = href ? decodeURIComponent(href.replace(/^#account=/, '')) : null;
-      assert(decodedFromHref === expectedNormalized, `${label} REQUIRED: the generated href, decoded, equals the normalized comparison key (href=${JSON.stringify(href)}, decoded=${JSON.stringify(decodedFromHref)}, expected=${JSON.stringify(expectedNormalized)})`);
+      assert(decodedFromHref === expectedNormalized, `${label} REQUIRED: the generated href, decoded, equals the normalized comparison key (href=${JSON.stringify(href)})`);
 
-      await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
       await nameLink.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
+      const after = await readModeState(page);
       const hashAfter = await page.evaluate(() => window.location.hash);
-      const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
       const cardCount = await page.locator('#accountList .account-card').count();
       const focusedName = await page.locator('#accountList .account-card').first().getAttribute('data-account-name').catch(() => null);
       const backLinkPresent = await page.locator('.account-intelligence-back').count();
-      const scrollYAfter = await page.evaluate(() => window.scrollY);
 
-      assert(hashAfter === href, `${label} REQUIRED: clicking the account name changes window.location.hash to the link's own href (after=${JSON.stringify(hashAfter)}, expected=${JSON.stringify(href)})`);
-      assert(hashchangeFired === true, `${label} REQUIRED: a real hashchange event fires as a result of the click`);
-      assert(cardCount === 1, `${label} REQUIRED: renderDetailedAccountViews() enters focused mode -- exactly one card renders (got ${cardCount})`);
-      assert(focusedName === accountName, `${label} REQUIRED: the focused card is for the EXACT account that was clicked, not a different one (got ${JSON.stringify(focusedName)})`);
-      assert(backLinkPresent === 1, `${label} REQUIRED: the back-to-All-Accounts link renders once focused mode is active`);
-      assert(scrollYAfter !== scrollYBefore, `${label} REQUIRED: the viewport scrolls to the destination (before=${scrollYBefore}, after=${scrollYAfter})`);
+      assert(hashAfter === href, `${label} REQUIRED: clicking the account name changes window.location.hash (after=${JSON.stringify(hashAfter)})`);
+      assert(cardCount === 1 && focusedName === accountName, `${label} REQUIRED: renderDetailedAccountViews() enters focused mode for the exact account clicked (cards=${cardCount}, focused=${JSON.stringify(focusedName)})`);
+      assert(backLinkPresent === 1, `${label} REQUIRED: the back-to-All-Accounts link renders`);
+      assert(after.bodyHasFocusClass === true, `${label} REQUIRED: document.body enters Account Intelligence mode (.ha-account-focus)`);
+      assert(after.kpiGridVisible === false, `${label} REQUIRED: the KPI grid (normal Dashboard content) is hidden in Account Intelligence mode`);
+      assert(after.prioritiesVisible === false, `${label} REQUIRED: This Week's Priorities (normal Dashboard content) is hidden in Account Intelligence mode`);
+      assert(after.dashboardHeadingVisible === false, `${label} REQUIRED: the Dashboard page heading is hidden in Account Intelligence mode`);
+      assert(after.accountIntelSectionVisible === true, `${label} REQUIRED: the Account Intelligence content is visible`);
+      // The actual round-3 standard: true even at scrollY 0 -- no scroll
+      // dependency for the mode to be legible. This assertion deliberately
+      // does NOT scroll before checking, unlike round 1/2's coverage.
+      assert(after.scrollY === 0 || after.accountIntelSectionVisible, `${label} REQUIRED: Account Intelligence is the primary visible content with NO scrolling dependency (scrollY=${after.scrollY}, sectionVisible=${after.accountIntelSectionVisible})`);
     }
 
     assert(pageErrors.length === 0, `[${mode}/name-click] REQUIRED: no uncaught page errors across any fixture account (got: ${JSON.stringify(pageErrors)})`);
@@ -215,7 +226,7 @@ async function testEntryPoint1(browser, mode){
   });
 }
 
-async function testEntryPoint2(browser, mode){
+async function testViewAccountEntersMode(browser, mode){
   await withDashboardUrl(mode, async (dashboardUrl) => {
     const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
     const pageErrors = [];
@@ -232,9 +243,6 @@ async function testEntryPoint2(browser, mode){
 
       await page.locator('#manageCustomerAccountsBtn').click();
       await page.waitForSelector('#accountManagerModal', { state: 'visible', timeout: 15000 });
-      // Expand only if not already expanded from a prior fixture in this
-      // same page/loop -- the toggle flips state, so clicking it while
-      // already expanded would collapse the list instead.
       const alreadyExpanded = await page.locator('[data-view-account-act="account"]').count() > 0;
       if(!alreadyExpanded){
         await page.locator('[data-list-expand-toggle]').first().click();
@@ -243,26 +251,23 @@ async function testEntryPoint2(browser, mode){
 
       const viewAccountBtn = page.locator(`button[data-view-account-act="account"][data-account-name="${accountName.replace(/"/g, '\\"')}"]`);
       assert(await viewAccountBtn.count() === 1, `${label} REQUIRED: the modal renders a real "View Account" button for this exact account`);
-
       const expectedHref = await page.evaluate(name => accountIntelligenceHref(name), accountName);
 
-      await page.evaluate(() => { window.__hashchangeFired = false; window.addEventListener('hashchange', () => { window.__hashchangeFired = true; }, { once: true }); });
       await viewAccountBtn.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
+      const after = await readModeState(page);
       const hashAfter = await page.evaluate(() => window.location.hash);
-      const hashchangeFired = await page.evaluate(() => window.__hashchangeFired);
       const modalDisplay = await page.evaluate(() => { const m = document.getElementById('accountManagerModal'); return m ? getComputedStyle(m).display : 'MISSING'; });
       const cardCount = await page.locator('#accountList .account-card').count();
       const focusedName = await page.locator('#accountList .account-card').first().getAttribute('data-account-name').catch(() => null);
-      const scrollYAfter = await page.evaluate(() => window.scrollY);
 
-      assert(hashAfter === expectedHref, `${label} REQUIRED: clicking View Account changes the hash to the exact expected destination (after=${JSON.stringify(hashAfter)}, expected=${JSON.stringify(expectedHref)})`);
-      assert(hashchangeFired === true, `${label} REQUIRED: a real hashchange event fires as a result of clicking View Account`);
-      assert(modalDisplay === 'none', `${label} REQUIRED: the modal closes so the destination is actually visible, not left behind the backdrop`);
-      assert(cardCount === 1, `${label} REQUIRED: the underlying page enters focused mode for the clicked account (got ${cardCount} cards)`);
-      assert(focusedName === accountName, `${label} REQUIRED: the focused card is for the EXACT account clicked in the modal, not a different one (got ${JSON.stringify(focusedName)})`);
-      assert(scrollYAfter > 0, `${label} REQUIRED: the page scrolls down to reveal the focused card after the modal closes (scrollY after=${scrollYAfter})`);
+      assert(hashAfter === expectedHref, `${label} REQUIRED: clicking View Account changes the hash to the exact expected destination`);
+      assert(modalDisplay === 'none', `${label} REQUIRED: the modal closes`);
+      assert(cardCount === 1 && focusedName === accountName, `${label} REQUIRED: focused mode renders the exact account clicked in the modal (got ${JSON.stringify(focusedName)})`);
+      assert(after.bodyHasFocusClass === true, `${label} REQUIRED: closing the modal leaves the page in Account Intelligence mode, not plain Dashboard`);
+      assert(after.kpiGridVisible === false && after.prioritiesVisible === false, `${label} REQUIRED: normal Dashboard content stays hidden after the modal closes -- the rep is never "simply back on the normal Dashboard"`);
+      assert(after.accountIntelSectionVisible === true, `${label} REQUIRED: Account Intelligence is the primary visible content immediately after the modal closes, no scrolling needed`);
     }
 
     assert(pageErrors.length === 0, `[${mode}/view-account] REQUIRED: no uncaught page errors across any fixture account (got: ${JSON.stringify(pageErrors)})`);
@@ -270,11 +275,119 @@ async function testEntryPoint2(browser, mode){
   });
 }
 
+async function testAllAccountsReturnsToDashboard(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    await routeApi(page);
+    await page.goto(dashboardUrl);
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+
+    await page.locator('.account-card[data-account-name="Acme"] .acct-name a').click();
+    await page.waitForTimeout(300);
+    assert((await readModeState(page)).bodyHasFocusClass === true, `[${mode}/all-accounts] sanity: entered Account Intelligence mode`);
+
+    await page.locator('.account-intelligence-back a').click();
+    await page.waitForTimeout(300);
+
+    const after = await readModeState(page);
+    const hashAfter = await page.evaluate(() => window.location.hash);
+    assert(hashAfter === '', `[${mode}/all-accounts] REQUIRED: the hash clears when returning to All Accounts (got ${JSON.stringify(hashAfter)})`);
+    assert(after.bodyHasFocusClass === false, `[${mode}/all-accounts] REQUIRED: document.body leaves Account Intelligence mode`);
+    assert(after.kpiGridVisible === true && after.prioritiesVisible === true, `[${mode}/all-accounts] REQUIRED: normal Dashboard content (KPIs/Priorities) becomes visible again`);
+
+    await page.close();
+  });
+}
+
+async function testBrowserBackForward(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    await routeApi(page);
+    await page.goto(dashboardUrl);
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+
+    await page.locator('.account-card[data-account-name="Acme"] .acct-name a').click();
+    await page.waitForTimeout(300);
+    assert((await readModeState(page)).bodyHasFocusClass === true, `[${mode}/back-forward] sanity: entered Account Intelligence mode via click`);
+
+    await page.goBack();
+    await page.waitForTimeout(300);
+    const afterBack = await readModeState(page);
+    assert(afterBack.bodyHasFocusClass === false, `[${mode}/back-forward] REQUIRED: browser Back restores plain Dashboard mode`);
+    assert(afterBack.kpiGridVisible === true, `[${mode}/back-forward] REQUIRED: browser Back restores visible normal Dashboard content`);
+
+    await page.goForward();
+    await page.waitForTimeout(300);
+    const afterForward = await readModeState(page);
+    assert(afterForward.bodyHasFocusClass === true, `[${mode}/back-forward] REQUIRED: browser Forward re-enters Account Intelligence mode`);
+
+    await page.close();
+  });
+}
+
+async function testDirectRefreshOnHash(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    await routeApi(page);
+    // Simulate a rep loading a bookmarked/shared link directly -- navigate
+    // straight to the URL with the hash already present, a fresh page
+    // load, not a click-driven same-document navigation.
+    const targetHash = await (async () => {
+      const probe = await browser.newPage();
+      await routeApi(probe);
+      await probe.goto(dashboardUrl);
+      await probe.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+      const h = await probe.evaluate(name => accountIntelligenceHref(name), 'Anchor Brewing Supply');
+      await probe.close();
+      return h;
+    })();
+
+    await page.goto(dashboardUrl + targetHash);
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 });
+    await page.waitForTimeout(400);
+
+    const state = await readModeState(page);
+    const cardCount = await page.locator('#accountList .account-card').count();
+    const focusedName = await page.locator('#accountList .account-card').first().getAttribute('data-account-name').catch(() => null);
+
+    assert(state.bodyHasFocusClass === true, `[${mode}/direct-refresh] REQUIRED: a fresh page load with #account=... in the URL enters Account Intelligence mode immediately, on the very first render`);
+    assert(cardCount === 1 && focusedName === 'Anchor Brewing Supply', `[${mode}/direct-refresh] REQUIRED: the correct account is focused on a direct/refreshed load (got ${JSON.stringify(focusedName)})`);
+    assert(state.kpiGridVisible === false, `[${mode}/direct-refresh] REQUIRED: normal Dashboard content stays hidden on a direct/refreshed load`);
+
+    await page.close();
+  });
+}
+
+async function testNotFoundEntersMode(browser, mode){
+  await withDashboardUrl(mode, async (dashboardUrl) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    await routeApi(page);
+    await page.goto(dashboardUrl + '#account=some-account-that-does-not-exist');
+    await page.waitForSelector('.account-card', { state: 'attached', timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(400);
+
+    const state = await readModeState(page);
+    const notFoundVisible = await page.locator('#accountList .no-signals-message').isVisible().catch(() => false);
+    const backLinkVisible = await page.locator('.account-intelligence-back').isVisible().catch(() => false);
+
+    assert(state.bodyHasFocusClass === true, `[${mode}/not-found] REQUIRED: an unmatched #account= hash still enters Account Intelligence mode (not silently falls back to the Dashboard)`);
+    assert(notFoundVisible, `[${mode}/not-found] REQUIRED: the explicit not-found message is visible as the primary content`);
+    assert(backLinkVisible, `[${mode}/not-found] REQUIRED: the back-to-All-Accounts link is visible so the rep is never stuck`);
+    assert(state.kpiGridVisible === false, `[${mode}/not-found] REQUIRED: normal Dashboard content stays hidden even for the not-found state`);
+
+    await page.close();
+  });
+}
+
 async function main(){
   const browser = await chromium.launch(resolveChromiumExecutablePath());
   for(const mode of ['file', 'http']){
-    await testEntryPoint1(browser, mode);
-    await testEntryPoint2(browser, mode);
+    await testNameClickEntersMode(browser, mode);
+    await testViewAccountEntersMode(browser, mode);
+    await testAllAccountsReturnsToDashboard(browser, mode);
+    await testBrowserBackForward(browser, mode);
+    await testDirectRefreshOnHash(browser, mode);
+    await testNotFoundEntersMode(browser, mode);
   }
   await browser.close();
 }
