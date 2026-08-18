@@ -10,25 +10,35 @@
 // matching the established pattern in
 // scripts/test-guided-tour-and-import-experience.js.
 //
-// Doctrine under test:
-//   - A cell reaches covered only when a transaction-evidenced,
-//     department-classified contact's OWN evidenced rows span EXACTLY
-//     ONE category -- a contact repeated across multiple categories
-//     (the real-export shape the founder flagged) never backs a
-//     specific cell, even though it still contributes real row-level
-//     "known relationship" metadata.
+// Doctrine under test (V1 Covered truth rule, founder correction
+// 2026-08-19, superseding an earlier same-row/single-category-
+// discrimination rule that was STILL too inferential):
+//   - A cell may render covered ONLY when (1) source data explicitly
+//     proves a specific buying center purchased a specific offering, or
+//     (2) a rep explicitly confirms they sell that offering into that
+//     buying center. Neither exists in this codebase today, so
+//     computeAccountWhitespaceMatrix() NEVER assigns 'covered' from real
+//     data -- co-occurrence, uniqueness, single-category discrimination,
+//     and any other correlation-based inference are all explicitly
+//     insufficient, no matter how narrow. Zero automatic covered
+//     intersections is the correct, accepted V1 result.
 //   - Known-relationship context lives on the ROW label, never painted
-//     across a whole row's cells.
-//   - Only 'covered' and 'whitespace' ever render from real evidence --
-//     'not_applicable'/'active_play' have reserved markup but are never
-//     assigned by computeAccountWhitespaceMatrix().
-//   - Real, unattributed category purchases render in a separate panel
-//     outside the organizational grid, never as a fake buying-center row.
+//     across a whole row's cells, and never implies cell-level coverage.
+//   - Only 'whitespace' ever renders from real evidence today --
+//     'covered'/'not_applicable'/'active_play' have reserved markup but
+//     are never assigned by computeAccountWhitespaceMatrix().
+//   - Every real category purchase renders in the unattributed panel
+//     outside the organizational grid, since no automatic attribution
+//     exists -- never a fake buying-center row.
 //   - Zero buying-center evidence renders the lightweight mapping prompt.
 //   - Confirmations are durable/organization-scoped via api/whitespace-map.js
 //     (fetch), never localStorage -- the client caches the server's
 //     response and only ever trusts the server's authoritative return
 //     value after a toggle.
+//   - (organization_id, normalized_company_name) is a V1 resolution key,
+//     not an immutable identifier -- a rename/re-upload that changes the
+//     normalized key orphans old confirmations safely (re-ask, never
+//     stale/wrong data), never silently misattributes them.
 //   - Sticky first column / fixed (never shrinking) column widths in CSS.
 //
 // Usage: node scripts/test-account-whitespace-intelligence-slice1.js
@@ -53,7 +63,7 @@ const SRC = [
 
 const EXPORT_NAMES = [
   'departmentFromText', 'hasOrderHistoryEvidence', 'escapeHtml', 'normalizeCompanyNameForLimit',
-  'WHITESPACE_DEPARTMENTS', 'WHITESPACE_CATEGORIES', 'contactIsTransactionLinked',
+  'WHITESPACE_DEPARTMENTS', 'WHITESPACE_CATEGORIES',
   'computeAccountWhitespaceMatrix', 'renderWhitespaceCell', 'renderWhitespaceMatrix',
   'renderWhitespaceMappingPrompt', 'renderUnattributedPurchasesPanel', 'renderAccountWhitespaceSection',
   'loadWhitespaceConfirmations', 'confirmedCentersForAccount', 'toggleWhitespaceMapConfirmation'
@@ -98,34 +108,36 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
 }
 
 // ===========================================================================
-// 2. computeAccountWhitespaceMatrix() -- corrected source-semantics
-//    discipline: a contact must be genuinely discriminating (evidenced
-//    against exactly one category) to back a covered cell.
+// 2. computeAccountWhitespaceMatrix() -- V1 Covered truth rule: NO source-
+//    data pattern, however narrow, is ever sufficient to mark a cell
+//    covered. Every real category purchase always lands in the
+//    unattributed panel; every cell is always whitespace.
 // ===========================================================================
 {
-  // The exact real-world failure mode the founder flagged: one HR contact
-  // repeated across Apparel, Onboarding, and Drinkware rows. This must
-  // NEVER produce a covered cell for any of those categories -- only
-  // row-level "known relationship" metadata.
+  // A generic HR contact repeated on every row, account happens to have
+  // purchased only Apparel -- the exact scenario the founder cited. Must
+  // NOT produce HR/People x Apparel = covered.
   const { dash } = makeSandbox();
   const account = {
     contacts: [{ name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' }],
     allRecords: [
       { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Apparel', revenue: 500, project: 'Jackets', dateStr: '2025-01-01', status: '' },
-      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Onboarding / Recruiting', revenue: 300, project: 'Welcome Kits', dateStr: '2025-02-01', status: '' },
-      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Drinkware', revenue: 150, project: 'Mugs', dateStr: '2025-03-01', status: '' }
+      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Apparel', revenue: 300, project: 'Polos', dateStr: '2025-02-01', status: '' }
     ],
-    categoryTypes: ['Apparel', 'Onboarding / Recruiting', 'Drinkware']
+    categoryTypes: ['Apparel']
   };
   const matrix = dash.computeAccountWhitespaceMatrix(account, []);
   const hr = matrix.rows.find(r => r.center === 'HR / People');
-  assert(hr.cells.every(c => c.status === 'whitespace'), 'REQUIRED: a contact repeated across multiple categories never backs ANY covered cell -- this is the real-export "static account contact" shape, not genuine per-purchase evidence');
-  assert(hr.metaLine === 'Jane Doe · known contact', 'REQUIRED: the repeated contact still produces real row-level known-relationship metadata, even though no cell is covered');
-  assert(matrix.unattributed.length === 3 && ['Apparel','Onboarding / Recruiting','Drinkware'].every(c => matrix.unattributed.includes(c)), `REQUIRED: all three real purchases fall to unattributed since none has genuinely discriminating evidence (got ${JSON.stringify(matrix.unattributed)})`);
+  assert(hr.cells.every(c => c.status === 'whitespace'), 'REQUIRED: HR / People x Apparel never reaches covered, even though HR is the only contact and Apparel is the only category purchased');
+  assert(hr.metaLine === 'Jane Doe · known contact', 'REQUIRED: the contact still produces real row-level known-relationship metadata');
+  assert(matrix.unattributed.length === 1 && matrix.unattributed.includes('Apparel'), `REQUIRED: Apparel still surfaces as an account-wide purchase not yet attributed, never as a false HR intersection (got ${JSON.stringify(matrix.unattributed)})`);
 }
 {
-  // The positive case: a contact evidenced against exactly ONE category
-  // IS genuinely discriminating and should still produce a covered cell.
+  // Even the PREVIOUS (now-superseded) standard's positive case -- a
+  // contact evidenced against exactly ONE category across multiple
+  // orders -- must NOT reach covered under the corrected V1 rule. Single-
+  // category discrimination was explicitly rejected as still-insufficient
+  // proof of a real buying-center x offering purchase.
   const { dash } = makeSandbox();
   const account = {
     contacts: [{ name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' }],
@@ -138,52 +150,27 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   const matrix = dash.computeAccountWhitespaceMatrix(account, []);
   const hr = matrix.rows.find(r => r.center === 'HR / People');
   const onboarding = hr.cells[dash.WHITESPACE_CATEGORIES.indexOf('Onboarding / Recruiting')];
-  assert(onboarding.status === 'covered', `REQUIRED: a contact evidenced against exactly one category (even across multiple orders) is genuinely discriminating and reaches covered (got ${onboarding.status})`);
-  assert(matrix.unattributed.length === 0, 'REQUIRED: the covered category is not also listed as unattributed');
+  assert(onboarding.status === 'whitespace', `REQUIRED: single-category contact discrimination is no longer sufficient proof of covered -- this is the corrected rule superseding the prior (too permissive) standard (got ${onboarding.status})`);
+  assert(matrix.unattributed.includes('Onboarding / Recruiting'), 'REQUIRED: the category still surfaces as unattributed rather than silently disappearing');
 }
 {
-  // Two DIFFERENT contacts in the same department: one narrow (covers a
-  // cell), one repeated/general (does not) -- each evaluated independently.
+  // A durable, org-level buying-center CONFIRMATION (rep says "I have a
+  // relationship in Marketing") is row-level metadata only -- it must
+  // never, by itself, mark any cell in that row covered. Cell-level
+  // coverage requires cell-level confirmation, which does not exist yet.
   const { dash } = makeSandbox();
-  const account = {
-    contacts: [
-      { name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' },
-      { name: 'Sam Reed', email: 'sam@acme.com', title: 'HR Coordinator', department: 'HR' }
-    ],
-    allRecords: [
-      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: 'Onboarding / Recruiting', revenue: 500, project: 'Welcome Kits', dateStr: '2025-01-01', status: '' },
-      { contactName: 'Sam Reed', contactEmail: 'sam@acme.com', contactTitle: 'HR Coordinator', contactDepartment: 'HR', category: 'Apparel', revenue: 200, project: 'Shirts', dateStr: '2025-02-01', status: '' },
-      { contactName: 'Sam Reed', contactEmail: 'sam@acme.com', contactTitle: 'HR Coordinator', contactDepartment: 'HR', category: 'Safety', revenue: 100, project: 'Vests', dateStr: '2025-03-01', status: '' }
-    ],
-    categoryTypes: ['Onboarding / Recruiting', 'Apparel', 'Safety']
-  };
-  const matrix = dash.computeAccountWhitespaceMatrix(account, []);
-  const hr = matrix.rows.find(r => r.center === 'HR / People');
-  assert(hr.cells[dash.WHITESPACE_CATEGORIES.indexOf('Onboarding / Recruiting')].status === 'covered', 'REQUIRED: the narrow contact (Jane Doe, one category) still covers her cell, unaffected by the other contact in the same department');
-  assert(hr.cells[dash.WHITESPACE_CATEGORIES.indexOf('Apparel')].status === 'whitespace' && hr.cells[dash.WHITESPACE_CATEGORIES.indexOf('Safety')].status === 'whitespace', 'REQUIRED: the repeated contact (Sam Reed, two categories) covers neither of his cells');
-  assert(hr.metaLine.includes('known contact'), 'sanity: row-level metadata still reflects real known contacts');
-}
-{
-  // Cross-row inference is still never allowed (regression from the prior
-  // same-row-only rule).
-  const { dash } = makeSandbox();
-  const account = {
-    contacts: [{ name: 'Jane Doe', email: 'jane@acme.com', title: 'HR Manager', department: 'HR' }],
-    allRecords: [
-      { contactName: 'Jane Doe', contactEmail: 'jane@acme.com', contactTitle: 'HR Manager', contactDepartment: 'HR', category: '', revenue: 500, project: 'HR Consulting Fee', dateStr: '2025-01-01', status: '' },
-      { contactName: '', contactEmail: '', contactTitle: '', contactDepartment: '', category: 'Apparel', revenue: 800, project: 'Field Jackets', dateStr: '2025-03-14', status: 'Closed' }
-    ],
-    categoryTypes: ['Apparel']
-  };
-  const matrix = dash.computeAccountWhitespaceMatrix(account, []);
-  const hr = matrix.rows.find(r => r.center === 'HR / People');
-  assert(hr.cells.every(c => c.status === 'whitespace'), 'REQUIRED: no cell is covered when the department-carrying row and the category-carrying row are DIFFERENT rows');
-  assert(matrix.unattributed.includes('Apparel'), 'REQUIRED: the Apparel purchase still surfaces as unattributed');
+  const account = { contacts: [], categoryTypes: ['Apparel'] };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, ['Marketing']);
+  const marketing = matrix.rows.find(r => r.center === 'Marketing');
+  assert(marketing.metaLine === 'Rep-confirmed relationship', 'sanity: the buying-center confirmation still produces row-level metadata');
+  assert(marketing.cells.every(c => c.status === 'whitespace'), 'REQUIRED: a buying-center-level rep confirmation never marks any specific offering cell covered -- that would assume an intersection the rep was never asked about');
+  assert(matrix.unattributed.includes('Apparel'), 'REQUIRED: Apparel remains unattributed regardless of the unrelated Marketing confirmation');
 }
 {
   const { dash } = makeSandbox();
   const matrix = dash.computeAccountWhitespaceMatrix({}, null);
   assert(matrix.hasAnyBuyingCenterEvidence === false && matrix.rows.length === 7 && matrix.unattributed.length === 0, 'a malformed/empty account never throws -- resolves to a full, empty, no-evidence matrix');
+  assert(matrix.rows.every(r => r.cells.every(c => c.status === 'whitespace')), 'REQUIRED: every cell in a malformed/empty account is whitespace, never covered');
 }
 
 // ===========================================================================
@@ -289,6 +276,31 @@ function makeSandbox({ fetchImpl, hasAuth = true } = {}){
   assert(/\.ws-matrix-scroll\{[^}]*overflow-x:\s*auto/.test(DASHBOARD_SRC), 'REQUIRED: the matrix scrolls horizontally rather than shrinking to fit');
   assert(/\.ws-matrix\{[^}]*width:\s*max-content/.test(DASHBOARD_SRC), 'REQUIRED: the matrix grid sizes to its real (fixed-width) content rather than being squeezed into the container');
   assert(/\.ws-rowhead\{[^}]*position:\s*sticky/.test(DASHBOARD_SRC) && /\.ws-corner\{[^}]*position:\s*sticky/.test(DASHBOARD_SRC), 'REQUIRED: the Buying Center row-label column (and its header corner) is pinned via position:sticky while scrolling horizontally');
+}
+
+// ===========================================================================
+// 7. Persistence identity -- (organization_id, normalized_company_name)
+//    is a V1 resolution key, not an immutable account identifier. A
+//    rename/re-upload that changes the normalized key must NEVER show
+//    stale/wrong confirmations against the renamed account -- it must
+//    gracefully fall back to "no confirmations known" (the same state as
+//    an account that was never confirmed), never silently misattribute
+//    another key's data.
+// ===========================================================================
+{
+  const { dash } = makeSandbox({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, confirmations: { 'acme': ['Marketing', 'HR / People'] } }) })
+  });
+  await dash.loadWhitespaceConfirmations();
+  assert(JSON.stringify(dash.confirmedCentersForAccount('Acme Corp')) === '["Marketing","HR / People"]', 'sanity: the account under its original name resolves its real confirmations');
+  // Simulate a rename/re-upload: the SAME real company now appears under
+  // a materially different name that normalizes to a different key. The
+  // old confirmations were keyed to "acme" and are now inert -- they must
+  // never leak onto the renamed account under any key match.
+  const renamed = dash.confirmedCentersForAccount('Meridian Promotional Group');
+  assert(JSON.stringify(renamed) === '[]', `REQUIRED: a renamed account (different normalized key) never inherits another key's confirmations -- it resolves to zero, the same safe state as never-confirmed (got ${JSON.stringify(renamed)})`);
+  const matrix = dash.computeAccountWhitespaceMatrix({ contacts: [], categoryTypes: [] }, renamed);
+  assert(matrix.hasAnyBuyingCenterEvidence === false, 'REQUIRED: the renamed account\'s matrix has zero buying-center evidence, so rendering falls back to the mapping prompt (a safe re-ask) rather than any stale state');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

@@ -25,6 +25,29 @@
 -- rather than forced into ha_signal_events, whose signal/event-fingerprint
 -- shape doesn't cleanly fit generic per-dimension account state and would
 -- need a fragile synthetic-fingerprint scheme to reuse.
+--
+-- (organization_id, normalized_company_name) is a V1 ACCOUNT-RESOLUTION
+-- KEY, not an immutable account identifier -- this codebase has no stable
+-- account UUID anywhere (see migration 15's identity doctrine, which made
+-- the same call for ha_monitoring_targets, with the same unmitigated
+-- exposure). There is no rename affordance in the product today (an
+-- account's name can only change via a CSV re-upload with a differently-
+-- spelled account name, and dashboard/index.html's saveAccountMetadataEdit()
+-- explicitly cannot rename an account). If a re-upload ever DOES produce a
+-- differently-normalizing account name, existing rows here under the old
+-- key become inert (not deleted, simply unreferenced) -- the account
+-- falls back to the mapping prompt and the rep re-confirms, the exact
+-- same safe state as an account that was never confirmed (see
+-- dashboard/index.html's computeAccountWhitespaceMatrix()/
+-- confirmedCentersForAccount() and their test coverage in
+-- scripts/test-account-whitespace-intelligence-slice1.js's persistence-
+-- identity section). Smallest safe mitigation for V1: deliberately do NOT
+-- add fuzzy/best-effort relinking of orphaned rows to a new account that
+-- happens to normalize to the same key -- that risks silently
+-- misattributing one company's confirmed buying centers to an unrelated
+-- company that coincidentally shares a name. A real fix needs a stable,
+-- cross-upload account identity (a larger Canonical Account Identity
+-- project), not V1 scope.
 create table if not exists public.ha_whitespace_confirmations (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.ha_organizations(id) on delete cascade,

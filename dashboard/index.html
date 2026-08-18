@@ -10502,29 +10502,45 @@ function getRelationshipMode(account){
 //     way.
 //   - A known CONTACT does not by itself prove covered buying-center
 //     coverage.
-//   - Same-row co-occurrence is NOT sufficient by itself. Founder
-//     correction (2026-08-19): real exports can repeat one account
-//     contact across every order row regardless of category, which would
-//     make row-level co-occurrence just as unreliable as account-level
-//     co-occurrence -- the row-level check alone cannot tell "this
-//     contact is genuinely tied to this specific purchase" apart from
-//     "this contact is the account's static default and happens to sit
-//     on every row." A cell reaches covered only when a transaction-
-//     evidenced, department-classified contact's OWN evidenced rows span
-//     EXACTLY ONE category -- i.e. the contact is genuinely discriminating,
-//     never a blanket contact reused across everything the account ever
-//     bought. A contact spanning multiple categories still contributes
-//     real row-level "known relationship" metadata; it just never backs a
-//     specific cell. This is a deliberately conservative standard --
-//     rep confirmation or future integration data (a real per-order
-//     buyer field) is how a legitimate multi-category contact eventually
-//     earns real cell coverage, not a looser inference rule.
+//   - V1 Covered truth rule (founder correction, 2026-08-19, superseding
+//     an earlier same-row/single-category-discrimination rule that was
+//     STILL too inferential): a cell may render covered only when (1)
+//     the source data explicitly establishes that a specific buying
+//     center purchased that specific offering, or (2) a rep explicitly
+//     confirms they sell that offering into that buying center. Neither
+//     exists today: real Beta order-history uploads carry no field with
+//     that meaning (a department/title column proves a contact's role,
+//     never which purchase that contact is personally responsible for),
+//     and today's durable rep confirmation (ha_whitespace_confirmations)
+//     is buying-center-level only ("we have a relationship in
+//     Marketing"), never offering-specific. Concretely: knowing a
+//     generic HR contact sits on every order row, and separately knowing
+//     the account bought Apparel, proves "HR / People is a known
+//     relationship" and "Apparel is an observed account-wide purchase"
+//     -- never their intersection ("HR bought Apparel"). Co-occurrence
+//     (same row, same account, or narrowed to a single-category contact)
+//     is NOT sufficient proof of that intersection under any of those
+//     framings -- it was rejected as too permissive even in its most
+//     conservative (single-category-contact) form, because correlation
+//     within the data HA already has is still not the same as evidence
+//     that data was ever designed to carry. Result: computeAccountWhitespaceMatrix()
+//     never assigns 'covered' from source data today, and will
+//     legitimately produce zero automatic covered intersections for
+//     every real account until either a real integration field or a
+//     cell-level (not just buying-center-level) rep confirmation
+//     mechanism exists -- that is an accepted, honest V1 state, not a
+//     bug. 'covered' markup stays reserved in renderWhitespaceCell()
+//     for that future mechanism, the same way 'not_applicable'/
+//     'active_play' are reserved today.
 //   - Known-relationship context lives on the ROW label ("Jane Doe ·
 //     known contact"), never painted across an entire row's cells --
 //     it describes the buying center, not any specific offering.
 //   - Real category purchases with no attributable buying center render
 //     in a separate "Account-wide purchases not yet attributed" panel,
 //     outside the organizational grid -- never a fake buying-center row.
+//     Since no automatic attribution exists (see the Covered rule
+//     above), every real purchased category an account has always lands
+//     here today.
 //   - Production recon (2026-08-18): real Beta order-history uploads
 //     currently populate contact department/title at ~0%. An account
 //     with zero classifiable buying centers renders a lightweight
@@ -10542,6 +10558,29 @@ function getRelationshipMode(account){
 //     established, without a hard foreign-key coupling to that table's
 //     monitoring-cadence lifecycle (see the migration's own header
 //     comment).
+//   - (organization_id, normalized_company_name) is a V1 ACCOUNT-
+//     RESOLUTION KEY, not an immutable account identifier -- this
+//     codebase has no stable account UUID anywhere (see migration 15's
+//     identity doctrine, which made the same call for
+//     ha_monitoring_targets). There is no rename affordance in the
+//     product today (saveAccountMetadataEdit() explicitly cannot rename
+//     an account), so the only way this key changes is a CSV re-upload
+//     whose account-name spelling normalizes differently than before.
+//     When that happens, existing confirmations under the OLD normalized
+//     key become inert (not deleted, just unreferenced) and the account
+//     safely falls back to the mapping prompt -- it re-asks the rep,
+//     exactly the same UX as an account that was never confirmed. This
+//     never shows stale or wrong data (verified: scripts/test-account-whitespace-intelligence-slice1.js
+//     section 7), it just costs the rep a re-confirmation. This mirrors
+//     ha_monitoring_targets' own accepted, documented, unmitigated
+//     exposure to the identical failure mode -- not a new risk class.
+//     Smallest safe mitigation for V1: deliberately do NOT add any
+//     fuzzy/best-effort relinking of orphaned rows to a new account that
+//     happens to normalize to the same key -- that could silently
+//     misattribute one company's confirmed buying centers to an
+//     unrelated company sharing a name. Graceful re-ask beats a clever
+//     guess. A real fix needs a stable, cross-upload account identity,
+//     which is a larger Canonical Account Identity project, not V1 scope.
 // ============================================================================
 
 // The explicit department taxonomy to grid whitespace against -- reuses
@@ -10612,54 +10651,23 @@ async function toggleWhitespaceMapConfirmation(accountName, center){
   return data.confirmedCenters;
 }
 
-// A contact is transaction-linked when at least one of its source CSV rows
-// (matched by the SAME name+email+title key importedContactsFromRecords()
-// already dedupes contacts by) also carries real order-history evidence.
-// A contact-only upload row (no revenue/project/status/date at all) proves
-// House Accounts knows a person, never that business flows through them.
-function contactIsTransactionLinked(contact, allRecords){
-  const key = `${contact?.name || ''}|${contact?.email || ''}|${contact?.title || ''}`.toLowerCase();
-  return (allRecords || []).some(r => {
-    if(!hasOrderHistoryEvidence(r)) return false;
-    const rKey = `${r?.contactName || ''}|${r?.contactEmail || ''}|${r?.contactTitle || ''}`.toLowerCase();
-    return rKey === key;
-  });
-}
-
 // Pure function (given the confirmedCenters array the caller already
 // resolved from the durable cache): (account, confirmedCenters) -> matrix.
 // Reads only already-stored account fields plus the supplied confirmation
 // list -- invents nothing, calls no provider, persists nothing itself.
+//
+// No source-data or account/buying-center-level confirmation signal is
+// ever sufficient to mark a cell covered -- see the V1 Covered truth rule
+// in the module doctrine comment above. Every cell is whitespace until a
+// real per-offering linkage exists (a source field this codebase doesn't
+// have today, or a future cell-level rep confirmation this codebase
+// doesn't have today either).
 function computeAccountWhitespaceMatrix(account, confirmedCenters){
   const contacts = Array.isArray(account?.contacts) ? account.contacts : [];
-  const allRecords = Array.isArray(account?.allRecords) ? account.allRecords : [];
   const categoryTypes = account?.categoryTypes instanceof Set ? account.categoryTypes : new Set(Array.isArray(account?.categoryTypes) ? account.categoryTypes : []);
   const confirmed = new Set(Array.isArray(confirmedCenters) ? confirmedCenters : []);
 
-  // Group each transaction-evidenced, department-classified contact's OWN
-  // rows by the distinct categories they appear against. A contact is
-  // only genuinely discriminating evidence for ONE category if that is
-  // literally the only category they're ever tied to -- a contact spread
-  // across multiple categories is exactly the "static/repeated account
-  // contact" shape the founder flagged as untrustworthy for cell-level
-  // linkage (see the module doctrine comment above).
-  const categoriesByContact = new Map(); // contactKey -> {dept, categories:Set}
-  for(const r of allRecords){
-    if(!hasOrderHistoryEvidence(r)) continue;
-    const dept = departmentFromText(r?.contactDepartment || r?.contactTitle || '');
-    const cat = r?.category;
-    if(!dept || !cat || !WHITESPACE_CATEGORIES.includes(cat)) continue;
-    const contactKey = `${r?.contactName || ''}|${r?.contactEmail || ''}|${r?.contactTitle || ''}`.toLowerCase();
-    if(!categoriesByContact.has(contactKey)) categoriesByContact.set(contactKey, { dept, categories: new Set() });
-    categoriesByContact.get(contactKey).categories.add(cat);
-  }
-  const linkedPairs = new Set();
-  for(const { dept, categories } of categoriesByContact.values()){
-    if(categories.size === 1) linkedPairs.add(`${dept}||${[...categories][0]}`);
-  }
-
-  const attributedCategories = new Set([...linkedPairs].map(p => p.split('||')[1]));
-  const unattributed = [...categoryTypes].filter(cat => WHITESPACE_CATEGORIES.includes(cat) && !attributedCategories.has(cat));
+  const unattributed = [...categoryTypes].filter(cat => WHITESPACE_CATEGORIES.includes(cat));
 
   const knownContactsByCenter = new Map();
   for(const c of contacts){
@@ -10683,17 +10691,20 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters){
     return {
       center,
       metaLine,
-      cells: WHITESPACE_CATEGORIES.map(cat => ({ status: linkedPairs.has(`${center}||${cat}`) ? 'covered' : 'whitespace' }))
+      cells: WHITESPACE_CATEGORIES.map(() => ({ status: 'whitespace' }))
     };
   });
 
   return { rows, unattributed, hasAnyBuyingCenterEvidence };
 }
 
-// 'not-applicable'/'active-play' markup below is reserved structure for
-// later slices (rep confirm/correct persistence, grounded expansion-play
-// logic) -- computeAccountWhitespaceMatrix() above never produces these
-// statuses today, so this branch is currently unreachable from real data.
+// 'covered'/'not-applicable'/'active-play' markup below is reserved
+// structure for later slices (a real per-offering source field or
+// cell-level rep confirm/correct persistence; grounded expansion-play
+// logic) -- computeAccountWhitespaceMatrix() above never produces any of
+// these statuses today (see the V1 Covered truth rule in the module
+// doctrine comment above), so these branches are currently unreachable
+// from real data.
 function renderWhitespaceCell(cell){
   if(cell.status === 'covered') return `<div class="ws-cell covered" title="Covered — real, linked evidence"><span class="ws-mark">✓</span></div>`;
   if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" title="Not applicable"><span class="ws-mark small">N/A</span></div>`;

@@ -29,6 +29,21 @@
 // header comment for why this identity convention, reused from
 // ha_monitoring_targets, was chosen over a hard foreign key or an
 // ha_signal_events-based representation.
+//
+// (organization_id, normalized_company_name) is a V1 account-resolution
+// key, not an immutable account identifier -- see the migration's own
+// header comment for the full doctrine on rename/re-upload exposure and
+// why it's an accepted, documented limitation (matching
+// ha_monitoring_targets) rather than something this endpoint tries to
+// paper over with fuzzy relinking.
+//
+// Covered-cell semantics (what this data is NOT proof of): a row here
+// means a rep confirmed a BUYING-CENTER relationship ("we have a
+// relationship in Marketing"), never a specific offering purchased
+// through that buying center. dashboard/index.html's
+// computeAccountWhitespaceMatrix() deliberately never infers a covered
+// (buying center x offering) cell from this data alone -- see its module
+// doctrine comment for the full V1 Covered truth rule.
 import { normalizeCompanyName } from './company-identity.js';
 
 const WHITESPACE_DEPARTMENTS = ['HR / People', 'Events', 'Marketing', 'Operations / Facilities', 'Procurement', 'Sales / Client Experience', 'Leadership'];
