@@ -393,6 +393,62 @@ async function main(){
     assert(modalIsOutsideBothContainers, '6) #accountManagerModal is not a descendant of either view container -- it cannot be hidden by the container toggle');
   });
 
+  // =========================================================================
+  // 7) Business Signals Found -- populated-state real-browser coverage
+  //    (2026-08-19, closing the founder-flagged QA gap: real Beta accounts
+  //    have not naturally produced a valid priority signal to inspect, and
+  //    no real-browser fixture ever populated one either -- deterministic/
+  //    vm-sandbox coverage existed, but never proved this actually renders
+  //    inside the real Account Intelligence card, through the real shell).
+  //    Verification only -- no signal scoring/research behavior touched;
+  //    account.signals[] is fed directly, the exact shape
+  //    renderVerifiedSignals()/renderSingleVerifiedSignal() already read.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    await page.route('**/api/get-dashboard**', route => {
+      const payload = getDashboardPayload();
+      const target = payload.accounts.find(a => a.name === 'Anchor Brewing Supply');
+      target.signals = [{
+        isReal: true,
+        sourceUrl: 'https://example.com/news/anchor-brewing-facility',
+        signalType: 'Expansion',
+        title: 'Anchor Brewing Supply opens new production facility',
+        signalDetail: 'Anchor Brewing Supply opens new production facility',
+        confidenceScore: 85,
+        confidence: 85,
+        publishedDate: '2026-07-01'
+      }];
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(payload)});
+    });
+    page.__baseUrl = baseUrl;
+    await gotoDashboard(page, {hash: '#account=anchor%20brewing%20supply'});
+    await page.waitForSelector('.signal-research-panel', {state: 'visible'});
+
+    const panelText = await page.locator('.signal-research-panel').innerText();
+    assert(!/No external signals found/.test(panelText), '7) REQUIRED: a real, valid sourced signal renders instead of the empty state');
+    assert(/Anchor Brewing Supply opens new production facility/.test(panelText), `7) REQUIRED: the real signal's headline renders (got "${panelText}")`);
+    assert(/Expansion/.test(panelText), '7) REQUIRED: the real signal type renders');
+    assert(/Published/.test(panelText) && /2026-07-01/.test(panelText), '7) REQUIRED: the real published date renders');
+    const sourceLinkHref = await page.locator('.signal-research-panel .source-link').getAttribute('href');
+    assert(sourceLinkHref === 'https://example.com/news/anchor-brewing-facility', `7) REQUIRED: the real source link renders and points at the real sourceUrl (got "${sourceLinkHref}")`);
+
+    assert(pageErrors.length === 0, `7) no uncaught page errors rendering a populated Business Signals panel (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 8) Business Signals Found -- the true empty state, asserted explicitly
+  //    (previously only implicit via account fixtures that happened to
+  //    carry no signals; this locks the exact copy in place).
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    page.__baseUrl = baseUrl;
+    await gotoDashboard(page, {hash: '#account=anchor%20brewing%20supply'});
+    await page.waitForSelector('.signal-research-panel', {state: 'visible'});
+    const panelText = await page.locator('.signal-research-panel').innerText();
+    assert(/No external signals found\./.test(panelText), `8) REQUIRED: the true empty state renders its exact honest copy when no signals exist (got "${panelText}")`);
+    assert(pageErrors.length === 0, `8) no uncaught page errors rendering the empty Business Signals state (got: ${JSON.stringify(pageErrors)})`);
+  });
+
   await server.close();
   console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

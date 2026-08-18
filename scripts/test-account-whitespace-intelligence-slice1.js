@@ -24,9 +24,15 @@
 //     intersections is the correct, accepted V1 result.
 //   - Known-relationship context lives on the ROW label, never painted
 //     across a whole row's cells, and never implies cell-level coverage.
-//   - Only 'whitespace' ever renders from real evidence today --
-//     'covered'/'not_applicable'/'active_play' have reserved markup but
-//     are never assigned by computeAccountWhitespaceMatrix().
+//   - 'covered'/'not_applicable' render from a real cell-level rep answer
+//     (Cell-Level Buying Center x Offering Confirmation / Correction V1,
+//     banked separately -- see scripts/test-whitespace-cell-answers-*.js);
+//     this file's own fixtures never pass cellAnswers, so they still only
+//     ever exercise 'whitespace'. 'active_play' is now real too (Active
+//     Expansion Plays V1) but is assigned by renderAccountWhitespaceSection()
+//     layering computeActiveExpansionPlays() on top of the matrix, never
+//     by computeAccountWhitespaceMatrix() itself -- see
+//     scripts/test-active-expansion-plays.js for that coverage.
 //   - Every real category purchase renders in the unattributed panel
 //     outside the organizational grid, since no automatic attribution
 //     exists -- never a fake buying-center row.
@@ -58,6 +64,18 @@ const SRC = [
   extractFn(DASHBOARD_SRC, 'hasOrderHistoryEvidence'),
   extractFn(DASHBOARD_SRC, 'escapeHtml'),
   extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit'),
+  // Active Expansion Plays V1: renderAccountWhitespaceSection() now calls
+  // computeActiveExpansionPlays(), which needs findRepeatPatternGroups()
+  // (and ITS real dependencies) plus reorderWindowStatus() (and its own
+  // real dependencies) for the "why now" copy -- real functions, not
+  // stubs, matching this file's own extract-the-real-source doctrine.
+  extractFn(DASHBOARD_SRC, 'parseMaybeDate'),
+  extractFn(DASHBOARD_SRC, 'monthNameFromDate'),
+  extractFn(DASHBOARD_SRC, 'averageRevenue'),
+  extractFn(DASHBOARD_SRC, 'findRepeatPatternGroups'),
+  extractFn(DASHBOARD_SRC, 'inferPurchaseMonth'),
+  extractFn(DASHBOARD_SRC, 'monthDistanceFromNow'),
+  extractFn(DASHBOARD_SRC, 'reorderWindowStatus'),
   extractRange(DASHBOARD_SRC, 'const WHITESPACE_DEPARTMENTS', 'function getOpportunityType(account, signalBased=false){')
 ].join('\n\n');
 
