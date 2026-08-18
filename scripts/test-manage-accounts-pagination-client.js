@@ -133,6 +133,18 @@ async function researchAccountFromManageModal(){ return {ok:false, error:'Resear
 async function researchListFromManageModal(){ return {ok:false, error:'Research is not available in this test fixture.'}; }
 async function refreshAggregateDashboard(){}
 function openResearchedAccountOpportunities(){}
+// Account Intelligence entry point (view-container reconciliation):
+// accountRow()/the delegated click listener (inside the real modal IIFE
+// below) now build a real href via accountIntelligenceHref() and, on
+// click, call goToAccountIntelligence() -- both defined in the OTHER
+// (main-dashboard) inline <script>, not loaded by this fixture. Stubbed
+// with the real route-identity shape (so href-format assertions below stay
+// meaningful) and a no-op navigation -- this file's own scope is
+// pagination/collapse/search/mutation, not the Account Intelligence
+// destination itself (covered by scripts/test-dashboard-orchestration.js
+// and the dedicated live-navigation regression test).
+function accountIntelligenceHref(name){ return '#account=' + encodeURIComponent(String(name || '').trim().toLowerCase()); }
+function goToAccountIntelligence(){}
 // ux/research-control-progress: accountRow()/listCard()/researchRunBanner()
 // (inside the real modal IIFE below) now consult this tab's own in-memory
 // research tracker first, falling back to the server-owned

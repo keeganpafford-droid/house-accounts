@@ -138,6 +138,22 @@ const REAL_SOURCE = [
   // the function under test in the collision/duplicate-name scenarios
   // below.
   extractFn('researchAccountFromCard'),
+  // Account Intelligence view-container reconciliation: renderDetailedAccountViews()
+  // now delegates to these route-identity/rendering helpers instead of
+  // building the account-list markup inline. They must be real, extracted
+  // source (not stubbed) -- normalizeCompanyNameForLimit() and
+  // accountIntelligenceHref()/currentAccountIntelligenceFocusKey() are the
+  // actual route-identity logic under test elsewhere (multi-word/punctuation
+  // account names), and accountCardHtml() is exactly what the Part A
+  // markup-safety assertions further down this file inspect for real
+  // escaping behavior -- a stub would make those assertions meaningless.
+  extractFn('normalizeCompanyNameForLimit'),
+  extractFn('accountIntelligenceHref'),
+  extractFn('currentAccountIntelligenceFocusKey'),
+  extractFn('goToAccountIntelligence'),
+  extractFn('applyAccountIntelligenceViewMode'),
+  extractFn('accountCardHtml'),
+  extractFn('ACCOUNT_INTELLIGENCE_BACK_LINK'),
   extractFn('renderDetailedAccountViews'),
   // Source-of-truth correction: serializeAccountForStorage() below now
   // calls isWebResearchSignal() to keep canonical business signals out of
@@ -814,11 +830,26 @@ async function waitUntil(conditionFn, {timeoutMs = 1000, intervalMs = 5} = {}){
 // onclick="..." handling, no account-name interpolation into anything
 // other than a plain HTML attribute -- see the tests below for what is
 // actually checked and why.
+//
+// View-container reconciliation: renderDetailedAccountViews() no longer
+// renders an unconditional multi-account list -- V1 only ever renders the
+// SINGLE account named by the #account=<key> hash (see
+// currentAccountIntelligenceFocusKey()/accountIntelligenceHref() in the
+// real extracted source above). To exercise the same escaping/collision
+// properties across multiple hostile/colliding names, this focuses each
+// account in turn (via the real accountIntelligenceHref() round-trip --
+// proving the real encode/decode path, not just accountCardHtml() in
+// isolation) and concatenates the resulting markup.
 function renderAccountsMarkup(accounts){
   const fetchImpl = makeFetch((call) => { throw new Error(`renderDetailedAccountViews() must never call fetch; got ${call.url}`); });
   const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl});
-  sandbox.renderDetailedAccountViews(accounts);
-  return sandbox.__accountListEl.innerHTML;
+  let combined = '';
+  for(const a of accounts){
+    sandbox.window.location.hash = sandbox.accountIntelligenceHref(a.name);
+    sandbox.renderDetailedAccountViews(accounts);
+    combined += sandbox.__accountListEl.innerHTML;
+  }
+  return combined;
 }
 
 // ===========================================================================
@@ -838,14 +869,19 @@ async function testMarkupNeverContainsExecutableAccountNames(){
   const html = renderAccountsMarkup(accounts);
 
   // The strongest, most direct proof: every onclick="..." attribute that
-  // exists anywhere in the output is EXACTLY the one known, static,
-  // account-data-free string (the card-header expand/collapse toggle) --
-  // never an account name, and never anything derived from one. Any other
-  // onclick value, or any onclick containing part of an account name,
-  // fails this.
+  // exists anywhere in the output is one of the two known, static,
+  // account-data-free strings -- the card-header expand/collapse toggle,
+  // or the "Dashboard" back link's hash-clear (ACCOUNT_INTELLIGENCE_BACK_LINK,
+  // now present in every focused render) -- never an account name, and
+  // never anything derived from one. Any other onclick value, or any
+  // onclick containing part of an account name, fails this.
+  const STATIC_ONCLICK_VALUES = new Set([
+    "this.nextElementSibling.classList.toggle('open')",
+    "window.location.hash='';return false;"
+  ]);
   const onclickValues = [...html.matchAll(/onclick="([^"]*)"/g)].map(m => m[1]);
   assert(onclickValues.length > 0, 'h) markup safety: sanity check -- the render actually produced at least the expected static onclick (the header toggle), so the assertion below is not vacuous');
-  assert(onclickValues.every(v => v === "this.nextElementSibling.classList.toggle('open')"), `h) markup safety: the ONLY onclick="..." attribute anywhere in the output is the static, literal account-head toggle -- no account name is ever interpolated into any onclick attribute (found values: ${JSON.stringify(onclickValues)})`);
+  assert(onclickValues.every(v => STATIC_ONCLICK_VALUES.has(v)), `h) markup safety: the ONLY onclick="..." attributes anywhere in the output are the two known static ones (account-head toggle, Dashboard back-link) -- no account name is ever interpolated into any onclick attribute (found values: ${JSON.stringify(onclickValues)})`);
 
   // Each hostile name's RAW, unescaped form never appears anywhere in the
   // output (proving it was actually escaped, not merely "not placed in an
@@ -867,13 +903,26 @@ async function testMarkupNeverContainsExecutableAccountNames(){
 // (removed) accountDomId() scheme -- "A&B Co" and "A B Co" both normalized
 // to "a-b-co" -- never produce a duplicate id in the generated markup, and
 // each retains its own exact, distinct name.
-// ===========================================================================
+//
+// "A&B Co" and "A B Co" ALSO collide under the route-identity key
+// (normalizeCompanyNameForLimit() strips the "&" and the "Co" business
+// suffix, so both hashes resolve to the same "#account=a%20b" -- an
+// accepted, documented limitation of that identity scheme: first match
+// wins, same as accountCardFor()'s pre-existing name-only lookup). That
+// collision is orthogonal to what this test checks -- DOM id uniqueness is
+// guaranteed by accountCardHtml()'s idx parameter, not by the route key --
+// so this calls the real, extracted accountCardHtml() directly for each
+// account at its own distinct idx, exactly as renderDetailedAccountViews()
+// itself does once it has resolved a single focused account.
 async function testMarkupIdsNeverCollide(){
   const accounts = [
     fixtureAccount('A&B Co', {industry: 'First'}),
     fixtureAccount('A B Co', {industry: 'Second'})
   ];
-  const html = renderAccountsMarkup(accounts);
+  const fetchImpl = makeFetch((call) => { throw new Error(`accountCardHtml() must never call fetch; got ${call.url}`); });
+  const sandbox = createSandbox({accounts, currentUploadId: 'upload-1', fetchImpl});
+  const safeAccounts = accounts.map(sandbox.normalizeSavedAccount);
+  const html = safeAccounts.map((a, idx) => sandbox.accountCardHtml(a, idx, {focused:false})).join('');
 
   const ids = [...html.matchAll(/\sid="([^"]*)"/g)].map(m => m[1]);
   const uniqueIds = new Set(ids);

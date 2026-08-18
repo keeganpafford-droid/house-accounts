@@ -367,6 +367,17 @@ const REAL_SOURCE = [
   extractFn(DASHBOARD_SRC, 'fmt'),
   extractFn(DASHBOARD_SRC, 'esc'),
   extractFn(DASHBOARD_SRC, 'request'),
+  // Account Intelligence entry point (view-container reconciliation):
+  // accountRow() below now builds a real href via accountIntelligenceHref(),
+  // and the delegated click listener extracted below (anchored after
+  // renderRecentlyResearchedSection()) now calls goToAccountIntelligence()
+  // for the "View Account" button/name-link it renders. Both are real,
+  // extracted source -- pure route-identity helpers with no bearing on this
+  // file's own reattachment/breadcrumb scope, but they must exist for
+  // accountRow() and the listener to run at all.
+  extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit'),
+  extractFn(DASHBOARD_SRC, 'accountIntelligenceHref'),
+  extractFn(DASHBOARD_SRC, 'goToAccountIntelligence'),
   extractFn(DASHBOARD_SRC, 'accountRow'),
   extractFn(DASHBOARD_SRC, 'researchRunBanner'),
   extractFn(DASHBOARD_SRC, 'listCard'),
