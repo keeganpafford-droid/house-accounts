@@ -245,6 +245,37 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(leadership.metaKind === 'relationship', 'REQUIRED: metaKind marks this as the relationship (non-contact) case, so rendering applies the subtle teal treatment, not the plain contact styling');
 }
 {
+  // Doctrine correction (founder, 2026-08-19, Warner Bros. Discovery
+  // trace): a Whitespace answer must NEVER imply a relationship. Only
+  // Covered proves House Accounts actually sells into this Buying Center
+  // -- "we don't sell this here" is knowledge about the cell, not access
+  // to the Buying Center. This is the exact real-account case that
+  // surfaced the bug: an explicitly-answered "whitespace" cell with no
+  // team confirmation and no contact must NOT produce "Known relationship"
+  // or a 'cell-mapping' evidence source, even though the matrix still has
+  // enough evidence overall to render (not fall back to the mapping
+  // prompt).
+  const { dash } = makeSandbox();
+  const account = { contacts: [], categoryTypes: [] };
+  const cellAnswers = { [dash.whitespaceCellKey('Events', 'Apparel')]: 'whitespace' };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, [], cellAnswers);
+  assert(matrix.hasAnyBuyingCenterEvidence === true, 'REQUIRED: an answered cell (any answer) still counts as enough evidence for the matrix to render');
+  const events = matrix.rows.find(r => r.center === 'Events');
+  assert(JSON.stringify(events.evidenceSources) === '[]', `REQUIRED: a Whitespace-only answered cell produces NO relationship evidence source -- knowledge about the cell is not access to the Buying Center (got ${JSON.stringify(events.evidenceSources)})`);
+  assert(events.metaLine === '', `REQUIRED: with no legitimate relationship evidence, the row shows no metaLine at all (falls through to "+ Add relationship" in the render) -- never "Known relationship" from a Whitespace answer alone (got "${events.metaLine}")`);
+}
+{
+  // Same correction, Not Applicable answer -- also never implies a
+  // relationship (neutral, not proof of business there).
+  const { dash } = makeSandbox();
+  const account = { contacts: [], categoryTypes: [] };
+  const cellAnswers = { [dash.whitespaceCellKey('Procurement', 'Drinkware')]: 'not_applicable' };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, [], cellAnswers);
+  const proc = matrix.rows.find(r => r.center === 'Procurement');
+  assert(JSON.stringify(proc.evidenceSources) === '[]', `REQUIRED: a Not-Applicable-only answered cell produces NO relationship evidence source (got ${JSON.stringify(proc.evidenceSources)})`);
+  assert(proc.metaLine === '', 'REQUIRED: Not Applicable alone never claims "Known relationship"');
+}
+{
   // Multiple legitimate evidence sources can coexist for one row (founder
   // round 2 doctrine) -- evidenceSources lists every one of them, not just
   // whichever the metaLine happens to summarize.
@@ -530,6 +561,30 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   dash.openWsRelationshipPopover(trigger);
   const popover = dash.ensureWsRelPopover();
   assert(!popover.classList.contains('open'), 'REQUIRED: with no legitimate evidence for the row, the popover declines to open at all');
+}
+{
+  // Doctrine correction regression (founder, 2026-08-19, Warner Bros.
+  // Discovery trace): a row whose ONLY evidence is Whitespace-answered
+  // cells (no team confirmation, no contact) must also decline to open --
+  // "Known from your account mapping" is no longer a legitimate claim
+  // from Whitespace/Not-Applicable answers alone.
+  const { dash } = makeSandbox({
+    accounts: [{ name: 'Acme Corp', contacts: [] }],
+    fetchImpl: async (url) => {
+      if(url === '/api/whitespace-map') return { ok: true, json: async () => ({ ok: true, confirmations: {} }) };
+      return { ok: true, json: async () => ({ ok: true, answers: { 'acme': { 'Events||Apparel': 'whitespace', 'Events||Recognition / Awards': 'whitespace' } } }) };
+    }
+  });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Events';
+  dash.openWsRelationshipPopover(trigger);
+  const popover = dash.ensureWsRelPopover();
+  assert(!popover.classList.contains('open'), 'REQUIRED: a row with ONLY Whitespace-answered cells (no team confirmation, no contact) declines to open the relationship popover -- Whitespace answers are not relationship evidence, even multiple of them');
 }
 {
   // Missing context never throws.

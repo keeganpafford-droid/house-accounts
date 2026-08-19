@@ -3936,7 +3936,21 @@ function buyingOpportunityIdentity(opp){
 
 function buyingConversationLabel(opp){
   const dept = likelyDepartmentFromOpportunity(opp);
-  const category = primaryCategoryFromOpportunity(opp);
+  // Truth correction (founder, 2026-08-19, Warner Bros. Discovery trace):
+  // for a Repeat/Pattern opportunity, opp.category is the REAL category
+  // the repeat pattern was detected in -- use it directly rather than
+  // primaryCategoryFromOpportunity()'s fuzzy classification, which reads
+  // opp.buyingCategory/commonPromoCategories/suggestedProducts (cross-
+  // sell suggestion text, not historical evidence) FIRST and can name a
+  // completely different, unrelated category (confirmed production case:
+  // a real Print / Stationery repeat pattern displayed "Recognition /
+  // Awards," a cosmetic cross-sell classification of that pattern's
+  // suggested products, never the category that actually repeated).
+  // Every other opportunity type is unaffected -- this only narrows the
+  // Repeat/Pattern Signal case to its own real, already-persisted field.
+  const category = (opp?.signalLayerType === 'Repeat / Pattern Signal' && WHITESPACE_CATEGORIES.includes(opp?.category))
+    ? opp.category
+    : primaryCategoryFromOpportunity(opp);
   const buyer = likelyKnownBuyer(opp) || likelySuggestedContact(opp);
   const buyerText = buyer && !isGenericContactLabel(buyer) ? ` • ${buyer}` : '';
   return `${dept} • ${category}${buyerText}`;
@@ -6299,6 +6313,24 @@ function getRepFriendlyWhy(opp){
     return 'Recent project activity creates a simple reason to check in while the order is still fresh.';
   }
   if(layer === 'Repeat / Pattern Signal'){
+    // Truth correction (founder, 2026-08-19, Warner Bros. Discovery
+    // trace): opp.category is the REAL, literal category
+    // findRepeatPatternGroups() detected the repeat pattern in --
+    // createRepeatPatternOpportunities() has stamped it verbatim since
+    // Organizational Learning V1B. Use it directly when present, rather
+    // than keyword-matching commonPromoCategories/suggestedProducts (a
+    // cross-sell PRODUCT SUGGESTION list, not historical evidence) --
+    // that matching could name a completely different category than the
+    // one that actually repeated (confirmed production case: a real
+    // Print / Stationery repeat pattern whose suggested cross-sell
+    // products included the word "apparel" produced "Past apparel
+    // buying..." copy, even though no Apparel repeat pattern existed at
+    // all). The keyword-matching fallback below is preserved ONLY for
+    // opportunities persisted before opp.category existed on this
+    // signal layer -- current generation always has it.
+    if(WHITESPACE_CATEGORIES.includes(opp?.category)){
+      return `Past ${opp.category.toLowerCase()} buying suggests it is worth asking whether another run or refresh is coming up.`;
+    }
     if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
       return 'Past apparel buying suggests it is worth asking whether another run or refresh is coming up.';
     }
@@ -11042,11 +11074,27 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     // A cell-level answer may imply the buying center is known one-way
     // (founder note, 2026-08-19): a rep cannot meaningfully answer a cell
     // for a buying center that doesn't exist at this account, so an
-    // answered cell counts as row-level evidence exactly like a known
-    // contact or a buying-center confirmation does -- without itself
-    // writing to ha_whitespace_confirmations (a cell answer and a buying-
-    // center confirmation remain two independent facts).
+    // answered cell (any answer) still counts toward whether the matrix
+    // itself has enough evidence to render at all
+    // (hasAnyBuyingCenterEvidence below), independent of any specific
+    // answer's value.
     const hasAnsweredCell = cells.some(c => !!c.answer);
+    // Row-level RELATIONSHIP evidence is a narrower claim than "this cell
+    // was answered" -- doctrine correction (founder, 2026-08-19, Warner
+    // Bros. Discovery trace): only a Covered answer implies a relationship
+    // in this buying center, because it explicitly proves House Accounts
+    // sells an offering there -- the same kind of real fact a team
+    // confirmation or a known contact is. A Whitespace answer ("we don't
+    // sell this here") proves the opposite; Not Applicable is neutral;
+    // neither is evidence of relationship ACCESS, only knowledge ABOUT the
+    // cell. Knowledge about a buying center is not the same thing as
+    // access to it. (computeActiveExpansionPlays() already independently
+    // never treats cell-mapping as relationship access for its own
+    // eligibility gate, for the identical reason -- this correction brings
+    // the row's own visible claim and the relationship popover into
+    // agreement with that same doctrine, rather than overclaiming "Known
+    // relationship" from a Whitespace/Not-Applicable answer alone.)
+    const hasCoveredCell = cells.some(c => c.status === 'covered');
     const isTeamConfirmed = confirmed.has(center);
     if(rowContacts.length || isTeamConfirmed || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
     // Founder correction (2026-08-19): the row's PRIMARY visible copy must
@@ -11064,7 +11112,7 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     const evidenceSources = [];
     if(rowContacts.length) evidenceSources.push('contact');
     if(isTeamConfirmed) evidenceSources.push('team-confirmed');
-    if(hasAnsweredCell) evidenceSources.push('cell-mapping');
+    if(hasCoveredCell) evidenceSources.push('cell-mapping');
     let metaLine = '';
     let metaKind = '';
     if(rowContacts.length){
@@ -11680,7 +11728,14 @@ function openWsRelationshipPopover(trigger){
   const contacts = contactsKnownForBuyingCenter(account, center);
   const isTeamConfirmed = confirmedCentersForAccount(accountName).includes(center);
   const cellAnswers = cellAnswersForAccount(accountName);
-  const isCellMappingKnown = WHITESPACE_CATEGORIES.some(cat => !!cellAnswers[whitespaceCellKey(center, cat)]);
+  // Doctrine correction (founder, 2026-08-19, Warner Bros. Discovery
+  // trace): matches computeAccountWhitespaceMatrix()'s own hasCoveredCell
+  // -- only a Covered answer implies a relationship in this buying
+  // center; Whitespace/Not Applicable prove the opposite or are neutral,
+  // never relationship access. Was previously "any answer," which let a
+  // row with only Whitespace-answered cells and no other legitimate
+  // evidence source claim "Known from your account mapping."
+  const isCellMappingKnown = WHITESPACE_CATEGORIES.some(cat => cellAnswers[whitespaceCellKey(center, cat)] === 'covered');
   // Nothing legitimate to show (e.g. a stale click after the last
   // evidence source was just removed elsewhere) -- decline to open rather
   // than show an empty/misleading popover.
