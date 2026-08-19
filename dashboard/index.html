@@ -1263,13 +1263,14 @@
   .ws-cell.active-play{background:var(--signal); border-color:#c97e0e; box-shadow:0 2px 6px rgba(245,166,35,0.45);}
   .ws-cell.active-play .ws-mark.strong{color:#fff; font-family:var(--mono); font-size:0.58rem; font-weight:800; letter-spacing:0.05em;}
   /* Cell-Level Buying Center x Offering Confirmation / Correction V1: every
-     real cell (covered/not-applicable/whitespace -- never the reserved,
-     still-unassigned active-play state) is clickable, opening
-     .ws-cell-popover. Confirmed Whitespace deliberately gets no extra
-     visual treatment here -- it must look identical to a never-answered
-     cell (see .ws-cell.whitespace above); the distinction lives only in
-     the durable data and in the popover's own selected-state indicator
-     when reopened. */
+     cell (covered/not-applicable/whitespace/active-play) is clickable,
+     opening .ws-cell-popover. active-play is a derived attention state
+     over a real 'whitespace' answer (founder, 2026-08-19), so it opens
+     the same popover, pre-selected on "We don't sell this here." Confirmed
+     Whitespace deliberately gets no extra visual treatment here -- it must
+     look identical to a never-answered cell (see .ws-cell.whitespace
+     above); the distinction lives only in the durable data and in the
+     popover's own selected-state indicator when reopened. */
   .ws-cell[data-buying-center]{cursor:pointer;}
   .ws-cell[data-buying-center]:hover{box-shadow:0 0 0 2px rgba(31,183,174,0.35) inset;}
   .ws-cell[data-buying-center]:focus-visible{outline:2px solid var(--radar); outline-offset:1px;}
@@ -11219,10 +11220,15 @@ function computeActiveExpansionPlays(account, matrixRows){
 // computeAccountWhitespaceMatrix()'s caller (renderAccountWhitespaceSection())
 // overrides a cell's status to 'active_play' only for a key
 // computeActiveExpansionPlays() above actually returned. covered/
-// not_applicable/whitespace cells remain interactive as before -- see the
-// delegated click listener below for the popover that answers/corrects
-// them; an active-play cell stays non-interactive (its detail lives in
-// the Active Expansion Plays panel below the matrix, not a popover).
+// not_applicable/whitespace/active_play cells are ALL interactive -- see
+// the delegated click listener below for the shared popover that answers/
+// corrects them. active_play is a DERIVED attention state over an
+// underlying real 'whitespace' answer, not a separate immutable cell
+// value (founder, 2026-08-19) -- so it opens the exact same popover as
+// any other cell, pre-selected on "We don't sell this here"; choosing
+// Covered or N/A persists that real durable answer and the play
+// disappears naturally because the underlying cell is no longer
+// whitespace, not because any play-completion state was tracked.
 function renderWhitespaceCell(cell){
   const center = cell?.center || '';
   const category = cell?.category || '';
@@ -11230,7 +11236,21 @@ function renderWhitespaceCell(cell){
   const cellLabel = (center && category) ? `${center} × ${category}` : 'this cell';
   if(cell.status === 'covered') return `<div class="ws-cell covered" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Covered — click to change" title="Covered — rep-confirmed, click to change"><span class="ws-mark">✓</span></div>`;
   if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Not applicable — click to change" title="Not applicable — click to change"><span class="ws-mark small">N/A</span></div>`;
-  if(cell.status === 'active_play') return `<div class="ws-cell active-play" title="Active Expansion Play"><span class="ws-mark strong">EXPAND</span></div>`;
+  // Interaction correction (founder, 2026-08-19): 'active_play' is a
+  // DERIVED attention state over an underlying confirmed-whitespace cell,
+  // never a new immutable cell answer -- so the EXPAND cell stays fully
+  // clickable and opens the SAME cell-answer popover every other cell
+  // uses (see the delegated .ws-cell[data-buying-center] click/keydown
+  // handlers below, which key off this exact markup shape). Its
+  // data-cell-answer is always 'whitespace' -- that is the real, durable,
+  // persisted answer computeActiveExpansionPlays() required to derive this
+  // state in the first place -- so re-opening the popover on an EXPAND
+  // cell correctly pre-selects "We don't sell this here." Choosing
+  // Covered/N/A persists that real answer and lets the whole section
+  // re-render from a fresh, no-longer-whitespace matrix -- which is also
+  // exactly why EXPAND naturally disappears afterward: nothing here
+  // tracks "play completion" as its own state.
+  if(cell.status === 'active_play') return `<div class="ws-cell active-play" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="whitespace" aria-label="${escapeHtml(cellLabel)}: Active Expansion Play — confirmed whitespace, click to update if you now sell here" title="Active Expansion Play — click to update if you now sell here"><span class="ws-mark strong">EXPAND</span></div>`;
   const whitespaceTitle = answer === 'whitespace' ? 'Confirmed whitespace — click to change' : 'Whitespace — click to answer';
   return `<div class="ws-cell whitespace" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: ${answer === 'whitespace' ? 'Confirmed whitespace' : 'Whitespace, no answer yet'} — click to answer" title="${whitespaceTitle}"></div>`;
 }
@@ -11444,9 +11464,11 @@ document.addEventListener('click', async (event) => {
   }
 
   // A real, real-data-driven cell was clicked (covered/not_applicable/
-  // whitespace -- never the reserved, inert active-play state, which
-  // carries no data-buying-center attribute) -- open the popover against
-  // it.
+  // whitespace/active_play -- active_play carries the SAME
+  // data-buying-center contract as any other cell, since it is a derived
+  // attention state over a real 'whitespace' answer, not a separate
+  // immutable value; see renderWhitespaceCell()'s own doc comment) --
+  // open the popover against it.
   const cell = event.target.closest('.ws-cell[data-buying-center]');
   if(cell){
     openWsCellPopover(cell);

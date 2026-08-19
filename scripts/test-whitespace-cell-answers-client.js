@@ -26,9 +26,13 @@
 //   - renderWhitespaceCell() emits data-buying-center/data-category/
 //     data-cell-answer attributes (HTML-escaped) so the delegated click
 //     listener can resolve which cell was clicked, and so reopening an
-//     answered cell's popover can show its current selection -- the
-//     reserved 'active_play' branch stays untouched (no attributes, not
-//     interactive).
+//     answered cell's popover can show its current selection --
+//     'active_play' now emits the SAME attributes (founder correction,
+//     2026-08-19): it is a derived attention state over a real underlying
+//     'whitespace' answer, not a separate immutable value, so it opens the
+//     identical popover, pre-selected on "We don't sell this here." See
+//     scripts/test-whitespace-cell-answers-live.js section 11/11b for the
+//     real-browser click-through coverage.
 //   - saveWhitespaceCellAnswer() POSTs to the durable endpoint and trusts
 //     only the server's authoritative response, never assumes the write
 //     succeeded client-side.
@@ -335,10 +339,20 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(/data-buying-center="Events"/.test(html) && /data-category="Safety"/.test(html), 'REQUIRED: a whitespace cell is still fully addressable (buying center + category attributes present) so it can be answered');
 }
 {
+  // Interaction correction (founder, 2026-08-19): active_play is a DERIVED
+  // attention state over a real underlying 'whitespace' answer, not a
+  // separate immutable value -- the EXPAND cell is fully interactive, using
+  // the SAME popover contract as any other cell, and always carries
+  // data-cell-answer="whitespace" (the real, durable answer that made it
+  // eligible in the first place, never "active_play" itself). See
+  // scripts/test-whitespace-cell-answers-live.js section 11/11b for the
+  // real-browser click-through-to-Covered/N/A coverage.
   const { dash } = makeSandbox();
-  const html = dash.renderWhitespaceCell({ status: 'active_play' });
-  assert(!/data-buying-center/.test(html) && !/role="button"/.test(html), 'REQUIRED: the reserved, still-unassigned active_play branch stays non-interactive -- no data attributes, not a click target');
-  assert(/EXPAND/.test(html), 'sanity: the reserved active_play markup itself is untouched');
+  const html = dash.renderWhitespaceCell({ status: 'active_play', center: 'Marketing', category: 'Headwear' });
+  assert(/data-buying-center="Marketing"/.test(html) && /data-category="Headwear"/.test(html), 'REQUIRED: the active_play (EXPAND) cell carries the same buying-center/category data attributes as any other cell');
+  assert(/role="button"/.test(html) && /tabindex="0"/.test(html), 'REQUIRED: the active_play (EXPAND) cell is keyboard-reachable and a real click target, not a dead tile');
+  assert(/data-cell-answer="whitespace"/.test(html), 'REQUIRED: the active_play cell\'s data-cell-answer is the real durable underlying answer ("whitespace"), never "active_play" itself -- active_play is never persisted as a cell answer');
+  assert(/EXPAND/.test(html), 'sanity: the active_play markup still shows the EXPAND mark');
 }
 {
   // Escaping: a hostile buying-center/category string (hypothetical --
