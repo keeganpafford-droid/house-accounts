@@ -1803,12 +1803,25 @@
   .acct-name a:hover{
     text-decoration:underline;
   }
-  .acct-mgr-name a{
-    color:inherit;
+  /* Cohesion round 3 (2026-08-19), founder Preview QA: the account-name
+     link is now the sole canonical entry point into Account Intelligence
+     (the separate "View Account" button was retired), but it rendered
+     with color:inherit -- indistinguishable from ordinary row text. Same
+     treatment applied to the Dashboard priority-card company name link
+     (.opp-card-title a) below, so every account-name entry point in the
+     product reads as a link the same way. */
+  .acct-mgr-name a, .opp-card-title a{
+    color:var(--radar);
     text-decoration:none;
+    cursor:pointer;
   }
-  .acct-mgr-name a:hover{
+  .acct-mgr-name a:hover, .opp-card-title a:hover{
     text-decoration:underline;
+  }
+  .acct-mgr-name a:focus-visible, .opp-card-title a:focus-visible{
+    outline:2px solid var(--radar);
+    outline-offset:2px;
+    border-radius:2px;
   }
 
   .research-controls{
@@ -3210,11 +3223,18 @@ function applyFreeCompanyLocksToCustomerAccounts(accounts){
 }
 
 const WEEKLY_PRIORITY_LIMIT = 25;
+// Cohesion round 3 (2026-08-19): normalized every timebox's header to
+// "This <Horizon>'s Priorities" -- "Pipeline"/"Quarter Planning"/"Annual
+// Opportunities" each visibly implied a DIFFERENT surface/mental model,
+// when all four are the identical ranked-attention feed at a different
+// time horizon. helper text is untouched -- founder scoped this
+// correction to the headers and feedSummary()'s own immediately-adjacent
+// summary-line nouns, not every "opportunities" occurrence.
 const TIMEBOX_CONFIG = {
   week: {label:"This Week", header:"This Week's Priorities", helper:"Who should I contact this week, and why?", limit:25},
-  month: {label:"This Month", header:"This Month's Pipeline", helper:"What should I start working in the next 30 days?", limit:40},
-  quarter: {label:"This Quarter", header:"Quarter Planning", helper:"What opportunities should I begin planning before they become urgent?", limit:50},
-  annual: {label:"This Year", header:"Annual Opportunities", helper:"Which recurring revenue opportunities should I prepare for this year?", limit:75}
+  month: {label:"This Month", header:"This Month's Priorities", helper:"What should I start working in the next 30 days?", limit:40},
+  quarter: {label:"This Quarter", header:"This Quarter's Priorities", helper:"What opportunities should I begin planning before they become urgent?", limit:50},
+  annual: {label:"This Year", header:"This Year's Priorities", helper:"Which recurring revenue opportunities should I prepare for this year?", limit:75}
 };
 
 function getSavedLead(){
@@ -7863,11 +7883,21 @@ function renderRepOpportunityCard(opp){
   // also capped at 2 here (was 3) -- Prepare for Call still shows the full
   // list via renderIdeasToSendSection() (no limit).
   const dateLine = signalDateAndActionabilityLine(opp);
+  // Cohesion round 3 (2026-08-19): the company name is now a real link
+  // into that customer's existing Account Intelligence destination -- "See
+  // customer -> click customer -> work customer." Deliberately only the
+  // name, not the whole card: Useful/Not Useful, Prepare for Call, and
+  // Email Contact below are independent actions of their own and must
+  // stay individually clickable, not swallowed by a card-wide link. Plain
+  // <a href>, no click-handler override needed -- there is no modal to
+  // close first on the Dashboard (unlike the same link inside Manage
+  // Customer Accounts), so native hash navigation is sufficient and
+  // reaches the same #account=<key> route every other entry point uses.
   return `
     <div class="opportunity-card daily-reason-card" data-account="${escapeHtml(opp.account || '')}" data-upload-id="${escapeHtml(opp.uploadId || '')}">
       <div class="opp-card-header">
         <div class="recommendation-badge ${recBadge.cls}"><span>${recBadge.icon}</span>${escapeHtml(recBadge.label)}</div>
-        <div class="opp-card-title">${escapeHtml(opp.account)}</div>
+        <div class="opp-card-title"><a href="${accountIntelligenceHref(opp.account)}">${escapeHtml(opp.account)}</a></div>
         <div class="opp-section">
           <div class="opp-label">Why Now</div>
           <div class="opp-content"><strong>${escapeHtml(opp.signalTitle || opportunityHeadline(opp))}</strong></div>
@@ -10198,10 +10228,16 @@ async function researchAccountFromCard(accountName, uploadId){
   const toastMessage = signalCount
     ? `${signalCount} signal${signalCount === 1 ? '' : 's'} found for ${accountName}${foundAndVerifiedSuffix(fresh.signals)}.`
     : `Research complete for ${accountName} — no signals found.`;
+  // Cohesion round 3 correction: same fix as handleResearchClick()'s own
+  // toast (Manage Customer Accounts) -- gated purely on signalCount (real
+  // evidence), never on whether a grounded Reason to Reach Out exists, so
+  // the CTA must say so honestly: "View signal(s) →" into this account's
+  // own Business Signal evidence, not the old "View opportunities" ->
+  // Prepare-for-Call handoff.
   if(typeof showToast === 'function'){
     showToast(toastMessage, signalCount ? {
-      label: 'View opportunities',
-      fn: () => { if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(uploadId, accountName); }
+      label: `View signal${signalCount === 1 ? '' : 's'} →`,
+      fn: () => { if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(accountName); }
     } : null, 8000);
   }
 }
@@ -14383,10 +14419,16 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts){
   return {displayedOpportunities, allOpportunities, priorityOpportunities};
 }
 
-// Priority 3 item 2: proper singular/plural for every category, and relabeled
-// to match the sprint's preferred copy ("business triggers" / "reorder
-// opportunities" / "follow-ups") instead of the old fixed "X business
-// activity" (which was always singular even at count 21).
+// Priority 3 item 2: proper singular/plural for every category. Cohesion
+// round 3 (2026-08-19): relabeled again, from "business triggers" /
+// "reorder opportunities" to the canonical user-facing terms -- "business
+// signal(s)" (matching the Signal/Reason to Reach Out/Priority
+// terminology decision: this line counts EVIDENCE, not commercial
+// interpretations) and "repeat buying pattern(s)" (the actual underlying
+// concept the cards themselves show, not a generic "opportunity" word).
+// Bounded to this one Dashboard summary line -- see the terminology
+// decision's own scope note; "opportunity" is not swept from the rest of
+// the codebase.
 function feedSummary(opps){
   const items = opps || [];
   const follow = items.filter(o => signalLayerLabel(o) === 'Follow-Up Signal').length;
@@ -14405,7 +14447,7 @@ function feedSummary(opps){
   // opportunity," which specifically claims a repeat cadence exists.
   const repeat = items.filter(o => signalLayerLabel(o) === 'Repeat / Pattern Signal' && o.opportunityType === 'REPEAT PATTERN').length;
   const business = items.filter(o => signalLayerLabel(o) === 'Business Activity Signal').length;
-  return `${pluralize(business, 'business trigger')} · ${pluralize(repeat, 'reorder opportunity', 'reorder opportunities')} · ${pluralize(follow, 'follow-up')}`;
+  return `${pluralize(business, 'business signal')} · ${pluralize(repeat, 'repeat buying pattern')} · ${pluralize(follow, 'follow-up')}`;
 }
 
 // Account Intelligence destination: a first-class, bookmarkable
@@ -16559,13 +16601,21 @@ function escapeHtml(text){
      const toastMessage = signalCount
        ? `${signalCount} signal${signalCount===1?'':'s'} found for ${accountName}${typeof foundAndVerifiedSuffix === 'function' ? foundAndVerifiedSuffix(fresh.signals) : ''}.`
        : `Research complete for ${accountName} — no signals found.`;
+     // Cohesion round 3 correction (2026-08-19, founder real-Preview QA,
+     // "Atlas Precision"): this toast is gated purely on signalCount --
+     // real, sourced evidence -- never on whether that evidence cleared
+     // the bar for a grounded Reason to Reach Out. The old "View
+     // opportunities" label overclaimed a recommended play exists even
+     // when Research Results correctly found none. Deliberately preserves
+     // that real product behavior (credible secondary evidence without a
+     // manufactured play) -- only the CTA's own honesty about what it
+     // leads to changed: "View signal(s) →" into Account Intelligence's
+     // own Business Signal evidence, the same deep-link "View Research"
+     // already uses, never the old Prepare-for-Call/Verified-Opportunity
+     // handoff.
      showToast(toastMessage, signalCount ? {
-       label:'View opportunities',
-       // Requirements 8/9: the SAME production function the Recently
-       // Researched row's own "View opportunities" button calls -- opens
-       // Prepare for Call directly (never merely scrolls/highlights), and
-       // closes this modal itself as part of that shared flow.
-       fn: () => { if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(listId, accountName); }
+       label: `View signal${signalCount === 1 ? '' : 's'} →`,
+       fn: () => { if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(accountName); }
      } : null, 8000);
    }catch(err){
      setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');

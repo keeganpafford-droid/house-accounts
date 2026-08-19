@@ -255,8 +255,8 @@ const DASHBOARD_SRC = loadDashboardSource();
   assert(realPatternAccounts.size === 5, `REQUIRED: exactly the 5 real detected patterns (Ridgeline, Lakeshore, Pinecrest, Golden Valley, Cascade) exist across the fixture, matching the founder's expected corrected count (got ${realPatternAccounts.size}: ${JSON.stringify([...realPatternAccounts])})`);
 
   const summary = dash.feedSummary(allOpportunities);
-  const reorderCount = Number((summary.match(/(\d+) reorder opportunit/) || [])[1]);
-  assert(reorderCount === 5, `REQUIRED: feedSummary()'s "N reorder opportunities" count is exactly 5 (the real detected patterns), not 6 (which would still include Meridian's generic-fallback template) -- got "${summary}"`);
+  const reorderCount = Number((summary.match(/(\d+) repeat buying patterns?/) || [])[1]);
+  assert(reorderCount === 5, `REQUIRED: feedSummary()'s "N repeat buying patterns" count is exactly 5 (the real detected patterns), not 6 (which would still include Meridian's generic-fallback template) -- got "${summary}"`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);

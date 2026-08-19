@@ -440,12 +440,14 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
   // assertions below only need to confirm these patterns are present.
   const handoffSrc = extractFn(DASHBOARD_SRC, 'handleResearchClick');
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
-  // Follow-up round: the toast's "View opportunities" action now calls the
-  // shared openResearchedAccountOpportunities() production function (same
-  // one the Recently Researched row's own button calls -- see the "7/8"
-  // test below) instead of scrollToAccountResult(), still passing its own
-  // captured listId, never currentUploadId.
-  assert(/openResearchedAccountOpportunities\(listId, accountName\)/.test(handoffSrc), 'composite: the "View opportunities" toast action passes the same captured listId into openResearchedAccountOpportunities(), not currentUploadId');
+  // Cohesion round 3 (Atlas Precision correction): the toast's "View
+  // signal(s) ->" action now deep-links into the account's Business
+  // Signals via deepLinkToAccountResearch(accountName) instead of the old
+  // openResearchedAccountOpportunities()/scrollToAccountResult() handoff --
+  // "1 signal found" is not the same claim as a recommended play existing,
+  // so this no longer routes into the Prepare-for-Call/Verified-Opportunity
+  // surface at all.
+  assert(/deepLinkToAccountResearch\(accountName\)/.test(handoffSrc), 'composite: the "View signal(s) ->" toast action deep-links via deepLinkToAccountResearch(accountName), not the old opportunities handoff');
   assert(!/scrollToAccountResult\(accountName\)/.test(DASHBOARD_SRC) && !/applyModalResearchResultToDashboard\(fresh\)\s*[;)]/.test(DASHBOARD_SRC), 'composite: no remaining call site uses the old name-only signature');
 }
 

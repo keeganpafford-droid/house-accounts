@@ -491,6 +491,12 @@ const TIMEBOX_CONFIG_SRC = extractFn(DASHBOARD_SRC, 'TIMEBOX_CONFIG');
 const IS_RELATIONSHIP_EXPANSION_SRC = extractFn(DASHBOARD_SRC, 'isRelationshipExpansionOpportunity');
 const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
+// Cohesion round 3: renderRepOpportunityCard() now links the company name
+// to Account Intelligence via accountIntelligenceHref(), which itself
+// needs normalizeCompanyNameForLimit() -- both required here or the
+// extract throws accountIntelligenceHref-is-not-defined at run time.
+const ACCOUNT_INTELLIGENCE_HREF_SRC = extractFn(DASHBOARD_SRC, 'accountIntelligenceHref');
+const NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC = extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
 // QA round 3, item 4: the exact "Newly Detected" single-source-of-truth
 // helper, plus the small dedup-key generator the dashboard metric tile
@@ -547,6 +553,8 @@ function makeSandbox(){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
+    ACCOUNT_INTELLIGENCE_HREF_SRC,
+    NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC,
     FORMAT_DASHBOARD_SCAN_DATE_SRC,
     UNIQUE_DASHBOARD_OPPORTUNITIES_SRC,
     DEDUPE_AND_IDENTITY_BLOCK,
@@ -652,7 +660,9 @@ function makeSandbox(){
     { evidence: ['recent order'] },
     {}
   ]);
-  assert(/\d+ business triggers?/.test(summary) && /\d+ reorder opportunit(y|ies)/.test(summary) && /\d+ follow-ups?/.test(summary), `feedSummary() uses the preferred category labels with correct pluralization (got: "${summary}")`);
+  // Cohesion round 3: "business trigger(s)" -> "business signal(s)",
+  // "reorder opportunit(y|ies)" -> "repeat buying pattern(s)".
+  assert(/\d+ business signals?/.test(summary) && /\d+ repeat buying patterns?/.test(summary) && /\d+ follow-ups?/.test(summary), `feedSummary() uses the preferred category labels with correct pluralization (got: "${summary}")`);
 }
 for(const timebox of ['week', 'month', 'quarter', 'annual']){
   const sandbox = makeSandbox();

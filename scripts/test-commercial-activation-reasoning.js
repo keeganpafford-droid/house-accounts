@@ -180,6 +180,11 @@ const SCORING_AND_TIMEBOX_BLOCK = extractRange(DASHBOARD_SRC, 'function normaliz
 const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
+// Cohesion round 3: renderRepOpportunityCard() now links the company name
+// to Account Intelligence via accountIntelligenceHref(), which itself
+// needs normalizeCompanyNameForLimit().
+const ACCOUNT_INTELLIGENCE_HREF_SRC = extractFn(DASHBOARD_SRC, 'accountIntelligenceHref');
+const NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC = extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit');
 function makeSandbox(){
   const fakeModal = { querySelector: () => ({ focus(){} }), querySelectorAll: () => [] };
   const sandbox = {
@@ -197,6 +202,7 @@ function makeSandbox(){
   const fullSource = [
     TIMEBOX_CONFIG_SRC, `let activeTimebox = 'week';`, `let showAllWeeklyPriorities = false;`,
     IS_RELATIONSHIP_EXPANSION_SRC, ESCAPE_HTML_SRC, FMT_MONEY_SRC, CLAMP_SCORE_SRC,
+    ACCOUNT_INTELLIGENCE_HREF_SRC, NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC,
     DEDUPE_AND_IDENTITY_BLOCK, CARD_AND_MODAL_BLOCK, SALES_PLAY_BLOCK, SCORING_AND_TIMEBOX_BLOCK
   ].join('\n\n');
   new vm.Script(fullSource, { filename: 'commercial-activation-reasoning-extract.js' }).runInContext(sandbox);

@@ -41,6 +41,11 @@ const SCORING_AND_TIMEBOX_BLOCK = extractRange(DASHBOARD_SRC, 'function normaliz
 const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
+// Cohesion round 3: renderRepOpportunityCard() now links the company name
+// to Account Intelligence via accountIntelligenceHref(), which itself
+// needs normalizeCompanyNameForLimit().
+const ACCOUNT_INTELLIGENCE_HREF_SRC = extractFn(DASHBOARD_SRC, 'accountIntelligenceHref');
+const NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC = extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit');
 const REASON_AND_STARTER_BLOCK = extractRange(DASHBOARD_SRC, 'function getReasonToReachOutTitle(opp){', 'function getConversationStarterText(');
 // The three V1B dispatch functions -- REAL, not stubbed, since this file
 // exists specifically to prove their behavior end-to-end.
@@ -92,6 +97,8 @@ function makeSandbox({ fetchStatesImpl, logSignalEventImpl } = {}){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
+    ACCOUNT_INTELLIGENCE_HREF_SRC,
+    NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC,
     DEDUPE_AND_IDENTITY_BLOCK,
     RESOLVE_TARGET_SRC,
     OPPORTUNITY_EVENT_TYPE_MAP_SRC,

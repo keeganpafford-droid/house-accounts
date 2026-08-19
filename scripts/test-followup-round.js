@@ -241,8 +241,8 @@ assert(
 // production function -- not two independent implementations.
 // ---------------------------------------------------------------------------
 assert(
-  /fn: \(\) => \{ if\(typeof openResearchedAccountOpportunities === 'function'\) openResearchedAccountOpportunities\(listId, accountName\); \}/.test(dashboardHtml),
-  'the research-completion toast\'s "View opportunities" action calls openResearchedAccountOpportunities()'
+  /fn: \(\) => \{ if\(typeof deepLinkToAccountResearch === 'function'\) deepLinkToAccountResearch\(accountName\); \}/.test(dashboardHtml),
+  'cohesion round 3 (Atlas Precision correction): the single-account research-completion toast\'s "View signal(s) ->" action deep-links into that account\'s Business Signals via deepLinkToAccountResearch(), not the old Prepare-for-Call/Verified-Opportunity handoff -- research finding credible evidence is not the same claim as a recommended play existing'
 );
 assert(
   /if\(event\.target\.closest\('\.rr-view-btn'\)\)\{\s*if\(typeof openResearchedAccountOpportunities === 'function'\) openResearchedAccountOpportunities\(uploadId, accountName\);/.test(dashboardHtml),

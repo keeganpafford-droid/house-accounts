@@ -73,6 +73,7 @@ const REAL_SOURCE = [
   fn('daysSinceDate'), fn('limitReasonsPerAccount'), fn('prepareAllOpportunities'),
   fn('prepareTimeboxReasons'), fn('opportunityMatchesTimebox'), fn('TIMEBOX_CONFIG'),
   fn('renderWeeklyPrioritiesFeed'), fn('renderRepOpportunityCard'),
+  fn('accountIntelligenceHref'), fn('normalizeCompanyNameForLimit'),
   fn('renderAccountHistoryOpportunityFeedback'), fn('renderPrepareForCallButton'),
   fn('escapeHtml'), fn('refreshOpportunityViews'), fn('feedSummary'),
   // The exact real server-side stamping logic (api/get-dashboard.js) -- run

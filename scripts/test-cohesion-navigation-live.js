@@ -69,6 +69,14 @@ function startStaticServer(){
 const ACCOUNT_NAME = 'Anchor Brewing Supply';
 const UPLOAD_ID = 'upload-cohesion-1';
 
+// Cohesion round 4 (2026-08-19), founder Preview QA item 2: populated only
+// by the Dashboard priority-card link test below -- every other section
+// deliberately keeps this empty so section 7's "quiet week" empty-state
+// assertion is unaffected. Shape matches the known-good, fully-rendering
+// durable-ref opportunity fixture already established in
+// scripts/test-dashboard-card-outreach-hydration.js's makeAccount().
+let extraFutureOpportunities = [];
+
 // A real, sourced signal (View Research needs signalCount > 0 to render at
 // all in Manage Customer Accounts) plus a real two-year Headwear repeat
 // pattern and a Marketing contact -- the exact fixture shape
@@ -86,7 +94,7 @@ function getDashboardPayload(){
         { category: 'Headwear', revenue: 1500, date: '2024-03-10' },
         { category: 'Headwear', revenue: 1800, date: '2025-03-12' }
       ],
-      futureOpportunities: [],
+      futureOpportunities: extraFutureOpportunities,
       signals: [{
         isReal: true, sourceUrl: 'https://example.com/news/anchor-brewing-facility',
         signalType: 'Expansion', title: 'Anchor Brewing Supply opens new production facility',
@@ -207,6 +215,22 @@ async function main(){
     const rowText = await page.locator('.acct-mgr-row').first().innerText();
     assert(!/View Account/.test(rowText), '2) REQUIRED: the row never shows the retired "View Account" label');
 
+    // Cohesion round 4, founder Preview QA item 1: the account name is now
+    // the sole entry point into Account Intelligence, but it previously
+    // rendered with color:inherit -- indistinguishable from ordinary row
+    // text. It must read as a real, teal/green HA link: brand color, a
+    // pointer cursor, and an underline on hover (real :hover state via
+    // page.hover(), not a static class check).
+    const linkStyle = await viewAccountMarkers.first().evaluate(el => {
+      const cs = getComputedStyle(el);
+      return { color: cs.color, cursor: cs.cursor };
+    });
+    assert(linkStyle.color === 'rgb(20, 184, 166)', `1) REQUIRED: the account-name link renders in the HA teal/green brand color (--radar), not inherited row text color (got "${linkStyle.color}")`);
+    assert(linkStyle.cursor === 'pointer', `1) REQUIRED: the account-name link shows a pointer cursor (got "${linkStyle.cursor}")`);
+    await viewAccountMarkers.first().hover();
+    const hoverDecoration = await viewAccountMarkers.first().evaluate(el => getComputedStyle(el).textDecorationLine);
+    assert(hoverDecoration === 'underline', `1) REQUIRED: hovering the account-name link underlines it (got "${hoverDecoration}")`);
+
     await viewAccountMarkers.first().click();
     await page.waitForSelector('#accountIntelligenceView .account-card', {state: 'visible'});
     const modalStillOpen = await page.locator('#accountManagerModal').evaluate(el => getComputedStyle(el).display !== 'none');
@@ -321,6 +345,98 @@ async function main(){
     assert(/being monitored/i.test(emptyStateText) && /automatically/i.test(emptyStateText), `7) REQUIRED: the empty state confirms monitoring is active and automatic (got "${emptyStateText}")`);
 
     assert(pageErrors.length === 0, `7) no uncaught page errors on the quiet-week empty state (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 8) Cohesion round 4, founder Preview QA item 2: the Dashboard priority
+  //    card's company name routes into the same Account Intelligence
+  //    destination -- but the card itself stays a collection of
+  //    independent actions (Useful / Not Useful / Prepare for Call), never
+  //    swallowed into one big card-wide link.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    page.__baseUrl = baseUrl;
+    // Known-good, fully-rendering durable-ref opportunity shape (matches
+    // scripts/test-dashboard-card-outreach-hydration.js's makeAccount()) --
+    // renders both the feedback row (accountOpportunityId/Fingerprint set)
+    // and the durable-ref Prepare for Call variant.
+    extraFutureOpportunities = [{
+      account: ACCOUNT_NAME, contact: 'Jordan Reyes', years: [2025], category: 'Headwear',
+      evidence: ['2 Headwear orders found'], industry: 'Promotional Products', confidence: 74,
+      department: 'Marketing', signalDate: '2025-08-16', opportunity: 'Headwear Program',
+      templateKey: 'repeat_pattern', whyNowScore: 87, contactEmail: '', contactTitle: 'Marketing Manager',
+      purchaseMonth: 7, quickWinScore: 74, accountRevenue: 42000, buyingCategory: 'Headwear',
+      estimatedValue: 5400, mostRecentDate: '2025-08-16', planningWindow: 'week', businessSignals: [],
+      opportunityName: 'Headwear Program', opportunityType: 'REPEAT PATTERN', signalLayerType: 'Repeat / Pattern Signal',
+      closeProbability: 74, opportunityScore: 87, reasonToReachOut: 'Headwear program may be coming up again',
+      relationshipStrength: 86, accountDiversityScore: 1, accountFrequencyScore: 0.5,
+      conversationStarter: 'Ask if the headwear program is happening again this year.', historicalPurchaseData: [],
+      accountOpportunityId: 'aoid-cohesion-1', accountOpportunityFingerprint: 'fp-cohesion-1'
+    }];
+    await gotoDashboard(page);
+    await page.waitForSelector('.opportunity-card', {state: 'visible'});
+
+    const card = page.locator('.opportunity-card').first();
+    assert(await card.evaluate(el => el.tagName.toLowerCase()) === 'div', '8) REQUIRED: the priority card itself is a plain container, not a card-wide link');
+
+    const cardLink = card.locator('.opp-card-title a');
+    assert(await cardLink.count() === 1, '8) REQUIRED: the card title renders exactly one link');
+    const href = await cardLink.getAttribute('href');
+    assert(/^#account=/.test(href || ''), `8) REQUIRED: the company-name link's href is the canonical #account= route (got "${href}")`);
+    assert(decodeURIComponent(String(href)).toLowerCase().includes('anchor brewing supply'), `8) REQUIRED: the href resolves to the correct account (got "${href}")`);
+
+    assert(await card.locator('.signal-feedback-btn[data-signal-feedback="useful"]').count() === 1, '8) sanity: the Useful action still renders as its own independent control');
+    assert(await card.locator('.account-history-prepare-btn').count() === 1, '8) sanity: Prepare for Call still renders as its own independent control');
+
+    // 8) REQUIRED: clicking elsewhere on the card (an area with no button
+    //    or link of its own) does NOT navigate -- proving the card is not
+    //    a single big click target.
+    await card.locator('.recommendation-badge').click();
+    assert(page.url().split('#')[1] !== 'account=anchor%20brewing%20supply', '8) REQUIRED: clicking a non-interactive area of the card does not navigate into Account Intelligence');
+    assert(await page.locator('#accountIntelligenceView .account-card').count() === 0, '8) REQUIRED: clicking a non-interactive area of the card leaves Account Intelligence unopened');
+
+    // 8) REQUIRED: Useful is independently clickable -- it fires its own
+    //    action without navigating the card away.
+    await card.locator('.signal-feedback-btn[data-signal-feedback="useful"]').click();
+    assert(await page.locator('#accountIntelligenceView .account-card').count() === 0, '8) REQUIRED: clicking Useful does not navigate into Account Intelligence -- it remains an independent card action');
+
+    // 8) REQUIRED: the company name itself does navigate, into the same
+    //    Account Intelligence destination every other entry point uses.
+    await cardLink.click();
+    await page.waitForSelector('#accountIntelligenceView .account-card', {state: 'visible'});
+    const cardText = await page.locator('#accountIntelligenceView .account-card').innerText();
+    assert(new RegExp(ACCOUNT_NAME).test(cardText), '8) REQUIRED: clicking the company name lands on the correct account in Account Intelligence');
+
+    assert(pageErrors.length === 0, `8) no uncaught page errors on the priority-card navigation flow (got: ${JSON.stringify(pageErrors)})`);
+    extraFutureOpportunities = [];
+  });
+
+  // =========================================================================
+  // 9) Cohesion round 4, founder Preview QA item 3: every timebox heading
+  //    now reads "This [Week/Month/Quarter/Year]'s Priorities" -- the same
+  //    ranked-attention surface at a different horizon, not four visibly
+  //    different mental models.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    page.__baseUrl = baseUrl;
+    await gotoDashboard(page);
+    await page.waitForSelector('#timeboxSectionHeader', {state: 'visible'});
+
+    const expected = {
+      week: "This Week's Priorities", month: "This Month's Priorities",
+      quarter: "This Quarter's Priorities", annual: "This Year's Priorities"
+    };
+    assert(await page.locator('#timeboxSectionHeader').innerText() === expected.week, `9) REQUIRED: the default (week) heading reads "${expected.week}" (got "${await page.locator('#timeboxSectionHeader').innerText()}")`);
+
+    for(const tb of ['month', 'quarter', 'annual']){
+      const tab = page.locator(`.timebox-tab[data-timebox="${tb}"]`);
+      if(await tab.count() === 0) continue;
+      await tab.click();
+      const heading = await page.locator('#timeboxSectionHeader').innerText();
+      assert(heading === expected[tb], `9) REQUIRED: switching to ${tb} renders "${expected[tb]}" (got "${heading}")`);
+    }
+
+    assert(pageErrors.length === 0, `9) no uncaught page errors switching timebox tabs (got: ${JSON.stringify(pageErrors)})`);
   });
 
   await server.close();
