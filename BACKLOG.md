@@ -4,7 +4,7 @@ Durable near-term items identified during active engineering work but deliberate
 
 Organized by how soon each item should be picked up, not by when it was written down. Explicit dependencies between items are called out inline — respect them; don't promote a dependent item ahead of what it depends on.
 
-The current commercial path stays the anchor for prioritization: **existing customer intelligence → reason to reach out → opportunity/play → Prepare for Call → rep action → outcome**. Larger strategic bets (LATER) exist to eventually extend this path, not to compete with it for near-term attention.
+The current commercial path stays the anchor for prioritization — canonical terminology per Product Cohesion V1 (banked, see "Recently completed" below): **Business Signal (evidence) → Reason to Reach Out (grounded commercial interpretation) → Priority (which Reasons deserve Dashboard attention now) → Prepare for Call / rep action → Outreach → Outcome → Learning**. Larger strategic bets (LATER) exist to eventually extend this path — e.g. a future Proactive Account Plays would add grounded activation intelligence inside this same loop — never to introduce a second, competing terminology model alongside it.
 
 ---
 
@@ -445,6 +445,14 @@ Bounded correctness audit if picked up — verify each bullet against current co
 
 **Do not act on the old literal instruction to remove "Why It Could Grow"** — that field still exists in the current dashboard (`dashboard/index.html`) and there is no current Beta evidence it's causing density problems. Treat this whole entry as Beta-driven UX backlog: revisit if/when real usage shows the compact card is too dense, not as a standing polish sprint.
 
+### Prepare for Call — best-next-question principle
+
+**Surfaced by:** mentor-derived insight, reconciled 2026-08-19. A quality/content principle to hold for Prepare for Call and rep-preparation surfaces generally — not necessarily a standalone feature, and not scoped or approved work.
+
+**Principle to preserve:** House Accounts should help the rep identify the best next question to learn or confirm what actually matters, rather than supplying long scripted talk tracks. "How to Approach" (the suggested-opener line) and Prepare for Call's other content should be judged against this bar going forward — a good approach surfaces the sharpest question to ask, not a script to recite.
+
+**Do not build anything from this now** — hold as a design principle to apply the next time Prepare for Call's content/copy is revisited, not a trigger for new work today.
+
 ### Manual research queue
 
 **Classification: DEFER.** Separate from the banked background monitoring Queue (Queue monitoring architecture, Full Beta Cutover) — this is about the *interactive* single/warm-account research flow.
@@ -454,6 +462,8 @@ Bounded correctness audit if picked up — verify each bullet against current co
 **Desired eventual UX, only if Beta behavior proves this is a real friction point:** requesting research for account A, then B, then C while A is still running queues B and C instead of failing. Must preserve the existing authoritative run lock, the Stop control, bounded execution, and truthful progress reporting — this is additive queuing on top of the existing lock, not a redesign of it.
 
 **Do not build this from the old note alone** — defer until real concurrent-research friction is actually observed in Beta usage.
+
+**Also preserve (2026-08-19 reconciliation) — progress visibility during a single research call, a distinct low/medium-priority UX item from queuing above:** longer-running account research (from Manage Customer Accounts, and from Dashboard/Account Intelligence research actions) should communicate that real work is actually happening rather than leaving the rep with an ambiguous spinner. **Do not implement now** — the release-candidate smoke test and real Beta usage may provide stronger evidence about whether this is actually a friction point worth prioritizing.
 
 ### Account Intelligence / account search
 
@@ -476,6 +486,8 @@ Bounded correctness audit if picked up — verify each bullet against current co
 Ongoing, not a single deliverable. Keep improving: import clarity; upload troubleshooting; clear CSV language; Company Website guidance (see the NOW entry above); empty-state behavior; first-use experience; Import Guides.
 
 Keep onboarding centered on existing customers, not cold prospecting — matches the current product's own doctrine (see the top of this file).
+
+**General guiding principle (2026-08-19 reconciliation, mentor-derived insight) — reconciles with the Whitespace Intelligence guided-education item under "Account Expansion / Whitespace Intelligence / Growth Map — remaining work" (NEXT), which stays the concrete first case, not a duplicate:** add lightweight contextual education only where real users demonstrate a concept is genuinely unfamiliar or confusing — not speculatively. Prefer progressive/contextual explanation (in-context "how this works" affordances, empty-state guidance) over a broad, upfront product tour.
 
 ---
 
@@ -505,6 +517,8 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 
 **Explicit constraint:** once Behavioral Learning is truly wired, add the stronger claim that House Accounts improves based on how the organization actually wins. **Do not claim behavioral learning publicly before it exists** — this messaging must trail the real capability, never lead it.
 
+**Internal positioning language to preserve (2026-08-19 reconciliation, mentor-derived insight) — working internal language, not necessarily final website copy:** *"House Accounts watches your customers, finds reasons worth reaching out, and helps your reps know where to focus and how to grow the relationship — without trying to do the selling for them."*
+
 ### Demo Booking + Guided Customer Activation (future, not built)
 
 **Surfaced by:** founder direction (2026-08-19).
@@ -518,6 +532,8 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 
 **Do not build scheduling/integration infrastructure now.**
 
+**Commercial hypothesis to preserve (2026-08-19 reconciliation, mentor-derived insight) — enriches "founder-led/high-touch" above rather than replacing it:** founder-led onboarding/setup for early customers, using their real customer books, to get them to first value quickly; observe actual product usage and return behavior while doing so; treat the requests/use cases that surface during this hands-on activation as real evidence for future prioritization, not just anecdote. This is about accelerating adoption and learning from real usage — not about bypassing the actual product with manual work standing in for it.
+
 ### Proactive Account Plays / Signal-to-Activation Intelligence — future product hypothesis (not started)
 
 **Surfaced by:** founder practitioner insight (2026-08-19), directly after Active Expansion Plays V1 banked. Preserve as a **distinct existing-account intelligence hypothesis** — not a sub-item of Whitespace Intelligence.
@@ -525,6 +541,8 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 **Founder practitioner insight:** while managing a major existing account, one highly effective growth behavior was monitoring company news and immediately responding to meaningful customer events with proactive promotional ideas. Example: customer launches a new product → rep proactively develops a supporting merch/activation concept around the launch → brings the idea to the customer before being asked → demonstrates strategic-partner behavior even if the exact concept is not ultimately purchased.
 
 **How this differs from Whitespace Intelligence:** Whitespace answers *"where inside this account can I grow?"* Proactive Account Plays would answer *"something meaningful just happened at this customer — what could I proactively bring them that helps them capitalize on it?"*
+
+**Practitioner framing to preserve (2026-08-19 reconciliation, mentor-derived insight):** a strong rep doesn't merely notice that something happened at a customer — they ask *"What could I proactively bring this customer that helps them capitalize on it?"* That question, not just signal detection, is the behavior this hypothesis is trying to encode. Confirms rather than changes the chain and guardrail immediately below, which already captured this correctly.
 
 **Conceptual chain to preserve:** verified signal → business objective/context → grounded promotional activation → rep action. Illustrative future examples: product launch → launch merchandise / dealer / influencer / sales-support activation; hiring growth → onboarding/recruiting activation; new location → opening/team/launch activation; event or sponsorship → attendee/on-site activation; company milestone → recognition/commemorative activation.
 
@@ -539,6 +557,21 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 Preserve validation examples for eventual use as sales/customer-story proof rather than letting them remain anecdotal internal notes:
 - Dover Honda holiday parade public signal → real outbound reply.
 - Route 236 field outreach, where specific signals/opportunity ideas produced real contacts/conversations.
+
+### Real-sales reasoning evaluation set — commercial-reasoning quality benchmark (not started)
+
+**Surfaced by:** mentor-derived insight, reconciled 2026-08-19. An intelligence-quality / evaluation backlog item, not current product development — do not begin implementation.
+
+**Distinct from "Customer proof / stories" immediately above, not a duplicate:** that entry preserves the Route 236 field-outreach example as future sales/customer-story proof. This entry preserves the same real-world class of example for a different purpose — a future evaluation benchmark for judging House Accounts' own commercial-reasoning quality. Reuse the existing Route 236 material when this is picked up rather than re-collecting it.
+
+**Evaluation concept to preserve:** use successful real-world selling examples as a quality benchmark for House Accounts' commercial reasoning. Evaluation question: given the evidence House Accounts could reasonably know, can it independently reach a commercially useful interpretation/action approximately as useful as the one a strong rep identified in the field?
+
+**Canonical example to preserve — Northern Pool & Spa's 50th anniversary ("50 Summers"):**
+- a real anniversary signal;
+- a commercially useful campaign interpretation;
+- relevant merchandise/activation possibilities;
+- possible account-expansion implications;
+- a useful discovery question about where merchandise purchasing currently lives.
 
 ### Later notification/channel expansion
 
