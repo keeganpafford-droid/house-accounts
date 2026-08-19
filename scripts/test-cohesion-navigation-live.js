@@ -439,6 +439,83 @@ async function main(){
     assert(pageErrors.length === 0, `9) no uncaught page errors switching timebox tabs (got: ${JSON.stringify(pageErrors)})`);
   });
 
+  // =========================================================================
+  // 10) Cohesion round 4, founder Preview QA follow-up (confirmed blocker):
+  //     "2 signals found for Adolfson & Peterson Construction · 2 verified.
+  //     View signals ->" rendered correctly, but clicking it did nothing.
+  //     Root-caused via reproduction (not guessed): the toast's own fixed
+  //     durationMs auto-dismiss (setTimeout tearing the button out of the
+  //     DOM) could elapse before a rep finishes reading the message and
+  //     decides to click a deliberate navigation CTA -- by the time they
+  //     clicked, the button genuinely no longer existed, so nothing
+  //     happened and nothing threw. This physically clicks the REAL
+  //     rendered toast button -- both promptly and after a real delay past
+  //     the old 8s window -- and proves Account Intelligence + the
+  //     Business Signals context actually open, closing the loop the
+  //     founder's own trace request asked for on "toast lifecycle/removal
+  //     interfering with the click".
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    page.__baseUrl = baseUrl;
+    await gotoDashboard(page);
+    // Stubbed AFTER the real page has loaded (and so already defined the
+    // real global) -- overriding it before navigation would just be wiped
+    // out by the real script's own declaration once the page actually
+    // loads.
+    await page.evaluate((accountName) => {
+      window.researchAccountFromManageModal = async (name, listId) => ({
+        ok: true,
+        account: {
+          name,
+          signals: [
+            {identityConfidence: 'confirmed', isReal: true, sourceUrl: 'https://example.com/news/1', signalType: 'Expansion', title: 'Signal one', signalDetail: 'Signal one', confidenceScore: 85, confidence: 85, publishedDate: '2026-08-01'},
+            {identityConfidence: 'confirmed', isReal: true, sourceUrl: 'https://example.com/news/2', signalType: 'Expansion', title: 'Signal two', signalDetail: 'Signal two', confidenceScore: 80, confidence: 80, publishedDate: '2026-08-02'}
+          ],
+          lastResearchedAt: new Date().toISOString()
+        }
+      });
+    }, ACCOUNT_NAME);
+    await page.click('#manageCustomerAccountsBtn');
+    await page.waitForSelector('#accountManagerContent .acct-mgr-list', {state: 'attached'});
+    await page.click(`[data-list-expand-toggle][data-list-id="${UPLOAD_ID}"]`);
+    await page.waitForSelector('.acct-mgr-row', {state: 'attached'});
+
+    await page.click('.acct-mgr-row [data-research-act="account"]');
+    await page.waitForSelector('#haToast', {state: 'visible', timeout: 8000});
+    const toastText = await page.locator('#haToast').innerText();
+    assert(/2 signals? found for/.test(toastText) && /View signals? →/.test(toastText), `10) sanity: the real toast renders the founder's exact reported text (got "${toastText}")`);
+
+    // 10) REQUIRED: waited past the OLD 8s auto-dismiss window (this is
+    //     the exact regression that would have caught the bug) -- the
+    //     toast/button must still be there and the click must still work.
+    await page.waitForTimeout(9000);
+    assert(await page.locator('#haToast .ha-toast-undo').count() === 1, '10) REQUIRED: the toast CTA is still present 9s after appearing -- past the old 8s auto-dismiss window that silently broke this click');
+    await page.click('#haToast .ha-toast-undo');
+
+    await page.waitForSelector('#accountIntelligenceView .account-card', {state: 'visible'});
+    assert(page.url().includes('#account='), '10) REQUIRED: the real, physical click on the toast CTA actually navigates into Account Intelligence');
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.account-business-signals-title');
+      return !!el && el.classList.contains('ha-just-researched-highlight');
+    }, undefined, {timeout: 2500}).catch(() => {});
+    const highlighted = await page.evaluate(() => {
+      const el = document.querySelector('.account-business-signals-title');
+      return !!el && el.classList.contains('ha-just-researched-highlight');
+    });
+    assert(highlighted, '10) REQUIRED: the real click opens and highlights the Business Signals context, the same canonical deep-link "View Research" uses');
+    // Note: this fixture's /api/get-dashboard route is a static canned
+    // payload (not stateful), so refreshAggregateDashboard()'s own refetch
+    // does not reflect the just-stubbed research result -- that data-
+    // freshness path is a separate concern already covered elsewhere
+    // (e.g. test-research-run-reattachment.js). What this block proves is
+    // the toast-click mechanics themselves: the panel renders real signal
+    // content, not an empty state.
+    const signalsPanelText = await page.locator('.signal-research-panel').innerText();
+    assert(signalsPanelText.length > 0 && !/No external signals found/.test(signalsPanelText), `10) REQUIRED: the Business Signals panel renders real content after the click, not an empty state (got "${signalsPanelText}")`);
+
+    assert(pageErrors.length === 0, `10) no uncaught page errors on the real toast-click flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
   await server.close();
   console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

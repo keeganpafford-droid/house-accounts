@@ -10234,11 +10234,29 @@ async function researchAccountFromCard(accountName, uploadId){
   // the CTA must say so honestly: "View signal(s) →" into this account's
   // own Business Signal evidence, not the old "View opportunities" ->
   // Prepare-for-Call handoff.
-  if(typeof showToast === 'function'){
-    showToast(toastMessage, signalCount ? {
+  //
+  // Cohesion round 4 correction (2026-08-19, founder real-Preview QA):
+  // showToast() itself is declared inside the Manage Customer Accounts
+  // modal's own IIFE (a separate <script> block) and was never in scope
+  // here -- the bare `showToast` this code called was always undefined in
+  // THIS function's scope chain, so `typeof showToast === 'function'`
+  // silently evaluated to false and no toast (not even the message text)
+  // ever rendered for the Research Account/Refresh Research button on a
+  // Dashboard or Account Intelligence card. Routed through the same
+  // window.HouseAccountManager export handleResearchClick()'s modal
+  // already uses for close()/showResearchResults() -- the one real toast
+  // implementation, reached correctly this time.
+  const toastFn = window.HouseAccountManager && typeof window.HouseAccountManager.showToast === 'function'
+    ? window.HouseAccountManager.showToast
+    : null;
+  if(toastFn){
+    // 15s (was 8s): a deliberate navigation decision deserves more than an
+    // "Undo" toast's window -- see showToast()'s own hover/focus-pause
+    // fix above for the rest of this correction.
+    toastFn(toastMessage, signalCount ? {
       label: `View signal${signalCount === 1 ? '' : 's'} →`,
       fn: () => { if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(accountName); }
-    } : null, 8000);
+    } : null, 15000);
   }
 }
 
@@ -16477,7 +16495,22 @@ function escapeHtml(text){
    showResearchResults(opts){ return showResearchResultsDialog(opts); },
    // Live QA round 6: the upload-success modal's "Research N accounts" CTA
    // entry point -- see researchListAndFocus()'s own comment above.
-   researchList(uploadId){ return researchListAndFocus(uploadId); }
+   researchList(uploadId){ return researchListAndFocus(uploadId); },
+   // Cohesion round 4 correction (2026-08-19, founder real-Preview QA):
+   // showToast() itself lives entirely inside this IIFE and was never
+   // exposed -- researchAccountFromCard() (main script) has always called
+   // a bare `showToast(...)` that does not exist in its own scope chain.
+   // typeof showToast === 'function' safely evaluates to false for an
+   // out-of-scope identifier rather than throwing, so this failed
+   // completely silently: no error, no toast, ever, for the "Research
+   // Account"/"Refresh Research" button on a Dashboard or Account
+   // Intelligence card (as opposed to the Manage Customer Accounts modal's
+   // own row-level Research button, handleResearchClick(), which is
+   // declared in this same IIFE and could always see showToast() directly).
+   // Exposed here the same way open()/close()/showResearchResults() above
+   // already are, so the main script can reach the one real toast
+   // implementation instead of silently swallowing it.
+   showToast(message, action, durationMs){ return showToast(message, action, durationMs); }
  };
 
  // Overflow menus -- position:fixed (computed from the trigger's own
@@ -16613,10 +16646,13 @@ function escapeHtml(text){
      // own Business Signal evidence, the same deep-link "View Research"
      // already uses, never the old Prepare-for-Call/Verified-Opportunity
      // handoff.
+     // 15s (was 8s): a deliberate navigation decision deserves more than an
+     // "Undo" toast's window -- see showToast()'s own hover/focus-pause
+     // fix (this same IIFE, above) for the rest of this correction.
      showToast(toastMessage, signalCount ? {
        label: `View signal${signalCount === 1 ? '' : 's'} →`,
        fn: () => { if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(accountName); }
-     } : null, 8000);
+     } : null, 15000);
    }catch(err){
      setRowStatus(row, 'error', (err && err.message) || 'Research failed. Please try again.');
      btn.disabled = false;
@@ -16800,6 +16836,20 @@ function escapeHtml(text){
  // the existing pause/resume call shape) or {label, fn} for a custom label
  // (e.g. "View opportunities"). durationMs lets the research-completion
  // toast stay up a little longer than the default reversible-action toast.
+ //
+ // Cohesion round 4 correction (2026-08-19, founder real-Preview QA): the
+ // founder's exact repro traced this down to the toast's own auto-dismiss
+ // timer -- the research-completion toast correctly showed "View signal(s)
+ // ->", but by the time the founder actually clicked it, durationMs had
+ // already elapsed and el.remove() had already torn the button out of the
+ // DOM, so the click landed on nothing and silently did nothing (no
+ // console error -- the button genuinely no longer existed). A fixed
+ // countdown is fine for a quick "Undo," but this CTA is a deliberate
+ // navigation decision a rep may want a moment to make. The timer now
+ // pauses while the pointer or keyboard focus is on the toast (the
+ // standard toast-UX fix for exactly this class of bug) and resumes its
+ // remaining time on mouseleave/blur, so a toast being actively read or
+ // hovered can never expire out from under the user.
  let activeToastTimer = null;
  function showToast(message, action, durationMs){
    const existing = document.getElementById('haToast');
@@ -16816,6 +16866,27 @@ function escapeHtml(text){
    const isFn = typeof action === 'function';
    const actionFn = isFn ? action : (action && action.fn);
    const actionLabel = isFn ? 'Undo' : ((action && action.label) || 'Undo');
+   const totalDuration = durationMs || 5000;
+   let remainingDuration = totalDuration;
+   let toastShownAt = Date.now();
+   function armDismissTimer(){
+     activeToastTimer = setTimeout(() => { el.remove(); activeToastTimer = null; }, remainingDuration);
+   }
+   function pauseDismissTimer(){
+     if(!activeToastTimer) return;
+     clearTimeout(activeToastTimer);
+     activeToastTimer = null;
+     remainingDuration = Math.max(0, remainingDuration - (Date.now() - toastShownAt));
+   }
+   function resumeDismissTimer(){
+     if(activeToastTimer) return;
+     toastShownAt = Date.now();
+     armDismissTimer();
+   }
+   el.addEventListener('mouseenter', pauseDismissTimer);
+   el.addEventListener('mouseleave', resumeDismissTimer);
+   el.addEventListener('focusin', pauseDismissTimer);
+   el.addEventListener('focusout', resumeDismissTimer);
    if(actionFn){
      const btn = document.createElement('button');
      btn.type = 'button';
@@ -16829,7 +16900,7 @@ function escapeHtml(text){
      el.appendChild(btn);
    }
    document.body.appendChild(el);
-   activeToastTimer = setTimeout(() => { el.remove(); activeToastTimer = null; }, durationMs || 5000);
+   armDismissTimer();
  }
 
  // Branded destructive-confirmation dialog -- replaces window.confirm() for

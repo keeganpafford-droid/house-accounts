@@ -162,7 +162,39 @@ function logOpportunityAwareEvent(){ return Promise.resolve(null); }
   // was manufactured -- research may find credible secondary evidence
   // without a recommended play existing.
   assert(/showToast\(toastMessage, signalCount \?/.test(handleResearchClickSrc), 'REQUIRED: handleResearchClick()\'s toast action is gated on signalCount alone, not on any manufactured play/reason');
-  assert(/showToast\(toastMessage, signalCount \?/.test(researchAccountFromCardSrc), 'REQUIRED: researchAccountFromCard()\'s toast action is gated on signalCount alone, not on any manufactured play/reason');
+  assert(/toastFn\(toastMessage, signalCount \?/.test(researchAccountFromCardSrc), 'REQUIRED: researchAccountFromCard()\'s toast action is gated on signalCount alone, not on any manufactured play/reason');
+
+  // Cohesion round 4 correction #2 (founder real-Preview QA follow-up,
+  // reproduced via a real click in a real browser): showToast() lives
+  // entirely inside the Manage Customer Accounts modal's own IIFE.
+  // handleResearchClick() is declared in that SAME IIFE, so its bare
+  // `showToast` call always worked -- but researchAccountFromCard() is a
+  // main-script function that called a bare `showToast` identifier that
+  // does not exist in its scope chain. typeof of an out-of-scope
+  // identifier safely returns 'undefined' rather than throwing, so this
+  // failed completely silently: no error, no toast at all, ever, for the
+  // "Research Account"/"Refresh Research" button on a Dashboard or
+  // Account Intelligence card. Now routed through the same
+  // window.HouseAccountManager export handleResearchClick()'s own modal
+  // already uses for close()/showResearchResults().
+  assert(!/(?<!\.)\bshowToast\(toastMessage/.test(researchAccountFromCardSrc), 'REQUIRED: researchAccountFromCard() never calls a bare, out-of-scope showToast() again');
+  assert(/window\.HouseAccountManager && typeof window\.HouseAccountManager\.showToast === 'function'/.test(researchAccountFromCardSrc), 'REQUIRED: researchAccountFromCard() reaches the toast through window.HouseAccountManager.showToast, the one real implementation');
+  assert(/showToast\(message, action, durationMs\){ return showToast\(message, action, durationMs\); }/.test(DASHBOARD_SRC), 'REQUIRED: window.HouseAccountManager exports showToast() so code outside the modal IIFE can reach it');
+
+  // Founder real-Preview QA follow-up root cause: the toast's own
+  // durationMs auto-dismiss (a fixed setTimeout tearing the button out of
+  // the DOM) is what actually broke "View signal(s) ->" -- the toast text
+  // rendered correctly, but by the time the founder clicked, the button no
+  // longer existed. Both call sites now give a deliberate navigation
+  // decision a longer window (15s, was 8s), and showToast() itself now
+  // pauses/resumes the dismiss timer on hover/focus so a toast being
+  // actively read or hovered can never expire out from under the user --
+  // proven via a real, physical click in scripts/test-cohesion-navigation-live.js.
+  assert(/\} : null, 15000\);/.test(handleResearchClickSrc), 'REQUIRED: handleResearchClick()\'s toast stays up 15s, not the old 8s window');
+  assert(/\} : null, 15000\);/.test(researchAccountFromCardSrc), 'REQUIRED: researchAccountFromCard()\'s toast stays up 15s, not the old 8s window');
+  const showToastSrc = extractFn(DASHBOARD_SRC, 'showToast');
+  assert(/addEventListener\('mouseenter', pauseDismissTimer\)/.test(showToastSrc) && /addEventListener\('mouseleave', resumeDismissTimer\)/.test(showToastSrc), 'REQUIRED: showToast() pauses its auto-dismiss timer on hover and resumes it on mouseleave');
+  assert(/addEventListener\('focusin', pauseDismissTimer\)/.test(showToastSrc) && /addEventListener\('focusout', resumeDismissTimer\)/.test(showToastSrc), 'REQUIRED: showToast() pauses its auto-dismiss timer on keyboard focus too, not just pointer hover');
 }
 
 // ===========================================================================
