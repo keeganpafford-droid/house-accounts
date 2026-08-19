@@ -156,6 +156,34 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 
 **Explicitly not built:** contact deletion, any CRM feature (activity/notes/call logs/tasks/reminders/email history/custom fields), Active Expansion Plays, Prospecting.
 
+### Active Expansion Plays V1 — COMPLETED / BANKED / LIVE IN PRODUCTION (2026-08-19)
+
+**Status: BANKED.** Merged (`--no-ff`) to `main` at `9580cb21c588061bed4fd482f437256f21c0222f`, founder-confirmed live in Production via independent Vercel verification (deployment `dpl_HsNojehvGaATVPXgnsuJkhTc46LK`, READY). Merged-`main` suite: 167/167. Founder personally click-tested the real deployed Preview across three rounds, including a real-account trace against Warner Bros. Discovery data, before approval.
+
+**Doctrine (concise, governs this feature going forward):**
+- **Matrix = where whitespace is.** **Relationship = where we have access.** **Repeat evidence = why now.** **Active Expansion Play = what is worth working.**
+- **V1 eligibility requires all three, together, per Buying Center × Offering cell:** (1) explicit confirmed whitespace in the exact cell (`answer === 'whitespace'`, never blank/inferred); (2) legitimate relationship access in that Buying Center (an explicit team confirmation, or a known mapped contact — cell-mapping evidence is deliberately excluded from this condition, see below); (3) a genuine category-matched Repeat/Pattern trigger (`findRepeatPatternGroups()`'s own real evidence bar, category matching the cell's offering exactly).
+- **Business signals do not activate a specific whitespace cell in V1** — today's signal-derived department/category classification isn't reliably linkable to one exact cell; a verified business signal is never a valid trigger.
+- **Blank cells never qualify** — only an explicit `'whitespace'` answer does.
+- **Whitespace/N/A cells do not imply relationship access; Covered can** — a covered cell proves real business exists in that Buying Center, which is legitimate relationship evidence; a whitespace or not-applicable answer proves nothing about access. (Corrected 2026-08-19, real-account trace: a row with only whitespace/N/A-answered cells had been falsely showing "Known relationship.")
+- **`active_play` is a derived attention state, never persisted as a cell answer.** The durable answer stays one of `covered | whitespace | not_applicable`; `active_play` is computed fresh at render time from a real `whitespace` answer plus the other two eligibility conditions.
+- **Lifecycle: `Whitespace → EXPAND → Covered ✓`.** The orange EXPAND cell stays fully clickable and opens the same cell-answer popover as any other cell, pre-selected on the real underlying whitespace answer. Selecting Covered or N/A persists that real answer and the play disappears immediately because the underlying cell is no longer whitespace — never because a separate "play completion" state was tracked.
+- **No dismiss/snooze/task-management lifecycle exists in V1** — completion is simply the rep updating the real cell truth.
+- **Repeat/Pattern visible copy reflects the actual historical category, not cross-sell suggestion text.** (Corrected 2026-08-19: `getRepFriendlyWhy()`/`buyingConversationLabel()` previously keyword-matched cross-sell suggestion lists (`commonPromoCategories`/`suggestedProducts`) and a cosmetic `buyingCategory` field, which could name a category that never actually repeated — e.g. a real Print/Stationery pattern displaying "Past apparel buying..." A real production trace against Warner Bros. Discovery proved this. Both functions now use the real `opp.category` directly for Repeat/Pattern Signal opportunities, falling back to the old keyword-matching only for legacy data persisted before `opp.category` existed on this signal layer.)
+- **Multiple qualifying Buying Centers sharing one trigger are never ranked or suppressed** — every one is a real, separate play, grouped under shared "why now" text only to avoid stuttering identical copy.
+- **Copy states facts, never overstates causality** — the repeat-pattern trigger is real account-wide purchase history, never claimed to be "from" the specific Buying Center; "what to explore" is phrased as a restrained question, never an assertion of need.
+
+**Known future freshness note (not a current defect):** Repeat/Pattern eligibility itself is stable over time — it is derived entirely from fixed historical purchase dates. Only downstream wording (e.g. `reorderWindowStatus()`'s "approaching/current/overdue" language) can age as real time passes, since Active Expansion recomputes that timing language live on every render while some persisted Reasons-to-Reach-Out wording elsewhere may not. Revisit as part of a future Product Cohesion/freshness pass — not a defect to fix now.
+
+**Shipped:**
+- `computeActiveExpansionPlays(account, matrixRows)` — the deterministic three-condition eligibility gate above.
+- The `active_play` matrix cell state, wired to real eligibility (previously reserved/unreachable markup).
+- A compact Active Expansion Plays panel in Account Intelligence, grouped by shared trigger, following the copy doctrine above.
+- The row-level relationship-semantics correction and Repeat/Pattern copy-truthfulness correction described above, both surfaced by a founder real-account trace against Production data (Warner Bros. Discovery) mid-QA, before final approval.
+- The clickable EXPAND-cell interaction described above, reusing the existing cell-answer popover/persistence path with no new endpoint, no new table, and no new completion-state concept.
+
+**Explicitly not built:** Prepare for Call deep-link from an Active Expansion Play (evaluated, did not fit cleanly within V1 scope, deliberately deferred); dismiss/snooze/task-management lifecycle; new signal scoring; industry templates as a trigger; Prospecting.
+
 ---
 
 ## NOW — Activation & launch quality
@@ -243,10 +271,10 @@ Work that makes House Accounts' recommendations get better over time, not just v
 
 **CRM boundary (standing constraint on all future slices):** House Accounts answers "where can I grow this account," never "what happened and when." No activity/call logging, deal/pipeline stages, task/reminder management, email history/sync, or custom-field CRM configuration. The whitespace grid must stay a derived, evidence-backed inference with rep correction — never a form a rep is expected to keep up to date from memory.
 
-**Shipped, no longer remaining:** cell-level confirm/correct (Covered / Whitespace / Not applicable) — the second, real condition of the V1 Covered truth rule — shipped and is banked; see "Relationship Footprint + Multi-Contact / Contact Durability V1" under Recently completed above. A cell can now render Covered in Production via a genuine rep answer, not only a future per-offering source field.
+**Shipped, no longer remaining:** cell-level confirm/correct (Covered / Whitespace / Not applicable) — the second, real condition of the V1 Covered truth rule — shipped and is banked; see "Relationship Footprint + Multi-Contact / Contact Durability V1" under Recently completed above. A cell can now render Covered in Production via a genuine rep answer, not only a future per-offering source field. **Active Expansion Plays V1 is also now shipped and banked** (see its own entry under Recently completed above) — a real, grounded, three-condition-gated expansion recommendation now exists in Production, as a new dedicated `computeActiveExpansionPlays()` panel alongside the matrix.
 
 **Remaining scope, sequenced:**
-- **Slice 3 — rework Relationship Expansion opportunity generation.** Today's `generateFutureOpportunities()` industry-template gate (`if(industry === 'Automotive...') if(cats.has('Apparel'))...`) must stop being a standalone trigger. A recommended expansion play requires an evidence-backed whitespace cell (non-confirmed-absent) PLUS at least one grounded commercial trigger — a real public signal, a detected recurring/program pattern (`findRepeatPatternGroups()`), or a rep-supplied introduction path (`suggestedIntroductionPath()`). An industry template alone becomes necessary-but-not-sufficient, never sufficient by itself. This touches live, revenue-relevant opportunity-generation logic with existing test dependencies — the highest-risk slice, do carefully with a full regression pass.
+- **Slice 3 — rework Relationship Expansion opportunity generation.** Still open, distinct from Active Expansion Plays V1 above — that shipped as a new, separate, strictly-gated panel; it did not touch or rework `generateFutureOpportunities()`'s existing industry-template gate (`if(industry === 'Automotive...') if(cats.has('Apparel'))...`), which still stands as a standalone trigger for the pre-existing Relationship Expansion opportunity type. Today's `generateFutureOpportunities()` industry-template gate must stop being a standalone trigger. A recommended expansion play requires an evidence-backed whitespace cell (non-confirmed-absent) PLUS at least one grounded commercial trigger — a real public signal, a detected recurring/program pattern (`findRepeatPatternGroups()`), or a rep-supplied introduction path (`suggestedIntroductionPath()`). An industry template alone becomes necessary-but-not-sufficient, never sufficient by itself. This touches live, revenue-relevant opportunity-generation logic with existing test dependencies — the highest-risk slice, do carefully with a full regression pass.
 - **Location/subsidiary/division whitespace** — explicitly deferred. Current data (a flat city/state string) cannot support this dimension truthfully; would need richer CSV input or a live integration (see Integrations) before it's worth building.
 - Rep confirmations should eventually feed the existing private org-scoped Behavioral Learning event foundation's *pattern* (not necessarily its literal table) — a confirm/correct action is structurally similar to the quality-feedback events `org-preference-learning.js` already consumes.
 
@@ -290,6 +318,8 @@ Do not build a parallel opportunity-scoring system alongside any of this — it 
 **Scope of the eventual audit:** explicitly review the current duplication/fragmentation across View Account, View Research, Research Again, Research Account inside Account Intelligence, Dashboard Priority cards, Prepare for Call, and future Active Expansion Plays. Specifically evaluate whether separate View Research / Research Again experiences remain necessary once Account Intelligence is complete — research should conceptually become something performed *on an account*, with the result living in that account's workspace, not a parallel destination.
 
 **Priority: after Account Expansion V1 (banked — see Recently completed above), before Find More Like Them / Prospecting.** Do not execute this cleanup now — this is a hypothesis to evaluate, not an approved redesign.
+
+**Whitespace Intelligence education / guided use — surfaced by founder observation (2026-08-19), after Active Expansion Plays V1 banked.** Many users may never have used a formal whitespace/account-mapping document before. The product may be functionally correct while still leaving a new user asking "what am I supposed to do with this grid?" Preserve as part of this same Product Cohesion / UX / Guided Activation checkpoint, not a separate project. Direction to evaluate when this checkpoint is picked up: a lightweight contextual explanation of what Whitespace Intelligence is for (first-use guidance, not a documentation burden); explain the simple workflow — *map who you know → mark what you sell → identify gaps → House Accounts watches for the right time to expand*; potentially contextual "How this works" affordances, empty-state guidance, or onboarding cues; the demo/setup-call flow (see "Demo Booking + Guided Customer Activation" under LATER) should also teach this workflow. **Do not implement now.**
 
 ---
 
@@ -465,6 +495,22 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 - Eventual setup flow should help a customer: upload/connect their book; understand Priorities; open Account Intelligence; map relationships/contacts; understand Whitespace Intelligence; act on their first recommendation; understand what ongoing monitoring will do.
 
 **Do not build scheduling/integration infrastructure now.**
+
+### Proactive Account Plays / Signal-to-Activation Intelligence — future product hypothesis (not started)
+
+**Surfaced by:** founder practitioner insight (2026-08-19), directly after Active Expansion Plays V1 banked. Preserve as a **distinct existing-account intelligence hypothesis** — not a sub-item of Whitespace Intelligence.
+
+**Founder practitioner insight:** while managing a major existing account, one highly effective growth behavior was monitoring company news and immediately responding to meaningful customer events with proactive promotional ideas. Example: customer launches a new product → rep proactively develops a supporting merch/activation concept around the launch → brings the idea to the customer before being asked → demonstrates strategic-partner behavior even if the exact concept is not ultimately purchased.
+
+**How this differs from Whitespace Intelligence:** Whitespace answers *"where inside this account can I grow?"* Proactive Account Plays would answer *"something meaningful just happened at this customer — what could I proactively bring them that helps them capitalize on it?"*
+
+**Conceptual chain to preserve:** verified signal → business objective/context → grounded promotional activation → rep action. Illustrative future examples: product launch → launch merchandise / dealer / influencer / sales-support activation; hiring growth → onboarding/recruiting activation; new location → opening/team/launch activation; event or sponsorship → attendee/on-site activation; company milestone → recognition/commemorative activation.
+
+**Important doctrine:** do not regress into `signal → random product suggestion`. The activation must have a defensible relationship to what actually happened and the business objective it creates — consistent with existing product direction: `signal → opportunity`, never `signal → generated email`.
+
+**Creative execution / mockups — preserve only as a later hypothesis, layered behind this one, not part of it yet.** Founder also raised the eventual possibility of turning a strong activation idea into actual creative concepts/mockups, potentially through a partner such as Penji or another design service. **Do not research or build a Penji integration now.** Preferred sequence to evaluate later: `Signal → Activation Intelligence → Creative Brief → optional concept/mockup execution`. First prove reps value the activation intelligence and creative brief; only then evaluate design-service integration, mockup quantity/usage limits, turnaround/SLA, pricing/markup, and revisions/quality control.
+
+**Do not begin implementation** — this is a hypothesis to preserve, not scoped or approved work.
 
 ### Customer proof / stories
 
