@@ -70,6 +70,11 @@ function startStaticServer(){
 // real Apparel purchase gives the unattributed-purchases panel something
 // real to show throughout.
 const ACCOUNT_NAME = 'Anchor Brewing Supply';
+// purchasesOverride lets the EXPAND-cell interaction section (11) below
+// give the account a real, qualifying repeat-pattern purchase history --
+// every other section leaves it empty, matching the original fixture, so
+// no existing section's Active Expansion eligibility changes.
+let purchasesOverride = [];
 // contacts param lets a specific section override the fixture's default
 // single-contact list (e.g. to test multiple contacts in one Buying
 // Center) without affecting every other section.
@@ -79,7 +84,7 @@ function getDashboardPayload(contacts){
       name: ACCOUNT_NAME, industry: 'Promotional Products', revenue: 42000, orderCount: 6,
       contacts: contacts || [{ name: 'Jordan Reyes', title: 'Marketing Manager', department: 'Marketing' }],
       categoryTypes: ['Apparel'],
-      futureOpportunities: [], signals: [], purchases: []
+      futureOpportunities: [], signals: [], purchases: purchasesOverride
     }],
     signals: [], weeklyRuns: [],
     user: {email: 'qa@example.com', name: 'QA Tester', company: 'QA Test Co'},
@@ -636,6 +641,106 @@ async function main(){
     assert(confirmedCenterStore.includes('Marketing'), '10) REQUIRED: Escape closes the relationship popover without removing anything');
 
     assert(pageErrors.length === 0, `10) no uncaught page errors dismissing the relationship popover (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 11) EXPAND-cell interaction correction (founder, 2026-08-19): active_play
+  //     is a derived attention state over an underlying confirmed-whitespace
+  //     cell, not a new immutable answer -- the orange EXPAND cell must
+  //     stay clickable and open the SAME cell-answer popover as any other
+  //     cell, pre-selected on its real "We don't sell this here" answer.
+  //     Marketing already has real relationship evidence (the fixture's
+  //     Jordan Reyes contact); a real two-year Headwear repeat pattern plus
+  //     an explicit Headwear whitespace answer makes Marketing x Headwear
+  //     eligible for a real Active Expansion Play.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = { 'Marketing||Headwear': 'whitespace' };
+    confirmedCenterStore = [];
+    purchasesOverride = [
+      { category: 'Headwear', revenue: 1500, date: '2024-03-10' },
+      { category: 'Headwear', revenue: 1800, date: '2025-03-12' }
+    ];
+    await gotoFocusedAccount(page, baseUrl);
+
+    // 1) The eligible whitespace cell renders EXPAND.
+    const expandCell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+    assert(await expandCell.evaluate(el => el.classList.contains('active-play')), '11) REQUIRED: the eligible whitespace cell renders the active-play (EXPAND) state');
+    assert(/EXPAND/.test(await expandCell.innerText()), '11) REQUIRED: the active-play cell shows the EXPAND mark');
+    assert(await page.locator('.aep-panel').count() === 1, '11) sanity: the Active Expansion Plays panel is present');
+
+    // 2) The EXPAND cell is clickable -- it opens the SAME cell-answer
+    //    popover as any other cell, pre-selected on its real underlying
+    //    "We don't sell this here" (whitespace) answer.
+    await expandCell.click();
+    await page.waitForSelector('.ws-cell-popover.open');
+    const titleText = await page.locator('.ws-cell-popover-title').innerText();
+    assert(/marketing/i.test(titleText) && /headwear/i.test(titleText), `11) REQUIRED: clicking EXPAND opens the popover for the correct cell (got "${titleText}")`);
+    const preSelected = page.locator('.ws-cell-popover-option.selected');
+    assert(await preSelected.count() === 1 && /We don.t sell this here/.test(await preSelected.innerText()), '11) REQUIRED: the EXPAND cell\'s popover opens pre-selected on the real underlying whitespace answer');
+
+    // 3) Choosing "We sell this here" persists Covered and produces the
+    //    normal teal Covered/check state -- EXPAND disappears.
+    await page.click('.ws-cell-popover-option[data-cell-answer-choice="covered"]');
+    await page.waitForSelector('.ws-cell-popover', { state: 'hidden' });
+    await page.waitForFunction(() => {
+      const c = document.querySelector('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+      return c && c.classList.contains('covered');
+    });
+    assert(cellAnswerStore['Marketing||Headwear'] === 'covered', '11) REQUIRED: selecting "We sell this here" persists the real covered answer server-side');
+    const coveredCell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+    assert(!(await coveredCell.evaluate(el => el.classList.contains('active-play'))), '11) REQUIRED: the orange EXPAND state disappears once the cell becomes Covered');
+    assert((await coveredCell.locator('.ws-mark').innerText()) === '✓', '11) REQUIRED: the normal teal Covered checkmark state appears');
+
+    // 4) The corresponding Active Expansion Play disappears immediately --
+    //    no separate "play completion" record, it is simply no longer
+    //    whitespace.
+    assert(await page.locator('.aep-panel').count() === 0, '11) REQUIRED: the Active Expansion Plays panel disappears immediately once its one qualifying cell is no longer whitespace');
+
+    // 5) Refresh preserves Covered (the durable answer, not a client-only
+    //    state) -- and EXPAND does not reappear on reload.
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('.ws-matrix', { state: 'visible' });
+    const reloadedCell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+    assert(await reloadedCell.evaluate(el => el.classList.contains('covered')), '11) REQUIRED: refresh preserves the real Covered answer');
+    assert(!(await reloadedCell.evaluate(el => el.classList.contains('active-play'))), '11) REQUIRED: EXPAND does not reappear after refresh');
+    assert(await page.locator('.aep-panel').count() === 0, '11) REQUIRED: no Active Expansion Play reappears after refresh');
+
+    assert(pageErrors.length === 0, `11) no uncaught page errors on the EXPAND-cell interaction flow (got: ${JSON.stringify(pageErrors)})`);
+  });
+
+  // =========================================================================
+  // 11b) Choosing "Not relevant" on an EXPAND cell persists N/A and also
+  //      removes the play -- the underlying cell is no longer whitespace
+  //      either way, whichever real answer the rep gives it.
+  // =========================================================================
+  await withPage(baseUrl, async (page, pageErrors) => {
+    cellAnswerStore = { 'Marketing||Headwear': 'whitespace' };
+    confirmedCenterStore = [];
+    purchasesOverride = [
+      { category: 'Headwear', revenue: 1500, date: '2024-03-10' },
+      { category: 'Headwear', revenue: 1800, date: '2025-03-12' }
+    ];
+    await gotoFocusedAccount(page, baseUrl);
+
+    const expandCell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+    assert(await expandCell.evaluate(el => el.classList.contains('active-play')), '11b) sanity: the cell starts as an active Play');
+
+    await expandCell.click();
+    await page.waitForSelector('.ws-cell-popover.open');
+    await page.click('.ws-cell-popover-option[data-cell-answer-choice="not_applicable"]');
+    await page.waitForSelector('.ws-cell-popover', { state: 'hidden' });
+    await page.waitForFunction(() => {
+      const c = document.querySelector('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+      return c && c.classList.contains('not-applicable');
+    });
+
+    assert(cellAnswerStore['Marketing||Headwear'] === 'not_applicable', '11b) REQUIRED: selecting "Not relevant" persists the real N/A answer server-side');
+    const naCell = page.locator('.ws-cell[data-buying-center="Marketing"][data-category="Headwear"]');
+    assert(!(await naCell.evaluate(el => el.classList.contains('active-play'))), '11b) REQUIRED: EXPAND disappears once the cell is marked Not Applicable');
+    assert(await page.locator('.aep-panel').count() === 0, '11b) REQUIRED: the play disappears once the underlying cell is no longer whitespace, regardless of which real answer replaced it');
+
+    assert(pageErrors.length === 0, `11b) no uncaught page errors marking an EXPAND cell Not Applicable (got: ${JSON.stringify(pageErrors)})`);
   });
 
   await server.close();

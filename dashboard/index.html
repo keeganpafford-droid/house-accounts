@@ -1263,13 +1263,14 @@
   .ws-cell.active-play{background:var(--signal); border-color:#c97e0e; box-shadow:0 2px 6px rgba(245,166,35,0.45);}
   .ws-cell.active-play .ws-mark.strong{color:#fff; font-family:var(--mono); font-size:0.58rem; font-weight:800; letter-spacing:0.05em;}
   /* Cell-Level Buying Center x Offering Confirmation / Correction V1: every
-     real cell (covered/not-applicable/whitespace -- never the reserved,
-     still-unassigned active-play state) is clickable, opening
-     .ws-cell-popover. Confirmed Whitespace deliberately gets no extra
-     visual treatment here -- it must look identical to a never-answered
-     cell (see .ws-cell.whitespace above); the distinction lives only in
-     the durable data and in the popover's own selected-state indicator
-     when reopened. */
+     cell (covered/not-applicable/whitespace/active-play) is clickable,
+     opening .ws-cell-popover. active-play is a derived attention state
+     over a real 'whitespace' answer (founder, 2026-08-19), so it opens
+     the same popover, pre-selected on "We don't sell this here." Confirmed
+     Whitespace deliberately gets no extra visual treatment here -- it must
+     look identical to a never-answered cell (see .ws-cell.whitespace
+     above); the distinction lives only in the durable data and in the
+     popover's own selected-state indicator when reopened. */
   .ws-cell[data-buying-center]{cursor:pointer;}
   .ws-cell[data-buying-center]:hover{box-shadow:0 0 0 2px rgba(31,183,174,0.35) inset;}
   .ws-cell[data-buying-center]:focus-visible{outline:2px solid var(--radar); outline-offset:1px;}
@@ -1317,6 +1318,14 @@
   .ws-unattributed-sub{font-family:var(--body); font-size:0.75rem; color:var(--muted); margin-bottom:10px; max-width:520px;}
   .ws-unattributed-pills{display:flex; gap:8px; flex-wrap:wrap;}
   .ws-unattributed-pill{font-family:var(--body); font-size:0.75rem; color:var(--ink); background:#fafaf6; border:1px solid var(--line); border-radius:999px; padding:5px 12px;}
+  .aep-panel{margin-top:18px; padding-top:14px; border-top:1px solid var(--line);}
+  .aep-group{background:#fffaf3; border:1px solid #f0d9b5; border-radius:8px; padding:14px 16px; margin-top:10px;}
+  .aep-why-now{margin-bottom:10px;}
+  .aep-play{padding:10px 0; border-top:1px solid #f0d9b5;}
+  .aep-play:first-of-type{border-top:none; padding-top:0;}
+  .aep-play-where{font-family:var(--display); font-weight:700; font-size:0.92rem; color:var(--ink); margin-bottom:6px;}
+  .aep-play-line{font-family:var(--body); font-size:0.82rem; color:var(--ink); line-height:1.5; margin-top:4px;}
+  .aep-play-line strong{font-family:var(--mono); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--label-amber); display:block; margin-bottom:2px;}
 
   .section-title{
     font-family:var(--mono); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--label-amber);
@@ -3928,7 +3937,21 @@ function buyingOpportunityIdentity(opp){
 
 function buyingConversationLabel(opp){
   const dept = likelyDepartmentFromOpportunity(opp);
-  const category = primaryCategoryFromOpportunity(opp);
+  // Truth correction (founder, 2026-08-19, Warner Bros. Discovery trace):
+  // for a Repeat/Pattern opportunity, opp.category is the REAL category
+  // the repeat pattern was detected in -- use it directly rather than
+  // primaryCategoryFromOpportunity()'s fuzzy classification, which reads
+  // opp.buyingCategory/commonPromoCategories/suggestedProducts (cross-
+  // sell suggestion text, not historical evidence) FIRST and can name a
+  // completely different, unrelated category (confirmed production case:
+  // a real Print / Stationery repeat pattern displayed "Recognition /
+  // Awards," a cosmetic cross-sell classification of that pattern's
+  // suggested products, never the category that actually repeated).
+  // Every other opportunity type is unaffected -- this only narrows the
+  // Repeat/Pattern Signal case to its own real, already-persisted field.
+  const category = (opp?.signalLayerType === 'Repeat / Pattern Signal' && WHITESPACE_CATEGORIES.includes(opp?.category))
+    ? opp.category
+    : primaryCategoryFromOpportunity(opp);
   const buyer = likelyKnownBuyer(opp) || likelySuggestedContact(opp);
   const buyerText = buyer && !isGenericContactLabel(buyer) ? ` • ${buyer}` : '';
   return `${dept} • ${category}${buyerText}`;
@@ -6291,6 +6314,24 @@ function getRepFriendlyWhy(opp){
     return 'Recent project activity creates a simple reason to check in while the order is still fresh.';
   }
   if(layer === 'Repeat / Pattern Signal'){
+    // Truth correction (founder, 2026-08-19, Warner Bros. Discovery
+    // trace): opp.category is the REAL, literal category
+    // findRepeatPatternGroups() detected the repeat pattern in --
+    // createRepeatPatternOpportunities() has stamped it verbatim since
+    // Organizational Learning V1B. Use it directly when present, rather
+    // than keyword-matching commonPromoCategories/suggestedProducts (a
+    // cross-sell PRODUCT SUGGESTION list, not historical evidence) --
+    // that matching could name a completely different category than the
+    // one that actually repeated (confirmed production case: a real
+    // Print / Stationery repeat pattern whose suggested cross-sell
+    // products included the word "apparel" produced "Past apparel
+    // buying..." copy, even though no Apparel repeat pattern existed at
+    // all). The keyword-matching fallback below is preserved ONLY for
+    // opportunities persisted before opp.category existed on this
+    // signal layer -- current generation always has it.
+    if(WHITESPACE_CATEGORIES.includes(opp?.category)){
+      return `Past ${opp.category.toLowerCase()} buying suggests it is worth asking whether another run or refresh is coming up.`;
+    }
     if(oppName.includes('apparel') || categories.some(c=>/apparel|shirt|uniform|hat|headwear/.test(c))){
       return 'Past apparel buying suggests it is worth asking whether another run or refresh is coming up.';
     }
@@ -11034,11 +11075,27 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     // A cell-level answer may imply the buying center is known one-way
     // (founder note, 2026-08-19): a rep cannot meaningfully answer a cell
     // for a buying center that doesn't exist at this account, so an
-    // answered cell counts as row-level evidence exactly like a known
-    // contact or a buying-center confirmation does -- without itself
-    // writing to ha_whitespace_confirmations (a cell answer and a buying-
-    // center confirmation remain two independent facts).
+    // answered cell (any answer) still counts toward whether the matrix
+    // itself has enough evidence to render at all
+    // (hasAnyBuyingCenterEvidence below), independent of any specific
+    // answer's value.
     const hasAnsweredCell = cells.some(c => !!c.answer);
+    // Row-level RELATIONSHIP evidence is a narrower claim than "this cell
+    // was answered" -- doctrine correction (founder, 2026-08-19, Warner
+    // Bros. Discovery trace): only a Covered answer implies a relationship
+    // in this buying center, because it explicitly proves House Accounts
+    // sells an offering there -- the same kind of real fact a team
+    // confirmation or a known contact is. A Whitespace answer ("we don't
+    // sell this here") proves the opposite; Not Applicable is neutral;
+    // neither is evidence of relationship ACCESS, only knowledge ABOUT the
+    // cell. Knowledge about a buying center is not the same thing as
+    // access to it. (computeActiveExpansionPlays() already independently
+    // never treats cell-mapping as relationship access for its own
+    // eligibility gate, for the identical reason -- this correction brings
+    // the row's own visible claim and the relationship popover into
+    // agreement with that same doctrine, rather than overclaiming "Known
+    // relationship" from a Whitespace/Not-Applicable answer alone.)
+    const hasCoveredCell = cells.some(c => c.status === 'covered');
     const isTeamConfirmed = confirmed.has(center);
     if(rowContacts.length || isTeamConfirmed || hasAnsweredCell) hasAnyBuyingCenterEvidence = true;
     // Founder correction (2026-08-19): the row's PRIMARY visible copy must
@@ -11056,7 +11113,7 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
     const evidenceSources = [];
     if(rowContacts.length) evidenceSources.push('contact');
     if(isTeamConfirmed) evidenceSources.push('team-confirmed');
-    if(hasAnsweredCell) evidenceSources.push('cell-mapping');
+    if(hasCoveredCell) evidenceSources.push('cell-mapping');
     let metaLine = '';
     let metaKind = '';
     if(rowContacts.length){
@@ -11072,14 +11129,106 @@ function computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers){
   return { rows, unattributed, hasAnyBuyingCenterEvidence };
 }
 
-// 'active-play' markup below is reserved structure for a later slice
-// (grounded Active Expansion Play logic, not built yet -- explicitly out
-// of scope for this slice) -- computeAccountWhitespaceMatrix() above never
-// produces it, so that branch stays non-interactive (no data attributes,
-// no click target) and unreachable from real data. covered/not_applicable/
-// whitespace cells ARE real, interactive, real-data-driven states as of
-// this slice -- see the delegated click listener below for the popover
-// that answers/corrects them.
+// Active Expansion Plays V1 (founder decision, 2026-08-19): the smallest
+// commercially useful AND trustworthy expansion recommendation this data
+// can honestly support -- existing Buying Center + new Offering only (see
+// BACKLOG.md's Active Expansion Plays entry for the full recon doctrine
+// this implements; new-Buying-Center motions are deliberately not
+// attempted -- they aren't a weaker version of this play, they're not
+// expressible as a coherent play at all without first becoming this one).
+//
+// Requires ALL THREE, together, per cell -- any one missing means no play:
+//   1. An EXPLICIT confirmed whitespace answer (`cell.answer === 'whitespace'`,
+//      never a blank/unanswered cell -- blank means "we don't know," never
+//      "confirmed nothing sold here").
+//   2. Trustworthy relationship access to that Buying Center -- an
+//      explicit team confirmation, OR a known mapped contact; either
+//      alone is sufficient, a contact is never REQUIRED when the team has
+//      already confirmed the relationship, but is surfaced whenever one
+//      exists. Deliberately does NOT accept row-level 'cell-mapping'
+//      evidence (an answered cell implying the center is known) as
+//      sufficient here -- the cell being evaluated is itself always
+//      'cell-mapping' evidence for its own row, so accepting it would
+//      make condition 2 trivially satisfied by condition 1 and collapse
+//      the two-part gate into one.
+//   3. A real, category-linked why-now trigger -- a qualifying Repeat/
+//      Pattern opportunity (findRepeatPatternGroups()'s own real evidence
+//      bar: >=2 dated same-category orders plus multi-year/seasonal/
+//      volume) whose category is the SAME offering as the whitespace
+//      cell. A Drinkware pattern can never activate an Apparel cell.
+//
+// Explicitly NOT a valid trigger: a verified business signal. Today's
+// signal-derived department/buyingCategory classification
+// (addSignalDerivedOpportunities()) is loosely-typed free text, never
+// cross-referenced against the whitespace matrix's fixed taxonomy --
+// using a signal to activate a specific cell would let HA claim a
+// Buying-Center/Offering linkage the data doesn't actually prove. A
+// priority verified signal may still be shown as supporting account-level
+// context once a play has independently qualified through the rule above
+// (see renderActiveExpansionPlaysPanel()) -- it is never itself a
+// trigger, and never implies causality with the proposed offering.
+//
+// Multiple-cell decision (founder, 2026-08-19): the same qualifying
+// category trigger can legitimately match more than one Buying Center at
+// once (e.g. both Marketing and Operations/Facilities have a confirmed
+// relationship AND confirmed Apparel whitespace, while the account has
+// exactly one qualifying Apparel repeat pattern). There is no evidence
+// basis to rank one Buying Center over another, so this deliberately does
+// NOT invent a confidence ranking or suppress to a single "best" cell --
+// every independently qualifying cell is a real, separate play, returned
+// here as-is. Grouping identical "why now" copy under one shared trigger
+// for display (never suppression, never ranking) is the panel's job, not
+// this function's -- see renderActiveExpansionPlaysPanel().
+function computeActiveExpansionPlays(account, matrixRows){
+  // findRepeatPatternGroups() requires account.purchases[].date to be a
+  // real Date object -- true for its only pre-existing call site
+  // (generateFutureOpportunities(), invoked once against a freshly-
+  // parsed CSV upload, where parseCSV() already produced real Date
+  // objects). This is the first call site that ever invokes it against a
+  // RELOADED account: normalizeSavedAccount() round-trips purchases
+  // exactly as saved, with no date re-hydration, so a reloaded account's
+  // purchases[].date is a plain ISO string, not a Date -- calling
+  // .getFullYear() on it would throw. Coerce defensively here (real
+  // Date objects pass through parseMaybeDate() unchanged) rather than
+  // assuming the Date-object contract silently still holds for
+  // already-saved data.
+  const account_ = Array.isArray(account?.purchases)
+    ? { ...account, purchases: account.purchases.map(p => (p && p.date) ? { ...p, date: parseMaybeDate(p.date) } : p) }
+    : account;
+  const patterns = findRepeatPatternGroups(account_);
+  const triggerByCategory = new Map();
+  patterns.forEach(p => { if(!triggerByCategory.has(p.category)) triggerByCategory.set(p.category, p); });
+  if(!triggerByCategory.size) return [];
+
+  const plays = [];
+  (matrixRows || []).forEach(row => {
+    const center = row.center;
+    const isTeamConfirmed = row.evidenceSources.includes('team-confirmed');
+    const contacts = row.evidenceSources.includes('contact') ? contactsKnownForBuyingCenter(account, center) : [];
+    if(!isTeamConfirmed && !contacts.length) return; // condition 2
+    row.cells.forEach(cell => {
+      if(cell.answer !== 'whitespace') return; // condition 1
+      const trigger = triggerByCategory.get(cell.category);
+      if(!trigger) return; // condition 3
+      plays.push({ key: whitespaceCellKey(center, cell.category), center, category: cell.category, isTeamConfirmed, contacts, trigger });
+    });
+  });
+  return plays;
+}
+
+// 'active-play' markup below is now REAL, reachable structure --
+// computeAccountWhitespaceMatrix()'s caller (renderAccountWhitespaceSection())
+// overrides a cell's status to 'active_play' only for a key
+// computeActiveExpansionPlays() above actually returned. covered/
+// not_applicable/whitespace/active_play cells are ALL interactive -- see
+// the delegated click listener below for the shared popover that answers/
+// corrects them. active_play is a DERIVED attention state over an
+// underlying real 'whitespace' answer, not a separate immutable cell
+// value (founder, 2026-08-19) -- so it opens the exact same popover as
+// any other cell, pre-selected on "We don't sell this here"; choosing
+// Covered or N/A persists that real durable answer and the play
+// disappears naturally because the underlying cell is no longer
+// whitespace, not because any play-completion state was tracked.
 function renderWhitespaceCell(cell){
   const center = cell?.center || '';
   const category = cell?.category || '';
@@ -11087,7 +11236,21 @@ function renderWhitespaceCell(cell){
   const cellLabel = (center && category) ? `${center} × ${category}` : 'this cell';
   if(cell.status === 'covered') return `<div class="ws-cell covered" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Covered — click to change" title="Covered — rep-confirmed, click to change"><span class="ws-mark">✓</span></div>`;
   if(cell.status === 'not_applicable') return `<div class="ws-cell not-applicable" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: Not applicable — click to change" title="Not applicable — click to change"><span class="ws-mark small">N/A</span></div>`;
-  if(cell.status === 'active_play') return `<div class="ws-cell active-play" title="Active Expansion Play"><span class="ws-mark strong">EXPAND</span></div>`;
+  // Interaction correction (founder, 2026-08-19): 'active_play' is a
+  // DERIVED attention state over an underlying confirmed-whitespace cell,
+  // never a new immutable cell answer -- so the EXPAND cell stays fully
+  // clickable and opens the SAME cell-answer popover every other cell
+  // uses (see the delegated .ws-cell[data-buying-center] click/keydown
+  // handlers below, which key off this exact markup shape). Its
+  // data-cell-answer is always 'whitespace' -- that is the real, durable,
+  // persisted answer computeActiveExpansionPlays() required to derive this
+  // state in the first place -- so re-opening the popover on an EXPAND
+  // cell correctly pre-selects "We don't sell this here." Choosing
+  // Covered/N/A persists that real answer and lets the whole section
+  // re-render from a fresh, no-longer-whitespace matrix -- which is also
+  // exactly why EXPAND naturally disappears afterward: nothing here
+  // tracks "play completion" as its own state.
+  if(cell.status === 'active_play') return `<div class="ws-cell active-play" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="whitespace" aria-label="${escapeHtml(cellLabel)}: Active Expansion Play — confirmed whitespace, click to update if you now sell here" title="Active Expansion Play — click to update if you now sell here"><span class="ws-mark strong">EXPAND</span></div>`;
   const whitespaceTitle = answer === 'whitespace' ? 'Confirmed whitespace — click to change' : 'Whitespace — click to answer';
   return `<div class="ws-cell whitespace" role="button" tabindex="0" data-buying-center="${escapeHtml(center)}" data-category="${escapeHtml(category)}" data-cell-answer="${escapeHtml(answer)}" aria-label="${escapeHtml(cellLabel)}: ${answer === 'whitespace' ? 'Confirmed whitespace' : 'Whitespace, no answer yet'} — click to answer" title="${whitespaceTitle}"></div>`;
 }
@@ -11146,6 +11309,65 @@ function renderUnattributedPurchasesPanel(categories){
   `;
 }
 
+// Active Expansion Plays V1 -- the qualifying trigger's window status,
+// reusing the SAME real reorderWindowStatus()/reorder-window doctrine
+// Reasons to Reach Out already uses (never a second, invented notion of
+// "buying window"). trigger.lastDate is always a real Date -- see
+// findRepeatPatternGroups(), whose patterns are built only from dated
+// orders -- so this never falls back to the date-less inference path.
+function activeExpansionPlayWhyNowText(trigger){
+  const categoryLower = trigger.category.toLowerCase();
+  const base = `This account has a repeat ${categoryLower} buying pattern`;
+  const windowStatus = reorderWindowStatus({ signalDate: trigger.lastDate.toISOString(), purchaseMonth: trigger.lastDate.getMonth() });
+  if(windowStatus === 'overdue') return `${base}, and the usual buying window has already passed.`;
+  if(windowStatus === 'current') return `${base}, and is currently in that buying window.`;
+  if(windowStatus === 'approaching') return `${base} and may be approaching another buying window.`;
+  return `${base}.`;
+}
+
+// Copy doctrine (founder, 2026-08-19): state the facts, never overstate
+// causality. The repeat-pattern trigger is real ACCOUNT-WIDE purchase
+// history -- it says nothing about which Buying Center made those past
+// purchases -- so this never writes "Marketing has bought Apparel before"
+// or similar. "Your position" states two independent, separately-evidenced
+// facts (a known relationship; a confirmed gap); "What to explore" is
+// deliberately a question, not a claim ("Explore whether..." never
+// "...needs apparel").
+function renderActiveExpansionPlaysPanel(plays, account){
+  if(!plays || !plays.length) return '';
+  const groups = new Map();
+  plays.forEach(p => { if(!groups.has(p.category)) groups.set(p.category, []); groups.get(p.category).push(p); });
+  const groupsHtml = [...groups.entries()].map(([category, group]) => {
+    const whyNow = activeExpansionPlayWhyNowText(group[0].trigger);
+    const playsHtml = group.map(play => {
+      const whoYouKnow = play.contacts.length
+        ? `<div class="aep-play-line"><strong>Who you know</strong> ${play.contacts.slice(0, 2).map(c => `${escapeHtml(c.name)}${c.title ? ` — ${escapeHtml(c.title)}` : ''}`).join('; ')}</div>`
+        : '';
+      return `
+        <div class="aep-play">
+          <div class="aep-play-where">${escapeHtml(play.center)} × ${escapeHtml(play.category)}</div>
+          <div class="aep-play-line"><strong>Your position</strong> You have a known relationship in ${escapeHtml(play.center)}, but you've confirmed ${escapeHtml(play.category)} is whitespace there.</div>
+          ${whoYouKnow}
+          <div class="aep-play-line"><strong>What to explore</strong> Explore whether ${escapeHtml(play.center)} has an upcoming ${escapeHtml(play.category.toLowerCase())} need.</div>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div class="aep-group">
+        <div class="aep-play-line aep-why-now"><strong>Why now</strong> ${escapeHtml(whyNow)}</div>
+        ${playsHtml}
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="aep-panel">
+      <div class="section-title">🎯 Active Expansion Plays</div>
+      <div class="ws-subtitle">Confirmed whitespace, a real relationship, and a real reason to ask — together.</div>
+      ${groupsHtml}
+    </div>
+  `;
+}
+
 function renderAccountWhitespaceSection(account){
   const accountName = account?.name || '';
   // Fire-and-forget: kicks off the one-time durable fetches on first
@@ -11158,6 +11380,17 @@ function renderAccountWhitespaceSection(account){
   const confirmedCenters = confirmedCentersForAccount(accountName);
   const cellAnswers = cellAnswersForAccount(accountName);
   const matrix = computeAccountWhitespaceMatrix(account, confirmedCenters, cellAnswers);
+  // Active Expansion Plays V1: computed from the matrix just built, then
+  // fed back into it -- a qualifying cell's status is overridden to
+  // 'active_play' so the grid itself shows the (now real, no longer
+  // reserved) orange EXPAND state, kept deliberately rare by the strict
+  // three-part gate in computeActiveExpansionPlays()'s own doctrine
+  // comment.
+  const activePlays = computeActiveExpansionPlays(account, matrix.rows);
+  const activePlayKeys = new Set(activePlays.map(p => p.key));
+  matrix.rows.forEach(row => row.cells.forEach(cell => {
+    if(activePlayKeys.has(whitespaceCellKey(cell.center, cell.category))) cell.status = 'active_play';
+  }));
   const body = matrix.hasAnyBuyingCenterEvidence
     ? renderWhitespaceMatrix(matrix.rows)
     : renderWhitespaceMappingPrompt(confirmedCenters);
@@ -11166,6 +11399,7 @@ function renderAccountWhitespaceSection(account){
       <div class="section-title">🗺️ Whitespace Intelligence</div>
       <div class="ws-subtitle">See where you have business today — and where there may be room to grow.</div>
       ${body}
+      ${renderActiveExpansionPlaysPanel(activePlays, account)}
       ${renderUnattributedPurchasesPanel(matrix.unattributed)}
     </div>
   `;
@@ -11230,9 +11464,11 @@ document.addEventListener('click', async (event) => {
   }
 
   // A real, real-data-driven cell was clicked (covered/not_applicable/
-  // whitespace -- never the reserved, inert active-play state, which
-  // carries no data-buying-center attribute) -- open the popover against
-  // it.
+  // whitespace/active_play -- active_play carries the SAME
+  // data-buying-center contract as any other cell, since it is a derived
+  // attention state over a real 'whitespace' answer, not a separate
+  // immutable value; see renderWhitespaceCell()'s own doc comment) --
+  // open the popover against it.
   const cell = event.target.closest('.ws-cell[data-buying-center]');
   if(cell){
     openWsCellPopover(cell);
@@ -11514,7 +11750,14 @@ function openWsRelationshipPopover(trigger){
   const contacts = contactsKnownForBuyingCenter(account, center);
   const isTeamConfirmed = confirmedCentersForAccount(accountName).includes(center);
   const cellAnswers = cellAnswersForAccount(accountName);
-  const isCellMappingKnown = WHITESPACE_CATEGORIES.some(cat => !!cellAnswers[whitespaceCellKey(center, cat)]);
+  // Doctrine correction (founder, 2026-08-19, Warner Bros. Discovery
+  // trace): matches computeAccountWhitespaceMatrix()'s own hasCoveredCell
+  // -- only a Covered answer implies a relationship in this buying
+  // center; Whitespace/Not Applicable prove the opposite or are neutral,
+  // never relationship access. Was previously "any answer," which let a
+  // row with only Whitespace-answered cells and no other legitimate
+  // evidence source claim "Known from your account mapping."
+  const isCellMappingKnown = WHITESPACE_CATEGORIES.some(cat => cellAnswers[whitespaceCellKey(center, cat)] === 'covered');
   // Nothing legitimate to show (e.g. a stale click after the last
   // evidence source was just removed elsewhere) -- decline to open rather
   // than show an empty/misleading popover.

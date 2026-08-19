@@ -26,9 +26,13 @@
 //   - renderWhitespaceCell() emits data-buying-center/data-category/
 //     data-cell-answer attributes (HTML-escaped) so the delegated click
 //     listener can resolve which cell was clicked, and so reopening an
-//     answered cell's popover can show its current selection -- the
-//     reserved 'active_play' branch stays untouched (no attributes, not
-//     interactive).
+//     answered cell's popover can show its current selection --
+//     'active_play' now emits the SAME attributes (founder correction,
+//     2026-08-19): it is a derived attention state over a real underlying
+//     'whitespace' answer, not a separate immutable value, so it opens the
+//     identical popover, pre-selected on "We don't sell this here." See
+//     scripts/test-whitespace-cell-answers-live.js section 11/11b for the
+//     real-browser click-through coverage.
 //   - saveWhitespaceCellAnswer() POSTs to the durable endpoint and trusts
 //     only the server's authoritative response, never assumes the write
 //     succeeded client-side.
@@ -245,6 +249,37 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(leadership.metaKind === 'relationship', 'REQUIRED: metaKind marks this as the relationship (non-contact) case, so rendering applies the subtle teal treatment, not the plain contact styling');
 }
 {
+  // Doctrine correction (founder, 2026-08-19, Warner Bros. Discovery
+  // trace): a Whitespace answer must NEVER imply a relationship. Only
+  // Covered proves House Accounts actually sells into this Buying Center
+  // -- "we don't sell this here" is knowledge about the cell, not access
+  // to the Buying Center. This is the exact real-account case that
+  // surfaced the bug: an explicitly-answered "whitespace" cell with no
+  // team confirmation and no contact must NOT produce "Known relationship"
+  // or a 'cell-mapping' evidence source, even though the matrix still has
+  // enough evidence overall to render (not fall back to the mapping
+  // prompt).
+  const { dash } = makeSandbox();
+  const account = { contacts: [], categoryTypes: [] };
+  const cellAnswers = { [dash.whitespaceCellKey('Events', 'Apparel')]: 'whitespace' };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, [], cellAnswers);
+  assert(matrix.hasAnyBuyingCenterEvidence === true, 'REQUIRED: an answered cell (any answer) still counts as enough evidence for the matrix to render');
+  const events = matrix.rows.find(r => r.center === 'Events');
+  assert(JSON.stringify(events.evidenceSources) === '[]', `REQUIRED: a Whitespace-only answered cell produces NO relationship evidence source -- knowledge about the cell is not access to the Buying Center (got ${JSON.stringify(events.evidenceSources)})`);
+  assert(events.metaLine === '', `REQUIRED: with no legitimate relationship evidence, the row shows no metaLine at all (falls through to "+ Add relationship" in the render) -- never "Known relationship" from a Whitespace answer alone (got "${events.metaLine}")`);
+}
+{
+  // Same correction, Not Applicable answer -- also never implies a
+  // relationship (neutral, not proof of business there).
+  const { dash } = makeSandbox();
+  const account = { contacts: [], categoryTypes: [] };
+  const cellAnswers = { [dash.whitespaceCellKey('Procurement', 'Drinkware')]: 'not_applicable' };
+  const matrix = dash.computeAccountWhitespaceMatrix(account, [], cellAnswers);
+  const proc = matrix.rows.find(r => r.center === 'Procurement');
+  assert(JSON.stringify(proc.evidenceSources) === '[]', `REQUIRED: a Not-Applicable-only answered cell produces NO relationship evidence source (got ${JSON.stringify(proc.evidenceSources)})`);
+  assert(proc.metaLine === '', 'REQUIRED: Not Applicable alone never claims "Known relationship"');
+}
+{
   // Multiple legitimate evidence sources can coexist for one row (founder
   // round 2 doctrine) -- evidenceSources lists every one of them, not just
   // whichever the metaLine happens to summarize.
@@ -304,10 +339,20 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   assert(/data-buying-center="Events"/.test(html) && /data-category="Safety"/.test(html), 'REQUIRED: a whitespace cell is still fully addressable (buying center + category attributes present) so it can be answered');
 }
 {
+  // Interaction correction (founder, 2026-08-19): active_play is a DERIVED
+  // attention state over a real underlying 'whitespace' answer, not a
+  // separate immutable value -- the EXPAND cell is fully interactive, using
+  // the SAME popover contract as any other cell, and always carries
+  // data-cell-answer="whitespace" (the real, durable answer that made it
+  // eligible in the first place, never "active_play" itself). See
+  // scripts/test-whitespace-cell-answers-live.js section 11/11b for the
+  // real-browser click-through-to-Covered/N/A coverage.
   const { dash } = makeSandbox();
-  const html = dash.renderWhitespaceCell({ status: 'active_play' });
-  assert(!/data-buying-center/.test(html) && !/role="button"/.test(html), 'REQUIRED: the reserved, still-unassigned active_play branch stays non-interactive -- no data attributes, not a click target');
-  assert(/EXPAND/.test(html), 'sanity: the reserved active_play markup itself is untouched');
+  const html = dash.renderWhitespaceCell({ status: 'active_play', center: 'Marketing', category: 'Headwear' });
+  assert(/data-buying-center="Marketing"/.test(html) && /data-category="Headwear"/.test(html), 'REQUIRED: the active_play (EXPAND) cell carries the same buying-center/category data attributes as any other cell');
+  assert(/role="button"/.test(html) && /tabindex="0"/.test(html), 'REQUIRED: the active_play (EXPAND) cell is keyboard-reachable and a real click target, not a dead tile');
+  assert(/data-cell-answer="whitespace"/.test(html), 'REQUIRED: the active_play cell\'s data-cell-answer is the real durable underlying answer ("whitespace"), never "active_play" itself -- active_play is never persisted as a cell answer');
+  assert(/EXPAND/.test(html), 'sanity: the active_play markup still shows the EXPAND mark');
 }
 {
   // Escaping: a hostile buying-center/category string (hypothetical --
@@ -530,6 +575,30 @@ function makeSandbox({ fetchImpl, hasAuth = true, accounts = [] } = {}){
   dash.openWsRelationshipPopover(trigger);
   const popover = dash.ensureWsRelPopover();
   assert(!popover.classList.contains('open'), 'REQUIRED: with no legitimate evidence for the row, the popover declines to open at all');
+}
+{
+  // Doctrine correction regression (founder, 2026-08-19, Warner Bros.
+  // Discovery trace): a row whose ONLY evidence is Whitespace-answered
+  // cells (no team confirmation, no contact) must also decline to open --
+  // "Known from your account mapping" is no longer a legitimate claim
+  // from Whitespace/Not-Applicable answers alone.
+  const { dash } = makeSandbox({
+    accounts: [{ name: 'Acme Corp', contacts: [] }],
+    fetchImpl: async (url) => {
+      if(url === '/api/whitespace-map') return { ok: true, json: async () => ({ ok: true, confirmations: {} }) };
+      return { ok: true, json: async () => ({ ok: true, answers: { 'acme': { 'Events||Apparel': 'whitespace', 'Events||Recognition / Awards': 'whitespace' } } }) };
+    }
+  });
+  await dash.loadWhitespaceConfirmations();
+  await dash.loadWhitespaceCellAnswers();
+  const trigger = makeFakeElement('button');
+  const section = makeFakeElement('div');
+  section.dataset.accountName = 'Acme Corp';
+  trigger.__section = section;
+  trigger.dataset.buyingCenter = 'Events';
+  dash.openWsRelationshipPopover(trigger);
+  const popover = dash.ensureWsRelPopover();
+  assert(!popover.classList.contains('open'), 'REQUIRED: a row with ONLY Whitespace-answered cells (no team confirmation, no contact) declines to open the relationship popover -- Whitespace answers are not relationship evidence, even multiple of them');
 }
 {
   // Missing context never throws.
