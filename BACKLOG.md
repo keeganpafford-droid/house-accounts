@@ -184,6 +184,41 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 
 **Explicitly not built:** Prepare for Call deep-link from an Active Expansion Play (evaluated, did not fit cleanly within V1 scope, deliberately deferred); dismiss/snooze/task-management lifecycle; new signal scoring; industry templates as a trigger; Prospecting.
 
+### Product Cohesion V1 — COMPLETED / BANKED / LIVE IN PRODUCTION (2026-08-19)
+
+**Status: BANKED.** Started from the founder's own real-product-usage hypothesis (2026-08-19, after using Relationship Footprint/Contact Durability — see the retired "Product Cohesion / canonical Account Intelligence workspace" hypothesis entry this replaces) and delivered across a recon/audit pass plus two implementation rounds, each independently founder-approved on real Preview click-testing. Merged (`--no-ff`) to `main` at `8d31edd590945ad3c5e22f3d298c95509d10afea` (from branch `claude/cohesion-simplification-v1`, approved tip `120ab8583d0009ccd5d925edf3386041642af05b`), founder-confirmed live in Production via independent Vercel verification (deployment `dpl_4zDKsdS1StoUZEYq8dBcrZeuevnq`, READY). Merged-`main` suite: 170/170. Founder personally click-tested the real deployed Preview across multiple rounds, including a real-Preview repro of a confirmed post-approval blocker (the "View signal(s) →" toast CTA), before final approval: "Product Cohesion V1 is approved."
+
+**Key outcomes (doctrine — preserve, do not re-litigate or re-audit without a new, specific reason):**
+- Dashboard is the canonical place to decide where to spend attention.
+- Account Intelligence is the canonical destination for understanding and working one customer.
+- Research is a capability/process attached to an account, not a separate conceptual destination.
+- Account-name links are the canonical entry into Account Intelligence from both Manage Customer Accounts and Dashboard priority cards.
+- Business Signal = evidence.
+- Reason to Reach Out = grounded commercial interpretation.
+- Priority = which Reasons deserve Dashboard attention now.
+- `Opportunity` has been reduced/retired where redundant in the approved scope (a bounded vocabulary correction, never a mechanical sweep of the word).
+- Relationship terminology was disambiguated without removing underlying ranking/persistence logic.
+- Active Expansion Plays remain distinct from Reasons to Reach Out.
+- Week / Month / Quarter / Year are now one consistent Priorities mental model ("This [Week/Month/Quarter/Year]'s Priorities").
+- Returning-user empty-state copy now reflects autonomous monitoring, not a re-upload/refresh prompt.
+- Research-completion CTAs route into Account Intelligence → Business Signals (`deepLinkToAccountResearch()`), never a separate results view or a Prepare-for-Call/Verified-Opportunity handoff implying a play that may not exist.
+- Lower-confidence / secondary research evidence can remain visible without manufacturing a Reason to Reach Out.
+
+**Shipped, round by round:**
+- **Round 3 (simplification slice):** retired the duplicate "View Account" button (the account-name link is the sole entry point); "View Research" deep-links into Account Intelligence's own Business Signal evidence instead of a separate results view; Active Expansion Plays got its own distinct icon (no collision with Reasons to Reach Out); the Whitespace Intelligence section gained a "Relationships" heading; the return-visit monitoring empty state no longer tells a rep to re-upload/refresh; "Relationship Expansion" badge label renamed to "Category Expansion" (display-only, classification identity untouched).
+- **Round 4 (final cohesion corrections):** account-name links get real link affordance (brand teal/green color, pointer cursor, hover underline, keyboard focus) in both Manage Customer Accounts and Dashboard priority cards; Dashboard priority-card company names link into Account Intelligence while Useful/Not Useful/Prepare for Call stay independent card actions (never a card-wide link); all four timebox headings normalized; `feedSummary()`'s two adjacent nouns corrected ("business signals"/"repeat buying patterns"); the research-completion "View signal(s) →" CTA fixed at both call sites.
+- **Round 4 follow-up (confirmed blocker):** root-caused via real-browser reproduction — the toast's own fixed 8s auto-dismiss timer could remove the CTA button from the DOM before a rep finished reading and decided to click a deliberate navigation decision (not a quick "Undo"). Fixed: `showToast()` now pauses its dismiss timer on hover/keyboard-focus and resumes the remaining time on mouseleave/blur; both research-completion toasts also get a longer base window (15s, was 8s). Also found and fixed a second, silent breakage along the way: `researchAccountFromCard()` (the Research button directly on a Dashboard/Account Intelligence card, as opposed to the Manage Customer Accounts modal's own row button) called a `showToast` that was out of its scope entirely (declared inside the modal's private IIFE) — `typeof` on an out-of-scope identifier silently returns `'undefined'` rather than throwing, so that toast never rendered at all for that entry point. Now reaches the one real implementation via `window.HouseAccountManager.showToast`.
+
+**Explicitly not built — preserve as distinct future items, do not fold back into a re-audit:**
+- **Whitespace Intelligence first-use/guided education** — moved to "Account Expansion / Whitespace Intelligence / Growth Map — remaining work" below.
+- **Slice 3 — stricter Category Expansion / relationship-expansion generation logic** — already tracked under "Account Expansion / Whitespace Intelligence / Growth Map — remaining work" below; unaffected by this cohesion work.
+- **Find More Like Them / Lookalike Expansion** — tracked under LATER below.
+- **Proactive Account Plays / Signal-to-Activation Intelligence** — tracked under LATER below.
+- **Integrations** — tracked under SOON below.
+- **Broader onboarding/demo infrastructure** — tracked under "Onboarding/upload polish" (SOON) and "Demo Booking + Guided Customer Activation" (LATER) below.
+
+**Founder determination — do not reopen or start another cohesion audit absent a confirmed, specific blocker.** The next step is a full founder release-candidate smoke test of the live product, not further cohesion/UX work.
+
 ---
 
 ## NOW — Activation & launch quality
@@ -276,6 +311,7 @@ Work that makes House Accounts' recommendations get better over time, not just v
 **Remaining scope, sequenced:**
 - **Slice 3 — rework Relationship Expansion opportunity generation.** Still open, distinct from Active Expansion Plays V1 above — that shipped as a new, separate, strictly-gated panel; it did not touch or rework `generateFutureOpportunities()`'s existing industry-template gate (`if(industry === 'Automotive...') if(cats.has('Apparel'))...`), which still stands as a standalone trigger for the pre-existing Relationship Expansion opportunity type. Today's `generateFutureOpportunities()` industry-template gate must stop being a standalone trigger. A recommended expansion play requires an evidence-backed whitespace cell (non-confirmed-absent) PLUS at least one grounded commercial trigger — a real public signal, a detected recurring/program pattern (`findRepeatPatternGroups()`), or a rep-supplied introduction path (`suggestedIntroductionPath()`). An industry template alone becomes necessary-but-not-sufficient, never sufficient by itself. This touches live, revenue-relevant opportunity-generation logic with existing test dependencies — the highest-risk slice, do carefully with a full regression pass.
 - **Location/subsidiary/division whitespace** — explicitly deferred. Current data (a flat city/state string) cannot support this dimension truthfully; would need richer CSV input or a live integration (see Integrations) before it's worth building.
+- **Whitespace Intelligence first-use / guided education** — surfaced by founder observation (2026-08-19), after Active Expansion Plays V1 banked; preserved here (moved from the now-banked Product Cohesion V1 entry under Recently completed) rather than implemented. Many users may never have used a formal whitespace/account-mapping document before. The product may be functionally correct while still leaving a new user asking "what am I supposed to do with this grid?" Direction to evaluate when this is picked up: a lightweight contextual explanation of what Whitespace Intelligence is for (first-use guidance, not a documentation burden); explain the simple workflow — *map who you know → mark what you sell → identify gaps → House Accounts watches for the right time to expand*; potentially contextual "How this works" affordances, empty-state guidance, or onboarding cues; the demo/setup-call flow (see "Demo Booking + Guided Customer Activation" under LATER) should also teach this workflow. **Do not implement now.**
 - Rep confirmations should eventually feed the existing private org-scoped Behavioral Learning event foundation's *pattern* (not necessarily its literal table) — a confirm/correct action is structurally similar to the quality-feedback events `org-preference-learning.js` already consumes.
 
 ### Behavioral Learning V1 — remaining work (notification wiring, richer dimensions)
@@ -306,20 +342,6 @@ Do not build a parallel opportunity-scoring system alongside any of this — it 
 **Explicitly not a CRM:** House Accounts is not becoming a full CRM (no generic meeting/quote/win/revenue tracking system of its own) — any of the above that requires data House Accounts doesn't already capture stays out of scope until there's a specific, evidence-backed reason to capture it.
 
 **Permission role vs. selling role stay separate** — see "Manager/team workflow" under SOON below, which already establishes this distinction; do not conflate the two here either.
-
-### Product Cohesion / canonical Account Intelligence workspace — hypothesis to evaluate (not started)
-
-**Surfaced by:** founder's own real-product usage (2026-08-19), directly after using the Relationship Footprint / Contact Durability feature (see Recently completed above).
-
-**Founder observation:** Dashboard tells the rep where to go; Account Intelligence is where the rep works the customer. **Supporting principle: centralize the context, not necessarily the clicks.**
-
-**Hypothesis to evaluate — not decided, not built:** Account Intelligence should become the canonical customer workspace / source of truth for customer-specific context, potentially containing reasons to reach out, relationship footprint, contacts, Whitespace Intelligence, purchase/order evidence, business signals/research, Active Expansion Plays, and Prepare for Call context all in one place. Fast actions can remain accessible directly from Dashboard/Priorities, but should ideally deep-link into the appropriate account/play state rather than creating competing mini account experiences.
-
-**Scope of the eventual audit:** explicitly review the current duplication/fragmentation across View Account, View Research, Research Again, Research Account inside Account Intelligence, Dashboard Priority cards, Prepare for Call, and future Active Expansion Plays. Specifically evaluate whether separate View Research / Research Again experiences remain necessary once Account Intelligence is complete — research should conceptually become something performed *on an account*, with the result living in that account's workspace, not a parallel destination.
-
-**Priority: after Account Expansion V1 (banked — see Recently completed above), before Find More Like Them / Prospecting.** Do not execute this cleanup now — this is a hypothesis to evaluate, not an approved redesign.
-
-**Whitespace Intelligence education / guided use — surfaced by founder observation (2026-08-19), after Active Expansion Plays V1 banked.** Many users may never have used a formal whitespace/account-mapping document before. The product may be functionally correct while still leaving a new user asking "what am I supposed to do with this grid?" Preserve as part of this same Product Cohesion / UX / Guided Activation checkpoint, not a separate project. Direction to evaluate when this checkpoint is picked up: a lightweight contextual explanation of what Whitespace Intelligence is for (first-use guidance, not a documentation burden); explain the simple workflow — *map who you know → mark what you sell → identify gaps → House Accounts watches for the right time to expand*; potentially contextual "How this works" affordances, empty-state guidance, or onboarding cues; the demo/setup-call flow (see "Demo Booking + Guided Customer Activation" under LATER) should also teach this workflow. **Do not implement now.**
 
 ---
 
