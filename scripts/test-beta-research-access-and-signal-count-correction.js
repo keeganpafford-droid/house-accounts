@@ -191,17 +191,22 @@ function sig(overrides = {}) {
 
 // Required regression 1: a Manage Customer Accounts row with research opens
 // the existing research machinery via a "View Research" action wired to
-// data-view-research-act="account", which the modal's click handler routes
-// to the SAME openResearchedAccountOpportunities() Recently Researched's own
-// button already calls.
+// data-view-research-act="account". Cohesion round 3 (2026-08-19): the
+// modal's click handler now routes this to deepLinkToAccountResearch() --
+// Account Intelligence's own Business Signal evidence, scrolled into view
+// -- rather than opening the separate Research Results view via
+// openResearchedAccountOpportunities(). That function still exists and is
+// still called by the UNRELATED "Recently Researched" panel's own button
+// (a different destination for a different purpose); only this modal's
+// View Research action changed.
 {
   assert(/data-view-research-act="account"/.test(DASHBOARD_SRC), 'REQUIRED regression 1: accountRow() renders a View Research action with data-view-research-act="account"');
   assert(/View Research<\/button>/.test(DASHBOARD_SRC), 'REQUIRED regression 1: the action is labeled "View Research"');
 
   const handlerHasBranch = DASHBOARD_SRC.includes(`const viewResearchBtn = e.target.closest('[data-view-research-act="account"]');`);
-  const handlerCallsSharedFn = /if\(viewResearchBtn\)\{[\s\S]{0,400}?openResearchedAccountOpportunities\(vrListId, vrAccountName\)/.test(DASHBOARD_SRC);
+  const handlerCallsDeepLink = /if\(viewResearchBtn\)\{[\s\S]{0,400}?deepLinkToAccountResearch\(vrAccountName\)/.test(DASHBOARD_SRC);
   assert(handlerHasBranch, 'REQUIRED regression 1: the Manage Customer Accounts click handler has a branch for the View Research action');
-  assert(handlerCallsSharedFn, 'REQUIRED regression 1: clicking View Research calls the SAME openResearchedAccountOpportunities(uploadId, accountName) Recently Researched\'s own button already calls');
+  assert(handlerCallsDeepLink, 'REQUIRED regression 1 (cohesion round 3): clicking View Research calls deepLinkToAccountResearch(accountName) -- Account Intelligence\'s own evidence, not a separate results view');
 
   // No new research renderer / no Account Workspace: the View Research
   // branch does not call any window.location navigation, does not open a

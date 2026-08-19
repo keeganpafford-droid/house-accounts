@@ -164,8 +164,8 @@ assert(
 
 const processDataSrc = extractFn(DASHBOARD_SRC, 'processData');
 assert(
-  /if\(!aggregateDashboardEverLoaded\)\{\s*\/\/ Render the focused recommendation feed\s*renderWeeklyPrioritiesFeed\(futureOpportunities, accounts, \{/.test(processDataSrc),
-  'required test 10: processData() only writes this single upload\'s own accounts/opportunities into the main #results/priorities feed when no aggregate dashboard has ever loaded yet this session -- it never overwrites an existing aggregate with a single-upload snapshot'
+  /if\(!aggregateDashboardEverLoaded\)\{[\s\S]{0,400}?renderWeeklyPrioritiesFeed\(futureOpportunities, accounts\);/.test(processDataSrc),
+  'required test 10: processData() only writes this single upload\'s own accounts/opportunities into the main #results/priorities feed when no aggregate dashboard has ever loaded yet this session -- it never overwrites an existing aggregate with a single-upload snapshot (cohesion round 3: renderWeeklyPrioritiesFeed() no longer takes an options/emptyMessage override -- its own default is now the correct, monitoring-aware message)'
 );
 assert(
   /if\(!aggregateDashboardEverLoaded\)\{\s*showBuildingDashboardPanelPlaceholder\(\);\s*\}/.test(processDataSrc),

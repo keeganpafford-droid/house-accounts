@@ -53,6 +53,11 @@ const ESCAPE_HTML_SRC = extractFn(DASHBOARD_SRC, 'escapeHtml');
 const FMT_MONEY_SRC = extractFn(DASHBOARD_SRC, 'fmtMoney');
 const CLAMP_SCORE_SRC = extractFn(DASHBOARD_SRC, 'clampScore');
 const REASON_AND_STARTER_BLOCK = extractRange(DASHBOARD_SRC, 'function getReasonToReachOutTitle(opp){', 'function getConversationStarterText(');
+// Cohesion round 3: renderRepOpportunityCard() now links the company name
+// to Account Intelligence via accountIntelligenceHref(), which itself
+// needs normalizeCompanyNameForLimit().
+const ACCOUNT_INTELLIGENCE_HREF_SRC = extractFn(DASHBOARD_SRC, 'accountIntelligenceHref');
+const NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC = extractFn(DASHBOARD_SRC, 'normalizeCompanyNameForLimit');
 
 function makeSandbox(){
   const sandbox = {
@@ -71,6 +76,8 @@ function makeSandbox(){
     ESCAPE_HTML_SRC,
     FMT_MONEY_SRC,
     CLAMP_SCORE_SRC,
+    ACCOUNT_INTELLIGENCE_HREF_SRC,
+    NORMALIZE_COMPANY_NAME_FOR_LIMIT_SRC,
     DEDUPE_AND_IDENTITY_BLOCK,
     CARD_AND_MODAL_BLOCK,
     OPPORTUNITY_GENERATION_BLOCK,

@@ -297,8 +297,8 @@ assert(
 // ---------------------------------------------------------------------------
 const accountRowSrc = extractFn(DASHBOARD_SRC, 'accountRow');
 assert(
-  /researched \? 'Research Again' : 'Research Account'/.test(accountRowSrc),
-  'accountRow() labels never-researched accounts "Research Account" and previously-researched accounts "Research Again"'
+  /researched \? 'Refresh Research' : 'Research Account'/.test(accountRowSrc),
+  'accountRow() labels never-researched accounts "Research Account" and previously-researched accounts "Refresh Research" (cohesion round 3: relabeled from "Research Again")'
 );
 assert(
   !/inScope/.test(accountRowSrc),

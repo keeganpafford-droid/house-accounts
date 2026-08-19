@@ -440,12 +440,14 @@ assert(/AbortController/.test(DASHBOARD_SRC), '1) dashboard/index.html now has r
   // assertions below only need to confirm these patterns are present.
   const handoffSrc = extractFn(DASHBOARD_SRC, 'handleResearchClick');
   assert(/applyModalResearchResultToDashboard\(fresh, listId\)/.test(handoffSrc), 'composite: the modal\'s completion handoff passes its own captured listId, not a global, into applyModalResearchResultToDashboard()');
-  // Follow-up round: the toast's "View opportunities" action now calls the
-  // shared openResearchedAccountOpportunities() production function (same
-  // one the Recently Researched row's own button calls -- see the "7/8"
-  // test below) instead of scrollToAccountResult(), still passing its own
-  // captured listId, never currentUploadId.
-  assert(/openResearchedAccountOpportunities\(listId, accountName\)/.test(handoffSrc), 'composite: the "View opportunities" toast action passes the same captured listId into openResearchedAccountOpportunities(), not currentUploadId');
+  // Cohesion round 3 (Atlas Precision correction): the toast's "View
+  // signal(s) ->" action now deep-links into the account's Business
+  // Signals via deepLinkToAccountResearch(accountName) instead of the old
+  // openResearchedAccountOpportunities()/scrollToAccountResult() handoff --
+  // "1 signal found" is not the same claim as a recommended play existing,
+  // so this no longer routes into the Prepare-for-Call/Verified-Opportunity
+  // surface at all.
+  assert(/deepLinkToAccountResearch\(accountName\)/.test(handoffSrc), 'composite: the "View signal(s) ->" toast action deep-links via deepLinkToAccountResearch(accountName), not the old opportunities handoff');
   assert(!/scrollToAccountResult\(accountName\)/.test(DASHBOARD_SRC) && !/applyModalResearchResultToDashboard\(fresh\)\s*[;)]/.test(DASHBOARD_SRC), 'composite: no remaining call site uses the old name-only signature');
 }
 
@@ -715,13 +717,15 @@ async function runClientTests(){
     assert(/disabled/.test(otherRowHtml) && !/Researching…/.test(otherRowHtml), '2) a DIFFERENT account in the same list is also disabled (single-active-run-per-upload) but is not itself labeled "Researching…"');
   }
   {
-    // Requirement 3: idle + a persisted lastResearchedAt -> "Research
-    // Again" and the persisted timestamp, not a stale/local flag.
+    // Requirement 3: idle + a persisted lastResearchedAt -> "Refresh
+    // Research" and the persisted timestamp, not a stale/local flag.
+    // (Cohesion round 3, 2026-08-19: relabeled from "Research Again" --
+    // same action, same state-driven logic, new user-facing wording.)
     const sandbox = createSandbox({ accounts: [], currentUploadId: 'upload-1' });
     const list = { id: 'upload-1', name: 'QA List', status: 'active', companyCount: 1, researchRunState: { status: 'idle' } };
     const account = { id: 'a1', name: 'L.L.Bean', monitoringStatus: 'active', lastResearchedAt: '2026-08-03T12:00:00Z' };
     const rowHtml = sandbox.accountRow(list, account);
-    assert(/Research Again/.test(rowHtml) && !/disabled/.test(rowHtml), '3) idle state + a prior lastResearchedAt shows an ENABLED "Research Again"');
+    assert(/Refresh Research/.test(rowHtml) && !/disabled/.test(rowHtml), '3) idle state + a prior lastResearchedAt shows an ENABLED "Refresh Research"');
     assert(/Last researched/.test(rowHtml), '3) the persisted "Last researched" date is shown in the row, sourced from the server, not a transient flag');
     assert(sandbox.researchRunBanner(list) === '', '3) no run banner is shown once the run is idle/complete');
   }
