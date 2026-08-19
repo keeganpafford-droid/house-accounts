@@ -715,13 +715,15 @@ async function runClientTests(){
     assert(/disabled/.test(otherRowHtml) && !/Researching…/.test(otherRowHtml), '2) a DIFFERENT account in the same list is also disabled (single-active-run-per-upload) but is not itself labeled "Researching…"');
   }
   {
-    // Requirement 3: idle + a persisted lastResearchedAt -> "Research
-    // Again" and the persisted timestamp, not a stale/local flag.
+    // Requirement 3: idle + a persisted lastResearchedAt -> "Refresh
+    // Research" and the persisted timestamp, not a stale/local flag.
+    // (Cohesion round 3, 2026-08-19: relabeled from "Research Again" --
+    // same action, same state-driven logic, new user-facing wording.)
     const sandbox = createSandbox({ accounts: [], currentUploadId: 'upload-1' });
     const list = { id: 'upload-1', name: 'QA List', status: 'active', companyCount: 1, researchRunState: { status: 'idle' } };
     const account = { id: 'a1', name: 'L.L.Bean', monitoringStatus: 'active', lastResearchedAt: '2026-08-03T12:00:00Z' };
     const rowHtml = sandbox.accountRow(list, account);
-    assert(/Research Again/.test(rowHtml) && !/disabled/.test(rowHtml), '3) idle state + a prior lastResearchedAt shows an ENABLED "Research Again"');
+    assert(/Refresh Research/.test(rowHtml) && !/disabled/.test(rowHtml), '3) idle state + a prior lastResearchedAt shows an ENABLED "Refresh Research"');
     assert(/Last researched/.test(rowHtml), '3) the persisted "Last researched" date is shown in the row, sourced from the server, not a transient flag');
     assert(sandbox.researchRunBanner(list) === '', '3) no run banner is shown once the run is idle/complete');
   }

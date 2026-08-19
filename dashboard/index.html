@@ -1231,6 +1231,13 @@
   .bd-item .val{font-family:var(--display); font-weight:700; font-size:1.4rem; margin-top:4px;}
 
   .ws-subtitle{font-family:var(--body); font-size:0.82rem; color:var(--muted); margin-bottom:14px;}
+  /* Cohesion round 3: Relationship footprint had no heading anywhere --
+     only small row-label text ("Known relationship"/"+Add relationship")
+     inside the matrix's own row headers, undiscoverable without already
+     knowing to look. This names the concept the row headers already carry,
+     without moving or restructuring the matrix itself (out of scope this
+     round -- see the Contacts-repositioning deferral). */
+  .ws-relationships-heading{font-family:var(--mono); font-size:0.66rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin:2px 0 8px;}
   /* Founder correction (2026-08-19): fixed-width columns intentionally
      never shrink to fit a laptop-width container -- the matrix scrolls
      horizontally instead, with the Buying Center column pinned via
@@ -11361,8 +11368,8 @@ function renderActiveExpansionPlaysPanel(plays, account){
   }).join('');
   return `
     <div class="aep-panel">
-      <div class="section-title">🎯 Active Expansion Plays</div>
-      <div class="ws-subtitle">Confirmed whitespace, a real relationship, and a real reason to ask — together.</div>
+      <div class="section-title">🧭 Active Expansion Plays</div>
+      <div class="ws-subtitle">The strongest Reasons to Reach Out we can show you — confirmed whitespace, a real relationship, and a real reason to ask, together.</div>
       ${groupsHtml}
     </div>
   `;
@@ -11398,6 +11405,7 @@ function renderAccountWhitespaceSection(account){
     <div class="account-whitespace-section" data-account-name="${escapeHtml(accountName)}">
       <div class="section-title">🗺️ Whitespace Intelligence</div>
       <div class="ws-subtitle">See where you have business today — and where there may be room to grow.</div>
+      <div class="ws-relationships-heading">👥 Relationships — who your team already knows in each Buying Center</div>
       ${body}
       ${renderActiveExpansionPlaysPanel(activePlays, account)}
       ${renderUnattributedPurchasesPanel(matrix.unattributed)}
@@ -13586,7 +13594,16 @@ function recommendationBadgeMeta(opp){
     'Annual Buying Pattern': {icon:'📅', label:'Annual Buying Pattern'},
     'Repeat Buying Pattern': {icon:'🔁', label:'Repeat Buying Pattern'},
     'Business Trigger': {icon:'🌐', label:'Business Trigger'},
-    'Relationship Expansion': {icon:'🧩', label:'Relationship Expansion'},
+    // Cohesion round 3: display label only, renamed to remove the
+    // collision with "Relationship" (now reserved for Buying Center
+    // access/footprint) -- the map KEY stays 'Relationship Expansion'
+    // unchanged, since getRecommendationType()/isRelationshipExpansionOpportunity()
+    // and other internal classification logic match against it. No
+    // generation/evidence logic changes here -- that question (this
+    // opportunity type's ungated industry-template trigger vs. Active
+    // Expansion Play's stricter evidence bar) is the separate, already-
+    // tracked Slice 3 backlog item.
+    'Relationship Expansion': {icon:'🧩', label:'Category Expansion'},
     'Dormant High-Value Account': {icon:'💤', label:'Dormant High-Value'},
     'Recent Project Follow-Up': {icon:'✅', label:'Recent Project Follow-Up'},
     'Buying Spike': {icon:'📈', label:'Buying Spike'},
@@ -14303,7 +14320,7 @@ function pluralize(n, singular, plural){
   return `${count} ${count === 1 ? singular : (plural || `${singular}s`)}`;
 }
 
-function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
+function renderWeeklyPrioritiesFeed(opportunities, accounts){
   const grid = document.getElementById('opportunitiesGrid');
   const resultCount = document.getElementById('resultCount');
   const config = TIMEBOX_CONFIG[activeTimebox] || TIMEBOX_CONFIG.week;
@@ -14329,11 +14346,21 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts, options={}){
     resultCount.innerHTML = `<span>${showingLabel} · From ${pluralize(accountCount, 'monitored account')} · ${feedSummary(displayedOpportunities)}</span>`;
   }
   if(grid){
-    // Priority 3 item 3: the empty-state copy now reflects the active tab
-    // (This Week/Month/Quarter/Year) instead of always saying "this week"
-    // regardless of which timeframe is actually empty.
-    const defaultEmptyMessage = `<div class="no-signals-message">No additional opportunities surfaced ${config.label.toLowerCase()}. Upload or refresh your account list to check for new reasons to reach out.</div>`;
-    const emptyMessage = displayedOpportunities.length === 0 ? (options.emptyMessage || defaultEmptyMessage) : '';
+    // Cohesion round 3 (2026-08-19): this is now the ONE empty-state
+    // message for "nothing actionable" -- previously a second, stale
+    // "upload or refresh your account list" message lived here as the
+    // default, while a correct, monitoring-aware message only reached a
+    // rep via a one-off options.emptyMessage override on processData()'s
+    // first-upload-only call site. Every ordinary return visit (ONLY
+    // this default) told a returning rep to re-upload even though
+    // monitoring runs autonomously in the background. That override is
+    // now retired -- this is the single message every caller gets, and it
+    // reflects the active tab (This Week/Month/Quarter/Year) via
+    // config.label, correctly suggesting the next-wider window only when
+    // one actually exists (nothing wider than "This Year").
+    const nextWiderTimeboxLabel = {week: 'This Month', month: 'This Quarter', quarter: 'This Year'}[activeTimebox] || null;
+    const defaultEmptyMessage = `<div class="no-signals-message">No actionable opportunities yet ${config.label.toLowerCase()} -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out ${config.label.toLowerCase()}. New business triggers, reorder windows, and follow-ups are checked automatically${nextWiderTimeboxLabel ? `; try ${nextWiderTimeboxLabel} or research your top accounts now to look further ahead` : ''}.</div>`;
+    const emptyMessage = displayedOpportunities.length === 0 ? defaultEmptyMessage : '';
     const actionButton = allOpportunities.length > config.limit
       ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
       : '';
@@ -14418,6 +14445,55 @@ function goToAccountIntelligence(name){
   window.location.hash = accountIntelligenceHref(name);
 }
 
+// Cohesion round 3 (2026-08-19): "View Research" (Manage Customer
+// Accounts) no longer opens a separate results view -- Research is a
+// capability House Accounts performs for an account, not a second
+// destination. This lands the rep on the SAME Account Intelligence
+// destination every other entry point uses, scrolled to the Business
+// Signal evidence that "View Research" used to show elsewhere. Reuses
+// goToAccountIntelligence() verbatim (no second navigation mechanism) and
+// the existing highlightResultElement() treatment.
+//
+// Watches #accountList (renderDetailedAccountViews()'s own render target)
+// with a MutationObserver rather than guessing how many
+// requestAnimationFrame callbacks the hashchange-triggered re-render needs
+// -- confirmed in practice that a fixed double-rAF wait (the pattern
+// settleThenRunGuidedTourStep() uses for a same-tick DOM change) is not
+// reliable here: setting location.hash queues hashchange as a task, not a
+// microtask, and real measured runs showed the re-render landing on a
+// later, non-deterministic tick, so a frame-count guess silently found no
+// target on some runs and never scrolled/highlighted anything. A mutation
+// observer reacts to the actual DOM replacement whenever it really
+// happens, with a bounded 5s safety disconnect so a genuinely-missing
+// target (or an already-current view, where no re-render/mutation occurs
+// at all) never leaks the observer.
+function deepLinkToAccountResearch(name){
+  const applyHighlight = () => {
+    const target = document.querySelector('.account-business-signals-title');
+    if(!target) return;
+    target.scrollIntoView({behavior:'smooth', block:'start'});
+    highlightResultElement(target);
+  };
+  // Deliberately does NOT disconnect on the first successful highlight:
+  // renderAccountWhitespaceSection()'s own fire-and-forget
+  // loadWhitespaceConfirmations()/loadWhitespaceCellAnswers() fetches
+  // resolve shortly after the initial render and trigger their own
+  // follow-up re-render (see that function's doc comment), which replaces
+  // the just-highlighted title element with a fresh, unhighlighted one --
+  // confirmed in practice (an initial correct highlight was silently wiped
+  // a beat later by exactly this). Re-applying on every mutation within
+  // the bounded window means whichever render ends up being the settled,
+  // final one is the one that actually keeps the highlight.
+  const container = document.getElementById('accountList');
+  if(container && typeof MutationObserver === 'function'){
+    const observer = new MutationObserver(applyHighlight);
+    observer.observe(container, {childList: true, subtree: true});
+    setTimeout(() => observer.disconnect(), 5000);
+  }
+  goToAccountIntelligence(name);
+  applyHighlight(); // covers the "already on this account" case, where no re-render/mutation occurs at all
+}
+
 // Explicit view-container switch (2026-08-19 reconciliation): exactly one
 // of #dashboardView / #accountIntelligenceView is visible at a time, keyed
 // off the #account=<key> hash. This is the SOLE toggle point -- every
@@ -14450,7 +14526,7 @@ function accountCardHtml(a, idx, opts = {}){
         ${focused ? '' : `<div class="rank">#${idx + 1}</div>`}
         <div>
           <div class="acct-name">${focused ? escapeHtml(a.name) : `<a href="${accountIntelligenceHref(a.name)}">${escapeHtml(a.name)}</a>`}</div>
-          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Opportunities${a.signals && a.signals.length ? ` · ${dedupeFoundSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
+          <div class="acct-meta">${escapeHtml(a.industry)} · ${a.orderCount} Orders · ${dedupeOpportunities(a.futureOpportunities || []).length} Reasons to Reach Out${a.signals && a.signals.length ? ` · ${dedupeFoundSignals(a.signals).length} Signals` : ''}${a.activePipelineCount ? ` · ${a.activePipelineCount} Active Estimates` : ''}</div>
         </div>
         <div class="score-block">
           <div class="score">${Math.round(a.confidence)}</div>
@@ -14474,7 +14550,6 @@ function accountCardHtml(a, idx, opts = {}){
         </div>` : `<div class="breakdown">
           <div class="bd-item"><div class="lbl">Closed Historical Revenue</div><div class="val">${fmtMoney(a.revenue)}</div></div>
           <div class="bd-item"><div class="lbl">Historical Orders</div><div class="val">${a.orderCount}</div></div>
-          <div class="bd-item"><div class="lbl">Relationship Strength</div><div class="val">${Math.round(a.relationshipStrength || 0)}</div></div>
           <div class="bd-item"><div class="lbl">Active Pipeline</div><div class="val">${fmtMoney(a.activePipelineValue)}</div></div>
           <div class="bd-item"><div class="lbl">Last Closed Order</div><div class="val">${a.mostRecentDate && a.mostRecentDate !== 'Unknown' ? formatShortDate(a.mostRecentDate) : 'Unknown'}</div></div>
         </div>`}
@@ -14486,7 +14561,7 @@ function accountCardHtml(a, idx, opts = {}){
         <div class="section-title">📄 Historical Orders Used As Evidence</div>
         ${a.purchases.length ? `<table class="projects-table"><thead><tr><th>Order / Project</th><th>Category</th><th>Revenue</th><th>Date</th><th>Status</th></tr></thead><tbody>${a.purchases.map(p => `<tr><td>${escapeHtml(p.project)}</td><td>${escapeHtml(p.category)}</td><td>${fmtMoney(p.revenue)}</td><td>${escapeHtml(p.dateStr || '')}</td><td>${escapeHtml(p.status || 'Historical')}</td></tr>`).join('')}</tbody></table>` : `<div class="no-signals-message">${isWarmAccount(a) ? 'No historical orders were included for this account. Public business signals and uploaded contact context will drive recommendations.' : 'No closed/converted historical orders found for this account.'}</div>`}
         ${renderPipelineTable(a.activePipeline || [])}
-        <div class="section-title">📡 Business Signals Found</div>
+        <div class="section-title account-business-signals-title">📡 Business Signals Found</div>
         <button class="btn btn-secondary research-account-btn" type="button">Research Account</button>
         <span class="research-note">Only externally sourced signals appear here. No signal means no invented hiring, launch, expansion, leadership, or event claim.</span>
         <div class="signal-research-panel" id="signals-${idx}">${renderVerifiedSignals(a.signals)}</div>
@@ -15633,10 +15708,11 @@ function processData(records){
   // own (honest -- it IS the whole aggregate) accounts immediately, exactly
   // as before.
   if(!aggregateDashboardEverLoaded){
-    // Render the focused recommendation feed
-    renderWeeklyPrioritiesFeed(futureOpportunities, accounts, {
-      emptyMessage: `<div class="no-signals-message">No actionable opportunities yet for this window -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out this week. New business triggers, reorder windows, and follow-ups are checked automatically; try This Month or research your top accounts now to look further ahead.</div>`
-    });
+    // Render the focused recommendation feed. Cohesion round 3: the
+    // monitoring-aware empty-state message this call site used to pass as
+    // a one-off override is now renderWeeklyPrioritiesFeed()'s own
+    // default -- see its doc comment.
+    renderWeeklyPrioritiesFeed(futureOpportunities, accounts);
     const revenueContext = calculateRevenueContext(accounts, futureOpportunities);
     const highConfidenceAccounts = new Set(futureOpportunities.filter(o => o.confidence >= 70).map(o => o.account));
     document.getElementById('totalAccounts').textContent = accounts.length;
@@ -16014,7 +16090,7 @@ function escapeHtml(text){
    // action only while THAT exact account is in flight, or while another
    // account in the same list has an active run (the server only allows
    // one run per list at a time).
-   const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Research Again' : 'Research Account');
+   const researchLabel = isBeingResearched ? 'Researching…' : (researched ? 'Refresh Research' : 'Research Account');
    const researchDisabled = runActive && !canStopThisRow;
    let researchTitle = '';
    if(runActive && !canStopThisRow) researchTitle = isBeingResearched ? 'Research in progress…' : 'Another account in this list is currently being researched.';
@@ -16038,19 +16114,29 @@ function escapeHtml(text){
    // decides Prepare for Call vs. the Research Results view on its own, and
    // already closes this modal first when needed, so no new rendering or
    // modal-management logic is added here.
+   // Cohesion round 3: "View Research" now deep-links into Account
+   // Intelligence's own Business Signal evidence, scrolled into view,
+   // instead of opening a separate results view -- Research is a
+   // capability HA performs for an account, not a second destination.
+   // See deepLinkToAccountResearch() (the click handler this button's
+   // marker resolves to) -- scoped narrowly to THIS button; the
+   // "Recently Researched" panel's own View Research/View Opportunities
+   // control calls a different, pre-existing function
+   // (openResearchedAccountOpportunities()) serving a distinct purpose
+   // (jumping straight into Prepare for Call right after a fresh research
+   // run) and is deliberately untouched by this round.
    const viewResearchHtml = signalCount > 0
      ? `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-research-act="account" data-account-name="${esc(a.name)}" data-list-id="${esc(list.id)}">View Research</button>`
      : '';
-   // Account Intelligence entry point: this modal previously had no path at
-   // all to an account's own Reasons to Reach Out / Whitespace / orders /
-   // signals view. Always shown (unlike View Research, which needs real
-   // research results to be worth showing) since the destination is useful
-   // even for a never-researched account.
-   const viewAccountHtml = `<button type="button" class="acct-mgr-action acct-mgr-action-secondary" data-view-account-act="account" data-account-name="${esc(a.name)}">View Account</button>`;
+   // Cohesion round 3: the separate "View Account" button is retired --
+   // the account name link two lines below already carries the identical
+   // data-view-account-act marker and reaches the exact same destination
+   // (goToAccountIntelligence()), so a second, differently-labeled control
+   // doing the same thing was a pure duplicate-CTA, not a second action.
    // Grouped into one wrapper so the row's existing 4-column grid
    // (.acct-mgr-row, including its own mobile breakpoint) never needs a 5th
    // column just because a second button now sometimes exists here.
-   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}${viewAccountHtml}</div>`;
+   const actionsGroupHtml = `<div class="acct-mgr-actions-group">${researchActionHtml}${viewResearchHtml}</div>`;
    return `<div class="acct-mgr-row${isBeingResearched?' acct-mgr-row-researching':''}">
       <div>
         <div class="acct-mgr-name"><a href="${accountIntelligenceHref(a.name)}" data-view-account-act="account" data-account-name="${esc(a.name)}">${esc(a.name)}</a>${a.hasActionableAlert ? ' <span style="color:var(--signal);" title="Actionable alert" aria-label="Actionable alert">●</span>' : ''}</div>
@@ -16447,7 +16533,7 @@ function escapeHtml(text){
        ? `Research complete — ${signalCount} signal${signalCount===1?'':'s'} found${typeof foundAndVerifiedSuffix === 'function' ? foundAndVerifiedSuffix(fresh.signals) : ''}.`
        : 'Research complete — no signals found.');
      btn.disabled = false;
-     btn.textContent = 'Research Again';
+     btn.textContent = 'Refresh Research';
 
      // ROUND 12, UX item 2 / ROUND 13 fix: display-only refresh of the main
      // dashboard (see applyModalResearchResultToDashboard()'s own comment in
@@ -16914,27 +17000,32 @@ function escapeHtml(text){
      return;
    }
 
-   // Beta correction (research access for all monitored accounts): reuses
-   // the SAME openResearchedAccountOpportunities() Recently Researched's
-   // own "View research"/"View opportunities" button already calls -- it
-   // already closes this modal itself before opening Prepare for Call or
-   // the Research Results view, so no modal-management logic is duplicated
-   // here.
+   // Cohesion round 3 (2026-08-19): "View Research" deep-links into
+   // Account Intelligence's own Business Signal evidence instead of
+   // opening a separate results view -- see deepLinkToAccountResearch()'s
+   // own doc comment (main script scope). The "Recently Researched"
+   // panel's own View Research/View Opportunities control is a different
+   // button serving a different purpose (jumping straight to Prepare for
+   // Call right after a fresh research run) and still calls
+   // openResearchedAccountOpportunities() unchanged.
    const viewResearchBtn = e.target.closest('[data-view-research-act="account"]');
    if(viewResearchBtn){
      closeAllMenus();
      const vrAccountName = viewResearchBtn.dataset.accountName;
-     const vrListId = viewResearchBtn.dataset.listId;
-     if(typeof openResearchedAccountOpportunities === 'function') await openResearchedAccountOpportunities(vrListId, vrAccountName);
+     if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(vrAccountName);
      return;
    }
 
-   // Account Intelligence entry point: both the "View Account" button and
-   // the account name link (rendered by accountRow() above) carry this same
-   // marker. Handled here rather than via the anchor's plain href so the
-   // modal reliably closes first -- goToAccountIntelligence() is the same
-   // helper renderDetailedAccountViews()'s own account-name links use, so
-   // both entry points behave identically.
+   // Account Intelligence entry point: the account name link (rendered by
+   // accountRow() above) carries this marker. Handled here rather than via
+   // the anchor's plain href so the modal reliably closes first --
+   // goToAccountIntelligence() is the same helper
+   // renderDetailedAccountViews()'s own account-name links use, so this
+   // and every other entry point behave identically. Cohesion round 3
+   // (2026-08-19): the separate "View Account" button that used to also
+   // carry this marker is retired -- the account name link was always a
+   // real link to the identical destination, so the button was a pure
+   // duplicate control, not a second action.
    const viewAccountBtn = e.target.closest('[data-view-account-act="account"]');
    if(viewAccountBtn){
      e.preventDefault();
