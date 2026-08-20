@@ -16,26 +16,6 @@ body > header:not(.ha-ignore-shared-header),
 body > nav.topnav,
 body > .topnav{display:none !important;}
 
-.ha-beta-banner{
-  min-height:32px;
-  padding:6px 18px;
-  background:#fff8e8;
-  border-bottom:1px solid var(--ha-border);
-  color:var(--ha-navy);
-  font-family:var(--ha-mono);
-  font-size:.74rem;
-  line-height:1.35;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  text-align:center;
-  gap:6px;
-  position:relative;
-  z-index:1001;
-}
-.ha-beta-banner a{color:var(--ha-navy);font-weight:900;text-decoration:none;border-bottom:1px solid var(--ha-gold)}
-.ha-beta-banner a:hover{color:var(--ha-teal);border-bottom-color:var(--ha-teal)}
-
 .ha-site-header{
   background:#fff;
   border-bottom:2px solid var(--ha-navy);
@@ -309,8 +289,6 @@ body.ha-overlay-open .ha-site-header.is-open .ha-nav-shell{display:none !importa
 }
 
 @media(max-width:560px){
-  .ha-beta-banner{font-size:.68rem;padding:7px 10px;display:block}
-  .ha-beta-banner a{white-space:nowrap}
   .ha-header-inner{padding:11px 15px}
   .ha-brand-link{font-size:1.5rem}
   .ha-product-label{font-size:.53rem;letter-spacing:.11em}

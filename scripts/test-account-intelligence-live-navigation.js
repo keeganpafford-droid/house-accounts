@@ -253,7 +253,14 @@ async function main(){
     const oldStaticHeaderCount = await page.locator('body > header:not(.ha-ignore-shared-header)').count();
     assert(oldStaticHeaderCount === 0, '1) the old static fallback <header> baked into dashboard/index.html was removed by the real removeLegacy()');
     const oldBannerCount = await page.locator('body > .beta-top-banner').count();
-    assert(oldBannerCount === 0, '1) the old static top banner was removed by the real removeLegacy() (site-header.js renders its own)');
+    assert(oldBannerCount === 0, '1) the old static top banner was removed by the real removeLegacy()');
+    // New-Customer Readiness correction (2026-08-20): the Beta banner itself
+    // was retired entirely -- site-header.js no longer injects a replacement,
+    // and no other announcement banner takes its place.
+    const injectedBannerCount = await page.locator('#haSharedHeader .ha-beta-banner').count();
+    assert(injectedBannerCount === 0, '1) REQUIRED: site-header.js does not inject a Beta banner (or any replacement announcement banner) any more');
+    const sharedHeaderHtml = await page.locator('#haSharedHeader').innerHTML();
+    assert(!/currently in Beta/i.test(sharedHeaderHtml), '1) REQUIRED: no "currently in Beta" framing renders anywhere in the shared header');
 
     const workflowSwitcherDisplay = await page.locator('.workflow-switcher').evaluate(el => getComputedStyle(el).display);
     assert(workflowSwitcherDisplay === 'none', '1) the old workflow switcher (Existing Customers / Target Accounts) stays hidden under .ha-mvp');

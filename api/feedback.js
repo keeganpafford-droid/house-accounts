@@ -126,7 +126,7 @@ async function sendFeedbackEmail({type, message, email, organizationName, curren
   const from = process.env.ALERTS_FROM_EMAIL || 'House Accounts <alerts@houseaccounts.ai>';
   const to = process.env.FEEDBACK_TO_EMAIL || 'hello@houseaccounts.ai';
   const label = friendlyType(type);
-  const subject = `House Accounts Beta ${label}`;
+  const subject = `House Accounts ${label}`;
   const pageLabel = friendlyPageName(currentPage);
   const submitterLabel = email || 'Not provided';
   // Diagnostic context is rendered in its own labeled block, visually and

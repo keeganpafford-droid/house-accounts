@@ -146,7 +146,6 @@
     const wrapper=document.createElement('div');
     wrapper.id='haSharedHeader';
     wrapper.innerHTML=`
-      <div class="ha-beta-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact.html">Leave Feedback →</a></div>
       <div class="ha-site-header">
         <div class="ha-header-inner">
           <div class="ha-brand-block">

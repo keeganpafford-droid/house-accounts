@@ -2109,28 +2109,6 @@
   }
 
 .low-confidence-signals{margin-top:12px;border:1px dashed var(--line);border-radius:10px;padding:10px 12px;background:#fffdf8}.low-confidence-signals summary{cursor:pointer;font-family:var(--mono);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
-.beta-top-banner{
-  min-height:30px;
-  padding:6px 16px;
-  background:#fff8e8;
-  border-bottom:1px solid #D8DEE9;
-  color:#17375E;
-  font-family:var(--mono, ui-monospace, monospace);
-  font-size:0.76rem;
-  line-height:1.35;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  text-align:center;
-  gap:6px;
-}
-.beta-top-banner a{
-  color:#17375E;
-  font-weight:800;
-  text-decoration:none;
-  border-bottom:1px solid #F5A623;
-}
-.beta-top-banner a:hover{color:#1FB7AE;border-bottom-color:#1FB7AE;}
 .beta-modal-backdrop{
   display:none;
   position:fixed;
@@ -2175,7 +2153,6 @@
   color:#6B7280;
 }
 @media(max-width:640px){
-  .beta-top-banner{font-size:0.7rem; padding:7px 12px;}
   .beta-modal{padding:24px;}
 }
 
@@ -2474,7 +2451,7 @@
 <script src="/site-header.js" defer></script>
 </head>
 <body>
-<div class="beta-top-banner">🚧 House Accounts is currently in Beta. Your feedback helps shape what we build next. <a href="/contact.html">Leave Feedback →</a></div>
+
 
 <header>
   <div class="brand">
@@ -2546,11 +2523,10 @@
 
   <div class="beta-modal-backdrop" id="betaWelcomeModal" role="dialog" aria-modal="true" aria-labelledby="betaWelcomeTitle">
     <div class="beta-modal">
-      <h2 id="betaWelcomeTitle">Welcome to the House Accounts Beta 👋</h2>
-      <p>Thanks for being one of our first Beta users.</p>
+      <h2 id="betaWelcomeTitle">Welcome to House Accounts 👋</h2>
       <p>Our mission is simple:</p>
       <div class="beta-mission">Help promotional products sales reps answer one question:<br>Who should I contact today, and why?</div>
-      <p>As a beta user, your feedback will directly influence what we build next.</p>
+      <p>Your feedback helps us keep improving House Accounts.</p>
       <div class="beta-setup-time">A 60–90 second tour, then your first upload takes about 2–3 minutes.</div>
       <button class="btn" type="button" id="betaWelcomeStartBtn">Get Started</button>
     </div>
