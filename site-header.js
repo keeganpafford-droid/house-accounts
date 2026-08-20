@@ -164,8 +164,7 @@
                     <button class="ha-action-link" type="button" id="haHelpToggle" aria-haspopup="true" aria-expanded="false">Help</button>
                     <div class="ha-help-dropdown" id="haHelpDropdown" role="menu" aria-label="Help" hidden>
                       <a role="menuitem" href="/dashboard/#restart-tour">Restart Product Tour</a>
-                      <a role="menuitem" href="/export-guides/#need-help">Export Help</a>
-                      <a role="menuitem" href="/export-guides/#troubleshooting">Upload Troubleshooting</a>
+                      <a role="menuitem" href="/faq.html">FAQ</a>
                       ${MVP_FEATURES.whatsNewNavigation ? `<a role="menuitem" href="/whats-new.html">What's New</a>` : ''}
                       <a role="menuitem" href="/contact.html">Contact / Feedback</a>
                     </div>

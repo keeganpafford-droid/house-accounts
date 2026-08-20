@@ -83,7 +83,11 @@ async function main(){
     await helpLink.waitFor({ state: 'visible' });
     const href = await helpLink.getAttribute('href');
     assert(href === '/whats-new.html', `item 2/6: the Help dropdown's "What's New" link points to /whats-new.html (got "${href}")`);
-    for(const existingLabel of ['Restart Product Tour', 'Export Help', 'Upload Troubleshooting', 'Contact / Feedback']){
+    // Release-candidate correction (2026-08-20, RC amendment): "Export
+    // Help" and "Upload Troubleshooting" were removed from the Help
+    // dropdown (redundant with the top-level Upload Guides destination);
+    // "FAQ" was added in their place.
+    for(const existingLabel of ['Restart Product Tour', 'FAQ', 'Contact / Feedback']){
       const visible = await page.locator('#haHelpDropdown a', { hasText: existingLabel }).isVisible();
       assert(visible, `item 6: existing Help item "${existingLabel}" is still visible alongside the new link`);
     }

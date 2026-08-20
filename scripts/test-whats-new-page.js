@@ -79,15 +79,21 @@ for(const internalTerm of ['branch', 'Claude', 'Anthropic', 'regression test', '
 assert.match(whatsNew, /Last updated: /, 'a visible "Last updated" label exists, using the same plain hand-maintained convention as privacy.html/terms.html');
 
 // Item 6: existing Help and header navigation remain functional -- every
-// pre-existing Help dropdown item is still present, unchanged.
+// Help dropdown item present as of this correction is still present,
+// unchanged. Release-candidate correction (2026-08-20, RC amendment):
+// "Export Help" and "Upload Troubleshooting" (both /export-guides/ anchors,
+// redundant with the top-level "Upload Guides" nav link) were removed from
+// the Help dropdown and replaced with a real "FAQ" entry -- see the
+// dedicated coverage in scripts/test-help-dropdown-faq-navigation.js.
 for(const existingItem of [
   'href="/dashboard/#restart-tour">Restart Product Tour',
-  'href="/export-guides/#need-help">Export Help',
-  'href="/export-guides/#troubleshooting">Upload Troubleshooting',
+  'href="/faq.html">FAQ',
   'href="/contact.html">Contact / Feedback'
 ]){
   assert.match(header, new RegExp(existingItem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `item 6: existing Help dropdown item ("${existingItem}") is still present and unchanged`);
 }
+assert.doesNotMatch(header, /href="\/export-guides\/#need-help">Export Help/, 'RC amendment: the redundant "Export Help" Help-menu entry is gone -- Upload Guides is already the top-level destination');
+assert.doesNotMatch(header, /href="\/export-guides\/#troubleshooting">Upload Troubleshooting/, 'RC amendment: the redundant "Upload Troubleshooting" Help-menu entry is gone -- Upload Guides is already the top-level destination');
 assert.match(header, /const publicLinks=\[/, 'item 6: the public (signed-out) nav link list is still defined');
 assert.match(header, /const appLinks=\[/, 'item 6: the authenticated app nav link list is still defined');
 {
