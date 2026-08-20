@@ -9,10 +9,20 @@
 // trialing/lapsed-trial org, where they are still the genuinely relevant
 // state.
 //
-// Extracts the real `const trialRows = ...` computation (verbatim, not
-// reimplemented) out of settings.html's inline <script> and runs it
-// against fixture usage/org shapes -- same convention as
-// scripts/test-settings-subscription-label.js.
+// Release-candidate correction (2026-08-20, RC-3.2): paidActive alone was
+// not the whole story -- a Free-tier account with genuinely zero trial
+// history (never trialActive/trialExpired/trialUsed, no org.trial_used,
+// no trialStartedAt) also does not have a "legitimate trial state" to show
+// (the founder's own reported case: a brand-new signed-in account with an
+// empty trial section). hasRealTrialHistory gates on the real underlying
+// signals the page's own trialUsed/trialLabel/trialStarted already derive
+// from, not a new source of truth -- presentation/state correctness only,
+// no pricing/entitlement change.
+//
+// Extracts the real `const hasRealTrialHistory = ...` / `const trialRows =
+// ...` computation (verbatim, not reimplemented) out of settings.html's
+// inline <script> and runs it against fixture usage/org shapes -- same
+// convention as scripts/test-settings-subscription-label.js.
 //
 // Usage: node scripts/test-settings-trial-field-visibility.js
 import { readFileSync } from 'fs';
@@ -25,8 +35,8 @@ function assert(condition, message){
 
 const html = readFileSync(new URL('../settings.html', import.meta.url), 'utf8');
 
-const match = html.match(/const trialRows = usage\.paidActive[\s\S]*?\['Trial remaining',trialDays\]\];/);
-if(!match) throw new Error('Could not locate the trialRows computation in settings.html -- it may have been renamed or restructured.');
+const match = html.match(/const hasRealTrialHistory = [\s\S]*?const trialRows = [\s\S]*?\['Trial remaining',trialDays\]\];/);
+if(!match) throw new Error('Could not locate the hasRealTrialHistory/trialRows computation in settings.html -- it may have been renamed or restructured.');
 const trialRowsFn = new Function('usage', 'trialLabel', 'trialUsed', 'trialStarted', 'org', 'dt', 'trialDays', `${match[0]}\nreturn trialRows;`);
 
 function dt(v){ return v ? `formatted(${v})` : '—'; }
@@ -39,15 +49,31 @@ function dt(v){ return v ? `formatted(${v})` : '—'; }
   assert(Array.isArray(rows) && rows.length === 0, `REQUIRED: a paid/manual organization (usage.paidActive) renders ZERO trial rows -- obsolete history is not shown next to a real subscription (got ${rows.length})`);
 }
 
-// A genuinely Free organization (never paid) -- the trial rows are still
-// the real, relevant state and must remain.
+// A genuinely Free organization that DID go through the trial flow (real
+// production shape -- trialUsed()/trialStarted() only ever derive from
+// usage.trialUsed||org.trial_used and usage.trialStartedAt||org.trial_started_at,
+// so a real account that ever trialed always carries at least one of
+// these) and never converted to paid -- the trial rows are still the
+// real, relevant state and must remain.
 {
-  const rows = trialRowsFn({ paidActive: false }, 'inactive', 'No', null, { trial_end: null }, dt, '—');
+  const rows = trialRowsFn({ paidActive: false, trialUsed: true }, 'inactive', 'Yes', '2026-06-01', { trial_end: '2026-06-30' }, dt, '—');
   const labels = rows.map(r => r[0]);
-  assert(labels.length === 5, `REQUIRED: a Free organization still shows all 5 trial rows (got ${labels.length})`);
+  assert(labels.length === 5, `REQUIRED: a Free organization with real trial history still shows all 5 trial rows (got ${labels.length})`);
   for(const label of ['Trial status', 'Trial used', 'Trial started', 'Trial end', 'Trial remaining']){
     assert(labels.includes(label), `REQUIRED: a Free organization's trial rows include "${label}"`);
   }
+}
+
+// Release-candidate correction (2026-08-20, RC-3.2) REQUIRED case: a Free
+// organization with genuinely ZERO trial history -- never trialActive,
+// never trialExpired, usage.trialUsed/org.trial_used both falsy, and no
+// trialStartedAt at all (the founder's own reported "obsolete trial state"
+// case) -- must show NO trial rows. This is presentation/state
+// correctness only: it does not change usage.paidActive, pricing, or
+// entitlements, and it is not the same gate as the paidActive check above.
+{
+  const rows = trialRowsFn({ paidActive: false }, 'inactive', 'No', null, { trial_end: null }, dt, '—');
+  assert(Array.isArray(rows) && rows.length === 0, `REQUIRED: a Free organization with no legitimate trial state at all renders ZERO trial rows (got ${rows.length})`);
 }
 
 // An organization currently mid a genuinely active grandfathered legacy

@@ -484,9 +484,24 @@ function refreshOpportunityViews(){ __refreshCalls.push({activeTimebox, showAllW
 // createSalesPlayPanel, getOpportunityScore) that has no bearing on THIS
 // suite's job -- proving the click delegation calls it, with the right
 // (uploadId, accountName) arguments, not scrollToAccountResult. Recorded
-// so the click-routing test below can assert on it directly.
+// so the click-routing test below can assert on it directly. Kept even
+// though no current call site targets it (see __deepLinkCalls just below)
+// -- other stubbed call sites in this sandbox still reference it by name.
 var __viewOpportunitiesCalls = [];
 function openResearchedAccountOpportunities(uploadId, accountName){ __viewOpportunitiesCalls.push({uploadId, accountName}); }
+// Release-candidate correction (2026-08-20, RC-1): the Recently Researched
+// row's own "View opportunities" button was the one remaining call site
+// still using the retired openResearchedAccountOpportunities() handoff --
+// it now deep-links into the account's Business Signal evidence via
+// deepLinkToAccountResearch(accountName), the same canonical routing every
+// other research-completion entry point already uses (see handleResearchClick's
+// own "composite" assertions above, from the earlier Cohesion round 3
+// correction). deepLinkToAccountResearch() itself is a main-script function
+// with its own dependency graph (goToAccountIntelligence, MutationObserver)
+// that has no bearing on THIS suite's job -- proving the click delegation
+// calls it with the right accountName, not the old opportunities handoff.
+var __deepLinkCalls = [];
+function deepLinkToAccountResearch(accountName){ __deepLinkCalls.push({accountName}); }
 // opportunityMatchesTimebox's real implementation depends on a long chain
 // of pure signal/opportunity classification helpers (getOpportunityPlanningWindow,
 // getRecommendationType, signalLayerLabel, ...) that have no bearing on
@@ -1008,23 +1023,26 @@ async function runClientTests(){
     assert(Array.isArray(entries) && entries.length === 1, 'durable 8b: with localStorage entirely unavailable, the entry still renders (fails safe) instead of crashing the dashboard');
   }
   {
-    // Follow-up round: "View opportunities" clicked from a Recently
-    // Researched card now routes through openResearchedAccountOpportunities()
-    // (requirements 8/9 -- the same shared production function the toast
-    // action calls, not scrollToAccountResult()) -- proven here via the
-    // delegated listener's real call to it, with the exact
-    // (uploadId, accountName) the clicked card carries.
+    // Release-candidate correction (2026-08-20, RC-1): the Recently
+    // Researched row's "View signal(s) ->" button now routes through
+    // deepLinkToAccountResearch() (the same canonical Business Signals
+    // routing every other research-completion entry point uses), never
+    // openResearchedAccountOpportunities() -- proven here via the
+    // delegated listener's real call to it, with the exact accountName the
+    // clicked card carries.
     const account = fixtureAccount('Click Co', { uploadId: 'upload-1', futureOpportunities: [{ account: 'Click Co', uploadId: 'upload-1', timebox: 'week' }] });
     const sandbox = createSandbox({ accounts: [account] });
     sandbox.applyModalResearchResultToDashboard({ name: 'Click Co', signals: [{ isReal: true }], lastResearchedAt: new Date().toISOString() }, 'upload-1');
     sandbox.__viewOpportunitiesCalls.length = 0;
+    sandbox.__deepLinkCalls.length = 0;
     const card = new FakeEl('div', { class: 'recently-researched-card', 'data-account-name': 'Click Co', 'data-upload-id': 'upload-1' });
     const viewBtn = new FakeEl('button', { class: 'rr-view-btn' });
     card.appendChild(viewBtn);
     const handler = sandbox.__dom.listeners.click;
     handler({ target: viewBtn });
-    assert(sandbox.__viewOpportunitiesCalls.length === 1, '7/8) clicking the real "View opportunities" button on a Recently Researched card triggers the real openResearchedAccountOpportunities()');
-    assert(sandbox.__viewOpportunitiesCalls[0] && sandbox.__viewOpportunitiesCalls[0].uploadId === 'upload-1' && sandbox.__viewOpportunitiesCalls[0].accountName === 'Click Co', '7/8) openResearchedAccountOpportunities() is called with the clicked card\'s exact (uploadId, accountName)');
+    assert(sandbox.__deepLinkCalls.length === 1, '7/8) clicking the real "View signal(s) ->" button on a Recently Researched card triggers the real deepLinkToAccountResearch()');
+    assert(sandbox.__deepLinkCalls[0] && sandbox.__deepLinkCalls[0].accountName === 'Click Co', '7/8) deepLinkToAccountResearch() is called with the clicked card\'s exact accountName');
+    assert(sandbox.__viewOpportunitiesCalls.length === 0, '7/8) REQUIRED: this click never routes through the retired openResearchedAccountOpportunities() handoff -- clicking a completed research card is exposure, not an auto-launched Prepare for Call');
   }
 
   // ---------------------------------------------------------------------

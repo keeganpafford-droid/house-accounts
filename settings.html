@@ -26,7 +26,20 @@ async function load(){await HouseAuth.requireAuth(); const headers=await HouseAu
   // history, not something a paying customer needs to see next to their
   // real "Subscription" row -- shown only for a Free/trialing/lapsed-trial
   // org, where they are still the genuinely relevant state.
-  const trialRows = usage.paidActive ? [] : [['Trial status',trialLabel],['Trial used',trialUsed],['Trial started',trialStarted?dt(trialStarted):'—'],['Trial end',org.trial_end?dt(org.trial_end):'—'],['Trial remaining',trialDays]];
+  //
+  // Release-candidate correction (2026-08-20, RC-3.2): "not currently paid"
+  // alone is not evidence a trial ever existed -- under the current
+  // no-new-trials pricing model, a brand-new signup is simply Free from day
+  // one and was never offered a trial at all, yet !usage.paidActive was
+  // true for it just the same, so it saw "Trial status: inactive / Trial
+  // used: No / ...: --" for a concept that never applied to it. Gated now
+  // on real trial evidence (a start date, or a currently-active/expired/
+  // used trial) so a genuinely grandfathered legacy trial account still
+  // sees its real history untouched, while an account that never had one
+  // sees none of these rows. Presentation only -- no change to pricing,
+  // entitlements, or accountCapacity()'s own precedence.
+  const hasRealTrialHistory = !!(trialStarted || usage.trialActive || usage.trialExpired || usage.trialUsed || org.trial_used);
+  const trialRows = (usage.paidActive || !hasRealTrialHistory) ? [] : [['Trial status',trialLabel],['Trial used',trialUsed],['Trial started',trialStarted?dt(trialStarted):'—'],['Trial end',org.trial_end?dt(org.trial_end):'—'],['Trial remaining',trialDays]];
   settingsGrid.innerHTML=[['Name',u.name||'—'],['Email',u.email||'—'],['Organization',org.name||u.company||'—'],['Subscription',subscriptionLabel],...trialRows,['Users',`${seatsUsed} · Unlimited`],['Member since',dt(u.created_at)],['Monitored companies',usageLabel],['Account role',u.app_role||'owner']].map(([l,v])=>`<div class="item"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div>${l==='Monitored companies'?`<div class="usage"><div class="fill" style="width:${pct}%"></div></div>`:''}</div>`).join('');
   notificationPreferenceSelect.value = u.notification_preference || 'weekly';
   await loadTeam();}

@@ -362,10 +362,18 @@ function realBusinessOpp(overrides = {}){
   assert(weatherby.signalCount !== weatherby.activeOpportunityCount, 'additional test 2: verified-signal count and active-opportunity count are NOT conflated into a single number');
 
   // required item 21: the action label does not imply an active opportunity
-  // exists when zero do.
+  // exists when zero do. Release-candidate correction (2026-08-20, RC-1):
+  // the label is no longer conditional on activeOpportunityCount at all --
+  // "View signal(s) ->" (gated only on signalCount, i.e. real research
+  // evidence existing) makes the same "does not imply an active
+  // opportunity" claim unconditionally, for every Recently Researched row.
   assert(
-    /View research/.test(RR_BLOCK.replace(/\n/g, ' ')) && /activeOpportunityCount \? 'View opportunities' : 'View research'/.test(RR_BLOCK.replace(/\s+/g, ' ')),
-    'additional test 3: the Recently Researched action label reads "View research" (not "View opportunities") when the account has verified signals but zero currently-active opportunities'
+    /View signal\$\{e\.signalCount === 1 \? '' : 's'\} →/.test(RR_BLOCK.replace(/\s+/g, ' ')),
+    'additional test 3: the Recently Researched action label reads "View signal(s) ->", never implying an active opportunity exists, regardless of activeOpportunityCount'
+  );
+  assert(
+    !/activeOpportunityCount \? 'View opportunities'/.test(RR_BLOCK.replace(/\s+/g, ' ')),
+    'additional test 3 REQUIRED: the retired activeOpportunityCount-conditional "View opportunities" label is gone'
   );
 
   // required item 22: the account is never removed from Recently Researched

@@ -126,7 +126,24 @@ function sanitizeSearchTerm(v){return clean(v).replace(/[%_*]/g,'').slice(0,120)
 function encodeCursor(accountName){return Buffer.from(String(accountName),'utf8').toString('base64')}
 function decodeCursor(raw){try{return Buffer.from(String(raw),'base64').toString('utf8')||null}catch{return null}}
 
-function accountListRow(a){return{id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false}}
+// Release-candidate correction (2026-08-20, RC-3.4): signalCount now comes
+// from a real, server-side count of this account's own persisted
+// ha_signals rows (see loadAccountPage() below) -- previously this row
+// carried no signal information at all, and the client derived "N signals
+// found"/"No signals found" purely from window.accountRadarAccounts, a
+// SEPARATE in-memory aggregate cache that can legitimately not (yet)
+// contain this exact account (a fresh page load mid-fetch, a first-upload
+// render race, cross-list state). When that cache lookup missed, the
+// client fell back to an empty array and confidently rendered "No signals
+// found" for an account that could have real, persisted evidence --
+// including legitimate lower-confidence/secondary evidence, which still
+// counts as a real signal even though it may never become a Reason to
+// Reach Out. This count is authoritative (a real row count, not a client
+// cache lookup) and deliberately unfiltered by confidence tier -- it only
+// answers "does at least one real signal row exist for this account,"
+// never eligibility/priority, which stays entirely downstream and
+// untouched.
+function accountListRow(a,signalCount=0){return{id:a.id,uploadId:a.upload_id,name:a.account_name,industry:a.industry||'',monitoringStatus:lower(a.raw_data?.monitoring_status||'active'),researchStatus:lower(a.raw_data?.research_status||'uploaded'),lastResearchedAt:a.raw_data?.last_researched_at||'',domain:a.raw_data?.website||'',dateAdded:a.created_at||'',hasActionableAlert:false,signalCount:Number(signalCount)||0}}
 
 // Confirms the requested upload actually belongs to a user this ctx can see
 // -- same ownership-scoping shape as every other id=eq./user_id=in.() check
@@ -166,7 +183,21 @@ async function loadAccountPage(ctx,{uploadId,cursor,search,limit}){
   const hasMore=list.length>pageSize;
   const page=hasMore?list.slice(0,pageSize):list;
   const nextCursor=hasMore?encodeCursor(page[page.length-1].account_name):null;
-  return{accounts:page.map(accountListRow),pageInfo:{limit:pageSize,hasMore,nextCursor,total,search:term}};
+  // RC-3.4: one bounded query (scoped to exactly this page's own account
+  // names via the same inFilter() helper deleteList() already trusts for
+  // arbitrary names) counting real ha_signals rows per account -- never
+  // per-row/N+1, and never unbounded (bounded by pageSize, same discipline
+  // as every other query in this function).
+  const signalCountByName=new Map();
+  if(page.length){
+    const signalRows=await sb(`ha_signals?upload_id=eq.${encodeURIComponent(uploadId)}&account_name=${inFilter(page.map(a=>a.account_name))}&select=account_name`);
+    for(const row of (Array.isArray(signalRows)?signalRows:[])){
+      const name=row?.account_name;
+      if(!name)continue;
+      signalCountByName.set(name,(signalCountByName.get(name)||0)+1);
+    }
+  }
+  return{accounts:page.map(a=>accountListRow(a,signalCountByName.get(a.account_name)||0)),pageInfo:{limit:pageSize,hasMore,nextCursor,total,search:term}};
 }
 
 async function loadLists(ctx){const ids=ctx.userIds.length?inFilter(ctx.userIds):'eq.__none__';const emails=ctx.emails.length?inFilter(ctx.emails):'eq.__none__';const [cu,pu]=await Promise.all([

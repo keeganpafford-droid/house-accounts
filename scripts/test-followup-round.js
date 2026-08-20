@@ -245,12 +245,16 @@ assert(
   'cohesion round 3 (Atlas Precision correction): the single-account research-completion toast\'s "View signal(s) ->" action deep-links into that account\'s Business Signals via deepLinkToAccountResearch(), not the old Prepare-for-Call/Verified-Opportunity handoff -- research finding credible evidence is not the same claim as a recommended play existing'
 );
 assert(
-  /if\(event\.target\.closest\('\.rr-view-btn'\)\)\{\s*if\(typeof openResearchedAccountOpportunities === 'function'\) openResearchedAccountOpportunities\(uploadId, accountName\);/.test(dashboardHtml),
-  'the Recently Researched row\'s "View opportunities" button calls the SAME openResearchedAccountOpportunities() function, not a separate scroll-only implementation'
+  /if\(event\.target\.closest\('\.rr-view-btn'\)\)\{[\s\S]{0,1600}?if\(typeof deepLinkToAccountResearch === 'function'\) deepLinkToAccountResearch\(accountName\);/.test(dashboardHtml),
+  'release-candidate correction (2026-08-20, RC-1): the Recently Researched row\'s "View signal(s) ->" button now calls the SAME deepLinkToAccountResearch() the single-account toast uses, not the retired openResearchedAccountOpportunities() handoff -- completed research is exposure, not an auto-launched Prepare for Call'
 );
 assert(
   !/scrollToAccountResult\(listId, accountName\)/.test(dashboardHtml) && !/if\(event\.target\.closest\('\.rr-view-btn'\)\)\{ scrollToAccountResult/.test(dashboardHtml),
   'neither View Opportunities call site still merely scrolls to/highlights the Recently Researched row'
+);
+assert(
+  !/if\(event\.target\.closest\('\.rr-view-btn'\)\)\{[\s\S]{0,400}?openResearchedAccountOpportunities\(uploadId, accountName\)/.test(dashboardHtml),
+  'release-candidate correction (2026-08-20, RC-1) REQUIRED: the Recently Researched row\'s own button no longer routes through the retired openResearchedAccountOpportunities() handoff at all'
 );
 
 // ---------------------------------------------------------------------------

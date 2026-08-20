@@ -5517,8 +5517,56 @@ function maybeResumeGuidedTourAfterPopulation(){
   const state = readGuidedTourState();
   if(state.status !== 'pending-resume' || typeof state.pendingResumeStep !== 'number') return;
   const resumeStep = state.pendingResumeStep;
+  // Release-candidate correction (2026-08-20, RC-4): this exact "data just
+  // populated" moment is ALSO the moment researchListAndFocus() (the
+  // upload-success modal's "Research N accounts" CTA) opens the real
+  // Manage Customer Accounts modal and starts research -- the two systems
+  // were built independently and neither knew about the other, so the
+  // tour's own spotlight/backdrop could render at the same time as the
+  // modal's full-screen overlay, visually colliding (confirmed via founder
+  // screenshots on a real first upload). Deferred here rather than
+  // resumed immediately when Manage Customer Accounts is open -- the
+  // pending-resume marker is deliberately left untouched in that case, so
+  // this is safe to call again.
+  if(window.HouseAccountManager && typeof window.HouseAccountManager.isOpen === 'function' && window.HouseAccountManager.isOpen()){
+    deferGuidedTourResumeUntilAccountsModalCloses();
+    return;
+  }
   writeGuidedTourState({ status: 'resumed-in-progress', updatedAt: new Date().toISOString() });
   launchGuidedTour({ resuming: true, startIndex: resumeStep });
+}
+
+// RC-4: Manage Customer Accounts exposes isOpen() but no close-event hook
+// to subscribe to, and adding one is out of scope for this correction --
+// a short bounded poll is the smallest way to notice the moment it closes
+// without touching that modal's own code at all. 250ms x up to 40 ticks
+// (10s) comfortably covers a real research-kickoff-and-close flow; if the
+// modal is somehow still open after that, the tour simply stays deferred
+// -- the SAME 'pending-resume' state means it still resumes correctly the
+// next time real data populates, or whenever the rep closes the modal and
+// something else calls maybeResumeGuidedTourAfterPopulation() again, or if
+// the rep manually restarts the tour from Help in the meantime.
+let guidedTourResumeDeferred = false;
+function deferGuidedTourResumeUntilAccountsModalCloses(){
+  if(guidedTourResumeDeferred) return;
+  guidedTourResumeDeferred = true;
+  let ticks = 0;
+  const poll = () => {
+    const stillOpen = window.HouseAccountManager && typeof window.HouseAccountManager.isOpen === 'function' && window.HouseAccountManager.isOpen();
+    if(!stillOpen){
+      guidedTourResumeDeferred = false;
+      // Re-run the real decision (not a direct launch) -- guidedTourActive/
+      // the persisted state may have legitimately changed while this was
+      // waiting (e.g. the rep already manually restarted the tour from
+      // Help, or skipped/finished it some other way).
+      maybeResumeGuidedTourAfterPopulation();
+      return;
+    }
+    ticks++;
+    if(ticks >= 40){ guidedTourResumeDeferred = false; return; }
+    setTimeout(poll, 250);
+  };
+  setTimeout(poll, 250);
 }
 
 function wireGuidedTourControls(){
@@ -10295,7 +10343,7 @@ function highlightResultElement(el){
 
 // "View opportunities" -- requirement: must work even when the account is
 // not near the top of the normal priority ranking, WITHOUT permanently
-// distorting that ranking. Reuses the existing "View All Opportunities"
+// distorting that ranking. Reuses the existing "View All Priorities"
 // toggle (showAllWeeklyPriorities) that already removes the display cap for
 // the CURRENT session's view -- the underlying sort/limit logic in
 // prepareTimeboxReasons()/prepareAllOpportunities() is untouched, this only
@@ -10680,7 +10728,7 @@ function renderRecentlyResearchedSection(){
             <div class="rr-meta">${e.signalCount ? `${e.signalCount} signal${e.signalCount === 1 ? '' : 's'} found${e.verifiedCount ? ` · ${e.verifiedCount} verified` : ''}` : 'No signals found'} · ${escapeHtml(relativeResearchTimeLabel(e.ts))}</div>
           </div>
           <div class="rr-actions">
-            ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">${e.activeOpportunityCount ? 'View opportunities' : 'View research'}</button>` : ''}
+            ${e.signalCount ? `<button type="button" class="btn btn-ghost btn-mini rr-view-btn">View signal${e.signalCount === 1 ? '' : 's'} →</button>` : ''}
             <button type="button" class="rr-dismiss-btn" aria-label="Dismiss ${escapeHtml(e.name)} from Recently Researched">✕</button>
           </div>
         </div>`).join('')}
@@ -10694,7 +10742,24 @@ document.addEventListener('click', (event) => {
   const accountName = card.dataset.accountName;
   if(!uploadId || !accountName) return;
   if(event.target.closest('.rr-view-btn')){
-    if(typeof openResearchedAccountOpportunities === 'function') openResearchedAccountOpportunities(uploadId, accountName);
+    // Release-candidate correction (2026-08-20, RC-1): this was the one
+    // remaining "View opportunities" -> openResearchedAccountOpportunities()
+    // call site left over from the Cohesion Round 3/4 terminology/routing
+    // fix -- handleResearchClick() and researchAccountFromCard() were
+    // already corrected to "View signal(s) ->" + deepLinkToAccountResearch(),
+    // but this panel's own button was left alone at the time on the
+    // (still-true) grounds that its GATING condition was already correct.
+    // The label and destination were the same retired pattern, just missed
+    // here. Recently Researched represents completed research, not a
+    // recommended play -- it must route into the account's own Business
+    // Signal evidence via the same canonical deep-link every other
+    // research-completion entry point uses, never auto-launch Prepare for
+    // Call just because House Accounts happened to rank an opportunity.
+    // openResearchedAccountOpportunities() itself is untouched -- it
+    // remains correct for runListResearch()'s batch-completion "View
+    // Opportunity"/"Review Opportunities" buttons, gated on real
+    // result.accountsWithOpportunities, a genuinely different case.
+    if(typeof deepLinkToAccountResearch === 'function') deepLinkToAccountResearch(accountName);
     return;
   }
   if(event.target.closest('.rr-dismiss-btn')){
@@ -12624,6 +12689,17 @@ function wireOutreachRow(rowEl){
       }
       saveInFlight = false;
       renderSaved();
+      // Release-candidate correction (2026-08-20, RC-2): initUnresolvedOutreachPanel()
+      // (the one place the Dashboard's "Outreach waiting on an update" panel
+      // is fetched/rendered) was wired ONLY to DOMContentLoaded -- a brand-new
+      // outreach saved here, inside an already-open Prepare for Call panel,
+      // never triggered it again, so the new item only ever appeared after a
+      // full page reload. The server-side isStillOpen semantics
+      // (api/lib/outcome-prompts.js) were already correct and immediate;
+      // this was purely a client-side refresh gap. Re-fetching here (a
+      // brand-new outreach event, not a note-only update) is what makes the
+      // Dashboard reflect it in the current session, no reload required.
+      if(typeof initUnresolvedOutreachPanel === 'function') initUnresolvedOutreachPanel();
     });
   }
 
@@ -14413,10 +14489,16 @@ function renderWeeklyPrioritiesFeed(opportunities, accounts){
     // config.label, correctly suggesting the next-wider window only when
     // one actually exists (nothing wider than "This Year").
     const nextWiderTimeboxLabel = {week: 'This Month', month: 'This Quarter', quarter: 'This Year'}[activeTimebox] || null;
-    const defaultEmptyMessage = `<div class="no-signals-message">No actionable opportunities yet ${config.label.toLowerCase()} -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out ${config.label.toLowerCase()}. New business triggers, reorder windows, and follow-ups are checked automatically${nextWiderTimeboxLabel ? `; try ${nextWiderTimeboxLabel} or research your top accounts now to look further ahead` : ''}.</div>`;
+    // Release-candidate correction (2026-08-20, RC-3.3): this string still
+    // said "No actionable opportunities"/"business triggers" -- the exact
+    // retired terms Cohesion Round 3/4 already relabeled to "priorities"/
+    // "business signals" everywhere else (see feedSummary()'s own comment
+    // above), just missed in this separate empty-state message. Same for
+    // the "View All Opportunities" button label just below.
+    const defaultEmptyMessage = `<div class="no-signals-message">No priorities yet ${config.label.toLowerCase()} -- your accounts are saved and being monitored, but nothing here rises to a timely reason to reach out ${config.label.toLowerCase()}. New business signals, reorder windows, and follow-ups are checked automatically${nextWiderTimeboxLabel ? `; try ${nextWiderTimeboxLabel} or research your top accounts now to look further ahead` : ''}.</div>`;
     const emptyMessage = displayedOpportunities.length === 0 ? defaultEmptyMessage : '';
     const actionButton = allOpportunities.length > config.limit
-      ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Opportunities'}</button>`
+      ? `<button class="btn btn-ghost btn-mini" type="button" onclick="toggleWeeklyPrioritiesView(${showAllWeeklyPriorities ? 'false' : 'true'})">${showAllWeeklyPriorities ? 'Show Priorities Only' : 'View All Priorities'}</button>`
       : '';
     grid.innerHTML = (actionButton ? `<div class="weekly-priority-actions">${actionButton}</div>` : '') + emptyMessage + displayedOpportunities.map((opp) => renderRepOpportunityCard(opp)).join('');
     // Founder QA: "Reached out ✓" (and "Used ✓") never hydrated on the
@@ -16118,9 +16200,24 @@ function escapeHtml(text){
    // Researched already uses for its own "N found · M verified" line, so
    // the two surfaces can never quietly disagree about what "found"/
    // "verified" mean.
+   //
+   // Release-candidate correction (2026-08-20, RC-3.4): window.accountRadarAccounts
+   // is a separate in-memory cache that can legitimately not (yet) contain
+   // this exact account -- a fresh page load mid-fetch, a first-upload
+   // render race, cross-list state -- and when it missed, foundSignals
+   // silently fell back to [], confidently rendering "No signals found" for
+   // an account that could have real, persisted signals (including
+   // legitimate lower-confidence/secondary evidence, which still counts as
+   // a real signal even though it is not automatically a Reason to Reach
+   // Out). `a.signalCount` (api/monitoring-lists.js's own loadAccountPage())
+   // is now a real, authoritative count of this account's persisted
+   // ha_signals rows, independent of this client cache. Taking the max of
+   // the two never UNDER-counts (the false-negative bug) while still
+   // preferring the richer client-derived data (and its verifiedCount) when
+   // the cache genuinely does have this account.
    const liveAccount = (window.accountRadarAccounts || []).find(x => x && x.uploadId === list.id && x.name === a.name);
    const foundSignals = liveAccount ? dedupeFoundSignals(liveAccount.signals || []) : [];
-   const signalCount = foundSignals.length;
+   const signalCount = Math.max(foundSignals.length, Number(a.signalCount) || 0);
    const verifiedCount = signalCount ? foundSignals.filter(isExplicitlyVerifiedIdentity).length : 0;
    const researchSummary = researched
      ? `${signalCount ? `${signalCount} signal${signalCount===1?'':'s'}${verifiedCount ? ` · ${verifiedCount} verified` : ''}` : 'No signals found'} · Last researched ${fmt(a.lastResearchedAt)}`

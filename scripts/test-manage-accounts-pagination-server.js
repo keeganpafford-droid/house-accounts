@@ -84,6 +84,19 @@ const HA_ACCOUNTS_C = [
 ];
 const ALL_ACCOUNTS = [...HA_ACCOUNTS_A, ...HA_ACCOUNTS_B, ...HA_ACCOUNTS_C];
 
+// RC-3.4 regression fixture: two real, persisted signals for "Account
+// 0001" -- one confirmed-identity, one deliberately NOT (a legitimate
+// lower-confidence/secondary signal, per payload.identityConfidence being
+// anything other than 'confirmed'). The server-side count must include
+// BOTH regardless of confidence tier -- confidence/priority eligibility is
+// an entirely separate, downstream question this endpoint never answers.
+// "Account 0000" deliberately has zero signals, to prove the row can
+// legitimately still say 0/"No signals found" when that is actually true.
+const HA_SIGNALS = [
+  {account_name: 'Account 0001', upload_id: UPLOAD_A, payload: {identityConfidence: 'confirmed'}},
+  {account_name: 'Account 0001', upload_id: UPLOAD_A, payload: {identityConfidence: 'possible'}}
+];
+
 // ===========================================================================
 // Fetch mock: routes by URL substring, mirroring exactly what
 // api/monitoring-lists.js's sb()/sbCount() actually request. Tracks every
@@ -143,7 +156,17 @@ function createFetchMock(){
 
     if(u.pathname === '/rest/v1/ha_signals'){
       if(method !== 'GET') throw new Error(`UNEXPECTED WRITE to ha_signals: ${method} ${url}`);
-      return jsonResp([]);
+      const uploadId = params.get('upload_id')?.replace('eq.', '');
+      const namesFilter = params.get('account_name');
+      let rows = HA_SIGNALS;
+      if(uploadId) rows = rows.filter(s => s.upload_id === uploadId);
+      if(namesFilter){
+        const names = parseInFilter(namesFilter);
+        if(names) rows = rows.filter(s => names.includes(s.account_name));
+      }
+      const select = params.get('select') || '';
+      if(select === 'account_name') rows = rows.map(s => ({account_name: s.account_name}));
+      return jsonResp(rows);
     }
 
     if(u.pathname === '/rest/v1/ha_research_runs'){
@@ -408,8 +431,35 @@ async function run(){
     for(const row of res._body.accounts){
       assert(!('raw_data' in row), `15) account row for "${row.name}" never includes the raw raw_data blob`);
       const keys = Object.keys(row).sort();
-      assert(JSON.stringify(keys) === JSON.stringify(['dateAdded', 'domain', 'hasActionableAlert', 'id', 'industry', 'lastResearchedAt', 'monitoringStatus', 'name', 'researchStatus', 'uploadId'].sort()), `15) account row for "${row.name}" contains only the expected display fields (got ${keys.join(',')})`);
+      assert(JSON.stringify(keys) === JSON.stringify(['dateAdded', 'domain', 'hasActionableAlert', 'id', 'industry', 'lastResearchedAt', 'monitoringStatus', 'name', 'researchStatus', 'signalCount', 'uploadId'].sort()), `15) account row for "${row.name}" contains only the expected display fields (got ${keys.join(',')})`);
     }
+  }
+
+  // =========================================================================
+  // 16. RC-3.4 (release-candidate correction, 2026-08-20): signalCount is a
+  //     real, authoritative count of this account's own persisted
+  //     ha_signals rows -- scoped to exactly this page's account names (one
+  //     bounded query, never per-row/N+1) -- and it is NEVER filtered by
+  //     confidence tier. "Account 0001" has two real signals: one
+  //     confirmed-identity, one deliberately lower-confidence/secondary
+  //     (payload.identityConfidence: 'possible'). Both must count -- a
+  //     legitimate secondary signal existing must never be represented as
+  //     "no signals," even though it may never become a verified Reason to
+  //     Reach Out. "Account 0000" has zero persisted signals and must
+  //     legitimately still report 0.
+  // =========================================================================
+  {
+    const fetchImpl = createFetchMock();
+    global.fetch = fetchImpl;
+    const res = fakeRes();
+    await handler(fakeReq({token: TOKEN_OWNER_A, query: {uploadId: UPLOAD_A, q: 'Account 000'}}), res);
+    const acct0000 = res._body.accounts.find(a => a.name === 'Account 0000');
+    const acct0001 = res._body.accounts.find(a => a.name === 'Account 0001');
+    assert(!!acct0000 && !!acct0001, '16) sanity: both fixture accounts are present in the search result');
+    assert(acct0001.signalCount === 2, `16) REQUIRED: an account with real persisted signals (one confirmed, one secondary/lower-confidence) reports the true count, not just the verified subset (got ${acct0001.signalCount})`);
+    assert(acct0000.signalCount === 0, `16) sanity: an account with genuinely zero persisted signals still correctly reports 0 (got ${acct0000.signalCount})`);
+    const signalFetches = fetchImpl.calls.filter(c => c.url.includes('/rest/v1/ha_signals'));
+    assert(signalFetches.length === 1, `16) REQUIRED: exactly ONE bounded ha_signals query serves the whole page, never one query per account row (got ${signalFetches.length})`);
   }
 
   // =========================================================================
