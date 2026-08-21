@@ -19,7 +19,11 @@
     // shown solely while the upload dropzone was visible. This was the
     // single biggest cause of "confused about how to get data in."
     importGuidesNavigation:true,
-    customerSuccessNavigation:false,
+    // Commercial Credibility V1 (2026-08-21): the old customerSuccessNavigation
+    // flag (always false, never actually consulted anywhere -- same dead-flag
+    // shape comingSoonNavigation used to be, see below) is removed entirely.
+    // What it would have gated is now Real-World Results, a real, permanent,
+    // unconditional top-level page -- not a feature-flagged one.
     // Paid-beta-readiness sprint: renamed from comingSoonNavigation, which
     // was defined here but never actually consulted anywhere -- the old
     // /coming-soon page it would have gated was orphaned (self-referencing
@@ -32,12 +36,24 @@
   window.HouseAccountsMvpFeatures=MVP_FEATURES;
   document.documentElement.classList.add('ha-mvp');
 
-  const publicLinks=[
-    {label:'Pricing',href:'/pricing.html',match:['/pricing','/pricing.html']},
-    {label:'FAQ',href:'/faq.html',match:['/faq','/faq.html']},
-    {label:'Security',href:'/security.html',match:['/security','/security.html']},
-    {label:'Feedback',href:'/contact.html',match:['/feedback','/contact','/contact.html']}
+  // Commercial Credibility V1 navigation doctrine (2026-08-21): pages have a
+  // home and they stay there -- Why House Accounts, Real-World Results, and
+  // Pricing are permanent top-level destinations, defined ONCE and reused
+  // identically for both signed-out and signed-in navigation, rather than
+  // two separate lists that happen to agree. Never make these conditional
+  // on auth state.
+  const COMMERCIAL_LINKS=[
+    {label:'Why House Accounts',href:'/why-house-accounts.html',match:['/why-house-accounts','/why-house-accounts.html']},
+    {label:'Real-World Results',href:'/real-world-results.html',match:['/real-world-results','/real-world-results.html']},
+    {label:'Pricing',href:'/pricing.html',match:['/pricing','/pricing.html']}
   ];
+
+  // FAQ, Security, and Feedback are deliberately no longer primary public
+  // navigation -- they remain fully reachable from the footer (see
+  // footerLinks below and every marketing page's own static footer), just
+  // not competing for header attention alongside the three permanent
+  // commercial destinations above.
+  const publicLinks=[...COMMERCIAL_LINKS];
 
   // Correction round: "House Accounts" was renamed to "Dashboard" here --
   // the logo/brand link (.ha-brand-link, always "House Accounts") already
@@ -45,14 +61,14 @@
   // goes. "Add Customer Data" is no longer a plain nav link -- it is the
   // global teal CTA rendered in the account-actions cluster below, using
   // the single canonical add-data action (see ADD_CUSTOMER_DATA_HREF).
-  // Stabilization round: Pricing is restored to the authenticated nav
-  // (previously only reachable from the public header) -- it was dropped
-  // for authenticated users during an earlier round, which meant a
-  // signed-in user had no way back to /pricing.html from inside the app.
+  // Commercial Credibility V1: Upload Guides moved out of primary
+  // authenticated navigation into the Help dropdown below (a guidance/
+  // support destination, not a top-level commercial one) -- see the
+  // guided tour's own step-2 correction for how it now teaches this new
+  // location instead of spotlighting the old nav link directly.
   const appLinks=[
     {label:'Dashboard',href:'/dashboard/',group:'workflow',match:['/dashboard','/dashboard/']},
-    {label:'Upload Guides',href:'/export-guides/',group:'workflow',match:['/export-guides','/export-guides/']},
-    {label:'Pricing',href:'/pricing.html',group:'workflow',match:['/pricing','/pricing.html']}
+    ...COMMERCIAL_LINKS
   ];
 
   // Single canonical URL+action contract for "Add Customer Data" -- every
@@ -163,6 +179,7 @@
                     <button class="ha-action-link" type="button" id="haHelpToggle" aria-haspopup="true" aria-expanded="false">Help</button>
                     <div class="ha-help-dropdown" id="haHelpDropdown" role="menu" aria-label="Help" hidden>
                       <a role="menuitem" href="/dashboard/#restart-tour">Restart Product Tour</a>
+                      <a role="menuitem" href="/export-guides/">Upload Guides</a>
                       <a role="menuitem" href="/faq.html">FAQ</a>
                       ${MVP_FEATURES.whatsNewNavigation ? `<a role="menuitem" href="/whats-new.html">What's New</a>` : ''}
                       <a role="menuitem" href="/contact.html">Contact / Feedback</a>

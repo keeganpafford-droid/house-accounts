@@ -132,13 +132,24 @@ async function invoke(handler, method, mockFetch, secret = CRON_SECRET) {
 }
 
 // ===========================================================================
-// 4. vercel.json routing sanity: cleanUrls/no rewrites/redirects/routes
-//    config that could intercept or redirect a Vercel Cron request to
-//    either endpoint before it reaches the function at all.
+// 4. vercel.json routing sanity: no rewrites/redirects/routes entry whose
+//    source pattern could intercept or redirect a Vercel Cron request to
+//    either endpoint before it reaches the function at all. Commercial
+//    Credibility V1 (2026-08-21) added a real `redirects` array (retiring
+//    the static /hall-of-accounts.html page to /real-world-results.html) --
+//    a blanket "vercel.json has no redirects at all" assertion is no
+//    longer the right check; the actual safety property this test cares
+//    about is narrower and still holds: nothing in that array's `source`
+//    can ever match either cron path.
 // ===========================================================================
 {
   const vercelConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vercel.json'), 'utf8'));
-  assert(!vercelConfig.rewrites && !vercelConfig.redirects && !vercelConfig.routes, 'REQUIRED: vercel.json defines no rewrites/redirects/routes that could redirect a Vercel Cron request away from the configured cron path');
+  assert(!vercelConfig.rewrites && !vercelConfig.routes, 'REQUIRED: vercel.json defines no rewrites/routes that could redirect a Vercel Cron request away from the configured cron path');
+  const cronPaths = ['/api/monitoring-scheduler', '/api/notification-scheduler'];
+  const redirectSources = (vercelConfig.redirects || []).map(r => r.source);
+  for (const cronPath of cronPaths) {
+    assert(!redirectSources.includes(cronPath), `REQUIRED: no vercel.json redirect entry sources from the exact cron path ${cronPath}`);
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

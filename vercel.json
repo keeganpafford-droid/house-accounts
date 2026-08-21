@@ -1,5 +1,17 @@
 {
   "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/hall-of-accounts.html",
+      "destination": "/real-world-results.html",
+      "permanent": false
+    },
+    {
+      "source": "/hall-of-accounts",
+      "destination": "/real-world-results.html",
+      "permanent": false
+    }
+  ],
   "crons": [
     {
       "path": "/api/monitoring-scheduler",

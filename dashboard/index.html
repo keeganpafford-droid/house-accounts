@@ -5109,11 +5109,21 @@ const GUIDED_TOUR_STEPS = [
     body: 'Start by uploading your existing customer and order history -- not a cold prospect list. House Accounts uses the relationships you already have to find timely, real reasons to reach out.'
   },
   {
+    // Commercial Credibility V1 (2026-08-21): Upload Guides moved out of
+    // primary authenticated navigation into the Help dropdown (site-header.js)
+    // -- this step used to spotlight the old top-level nav link directly
+    // (`a[href="/export-guides/"]`), which is now hidden inside Help by
+    // default and would never be visible when this step renders. Rather
+    // than programmatically opening the dropdown just to preserve the old
+    // spotlight target, this step now spotlights the permanent Help
+    // control itself and teaches the real, current information
+    // architecture -- where Upload Guides actually lives -- instead of
+    // recreating its old top-level-nav behavior through tour scripting.
     id: 'export-guides',
-    target: 'a[href="/export-guides/"]',
+    target: '#haHelpToggle',
     eyebrow: 'Step 2 of 5',
     title: 'Upload Guides',
-    body: "Not sure how to get a customer export out of your CRM, order system, or spreadsheet? Upload Guides has simple, step-by-step instructions for the system you already use."
+    body: "Need help preparing or uploading customer data? Upload Guides are always available under Help."
   },
   {
     id: 'manage-accounts',

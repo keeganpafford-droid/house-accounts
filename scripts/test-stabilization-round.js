@@ -333,16 +333,30 @@ assert(
 
 // ---------------------------------------------------------------------------
 // Required test 16: Pricing appears exactly once in the authenticated
-// header nav, alongside Dashboard and Upload Guides, with Add Customer Data
-// remaining the separate teal CTA (not a plain nav link).
+// header nav, alongside Dashboard, with Add Customer Data remaining the
+// separate teal CTA (not a plain nav link).
+//
+// Commercial Credibility V1 (2026-08-21) superseded the original "alongside
+// Dashboard and Upload Guides" requirement -- Upload Guides moved out of
+// primary authenticated navigation into Help (see
+// scripts/test-commercial-credibility-v1.js for that coverage), and Pricing
+// is now defined once in a shared COMMERCIAL_LINKS constant spread into
+// both appLinks and publicLinks, rather than a literal inline appLinks
+// entry -- "pages have a home and stay there" doctrine, not a duplicated
+// definition that happens to agree.
 // ---------------------------------------------------------------------------
 {
   const appLinksMatch = siteHeaderJs.match(/const appLinks=\[([\s\S]*?)\];/);
   assert(Boolean(appLinksMatch), 'site-header.js defines an appLinks array for the authenticated nav');
   const appLinksBlock = appLinksMatch ? appLinksMatch[1] : '';
-  const pricingOccurrences = (appLinksBlock.match(/label:'Pricing'/g) || []).length;
-  assert(pricingOccurrences === 1, `Pricing appears exactly once in appLinks (found ${pricingOccurrences})`);
-  assert(/label:'Dashboard'/.test(appLinksBlock) && /label:'Upload Guides'/.test(appLinksBlock), 'Dashboard and Upload Guides remain in the authenticated nav alongside Pricing');
+  const commercialLinksMatch = siteHeaderJs.match(/const COMMERCIAL_LINKS=\[([\s\S]*?)\];/);
+  assert(Boolean(commercialLinksMatch), 'site-header.js defines a shared COMMERCIAL_LINKS constant');
+  const commercialLinksBlock = commercialLinksMatch ? commercialLinksMatch[1] : '';
+  const pricingOccurrences = (commercialLinksBlock.match(/label:'Pricing'/g) || []).length;
+  assert(pricingOccurrences === 1, `Pricing appears exactly once in COMMERCIAL_LINKS (found ${pricingOccurrences})`);
+  assert(/\.\.\.COMMERCIAL_LINKS/.test(appLinksBlock), 'appLinks spreads the shared COMMERCIAL_LINKS constant (including Pricing), rather than redefining it');
+  assert(/label:'Dashboard'/.test(appLinksBlock), 'Dashboard remains in the authenticated nav');
+  assert(!/label:'Upload Guides'/.test(appLinksBlock), 'Upload Guides is no longer in the authenticated nav -- it lives in Help now');
   assert(
     /id="haAddCustomerDataCta"/.test(siteHeaderJs) && !/appLinksBlock.*Add Customer Data/.test(appLinksBlock),
     'Add Customer Data remains the dedicated teal CTA, rendered separately from the plain nav links array'

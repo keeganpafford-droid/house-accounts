@@ -11,7 +11,7 @@
 // was introduced.
 //
 // Usage: node scripts/test-new-customer-readiness-beta-language.js
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 
 let failures = 0;
 function assert(condition, message){
@@ -38,7 +38,7 @@ function read(path){ return readFileSync(new URL(`../${path}`, import.meta.url),
 
   const pagesWithMarkup = [
     'index.html', 'pricing.html', 'faq.html', 'security.html', 'privacy.html',
-    'terms.html', 'contact.html', 'whats-new.html', 'hall-of-accounts.html',
+    'terms.html', 'contact.html', 'whats-new.html',
     'dashboard/index.html'
   ];
   const pagesCssOnly = [
@@ -124,24 +124,17 @@ function read(path){ return readFileSync(new URL(`../${path}`, import.meta.url),
 }
 
 // =============================================================================
-// 7) Hall of Accounts -- the unverifiable "Beta Distributor" testimonial was
-//    removed (the page's own "Coming soon" note establishes every quote on
-//    it as placeholder/demo copy, not genuine attributed feedback); the page
-//    itself was not redesigned or newly linked/promoted.
+// 7) Hall of Accounts -- superseded by Commercial Credibility V1
+//    (2026-08-21): at the time this test was written, the "Beta Distributor"
+//    testimonial had just been removed but the page itself was still live,
+//    unlinked, with two other unverified testimonials. The whole page has
+//    since been retired -- see scripts/test-commercial-credibility-v1.js for
+//    full coverage of the retirement/redirect. Only a light presence check
+//    remains here so this file doesn't silently stop covering the file at
+//    all.
 // =============================================================================
 {
-  const hall = read('hall-of-accounts.html');
-  assert(!/Beta Distributor/.test(hall), '7) REQUIRED: the "Beta Distributor" testimonial attribution is gone');
-  assert(!hall.includes('House Accounts found three customers I completely forgot about'), '7) REQUIRED: the whole unverifiable testimonial card was removed, not just its attribution');
-  const cardCount = (hall.match(/<div class="card">/g) || []).length;
-  assert(cardCount === 2, `7) sanity: exactly the two remaining testimonial cards are present (got ${cardCount})`);
-  assert(hall.includes('Promo Sales Manager') && hall.includes('Distributor Owner'), '7) sanity: the two other testimonial cards are untouched');
-  assert(hall.includes('Coming soon'), '7) sanity (scope discipline): the page\'s own "Coming soon" disclaimer is untouched -- no redesign, no promotion of this page');
-
-  const links = ['site-header.js', 'index.html', 'pricing.html', 'faq.html', 'security.html', 'dashboard/index.html'].map(read);
-  for(const [i, content] of links.entries()){
-    assert(!/href="\/hall-of-accounts\.html"/.test(content), `7) REQUIRED (scope discipline): Hall of Accounts is still not linked/promoted from real navigation (checked ${['site-header.js','index.html','pricing.html','faq.html','security.html','dashboard/index.html'][i]})`);
-  }
+  assert(!existsSync(new URL('../hall-of-accounts.html', import.meta.url)), '7) sanity: hall-of-accounts.html no longer exists in the repo (retired by Commercial Credibility V1)');
 }
 
 // =============================================================================

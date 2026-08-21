@@ -6,7 +6,14 @@ const signup=fs.readFileSync('signup.html','utf8');
 const login=fs.readFileSync('login.html','utf8');
 assert(!header.includes("label:'Coming Soon'"),'Coming Soon remains in public nav');
 assert(!header.includes("label:'Customer Success'"),'Customer Success remains in public nav');
-for(const label of ['Pricing','FAQ','Security','Feedback']) assert(header.includes(`label:'${label}'`),`${label} missing from public nav`);
+// Commercial Credibility V1 (2026-08-21) navigation doctrine: Why House
+// Accounts, Real-World Results, and Pricing are the permanent top-level
+// public destinations. FAQ, Security, and Feedback were deliberately
+// removed from primary public navigation -- they remain reachable from
+// the footer instead (see scripts/test-commercial-credibility-v1.js for
+// full coverage of the new architecture).
+for(const label of ['Why House Accounts','Real-World Results','Pricing']) assert(header.includes(`label:'${label}'`),`${label} missing from public nav`);
+for(const label of ['FAQ','Security','Feedback']) assert(!header.includes(`label:'${label}'`),`${label} should no longer be a primary public/authenticated nav label -- footer-only now`);
 assert(home.includes('Upload your customer history'),'Homepage MVP supporting copy missing');
 assert(!home.includes('Research target accounts'),'Homepage still promotes target-account research');
 for(const name of ['name','organizationName','role','house_accounts','crm_erp','email','password']) assert(signup.includes(`name="${name}"`),`Signup field ${name} missing`);
