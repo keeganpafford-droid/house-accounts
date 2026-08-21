@@ -241,12 +241,12 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 **Founder determination (2026-08-20) — House Accounts is cleared for active selling.** Product development continues in parallel with real customer evidence driving prioritization, not as a precondition. Do not reopen this remediation slice or re-run another full smoke-test triage absent a new, specific, confirmed issue.
 
 **Founder smoke-test B/C-classified observations — preserved as backlog/polish, not implemented in this slice (documentation only; do not build any of this without separate founder scoping):**
-- **Beta positioning / messaging coherence** (site-wide copy consistency, welcome/upload-guide copy following the same positioning decision) — ties to "Website / positioning / commercialization" (LATER); a real positioning decision, not a functional defect.
+- **Beta positioning / messaging coherence** — **SHIPPED, do not reopen.** Delivered by the New-Customer Readiness / Beta Language pass (see "Recently completed" above): Beta banner removed, welcome modal rewritten, Settings/Feedback & Support/What's New copy corrected, feedback email subject fixed.
 - **Broader FAQ content overhaul** (audience framing beyond the one corrected multi-list claim; "why House Accounts vs. ChatGPT/Claude" framing — ties to "Website / positioning / commercialization" above; documenting notification settings in FAQ) — explicitly deferred per the founder's own PASS note: *"The broader FAQ/content overhaul remains deferred backlog work."*
 - **Reduce AI-ish em-dash/prose cadence in copy** — a real prose-quality note, not yet scoped.
 - **Feedback/Support footer and support instructions read as overly technical** for a non-technical rep — small, safe copy-level fix, not yet scoped.
 - **Request-a-Demo/calendar-link CTA placement** on Pricing/public site — placement assessment only; ties to "Demo Booking + Guided Customer Activation" (LATER), which already forbids building scheduling infrastructure now.
-- **Stronger "Why House Accounts" / founder story** on public and authenticated nav, and legitimate customer-success proof placement — ties to "Website / positioning / commercialization" and "Customer proof / stories" (both LATER); must wait for real, non-fabricated proof points per those entries' own constraints.
+- **Stronger "Why House Accounts" / founder story** on public and authenticated nav, and legitimate customer-success proof placement — **SHIPPED, do not reopen.** Delivered by Commercial Credibility V1 (see "Recently completed" above): a dedicated Why House Accounts page in permanent top-level nav, and Real-World Results as the canonical proof destination carrying three confirmed-real, anonymized founder field results. See the updated "Customer proof / stories" (LATER) for the continuing distinction between these founder field results and future independent customer case studies.
 - **My View vs. Team View unclear to a newly signed-up owner** — real Day-1 confusion point; smallest fix framed by the founder as a label/tooltip, not a redesign, if picked up.
 - **What's New page reads stale** — visible staleness reads as product neglect to a paying customer; update-vs-hide is a judgment call, not yet scoped.
 - **First-use empty "This Week" can hide meaningful Month/Quarter/Year intelligence** — an activation-quality insight to investigate subtly, not a confirmed defect; explicitly excluded from this slice (no first-value timebox highlighting work was done here).
@@ -265,6 +265,44 @@ Also fixed while auditing: the matrix's responsive behavior now scrolls horizont
 - **Prepare for Call readability; whether Account History and Account Context sections are duplicative** — worth investigating structure later, not scoped or approved work yet; explicitly excluded from this slice (no Prepare for Call redesign was done here).
 
 Doctrine-confirmation notes from the same smoke test (Active Expansion V1 eligibility causing confusion during the test; existing-account evidence vs. broader future-prospecting context; the Monitor & Grow → Find More Like Them → Prospecting long-term sequencing) reaffirmed existing, already-banked doctrine with no changes needed — not repeated here, no BACKLOG action required.
+
+### New-Customer Readiness / Beta Language — COMPLETED / FOUNDER-PASSED / LIVE IN PRODUCTION (2026-08-21)
+
+**Status: BANKED.** A narrow New-Customer Readiness lane, established after House Accounts began active selling to prospects and customers, deliberately kept separate from general backlog development. Implemented and founder-approved on Preview, merged to `main`, and independently verified live in Production. Main commit `588c530b1d3364e8c3d6d3798758610e35f74677`. Production deployment `dpl_9mh38kpiwZhEr2Ro4Zx5okzQ29Da` (READY). Merged-`main` suite: 174/174.
+
+**Shipped:**
+- Beta banner removed from customer-facing surfaces.
+- Welcome modal copy rewritten for new customers rather than beta testers.
+- Settings, Feedback & Support, and What's New copy corrected to match commercial (non-beta) positioning.
+- Feedback email subject line corrected.
+- Hall of Accounts testimonial addressed under an explicit provenance-verification instruction (use only if genuine, anonymized; remove rather than imply customer proof otherwise) — Hall of Accounts was subsequently retired entirely by Commercial Credibility V1 below.
+
+**Resolves, cross-referenced above:** "Beta positioning / messaging coherence" under the Release-Candidate Remediation Slice's B/C-classified observations (now marked SHIPPED there).
+
+### Commercial Credibility V1 — COMPLETED / FOUNDER-PASSED / LIVE IN PRODUCTION (2026-08-21)
+
+**Status: BANKED.** Founder-approved commercial site-credibility slice, implemented and click-tested on Preview (9-point founder QA pass), merged to `main`, and independently verified live in Production. Main commit `e4f362068bc3660d1ff8aa190810ac432b6c691c`. Production deployment `dpl_8jd943hRjQfyydXkvz3u5GpT6bRN` (READY). Merged-`main` suite: 176/176. Founder Preview QA: PASS.
+
+**Shipped:**
+- New Why House Accounts page (`why-house-accounts.html`) is live — a practitioner/founder story explaining that House Accounts grew out of practices used while building a promotional-products book from roughly $0 to $1M after entering the industry with no prior experience.
+- Site remains product-first; the homepage received only a compact Why + proof bridge, not a rewrite.
+- Real-World Results (`real-world-results.html`, renamed from `success-stories.html`) is now the canonical proof destination.
+- Three confirmed-real, anonymized founder field results are represented: Timing Confirmed — Regional Manufacturing Company / seasonal buying pattern; Meeting Scheduled — Regional Automotive Dealership / community-event signal; Order Won — Regional Healthcare Practice / milestone anniversary / $1,000 order.
+- These are explicitly presented as field results, not falsely presented as three independent House Accounts customer case studies — see the updated "Customer proof / stories" (LATER) for the preserved distinction from future, genuinely independent customer case studies.
+- Hall of Accounts concept/name retired; the old URLs (`/hall-of-accounts.html` and `/hall-of-accounts`) redirect to Real-World Results (`vercel.json`).
+- Permanent top-level commercial navigation: Why House Accounts, Real-World Results, Pricing — a single shared `COMMERCIAL_LINKS` list in `site-header.js`, spread into both signed-out and signed-in nav ("pages have a home and they stay there" doctrine).
+- Signed-out header simplified: FAQ, Security, and Feedback moved to secondary/footer locations.
+- Upload Guides moved from authenticated primary nav into Help.
+- Product Tour updated to teach the new permanent Upload Guides location via Help (spotlights `#haHelpToggle` rather than programmatically opening the dropdown).
+
+**Explicitly not built / do not overstate:**
+- Dashboard/product shell was not redesigned.
+- The three shipped Real-World Results stories are founder field results, not independent customer case studies — do not present them as customer testimonials.
+- The "vs. ChatGPT / Claude" comparative positioning and the Behavioral-Learning-gated stronger messaging claim remain open — see "Website / positioning / commercialization" (LATER).
+
+**Resolves, cross-referenced above:** "Stronger 'Why House Accounts' / founder story... and legitimate customer-success proof placement" under the Release-Candidate Remediation Slice's B/C-classified observations (now marked SHIPPED there).
+
+**Founder determination — product-development operating state (2026-08-21).** House Accounts is now commercially presentable and cleared for active selling. We are intentionally not selecting another proactive backlog sprint. Near-term founder priority is: sales outreach → demos → onboarding → usage observation → customer feedback → evidence-driven product decisions. Product work should resume when driven by: confirmed production defects; meaningful activation/trust friction; repeated customer evidence; revenue/deal blockers; clear market pull. BACKLOG remains a warehouse of hypotheses/future work, not an active to-do queue.
 
 ---
 
@@ -558,6 +596,8 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 
 ### Website / positioning / commercialization — "Why House Accounts vs. ChatGPT / Claude?"
 
+**Partially shipped (2026-08-21) — do not reopen the shipped portion.** Commercial Credibility V1 shipped a dedicated Why House Accounts page (practitioner/founder narrative: grew a promotional-products book from roughly $0 to $1M after entering the industry with no prior experience, systematized into House Accounts) and permanent top-level commercial navigation (Why House Accounts, Real-World Results, Pricing) — see "Recently completed" above. What remains open here is narrower than before: the direct "vs. ChatGPT / Claude" comparative positioning below, and the stronger Behavioral-Learning-driven claim below. Do not re-litigate the shipped founder-story page.
+
 **Depends on:** Behavioral Learning V1 for its strongest claim.
 
 **Future messaging direction:** general assistants wait for prompts; House Accounts is persistent, proactive, account-aware, workflow-native, organization-specific, continuously watching the customer book, and remembers what happened.
@@ -601,9 +641,13 @@ Real, worth preserving, but should not outrank NOW/NEXT/SOON for attention. Seve
 
 ### Customer proof / stories
 
-Preserve validation examples for eventual use as sales/customer-story proof rather than letting them remain anecdotal internal notes:
+**Shipped, do not reopen (2026-08-21):** Real-World Results (`real-world-results.html`) is now live as the canonical proof destination, replacing the retired Hall of Accounts concept/name (old URL redirects there). It presents three confirmed-real, anonymized **founder field results** — Regional Manufacturing Company (Timing Confirmed), Regional Automotive Dealership (Meeting Scheduled), Regional Healthcare Practice (Order Won, $1,000 order) — see "Recently completed" above for full detail and provenance.
+
+**Important distinction to preserve going forward:** the three shipped stories are the founder's own field results from using House-Accounts-style practices, explicitly presented as such — not independent customer case studies, and the page must not imply otherwise. The items below remain preserved as future, genuinely independent **customer** proof points (distinct from founder field results), for whenever real customer usage produces them — not yet built, not promoted to NOW/NEXT:
 - Dover Honda holiday parade public signal → real outbound reply.
 - Route 236 field outreach, where specific signals/opportunity ideas produced real contacts/conversations.
+
+Do not add either of these (or any other example) to Real-World Results without the same provenance/anonymity discipline used for the three shipped stories.
 
 ### Real-sales reasoning evaluation set — commercial-reasoning quality benchmark (not started)
 
