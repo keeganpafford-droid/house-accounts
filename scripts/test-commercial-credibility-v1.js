@@ -108,12 +108,18 @@ function read(path){ return readFileSync(new URL(`../${path}`, import.meta.url),
   assert(page.includes('Who should I contact next, and why?'), 'REQUIRED: preserves the existing product question');
   assert(page.includes('Make every rep their best rep.'), 'REQUIRED: preserves "Make every rep their best rep."');
   assert(page.includes('Trustworthy first. Useful second. Clever third.'), 'REQUIRED: preserves "Trustworthy first. Useful second. Clever third."');
-  assert(/\$0 to \$1M/.test(page), 'sanity: the practitioner-credibility framing is present');
+  // Founder Narrative Correction (2026-08-21): the founder's personal $0->$1M
+  // sales milestone is no longer the public positioning centerpiece -- it
+  // remains fine for direct founder-led sales conversations, interviews, and
+  // historical/internal documentation, but must not carry the core public
+  // product story. See BACKLOG.md for the doctrine.
+  assert(!/\$0|\$1M|\bno prior (industry )?experience\b/i.test(page), 'REQUIRED: the founder\'s personal $0->$1M milestone is no longer the public positioning centerpiece on Why House Accounts');
+  assert(page.includes('firsthand experience building and managing a promotional-products book'), 'REQUIRED: the durable practitioner-credibility framing (firsthand experience, not the milestone) is present');
   assert(!/solely|mostly responsible/i.test(page), 'REQUIRED: does not claim the practices were solely or mostly responsible for the growth');
   assert(!/biography|life story/i.test(page), 'sanity: does not read as a founder biography');
   assert(page.includes('href="/real-world-results.html"'), 'REQUIRED: bridges to Real-World Results');
   assert(page.includes('href="/signup"'), 'REQUIRED: bridges to Start Free');
-  for(const practice of ['reorders', 'go quiet', 'timely', 'departments and categories', 'proactive']){
+  for(const practice of ['reorder', 'go quiet', 'timely', 'departments and categories', 'proactive']){
     assert(new RegExp(practice, 'i').test(page), `sanity: the practices list mentions "${practice}"`);
   }
 }
