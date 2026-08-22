@@ -308,6 +308,24 @@ Doctrine-confirmation notes from the same smoke test (Active Expansion V1 eligib
 
 ---
 
+### Signal-Grounding Trust Correction: Social-Source Identity Rule (Eliot Veterinary Hospital / HARTPETS) — COMPLETED / FOUNDER-PASSED / LIVE IN PRODUCTION (2026-08-22)
+
+**Status: BANKED.** Founder QA: PASS (Preview `dpl_DDkKurYGrUbVFmM2ENTTDeYKqmK6`, independently verified READY). Merged to `main` at `86062aa9200d8f63f74bdd95b5663858022f5999`. Production deployment `dpl_3jTo5RXSYLMMkaoMR3yeQojQ5wZ2` (READY, independently verified). Merged-`main` suite: 176/176.
+
+**Surfaced by:** the Firecrawl `/search` shadow-evaluation run above — Path A output surfaced a signal for account "Eliot Veterinary Hospital" sourced from `facebook.com/HartPets`, independently verified by the founder to be Hartz's own official Facebook presence (a pet-products brand) — a **confirmed wrong-entity acceptance**, not a namesake/franchise-confusion edge case. The founder rejected relying on downstream dashboard `secondary` visibility as sufficient mitigation: the evidence itself was not valid evidence about the target account, so the correction had to be made at the identity-grounding layer, not the display layer.
+
+**Root cause:** `verifyCandidateCompanyGrounding()` (`api/signal-intelligence.js`) grants `'unconfirmed'` (a visible, persisted Business Signal) to any multi-word bare company-name match with zero independent corroboration, provided there is no location contradiction — with no distinction for whether the source itself is a social profile/post. Unlike a news outlet or publisher, a social account carries no identity claim independent of the text it contains, so a bare name mention on an unrelated account was enough to pass.
+
+**Correction (bounded, social-source-specific):** in the exact branch that previously returned `'unconfirmed'` for a multi-word bare-name match with no corroboration, a candidate sourced from a social URL (`isSocialUrl()`) is now rejected outright unless it carries at least one real identity anchor — reusing the same four-anchor set that already overrides the location-contradiction veto elsewhere in the same function: `domainCorroborated`, `knownSocialProfileMatch`, `selfDomainCorroborated`, `exactSocialHandleCorroborated`. No new identity-matching framework — the existing primitives (`isSocialUrl()`, `accountKnownSocialProfileMatch()`, `isExactSelfSocialHandleMatch()`, `socialProfileMatchesCompany()`) were already present and already wired in; only the missing branch check was added.
+
+**Ordinary third-party news/local-publication behavior unchanged.** The correction fires only when the candidate's source URL is a social profile/post domain (`linkedin.com`, `facebook.com`, `instagram.com`, `x.com`/`twitter.com`) — a bare multi-word company mention on an ordinary news or local-publication page still grades `'unconfirmed'` exactly as before.
+
+**Regression coverage added** (`scripts/test-signal-account-evidence-grounding.js`): (1) an unrelated Facebook/Hartz-style account + bare mention of "Eliot Veterinary Hospital" → rejected, never visible — the actual reproduced defect; (2) the account's own exact compacted Facebook handle, and separately a known official profile on file, both posting about themselves → remain eligible, confirmed; (3) a legitimate third-party local-news article with a multi-word company mention → unchanged, still `'unconfirmed'`; (4) the existing namesake/location-contradiction safeguard (an unrelated same-name business in a genuinely different city, sourced from an ordinary non-social page) → still rejects exactly as before, unaffected by this correction. One pre-existing test (the Dover Honda ambiguous-social-handle case) was updated from its prior `'unconfirmed'` expectation to `'rejected'` — it was the identical failure shape now fixed, not a new scenario.
+
+**Companion recon findings from the same run, resolved separately:** Avidia Bank's single-location-model grounding false-negative — see "Signal-grounding trust correction: single-location account model can reject legitimate multi-location coverage (Avidia Bank)" under LATER — banked as a known architectural limitation, explicitly not implemented (no guard loosening, no multi-location architecture added from one case).
+
+---
+
 ## NOW — Activation & launch quality
 
 Bounded, near-term work that directly completes or polishes what's already live. Ship before or alongside Production monitoring/notification activation.
