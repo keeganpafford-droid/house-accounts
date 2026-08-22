@@ -968,6 +968,35 @@ function verifyCandidateCompanyGrounding(candidate = {}, account = {}) {
   // generic-suffix-exempt).
   if (hasBareNameMatch && !isSingleTokenCompanyIdentity(companyName)) {
     if (!isEntityEmbeddedInLargerName(companyName, scopedCandidate.snippet)) {
+      // Founder trust correction (Eliot Veterinary Hospital / HARTPETS,
+      // confirmed wrong-entity acceptance): reaching this point already
+      // means `corroborated` (checked above) was false -- none of
+      // domainCorroborated, locationCorroborated, knownSocialProfileMatch,
+      // publisherGeoCorroborated, selfDomainCorroborated, or
+      // exactSocialHandleCorroborated held. For an ORDINARY third-party
+      // page (news, local publication, trade press) that absence still
+      // leaves a real, if uncorroborated, claim -- the publisher is a
+      // known, identifiable outlet writing under its own name, so
+      // 'unconfirmed' (a legitimate, visible Business Signal) is correct
+      // and unchanged. A SOCIAL profile/post is structurally different:
+      // anyone can create a social account under any name, so the source
+      // itself carries no identity claim independent of the bare name
+      // mention it contains -- the founder's real-production case was a
+      // Hartz-owned facebook.com/HartPets account, wholly unrelated to
+      // Eliot Veterinary Hospital, accepted purely because the target's
+      // multi-word name appeared in its text. A social source therefore
+      // needs one of the anchors already computed above (matches the SAME
+      // four that already override the location-contradiction veto, for
+      // the identical reason: only first-party-strength evidence --
+      // known/exact profile or domain linkage -- actually establishes
+      // WHICH account a social post is about) before a bare mention alone
+      // is trusted. No anchor here plus a social source -> reject outright
+      // rather than downgrade, per founder direction that 'secondary'
+      // visibility is not sufficient mitigation for evidence that was
+      // never actually about the target account.
+      if (socialUrl) {
+        return { grounded: false, identityConfidence: 'rejected', reasons: [...reasons, 'social source (profile/post) with only a bare name mention and no independent identity anchor (known/exact profile or domain match) -- not trusted as evidence about this account'] };
+      }
       return { grounded: true, identityConfidence: 'unconfirmed', reasons };
     }
     reasons.push('bare match is embedded inside a larger, different proper-name entity in the source text -- treated as a possible match, not a confirmed reference');

@@ -215,14 +215,23 @@ assert(
   '15) same name match, on an unrelated dealership\'s own social handle, with an explicit conflicting city/state -> rejected'
 );
 
-// 6) ambiguous social candidate (name match, no location, unrecognized handle) -> unconfirmed
+// 6) ambiguous social candidate (name match, no location, unrecognized handle)
+// -> rejected. Superseded by the founder's Eliot Veterinary Hospital /
+// HARTPETS trust correction (2026-08-22): a social profile/post with only a
+// bare multi-word name mention and NO independent identity anchor (known
+// profile, exact handle, or domain match) is no longer trusted as evidence
+// about the account -- this is the exact shape of the confirmed production
+// defect (an unrelated Hartz-owned facebook.com/HartPets account accepted
+// solely from a bare "Eliot Veterinary Hospital" mention). See the
+// founder's four required regression scenarios appended at the end of this
+// file.
 assert(
   verifyCandidateCompanyGrounding({
     title: 'Dover Honda spotted at regional auto show',
     snippet: 'Photos from the show floor featured several dealership booths including Dover Honda.',
     url: 'https://www.instagram.com/newenglandautoscene',
-  }, DOVER_HONDA).identityConfidence === 'unconfirmed',
-  '16) ambiguous social candidate: name match, no location/domain, and a handle that is neither the account\'s own nor explicitly a different named business -> unconfirmed (same general rule as non-social sources, no social-specific carve-out needed)'
+  }, DOVER_HONDA).identityConfidence === 'rejected',
+  '16) social candidate: name match, no location/domain, and a handle that is neither the account\'s own nor explicitly a different named business -> rejected (a social source with no independent identity anchor is not trusted evidence about the account, per the HARTPETS correction)'
 );
 
 // 7) Final bounded Beta trust correction (Item 3): isExactSelfSocialHandleMatch()
@@ -456,6 +465,83 @@ assert(
     url: 'https://iclautos.com/locations',
   }, DOVER_HONDA_GROUP_DOMAIN).identityConfidence === 'confirmed',
   '30) an account-specific group-domain page that explicitly names Dover Honda passes the name floor and confirms via domain corroboration -- proving the architecture is feasible once real evidence exists'
+);
+
+// ---------------------------------------------------------------------------
+// Founder-directed trust correction (2026-08-22): Eliot Veterinary Hospital /
+// HARTPETS confirmed wrong-entity acceptance. ChatGPT's live Firecrawl
+// shadow-evaluation recon surfaced a signal accepted for account "Eliot
+// Veterinary Hospital" sourced from facebook.com/HartPets -- independently
+// verified by the founder to be Hartz's own official Facebook presence (a
+// pet-products brand), i.e. an entirely unrelated account, not a namesake or
+// franchise confusion. The candidate reached the multi-word bare-name-match
+// branch above with zero corroboration and no location contradiction, so it
+// previously graded 'unconfirmed' (a visible, if caveated, Business Signal)
+// purely because "Eliot Veterinary Hospital" appeared as text on someone
+// else's social post. The founder explicitly rejected relying on downstream
+// 'secondary' dashboard visibility as sufficient mitigation: the evidence
+// itself is not valid evidence about the target account, so the correction
+// belongs at the identity-grounding layer, not the display layer. Four
+// exact scenarios required by the founder, verbatim:
+// ---------------------------------------------------------------------------
+const ELIOT_VET = { name: 'Eliot Veterinary Hospital' };
+
+// 31) unrelated Facebook/Hartz-style account + bare mention of "Eliot
+// Veterinary Hospital" -> rejected / never visible. The actual reproduced
+// production defect.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'HartPets on Facebook',
+    snippet: 'Stopping by Eliot Veterinary Hospital today to pick up some supplies for our furry friends!',
+    url: 'https://www.facebook.com/HartPets',
+  }, ELIOT_VET).identityConfidence === 'rejected',
+  '31) unrelated Facebook/Hartz-style account + bare mention of "Eliot Veterinary Hospital" -> rejected, never visible -- the confirmed HARTPETS production defect'
+);
+
+// 32) exact known company Facebook profile + company mention -> remains
+// eligible (a social source is not banned outright, only held to a real
+// identity bar).
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Eliot Veterinary Hospital celebrates 20 years serving the community',
+    snippet: 'We are so grateful for two decades of trusted care -- thank you to all our wonderful clients!',
+    url: 'https://www.facebook.com/EliotVeterinaryHospital',
+  }, ELIOT_VET).identityConfidence === 'confirmed',
+  '32) the account\'s own exact compacted Facebook handle ("EliotVeterinaryHospital") posting about itself -> remains eligible, confirmed via exactSocialHandleCorroborated -- social evidence is not globally excluded'
+);
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Eliot Veterinary Hospital celebrates 20 years serving the community',
+    snippet: 'We are so grateful for two decades of trusted care -- thank you to all our wonderful clients!',
+    url: 'https://www.facebook.com/some.other.handle',
+  }, { ...ELIOT_VET, knownSocialProfiles: ['https://www.facebook.com/some.other.handle'] }).identityConfidence === 'confirmed',
+  '32b) a KNOWN official profile on file for the account (account.knownSocialProfiles) also remains eligible, confirmed via knownSocialProfileMatch, even when the handle text itself does not resemble the company name'
+);
+
+// 33) legitimate third-party local-news article + multi-word company
+// mention -> behavior unchanged (still 'unconfirmed', not rejected). The
+// correction is social-source-specific and must not penalize ordinary news
+// coverage of a company.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Local business roundup: pet care providers adapt to demand',
+    snippet: 'Eliot Veterinary Hospital was among several local practices featured in this week\'s roundup of growing regional businesses.',
+    url: 'https://example-localnews.com/pet-care-roundup',
+  }, ELIOT_VET).identityConfidence === 'unconfirmed',
+  '33) legitimate third-party local-news article + multi-word company mention -> unchanged, still \'unconfirmed\' -- ordinary news coverage is not held to the social-source anchor requirement'
+);
+
+// 34) existing namesake/location safeguards remain green -- an unrelated
+// same-name company in a genuinely different location, sourced from an
+// ordinary (non-social) third-party page, still rejects via the existing
+// location-contradiction veto exactly as before this correction.
+assert(
+  verifyCandidateCompanyGrounding({
+    title: 'Eliot Veterinary Hospital opens new Sacramento, CA location',
+    snippet: 'The Sacramento, CA practice announced its expanded hours for the new location.',
+    url: 'https://example-blog.com/eliot-vet-sacramento',
+  }, { ...ELIOT_VET, location: 'Eliot, ME' }).identityConfidence === 'rejected',
+  '34) existing namesake/location contradiction safeguard remains green and unaffected -- an unrelated same-name business in a conflicting city/state still rejects via hasLocationContradiction, independent of the new social-source rule'
 );
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
