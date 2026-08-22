@@ -688,7 +688,16 @@ House Accounts remains the canonical state; notification channels are transport 
 
 **Current-state finding (verified against code, still true):** House Accounts does not call Firecrawl `/search` anywhere today. Every Firecrawl call site (`api/research-batch.js` and `api/research-account.js`, both `firecrawlScrape()`) hits `/v2/scrape` only, on candidate URLs Serper has already discovered and House Accounts' own scoring/dedup/grounding pipeline has already filtered. Discovery itself is 100% Serper's job.
 
-**Evaluation run and concluded (2026-08-22):** a disposable local harness (`scripts/dev-tools/firecrawl-search-shadow-eval.mjs`, throwaway branch `claude/firecrawl-search-shadow-eval-v1`, not merged) ran a bounded, three-path side-by-side (A: current Serper + filtered Firecrawl scrape; B: Firecrawl `/search` excerpt-only; C: Firecrawl `/search` + scrape) across six fixture accounts via a one-shot Preview-build live execution, frozen query set, and real cost/latency accounting. **Conclusion: do not replace Serper discovery, and do not adopt Firecrawl `/search` as a general discovery-or-excerpt substitute.** The current Serper → filtered Firecrawl scrape path remains the production path unchanged.
+**Evaluation run and concluded (2026-08-22):** a disposable local harness (`scripts/dev-tools/firecrawl-search-shadow-eval.mjs`, throwaway branch `claude/firecrawl-search-shadow-eval-v1`, not merged) ran a bounded, three-path side-by-side (A: current Serper + filtered Firecrawl scrape; B: Firecrawl `/search` excerpt-only; C: Firecrawl `/search` + scrape) across six fixture accounts via a one-shot Preview-build live execution, frozen query set, and real cost/latency accounting.
+
+**Conclusion — none of the three alternative paths approved:**
+- Serper is retained as the discovery provider.
+- Firecrawl `/search` is **not approved** as a discovery replacement (Path B).
+- Excerpt-only is **not approved** as a scrape replacement (Path B).
+- Firecrawl `/search` + scrape is **not approved** (Path C).
+- Key reasons: materially slower discovery, higher Firecrawl-credit usage, no downstream OpenAI-token reduction, and mixed evidence quality despite higher raw accepted-signal counts on the Firecrawl paths.
+
+The current Serper → filtered Firecrawl scrape path remains the production path unchanged.
 
 **One LATER hypothesis preserved from the run, still not implemented:** a narrow, conditional highlight-fallback — *Serper discovery → normal House Accounts enrichment → if a candidate's scrape is blocked/boilerplate/low-information, evaluate a query-relevant Firecrawl `/search` highlight as a fallback input for that specific candidate only* — rather than a general discovery or excerpt replacement. **Not scoped, not approved, no implementation.** Any future pursuit of this must re-verify against current code and re-run a bounded comparison before building anything, per the standing "no migration without demonstrated advantage" doctrine below.
 
