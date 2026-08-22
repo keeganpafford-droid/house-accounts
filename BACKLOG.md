@@ -682,6 +682,30 @@ House Accounts remains the canonical state; notification channels are transport 
 
 **If retained, frame correctly:** a founder-approved, explicit one-time enrichment operation with a clear before/after evidence trail — never an ongoing background reinterpretation system.
 
+### Firecrawl `/search` shadow evaluation (conditional — verify before building)
+
+**Surfaced by:** founder-directed read-only capability review of Firecrawl's July 2026 `/search` relevance/excerpt upgrade, Firecrawl Monitor, and Firecrawl MCP (2026-08-22). Documentation-only banking of this review's findings — no implementation.
+
+**Current-state finding (verified against code):** House Accounts does not call Firecrawl `/search` anywhere today. Every Firecrawl call site (`api/research-batch.js` and `api/research-account.js`, both `firecrawlScrape()`) hits `/v2/scrape` only, on candidate URLs Serper has already discovered and House Accounts' own scoring/dedup/grounding pipeline has already filtered. Discovery itself is 100% Serper's job. The July 2026 `/search` upgrade therefore does not apply to anything House Accounts currently does.
+
+**Hypothesis to evaluate, not build:** whether Firecrawl's improved `/search` excerpts could reduce or replace some combination of `Serper search → Firecrawl full-page scrape → large OpenAI context`. Grounding today (`verifyCandidateCompanyGrounding()`, `signal-intelligence.js`) already runs on title/snippet alone, not scraped content, and the synthesis prompt already truncates scraped content to ~1800 chars/candidate — so a sufficiently good `/search` excerpt is architecturally plausible as an input, but this has not been verified against the current codebase live.
+
+**Before any discovery-provider or research-pipeline change:** run a bounded side-by-side against House Accounts' current Serper → filtered Firecrawl scrape path, using known accepted/rejected signal examples (the existing grounding fixtures — e.g. the Gallagher/Avidia and Dover Honda namesake-collision cases in `scripts/test-signal-account-evidence-grounding.js` — plus small/local companies where possible, not just large brands). Compare: commercially useful recall; source authority; irrelevant/stale rate; grounding-context sufficiency (does the excerpt carry enough for House Accounts' evidence-validation doctrine); full-page-scrape reduction; downstream OpenAI token impact; Firecrawl credits/cost; Serper cost; latency.
+
+**No migration or Production implementation without demonstrated advantage.** Do not build speculatively from vendor capability alone — per the product-development operating-state doctrine above (2026-08-21), this is not evidence-driven work and does not meet the bar for NOW/NEXT.
+
+### Selective company-owned-page change detection (conditional — not scoped, not approved)
+
+**Surfaced by:** the same 2026-08-22 Firecrawl capability review, specifically the Firecrawl Monitor (`search/page/site monitor → diff/new result → optional judge → webhook`) architectural-overlap evaluation.
+
+**Finding — do not pursue a Firecrawl Monitor migration.** House Accounts' existing `scheduler → due target → queue → bounded one-account worker → evidence → notification` architecture (Notification & Outcome Loop V1, Full Beta Monitoring Cutover — both banked above) is a mature, tested, production-proven state machine with its own capacity leasing, per-target DB lease, cooldowns, poison-delivery handling, and cadence advancement. Firecrawl Monitor's generic diff/webhook lifecycle would duplicate that, not replace it, and its URL-diff dedup is strictly weaker than House Accounts' existing event-fingerprint + entity-disambiguation dedup. **Do not add a generic "Firecrawl Monitor migration" item to this backlog.**
+
+**The one narrow idea worth preserving, only if evidence later justifies it:** House Accounts already re-scrapes a company's own `site:domain` pages every monitoring cycle via the existing "owned" query, regardless of whether that page actually changed. Firecrawl Monitor (or an equivalent change-detection mechanism) could someday serve as a selective upstream optimization for known trusted company-owned pages specifically — reducing redundant full-page scrapes/token ingestion when nothing changed. **Not scoped, not approved, do not build now** — only worth evaluating if monitoring scale, cost, or noise later makes it a real, evidence-backed problem.
+
+**Standing doctrine, applies to any future use of Firecrawl Monitor/judge output:** Firecrawl's monitor/judge output is candidate evidence only. It can never establish an HA Business Signal, Reason to Reach Out, or Priority by itself — any such output must still pass House Accounts' existing identity/source/evidence/grounding gates (`verifyCandidateCompanyGrounding()`, `classifyMonitoringSignalEligibility()`) exactly like a Serper-discovered candidate does today. This is not a proposal to replace House Accounts' existing scheduler/queue/worker/monitoring architecture.
+
+**Firecrawl MCP — explicitly not a House Accounts roadmap item, do not add to this backlog.** The same review concluded MCP (a tool-discovery protocol built for interactive/agentic sessions) creates no Production advantage over House Accounts' existing direct, typed, timeout-bounded API call sites in its deterministic serverless pipeline. It may be useful as future developer/agent tooling for engineering investigation work (e.g. driving a live evaluation of the `/search` hypothesis above), but that is a tooling choice, not a product hypothesis, and is deliberately excluded from this backlog.
+
 ### Longer-term / older parked ideas
 
 Kept clearly lower priority unless current strategy explicitly promotes one of these — do not let them outrank the current commercial path (existing customer intelligence → reason to reach out → opportunity/play → Prepare for Call → rep action → outcome):
