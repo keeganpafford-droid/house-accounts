@@ -72,18 +72,12 @@ assert(!existsSync(join(REPO_ROOT, 'api', 'weekly-scan.js')), 'REQUIRED: api/wee
 }
 
 // ===========================================================================
-// 3. vercel.json: the retired cron is gone, the two new-architecture crons
-//    are registered with the exact founder-specified schedules, and the
-//    weekly-scan-only maxDuration function entry is gone too.
+// 3. vercel.json: scheduled work is disabled before the account downgrade.
 // ===========================================================================
 {
   const vercelConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vercel.json'), 'utf8'));
   const crons = Array.isArray(vercelConfig.crons) ? vercelConfig.crons : [];
-  assert(!crons.some(c => String(c.path || '').includes('weekly-scan')), 'REQUIRED: /api/weekly-scan is no longer registered in vercel.json\'s crons');
-  const monitoringCron = crons.find(c => c.path === '/api/monitoring-scheduler');
-  const notificationCron = crons.find(c => c.path === '/api/notification-scheduler');
-  assert(monitoringCron?.schedule === '*/5 * * * *', `REQUIRED: /api/monitoring-scheduler is registered at */5 * * * * (got ${JSON.stringify(monitoringCron)})`);
-  assert(notificationCron?.schedule === '0 12 * * *', `REQUIRED: /api/notification-scheduler is registered at 0 12 * * * (got ${JSON.stringify(notificationCron)})`);
+  assert(crons.length === 0, `REQUIRED: no cron jobs are registered in vercel.json before downgrade (got ${JSON.stringify(crons)})`);
   assert(!vercelConfig.functions?.['api/weekly-scan.js'], 'REQUIRED: vercel.json\'s functions block no longer configures api/weekly-scan.js');
 }
 
