@@ -12,30 +12,12 @@
       "permanent": false
     }
   ],
-  "crons": [
-    {
-      "path": "/api/monitoring-scheduler",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/notification-scheduler",
-      "schedule": "0 12 * * *"
-    }
-  ],
   "functions": {
     "api/research-batch.js": {
       "maxDuration": 58
     },
     "api/queues/monitoring-consumer.js": {
-      "maxDuration": 180,
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "monitoring-jobs",
-          "retryAfterSeconds": 60,
-          "initialDelaySeconds": 0
-        }
-      ]
+      "maxDuration": 180
     }
   }
 }
